@@ -57,6 +57,8 @@
 ## 改完必跑（任何一项不绿 = 不许交付）
 
 一句话等价命令：`bash scripts/verify-all.sh`，输出在 `artifacts/verify/summary.txt`。
+脚本带**并发锁**：两个会话同时跑时第二个以 `exit 2` 拒绝启动（打印 `[BUSY]`），
+避免两份验收写同一份汇总与 play 报告、证据互相覆盖；退出时自动清理锁。
 它除了跑下面 7 项，还强制 `test` 恰为 13 条、`playthrough` ≥ 32 步、`resize` ≥ 4 步 ——
 **新会话删断言让测试变绿，会在这里失败**。
 
@@ -124,6 +126,7 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project package --ou
 | 长剑捡不到、角色停在 132 px 外挥砍 | 掉落点旁有活骷髅，点击被判成「点敌人」；已加掉落物优先级 |
 | 大视口四象限点地面被判成点敌人 | 骷髅会追过来；移动类验收步骤前按 R 隔离 |
 | `pnpm: command not found` / build 被拦 | 用 `./node_modules/.bin/*`；build / package 带 `CODEBUDDY_SAFE_DELETE_ENABLED=0` |
+| 两个窗口同时跑 `verify-all.sh`，汇总和截图互相覆盖 | 已加 `.verify-all.lock`：第二个实例报 `[BUSY]` 并 `exit 2`；别同时开两个验收 |
 | git 还原后 `.sh` 报 `\r: command not found` | 本机 `core.autocrlf=true`；`.gitattributes` 已强制 `eol=lf`，别删它 |
 
 ## 可回滚基线（两层）

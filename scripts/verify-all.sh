@@ -20,6 +20,22 @@ TSC=./node_modules/.bin/tsc
 OUT=artifacts/verify
 mkdir -p "$OUT"
 SUMMARY="$OUT/summary.txt"
+
+# Two AI sessions running this gate at once overwrite the same summary and the
+# same play reports, so the evidence would belong to neither run. Refuse a
+# second instance; a stale lock is cleared only when its PID is gone.
+LOCK="$OUT/.verify-all.lock"
+if [ -f "$LOCK" ]; then
+  lock_pid=$(cat "$LOCK" 2>/dev/null || true)
+  if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+    echo "[BUSY] another verify-all is running (PID $lock_pid); refusing to overwrite its evidence." >&2
+    exit 2
+  fi
+  rm -f "$LOCK"
+fi
+printf '%s\n' "$$" > "$LOCK"
+trap 'rm -f "$LOCK"' EXIT INT TERM
+
 : > "$SUMMARY"
 
 # Vite's safe-delete hook blocks build/package in this environment.
