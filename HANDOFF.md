@@ -86,6 +86,29 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project package --ou
 
 主验收必含**非 1280x720 视口**：坐标映射的回归只在 drawing buffer 尺寸变化时暴露。
 
+## 功能契约 ↔ 护栏覆盖（可核对）
+
+下表把「当前功能契约」逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
+若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
+删断言不会让这张表悄悄失效。单测 11 条 movement + 2 条 `empty-project` = 13 条；浏览器
+验收 12 个命名场景（报告展开为 32 steps）。
+
+| 功能契约 | 单测 `assets/__tests__/movement.test.ts` | 浏览器 `scripts/playthrough.mjs` |
+|:--|:--|:--|
+| 悬停不动 | `hovering the pointer never moves the player` | `hovering the pointer does not move the player` |
+| 点地面只移动、不挥砍 | `a click on the ground moves there, stops, and never attacks` | `a click on the ground moves but never attacks` |
+| 点地面靠近敌人也不攻击 | `a ground click near, but not on, an enemy never attacks` | — |
+| 四象限方向 / 任意视口 | `clicking any quadrant walks the matching direction` | `click-to-move maps to all four quadrants on non-1280x720 viewports` + `playthrough-resize.mjs` |
+| 落点到达即停、之后悬停不启动 | 同上（到达即停） | `a click waypoint stops on arrival and ignores later hovering` |
+| 长按跟随、松开冻结落点 | `a held left button follows the live cursor; release freezes the waypoint` | `holding the left button follows the live cursor; release stops following` |
+| 长按不产生攻击 | `a long hold cancels a pending attack order and never attacks` | 跟随步骤内断言 `attacks === 0` |
+| 闪避不改写落点 | `a dodge keeps its own waypoint even while the cursor is held elsewhere` | `space dodges` |
+| 点敌人在范围内挥砍一次、只扣目标 | `clicking an enemy in range swings once and damages only that enemy` | `left click on an enemy kills it and produces a longsword` |
+| 点远处敌人先接近、进距离才挥砍 | `clicking a distant enemy approaches first and swings only in range` | `clicking a distant enemy approaches, then swings once in range` |
+| 掉落物优先于敌人判定（且不误伤点敌人） | `clicking a drop that sits under an enemy walks to loot, not to attack` + `a body-centre click still attacks the enemy even with a drop at its feet` | `click the drop to walk over it and equip the main weapon` |
+| 装备后近战仍可用 | — | `armed melee still works on a clicked enemy` |
+| 初始状态 / reload 可玩 | `empty-project.test.ts`（2 条工程契约） | `spawn: ...` + `reload preserves a playable frame` |
+
 ## 已知陷阱速查
 
 | 现象 | 根因 / 处理 |
