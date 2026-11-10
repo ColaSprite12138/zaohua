@@ -20,6 +20,11 @@
  *   deploy   -> weapon slots are borrowed out of the inventory
  *   cleared  -> weapons returned + authored loot banked
  *   gameOver -> borrowed weapons and loot permanently lost
+ *
+ * It also drives the mandatory login through the REAL overlay UI (register,
+ * auto-save, simulated refresh, account isolation) and the in-run bag (B opens
+ * it without freezing the arena, drag-equipping emits an immediate `equip`
+ * message, ESC closes it): 28 assertions in total.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -71,7 +76,10 @@ const SELFTEST = `
 <div id="selftest-result">PENDING</div>
 <script>
 (function () {
-  var out = { steps: {}, ok: false, error: null };
+  var out = {
+    steps: {}, ok: false, error: null,
+    auth: {}, bag: {}, equipMessages: [], lockMessages: [],
+  };
   var resultEl = document.getElementById('selftest-result');
   var publish = function () { resultEl.textContent = JSON.stringify(out); };
   window.addEventListener('error', function (e) {
@@ -89,9 +97,14 @@ const SELFTEST = `
       seenDeploy = msg.deployment;
       chan.postMessage({ type: 'deployed', monsterCount: msg.deployment.monsterCount });
     }
+    if (msg && msg.type === 'equip') {
+      out.equipMessages.push({ slots: msg.slots, activeWeaponSlot: msg.activeWeaponSlot });
+    }
+    if (msg && (msg.type === 'lock' || msg.type === 'unlock')) out.lockMessages.push(msg.type);
   };
 
   var M = window.MetaInventory, H = window.MetaShell;
+  var A = window.MetaAccount, Auth = window.MetaAuth;
   var snap = function (tag) {
     var s = H.getState();
     out.steps[tag] = {
@@ -133,6 +146,46 @@ const SELFTEST = `
 
   (async function () {
     try {
+      // ---- mandatory local login, driven through the REAL overlay UI ----
+      var authEl = document.getElementById('fx-auth');
+      out.auth.overlayVisibleAtStart = !!authEl && getComputedStyle(authEl).display !== 'none';
+      out.auth.guestAtStart = A.currentUser() === null;
+      document.getElementById('fx-deploy').click();
+      out.auth.deployBlockedWithoutLogin = !inBattle() && /请先登录/.test(logText());
+
+      document.getElementById('fx-auth-name').value = 'tester';
+      document.getElementById('fx-auth-pass').value = 'pass1234';
+      document.getElementById('fx-auth-register').click();
+      out.auth.registered = A.currentUser() === 'tester';
+      out.auth.overlayHidden = authEl.style.display === 'none';
+      out.auth.initialLoose = H.getState().loose.length;
+      out.auth.rawNoPlaintext = (function () {
+        try {
+          return String(localStorage.getItem('forgeax.accounts.v1')).indexOf('pass1234') < 0;
+        } catch (e) {
+          return A.loadDb().users.tester.hash !== 'pass1234';
+        }
+      })();
+
+      // Every render is a save point; simulate a refresh (session lost, disk kept).
+      H.getState().loose.push({ uid: 'save-probe', defId: 'longsword' });
+      H.render();
+      out.auth.savedLoose = A.loadState('tester').loose.length;
+      A.logout();
+      var relog = A.login('tester', 'pass1234');
+      out.auth.reloginOk = relog.ok && relog.state.loose.length === out.auth.savedLoose;
+      H.setState(relog.state);
+
+      // A second account must not see the first one's loot/equipment.
+      A.logout();
+      A.register('other', 'pass5678', M.createInventoryState(3));
+      out.auth.isolated = A.loadState('tester').loose.length === out.auth.savedLoose
+        && A.loadState('other').loose.length === 3;
+      A.logout();
+      var back = A.login('tester', 'pass1234');
+      H.setState(back.state);
+      out.auth.backOnTester = A.currentUser() === 'tester';
+
       out.authoredRegistered = (function () {
         try { return M.itemDef('10006').name === '霜之哀伤'; } catch (e) { return false; }
       })();
@@ -154,6 +207,25 @@ const SELFTEST = `
       await waitFor(function () { return seenDeploy !== null && inBattle() && /出征中/.test(logText()); });
       out.deployment = seenDeploy;
       snap('deployed');
+
+      // ---- in-run bag: B opens it, the arena keeps running, equipping is
+      //      pushed to the Worker immediately, ESC closes it ----
+      out.bag.locksBefore = out.lockMessages.filter(function (x) { return x === 'lock'; }).length;
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', bubbles: true }));
+      out.bag.openedByKey = document.getElementById('fx-shell').classList.contains('fx-run-bag-open');
+      out.bag.panelVisible = getComputedStyle(document.getElementById('fx-bag-content')).display !== 'none';
+      out.bag.stillInBattle = inBattle();
+      var bagState = H.getState();
+      var looseUid = bagState.loose.length ? bagState.loose[0].uid : null;
+      out.bag.equippedInRun = looseUid ? M.equipItem(bagState, looseUid, 0) : false;
+      H.render();
+      await waitFor(function () { return out.equipMessages.length > 0; });
+      out.bag.equipMsg = out.equipMessages[out.equipMessages.length - 1] || null;
+      out.bag.armedSlot0 = H.getState().equipped[0] !== null;
+      out.bag.noNewLock = out.lockMessages.filter(function (x) { return x === 'lock'; }).length
+        === out.bag.locksBefore;
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      out.bag.closedByEsc = !document.getElementById('fx-shell').classList.contains('fx-run-bag-open');
 
       // A cleared run returns the weapon and banks two authored loot items.
       sendResult({
@@ -203,7 +275,7 @@ ${SELFTEST}
 const profile = path.join(outDir, 'shell-chrome-' + process.pid);
 const run = spawnSync(chrome, [
   '--headless=new', '--disable-gpu', '--no-sandbox',
-  '--allow-file-access-from-files', '--virtual-time-budget=6000',
+  '--allow-file-access-from-files', '--virtual-time-budget=10000',
   '--user-data-dir=' + profile,
   '--dump-dom', 'file:///' + testPage.replace(/\\/g, '/'),
 ], { encoding: 'utf8', maxBuffer: 24 * 1024 * 1024, timeout: 90000 });
@@ -235,7 +307,29 @@ if (!result.ok) {
 
 const S = result.steps;
 const d = result.deployment || {};
+// The in-run bag can arm an extra weapon slot, so the SECOND deploy borrows
+// whatever the cleared settlement left equipped (1 or 2), not a hard-coded 1.
+// Derive the expected loss instead of weakening the assertion.
+const expectedLoss = (S.cleared.weapon0 ? 1 : 0) + (S.cleared.weapon1 ? 1 : 0);
 const checks = [
+  ['login overlay blocks the game on a fresh page',
+    result.auth.overlayVisibleAtStart === true && result.auth.guestAtStart === true, result.auth],
+  ['deploy is refused before login', result.auth.deployBlockedWithoutLogin === true, result.auth],
+  ['registering via the real UI logs the account in and hides the overlay',
+    result.auth.registered === true && result.auth.overlayHidden === true, result.auth],
+  ['password is never stored in plaintext', result.auth.rawNoPlaintext === true, result.auth],
+  ['every render auto-saves the inventory to the account', result.auth.savedLoose === 4, result.auth],
+  ['a simulated refresh restores the saved inventory', result.auth.reloginOk === true, result.auth],
+  ['a second account has a fully isolated inventory', result.auth.isolated === true, result.auth],
+  ['switching back restores the original account', result.auth.backOnTester === true, result.auth],
+  ['B opens the in-run bag overlay during battle',
+    result.bag.openedByKey === true && result.bag.panelVisible === true, result.bag],
+  ['the bag does not leave or freeze the battle',
+    result.bag.stillInBattle === true && result.bag.noNewLock === true, result.bag],
+  ['drag-equipping in the bag pushes an immediate equip message',
+    result.bag.equippedInRun === true && result.bag.armedSlot0 === true
+      && !!result.bag.equipMsg && result.bag.equipMsg.slots[0] === true, result.bag],
+  ['ESC closes the in-run bag', result.bag.closedByEsc === true, result.bag],
   ['authored item catalog registered in the shell', result.authoredRegistered === true, result.authoredRegistered],
   ['bag 5x8 = 40 cells, stash 16x10 = 160 cells', result.gridCells.bag === 40 && result.gridCells.stash === 160, result.gridCells],
   ['ten equipment slots', result.equipSlots === 10, result.equipSlots],
@@ -253,7 +347,10 @@ const checks = [
   ['a second deploy borrows the weapon again', S.secondDeploy.weapon0 === null, S.secondDeploy],
   ['gameOver permanently loses the borrowed weapon', S.gameOver.weapon0 === null, S.gameOver],
   ['gameOver does not bank any loot', S.gameOver.bagDefs.length === 2, S.gameOver],
-  ['gameOver reports the loss', /阵亡/.test(S.gameOver.log) && /丢失带出装备 1 件/.test(S.gameOver.log), S.gameOver.log],
+  ['gameOver reports the loss of every borrowed weapon',
+    /阵亡/.test(S.gameOver.log)
+      && S.gameOver.log.indexOf('丢失带出装备 ' + expectedLoss + ' 件') >= 0,
+    { log: S.gameOver.log, expectedLoss }],
   ['returning to meta keeps the inventory usable', S.backToMeta.inBattle === false, S.backToMeta],
 ];
 let failed = 0;

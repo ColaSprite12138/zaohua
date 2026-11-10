@@ -16,6 +16,7 @@ engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas �
 | **1 / 2** | 切换当前使用的武器槽；只有激活槽那把参与攻击，空槽＝徒手 |
 | 空格 | 闪避，短暂无敌，带冷却与残影 |
 | R | 重新开始 |
+| **B / I** | 战斗中打开 / 关闭**局内背包**（不暂停战斗，ESC 关闭） |
 
 初始场上两只骷髅、**两个武器槽都空**。击杀骷髅掉落长剑，走近拾取自动装入第一个空槽；
 激活槽为长剑时攻击范围（140 → 170）与伤害（22 → 46）提升，两槽都满后再拾取折算 80 分。
@@ -43,8 +44,9 @@ engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas �
 `open-2.5d-game.bat` 打开的 **4174 同一个页面**现已合并成连续流程：局外配装 → 出征 → 战斗 → 结算。
 主窗口 `window.MetaShell.state` 持唯一权威 `InventoryState`，局外 UI 与 `shell-bridge.js` 共享它；
 Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、在清场/阵亡时发 `result`。
-不同标签页 / Worker 是独立 JS 堆，`file://` 与 `http://localhost:4174` 也不同源，所以**不做磁盘存档**，
-内存直传即可；刷新页面回到 demo 数据是有意的。
+局内局外在**同一个页面内**内存共享（不同标签页 / Worker 是独立 JS 堆，`file://` 与
+`http://localhost:4174` 也不同源）；持久化由下节的**按账号本地存档**负责，
+刷新页面需重新登录，登录后资产恢复。
 
 | 阶段 | 规则 |
 |:--|:--|
@@ -57,6 +59,28 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 所以注入必须是全流程最后一步（`verify-all.sh` 已放在 `package` 之后）。`scopeCss()` 把独立页 CSS
 限定到 `#fx-shell`，`--check` 防漂移。注意 `project package` 产出的 Web ZIP 在注入前生成，**不含壳层**；
 正式分发包需另行处理。独立 `file://` 页仍可双击，行为不变。
+
+### 本地账号、存档与战局内背包
+
+打开 4174 会**先看到登录 / 注册遮罩**，没有账号不能出征。无服务器，账号与存档全在本机
+`localStorage['forgeax.accounts.v1']`：
+
+| 项 | 说明 |
+|:--|:--|
+| 注册 / 登录 | 账号 2–16 位（中英文 / 数字 / 下划线），密码至少 4 位；密码只存随机 salt + SHA-256 摘要，**不存明文** |
+| 强制登录 | **每次刷新都要重新输密码**；`lastUser` 只预填账号名。顶栏「切换账号」可退出 |
+| 账号产出 | 背包 / 仓库 / 装备栏 / 战利品按账号隔离；每次拖放、换装、出征结算都自动存盘 |
+| 数据容错 | 损坏 JSON / 版本不符降级空库；缺字段存档回退 demo 数据，不崩页面 |
+| 遮罩期间 | Engine Worker 收 `lock` 冻结竞技场，登录成功 `unlock` 重置一局 |
+
+`assets/meta/account.ts`（零 import、全同步）→ `scripts/build-meta-ui.mjs` 生成 `meta-ui/account.js`；
+`meta-ui/auth-ui.js` 是登录遮罩。这两个脚本**只由 `inject-shell.mjs` 注入 4174**，
+独立 `file://` 双击页不引用、不登录、不入存档（`file://` 与 4174 不同源，演示页定位不变）。
+
+战斗内按 **B / I**（或顶栏「背包」按钮）打开同一份格子背包浮层，**战斗不会暂停**：怪物继续行动，
+浮层外的鼠标点击照常落到 canvas。拖放换装后，发生变化的武器槽经 `BroadcastChannel` 发 `equip`
+给 Worker，本局伤害 / 攻击距离**立即生效**，同时写回账号存档；ESC 关闭。
+`equip.slots[i] === null` 表示保留该槽出征时借出的武器，避免覆盖。
 
 ### 人工数据表 → 生成物
 

@@ -13,7 +13,7 @@
 | 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad |
 | 怎么开 | 双击 `open-2.5d-game.bat`（独立 Chrome profile + 硬件 WebGPU，端口 4174）；4174 单页含「局外配装 → 出征 → 结算」顶栏。局外独立演示页仍可双击 `meta-ui/index.html` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（≥72）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（≥84）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
 | 怎么还原 | `git checkout HEAD -- <path>`；整包兜底见「可回滚基线」 |
 
@@ -79,12 +79,28 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
 | 出征 | `buildLoadout()` **只借出两个武器槽**（非武器装备留局外）→ 发 `deploy{ monsterCount, seed, armedWeapons, activeWeaponSlot }` → 顶栏切到战斗态，meta 面板隐藏且 `#fx-shell` 指针透明，点击直达 canvas |
 | 通关 | `settleRun()` 归还借出武器 + 战利品按 `bag → stash → loose` 入库，永不静默丢弃 |
 | 阵亡 | 借出装备**和本局战利品永久丢失** |
-| 返回局外 | 重新配装出征；状态只在本页内存，刷新回 demo 数据（本轮刻意不做磁盘存档） |
+| 返回局外 | 重新配装出征；登录后资产自动写入该账号的本地存档，刷新页面需重新登录（见下节） |
 
 `scripts/inject-shell.mjs` 把局外 UI 注入 `dist/index.html`（`dist/` 是 gitignored 生成物，
 `build` / `play` / `package` 都会重建它），CSS 由 `scopeCss()` 限定到 `#fx-shell`，`--check` 防漂移。
 **注入必须是全流程最后一步**，`verify-all.sh` 已放在 `package` 之后；否则 4174 会静默丢掉单页流程。
 独立 `file://` 页仍走 `createInventoryState()` 缺省路径，行为不变。
+
+### 本地账号、存档与战局内背包（2026-11-11）
+
+用户新增需求：**注册 / 登录本地账号、账号下的产出存盘（无服务器，本地存档）**，
+以及**战局内可打开背包调整穿戴**。选项拍板：localStorage 多账号、**强制先登录**、局内背包**不冻结 + 立即生效**。
+
+| 项 | 契约 |
+|:--|:--|
+| 账号 | `assets/meta/account.ts`（零 import、全同步自实现 SHA-256）；`localStorage['forgeax.accounts.v1']` 按用户名隔离 `state` + `salt` / 摘要，**不存明文** |
+| 登录 | `meta-ui/auth-ui.js` 的 `#fx-auth` 遮罩挂 `document.body`，未登录 `deploy` 被拒；每次刷新必须重新输密码，`lastUser` 只预填 |
+| 存盘 | `shell-bridge.js` 的 `syncBadge()`（唯一 `onRender` 钩子）在每次 `render()` 后 `MetaAuth.persist()`；拖放 / 换装 / 结算 / 登录全覆盖 |
+| 遮罩冻结 | Worker 收 `lock` 停 `step()` 与结算；**Worker 就绪后主动广播 `ready`** 让遮罩重发 `lock`（主窗口脚本先于 Worker 启动，初始 lock 会丢） |
+| 局内背包 | `B` / `I` / 顶栏按钮打开 `#fx-bag-content` 浮层，ESC 关闭；战斗继续推进，浮层外点击仍到 canvas |
+| 立即生效 | 发生变化的装备槽经 `equip { slots: [bool\|null, bool\|null], activeWeaponSlot }` 发到 Worker，直接改本局 `weaponSlots`；`null` 保留借出武器 |
+
+`meta-ui/account.js` / `auth-ui.js` **只由 `inject-shell.mjs` 注入 4174**；独立 `file://` 双击页不引用、不登录、不入存档（演示页定位，`file://` 与 4174 不同源）。
 
 关键取舍（都是用户明确拍板或实测修正过的，别"顺手优化"）：
 
@@ -93,7 +109,7 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
 - 攻击**没有**锥形范围、软锁定、溅射；`attackOrder + targetEnemy` 单体结算，一次点击只挥一次。
 - 闪避期间鼠标不改写落点、攻击指令不结算。
 - 初始两只骷髅、**两个武器槽都空**；击杀掉长剑，走近装进第一个空槽；激活槽为长剑时范围 140→170、伤害 22→46。**默认场景恒为 2 只**，多怪只在单页出征 `deployRun()` 时注入，别改 `spawnSkeletons()` 默认值。
-- **局外↔战斗靠同一页面内内存共享，不做磁盘存档**：跨标签页 / Worker 是独立 JS 堆，`file://` 与 `http://localhost:4174` 也不同源，`localStorage` 互通走不通；用户拍板「内存里缓存下来直接用」+ 标准搜打撤（失败丢失）。刷新页面回 demo 数据是有意的。`1/2` 在两边各自切换激活槽。
+- **局内局外靠同一页面内内存共享**（跨标签页 / Worker 是独立 JS 堆，`file://` 与 `http://localhost:4174` 也不同源，靠跨页面 `localStorage` 互通走不通）。持久化层是 2026-11-11 新增的**按账号本地存档**，不是跨页面互通：用户先拍板「内存里缓存下来直接用」+ 标准搜打撤（失败丢失），后追加「注册登录 + 账号下的产出存盘」。刷新后需重新登录，登录后资产恢复；`1/2` 在两边各自切换激活槽。
 - `GameState.moveMode` 三态：`idle` / `point` / `follow`；`game.state` 投影暴露 `moveMode`、`target`、`followingPointer`、`attackOrder`、`attackTarget`、`skeletons`（坐标/血量/存活）。
 
 ## 保护清单（改之前先说清改什么、为什么）
@@ -111,7 +127,9 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
 10. `dist/index.html` 的单页壳层是**构建后注入**的生成物：`build` / `play` / `package` **都会重建 `dist/`**，注入必须是全流程最后一步，否则 4174 会静默丢掉单页流程。`verify-all.sh` 已把它放在 `package` 之后。不要手改 `dist/`。**`project package` 产出的 Web ZIP 在注入之前生成，因此不含壳层**；正式分发包需另行处理（用户本轮未选重打）。
 11. `assets/game/game.pack.ts` 里 **`game.state` 必须保持唯一 read projection**：`project play` 以「唯一注册」解析默认读取，多注册一个（哪怕 `run.result`）会让 35 步 playthrough 首步报 `state-unavailable`。部署 / 结算只走 BroadcastChannel，别加 projection seam。2026-11-11 追加的只读 `probe` → `state` 消息只是把 `projection(state)`（外加全部掉落点坐标）序列化到主窗口，**不注册新 projection**，供真实 4174 页面端到端取证；不要把它改成 `registerRead`。
 
-`scripts/check-drift.sh` 会把上面 1–11 涉及的文件单独列出来，接手时先看它。
+12. `assets/meta/account.ts` **零 import、全同步**（自实现 SHA-256；不要换回 `crypto.subtle`，`verify-shell.cjs` 跑在 `file://` + 虚拟时间下）。`meta-ui/account.js` / `auth-ui.js` 只由 `inject-shell.mjs` 注入 4174，**独立双击页不得引用**。`#fx-auth` 必须挂 `document.body`；`unlock` 每次登录**只发一次**（Worker 收到会 `reset(state)`，重发会重开正在打的局）。`lock` / `unlock` / `equip` 只走 BroadcastChannel，别加 projection seam；`equip` 的 `slots[i] === null` 表示「保留该槽借出的武器」，不要改成布尔全覆盖。
+
+`scripts/check-drift.sh` 会把上面 1–12 涉及的文件单独列出来，接手时先看它。
 
 ## 改完必跑（任何一项不绿 = 不许交付）
 
@@ -124,7 +142,7 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
 **发版前 / 跨模块改动用全量**：`bash scripts/verify-all.sh`，输出 `artifacts/verify/summary.txt`。
 脚本带**并发锁**：两个会话同时跑时第二个以 `exit 2` 拒绝启动（打印 `[BUSY]`），
 避免两份验收写同一份汇总与 play 报告、证据互相覆盖；退出时自动清理锁。
-它除了跑下面各项 + meta-ui 页面验收，还强制 `test` ≥ **72** 条、`playthrough` ≥ 35 步、
+它除了跑下面各项 + meta-ui 页面验收，还强制 `test` ≥ **84** 条、`playthrough` ≥ 35 步、
 `resize` ≥ 4 步 —— **新会话删断言让测试变绿，会在这里失败**。
 `verify.sh` 按模块附加：命中 `meta` 跑 `build-meta-ui.mjs --check`、`verify-meta-ui.cjs`（13 条真实拖放）
 与 `inject-shell.mjs --check` + `verify-shell.cjs`（16 条单页断言）；命中 `resource` 跑
@@ -137,7 +155,7 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
 
 ```bash
 ./node_modules/.bin/forgeax project check --json
-./node_modules/.bin/forgeax project test --json          # 72/72（下限 72）
+./node_modules/.bin/forgeax project test --json          # 84/84（下限 84）
 node scripts/build-meta-ui.mjs --check                  # 生成物与源码同步
 python scripts/export_tables.py --check                  # xlsx 与 generated/*.ts 同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000   # 真实 rollLoot 跑批
@@ -149,7 +167,7 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project build --json
 CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project package --output release/forgeax-game-web.zip --json
 node scripts/inject-shell.mjs                           # 最后一步：build/play/package 都会重建 dist
 node scripts/inject-shell.mjs --check
-node scripts/verify-shell.cjs                            # 4174 单页 16/16
+node scripts/verify-shell.cjs                            # 4174 单页 28/28
 ```
 
 验收基线（2026-11-11 最后一次完整运行，新会话应以 `verify-all.sh` 的实际输出为准）：
@@ -157,13 +175,13 @@ node scripts/verify-shell.cjs                            # 4174 单页 16/16
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **72** 项全过（下限 72：combat 34 + meta 24 + battle 4 + talent 3 + resource 5 + 模板 2） |
+| `test` | **84** 项全过（下限 84：combat 34 + meta 36 + battle 4 + talent 3 + resource 5 + 模板 2） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` 三张表与 `generated/*.ts` 一致 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
 | `meta-ui` | 生成物同步 + 独立页面浏览器验收 13/13 |
 | `build` | `ok` |
-| `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **16/16** |
+| `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **28/28**（含登录/存档/局内背包） |
 | `playthrough` 1600x900 | `passed:true`、35 steps、0 errors |
 | `playthrough-resize` 1700x1000 | `passed:true`、4 steps、0 errors |
 | `package` | sha256 校验通过，包内 README + feedback 齐全 |
@@ -174,9 +192,10 @@ node scripts/verify-shell.cjs                            # 4174 单页 16/16
 
 下表把「当前功能契约」逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 72 条＝combat 34（movement 11 + modifiers 3 + weapons 7 + loot 13）、
-meta 24（meta 3 + inventory 14 + run-settlement 7）、battle 4、talent 3、resource 5、模板 2；全量下限 72 条。
-浏览器验收：playthrough 13 个命名场景（展开 35 steps）、独立页 13 条、4174 单页 16 条。
+删断言不会让这张表悄悄失效。单测 84 条＝combat 34（movement 11 + modifiers 3 + weapons 7 + loot 13）、
+meta 36（meta 3 + inventory 14 + run-settlement 7 + account 12）、battle 4、talent 3、resource 5、模板 2；全量下限 84 条。
+浏览器验收：playthrough 13 个命名场景（展开 35 steps）、独立页 13 条、4174 单页 28 条。
+真实硬件 WebGPU 冒烟（一次性）：`node artifacts/smoke-login-bag.mjs`，覆盖强制登录、刷新后存档、局内背包不冻结与换装立即生效。
 
 | 功能契约 | 单测 `assets/combat/__tests__/movement.test.ts` | 浏览器 `scripts/playthrough.mjs` |
 |:--|:--|:--|

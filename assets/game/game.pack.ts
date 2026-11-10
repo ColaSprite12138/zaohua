@@ -25,7 +25,7 @@ import {
 import { createPrimitiveMesh } from '@forgeax/engine/geometry';
 
 import {
-  createState, deployRun, projection, step, VIEW_H, VIEW_W,
+  createState, deployRun, projection, reset, step, VIEW_H, VIEW_W,
   type Deployment,
 } from './simulation.ts';
 import { paint } from './paint.ts';
@@ -71,6 +71,10 @@ export const game: Plugin = {
     // per run (on cleared / gameOver) and read back by playthrough assertions.
     let lastResult: RunResult | null = null;
     let resultSent = false;
+    // While the mandatory login overlay is up the arena must not advance:
+    // otherwise the skeletons would quietly kill an unattended player before
+    // anyone has logged in. `unlock` resets to a clean run on successful auth.
+    let locked = false;
     let channel: BroadcastChannel | null = null;
     if (typeof BroadcastChannel !== 'undefined') {
       channel = new BroadcastChannel(RUN_CHANNEL);
@@ -79,6 +83,8 @@ export const game: Plugin = {
           type?: string;
           deployment?: Deployment;
           requestId?: number;
+          slots?: (boolean | null)[];
+          activeWeaponSlot?: 0 | 1;
         } | null;
         if (!msg || typeof msg !== 'object') return;
         if (msg.type === 'deploy') {
@@ -88,6 +94,30 @@ export const game: Plugin = {
           channel?.postMessage({ type: 'deployed', monsterCount: state.monsterCount });
         } else if (msg.type === 'hello') {
           channel?.postMessage({ type: 'ready' });
+        } else if (msg.type === 'lock') {
+          locked = true;
+        } else if (msg.type === 'unlock') {
+          // One-shot: never reset a live run just because another `hello`
+          // handshake arrived. Only a real auth transition sends `unlock`.
+          if (locked) {
+            locked = false;
+            reset(state);
+            lastResult = null;
+            resultSent = false;
+          }
+        } else if (msg.type === 'equip') {
+          // In-run bag changes. `null` = leave that slot's BORROWED weapon
+          // alone; true/false = the player armed/unarmed that slot in the bag.
+          const slots = msg.slots;
+          if (Array.isArray(slots)) {
+            if (slots[0] === true) state.weaponSlots[0] = 'longsword';
+            else if (slots[0] === false) state.weaponSlots[0] = null;
+            if (slots[1] === true) state.weaponSlots[1] = 'longsword';
+            else if (slots[1] === false) state.weaponSlots[1] = null;
+          }
+          if (msg.activeWeaponSlot === 0 || msg.activeWeaponSlot === 1) {
+            state.activeWeaponSlot = msg.activeWeaponSlot;
+          }
         } else if (msg.type === 'probe') {
           // Read-only observability seam for REAL 4174 acceptance runs. The
           // projection registry lives in this Worker's module scope, so an
@@ -114,6 +144,11 @@ export const game: Plugin = {
           });
         }
       };
+      // Main-window scripts (including the login overlay) run BEFORE this
+      // Worker boots. A `hello` sent at DOMContentLoaded is therefore lost,
+      // and so is the overlay's initial `lock`. Proactively announce readiness
+      // so the overlay can reassert the lock as soon as this channel exists.
+      channel?.postMessage({ type: 'ready' });
     }
 
     const settleIfFinished = (): void => {
@@ -196,25 +231,29 @@ export const game: Plugin = {
             // no button produces no order at all.
             const mouse = snapshot?.mouse;
             const restart = snapshot?.keyboard?.justPressedCode('KeyR') ?? false;
-            step(state, dt, {
-              mouse: pointer
-                ? { x: (pointer.x / canvasW) * VIEW_W, y: (pointer.y / canvasH) * VIEW_H }
-                : undefined,
-              pointerDown: mouse?.justPressed(0) ?? false,
-              pointerHeld: mouse?.button(0) ?? false,
-              pointerUp: mouse?.justReleased(0) ?? false,
-              switchWeapon: snapshot?.keyboard?.justPressedCode('Digit1') ?? false
-                ? 0
-                : (snapshot?.keyboard?.justPressedCode('Digit2') ?? false) ? 1 : null,
-              dodge: snapshot?.keyboard?.justPressedCode('Space') ?? false,
-              restart,
-            });
-            // An in-run restart (R) starts a fresh settlement window.
-            if (restart) {
-              lastResult = null;
-              resultSent = false;
+            // Login overlay: freeze simulation AND settlement, but keep painting
+            // so the canvas behind the overlay still shows a live frame.
+            if (!locked) {
+              step(state, dt, {
+                mouse: pointer
+                  ? { x: (pointer.x / canvasW) * VIEW_W, y: (pointer.y / canvasH) * VIEW_H }
+                  : undefined,
+                pointerDown: mouse?.justPressed(0) ?? false,
+                pointerHeld: mouse?.button(0) ?? false,
+                pointerUp: mouse?.justReleased(0) ?? false,
+                switchWeapon: snapshot?.keyboard?.justPressedCode('Digit1') ?? false
+                  ? 0
+                  : (snapshot?.keyboard?.justPressedCode('Digit2') ?? false) ? 1 : null,
+                dodge: snapshot?.keyboard?.justPressedCode('Space') ?? false,
+                restart,
+              });
+              // An in-run restart (R) starts a fresh settlement window.
+              if (restart) {
+                lastResult = null;
+                resultSent = false;
+              }
+              settleIfFinished();
             }
-            settleIfFinished();
             paint(painter, state);
             texture.update();
           },

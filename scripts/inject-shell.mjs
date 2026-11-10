@@ -12,9 +12,14 @@
  * The injected layer reuses the SAME authored sources as the standalone page:
  *   meta-ui/index.html      -> DOM + interaction script (MetaShell hook)
  *   meta-ui/inventory.js    -> generated rules (single source of truth)
+ *   meta-ui/account.js      -> generated local accounts + save data
+ *   meta-ui/auth-ui.js      -> mandatory login overlay (shell only)
  *   meta-ui/shell.css       -> scoped shell chrome
- *   meta-ui/shell-bridge.js -> deploy / settlement over BroadcastChannel
+ *   meta-ui/shell-bridge.js -> deploy / settlement / in-run bag over BroadcastChannel
  *   resource/generated/item.ts -> authored item catalog as JSON
+ *
+ * account.js / auth-ui.js are intentionally NOT referenced by the standalone
+ * file:// page: that page stays a double-clickable, serverless demo.
  */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -81,8 +86,9 @@ function buildBlock() {
   const { styles, markup, script } = extractMetaPage();
   const rows = generatedRows('item.ts', 'item');
   const sources = [
-    'meta-ui/index.html', 'meta-ui/inventory.js', 'meta-ui/shell.css',
-    'meta-ui/shell-bridge.js', 'assets/resource/generated/item.ts',
+    'meta-ui/index.html', 'meta-ui/inventory.js', 'meta-ui/account.js',
+    'meta-ui/auth-ui.js', 'meta-ui/shell.css', 'meta-ui/shell-bridge.js',
+    'assets/resource/generated/item.ts',
   ];
   const digest = createHash('sha256')
     .update(sources.map((f) => read(f)).join('\n---\n'))
@@ -101,7 +107,9 @@ ${read('meta-ui/shell.css')}
 ${markup}
 </div>
 <script>${read('meta-ui/inventory.js')}</script>
+<script>${read('meta-ui/account.js')}</script>
 <script>${script}</script>
+<script>${read('meta-ui/auth-ui.js')}</script>
 <script>${read('meta-ui/shell-bridge.js')}</script>
 ${END}`;
 }

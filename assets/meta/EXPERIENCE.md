@@ -44,3 +44,14 @@
 - `SettlementReport` 字段是 `readonly`，函数内不能累加赋值；用局部可变计数，最后一次性构造返回对象（否则 tsc TS2540）。
 - **浏览器验收不要依赖 `.click()` 驱动真实引擎页**：ForgeAX 启动遮罩在 window 捕获阶段对 click 调 `stopImmediatePropagation()`；无 WebGPU 的自测页里它永不解除。`verify-shell.cjs` 改用只含 shell 块的最小骨架页。BroadcastChannel 消息是排队 task，固定 `setTimeout` 会先于消息触发，必须用**条件轮询等状态迁移**，且要等 `deployed` ack 处理完再发 `result`，否则日志被覆盖。
 - `scripts/inject-shell.mjs` 把独立页 CSS 用 `scopeCss()` 限定到 `#fx-shell`；独立页若新增 `@media` 等 at-rule，脚本会主动抛错要求更新 `scopeCss()`，不要直接放行。
+
+## 2026-11-11 · 本地账号存档与战局内背包
+
+- **账号 API 必须同步**：`crypto.subtle.digest` 是异步且只在 secure context 可用，而 `verify-shell.cjs` 跑在 `file://` + `--virtual-time-budget` 的最小骨架页里，异步哈希会让注册/登录的断言时序不可控。`account.ts` 自带同步 SHA-256（FIPS 180-4），并用单测逐用例比对 Node `crypto`，既自洽又可验证。
+- **登录遮罩必须挂在 `document.body`**：放进 `#fx-shell` 会被 `.fx-in-battle > *` 的 `display:none !important` 吞掉，战斗中就无法「切换账号」。`#fx-auth` 用 `position:fixed` + 高 z-index 覆盖全页。
+- **`unlock` 只能发一次**：Worker 收到 `unlock` 会 `reset(state)`。若每次 `hello`/`ready` 握手都重发，正在打的局会被莫名其妙重开。`auth-ui.js` 只在登录状态真正跃迁时发一次，握手期间只重发幂等的 `lock`。
+- **自动存盘挂在唯一的 `host.onRender` 上**：`syncBadge()` 已是壳层的 onRender 钩子，拖放 / 换装 / 结算 / 登录都会触发 `render()`，在那里 `MetaAuth.persist()` 最不容易漏；`saveState()` 再校验 `session === name`，保证访客态写不进任何账号。
+- **局内换装的 `equip` 消息用 `null` 哨兵**：出征时 `buildLoadout()` 已把两个武器槽借走并置空，Worker 的 `weaponSlots` 里是借出的武器。若直接把 `[!!equipped[0], !!equipped[1]]` 发过去，会把没被操作的槽也清成徒手。只发送**发生变化的槽**，未变化的发 `null`＝保留借出武器。deploy 前要重置基线，否则「借出置空」本身会被误判成一次卸下。
+- **老断言写死的数值会被新功能打破**：原 `verify-shell.cjs` 断言「阵亡丢失带出装备 1 件」，局内背包换装后通关会留下 2 把武器，第二次出征借出 2 件 → 红灯。正确做法是把期望值改成按 `S.cleared.weapon0/weapon1` 动态推导（断言更严），而不是把数字改大或删断言。
+- **独立页刻意不加账号**：`file://` 与 `http://localhost:4174` 不同源，账号库存不进去；给双击页加登录只会破坏「无服务器演示页」和 13 条拖放验收。账号脚本只由 `inject-shell.mjs` 注入 4174。
+- **已知边界**：局内背包看到的是被借空的武器槽（借出武器在 `borrowed` 快照里，不在 `InventoryState`）；阵亡时借出装备与本局战利品照常丢失，但局内从账号背包装上的武器仍留在存档中。要改成「阵亡也丢局内换装」需用户确认后再动 `settleRun`。

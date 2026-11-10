@@ -76,11 +76,109 @@
 #fx-shell .fx-battle-hint b { color: #ffd166; }
 #fx-shell .fx-battle-hint .fx-sub { color: #8fa9bb; font-size: 11px; }
 
-/* Battle mode: meta panels disappear, the layer lets pointer events through. */
+/* Battle mode: meta panels disappear, the layer lets pointer events through.
+   #fx-bag-content is the ONE exception: B / I opens it as an in-run overlay. */
 #fx-shell.fx-in-battle {
   background: transparent;
   pointer-events: none;
   overflow: hidden;
 }
-#fx-shell.fx-in-battle > *:not(.fx-bar):not(.fx-battle-hint) { display: none !important; }
+#fx-shell.fx-in-battle > *:not(.fx-bar):not(.fx-battle-hint):not(#fx-bag-content) { display: none !important; }
+#fx-shell.fx-in-battle > #fx-bag-content { display: none !important; }
 #fx-shell.fx-in-battle .fx-bar { pointer-events: auto; background: rgba(17, 30, 42, .92); }
+
+/* ------------------------- mandatory local login ------------------------ */
+/* Appended to <body> by auth-ui.js, outside #fx-shell, so battle-mode hiding
+   rules can never swallow the overlay (logout must work mid-run too). */
+#fx-auth {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 10, 16, .94);
+  color: #dbe9f5;
+  font: 14px/1.6 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+}
+#fx-auth .fx-auth-card {
+  width: min(420px, calc(100vw - 32px));
+  background: #111e2a;
+  border: 1px solid #294055;
+  border-radius: 14px;
+  padding: 22px 24px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .55);
+}
+#fx-auth h2 { margin: 0 0 6px; font-size: 20px; color: #67e8f9; }
+#fx-auth .fx-auth-note { color: #8fa9bb; font-size: 12px; margin: 0 0 16px; }
+#fx-auth label { display: block; margin: 10px 0; color: #8fa9bb; font-size: 12px; }
+#fx-auth input {
+  display: block;
+  width: 100%;
+  margin-top: 5px;
+  background: #0e1a25;
+  color: #dbe9f5;
+  border: 1px solid #294055;
+  border-radius: 8px;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 14px;
+}
+#fx-auth input:focus { outline: none; border-color: #67e8f9; }
+#fx-auth .fx-auth-actions { display: flex; gap: 10px; margin-top: 16px; }
+#fx-auth button {
+  flex: 1;
+  background: #162635;
+  color: #dbe9f5;
+  border: 1px solid #294055;
+  border-radius: 8px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+#fx-auth #fx-auth-login { border-color: #ffd166; color: #ffd166; }
+#fx-auth button:hover { border-color: #67e8f9; color: #67e8f9; }
+#fx-auth .fx-auth-msg { min-height: 20px; margin-top: 12px; color: #4ade80; font-size: 12px; }
+#fx-auth .fx-auth-msg.bad { color: #ff7b7b; }
+#fx-auth .fx-auth-users { margin-top: 8px; color: #8fa9bb; font-size: 11px; word-break: break-all; }
+
+/* --------------------------- account chip ------------------------------- */
+#fx-shell .fx-account { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8fa9bb; }
+#fx-shell .fx-account b { color: #ffd166; }
+#fx-shell .fx-account button { padding: 4px 9px; font-size: 11px; }
+
+/* ------------------------- in-run bag overlay --------------------------- */
+/* Battle keeps running (no freeze): only this panel captures pointer events;
+   clicks outside still reach the ForgeAX canvas underneath. */
+#fx-shell.fx-in-battle.fx-run-bag-open > #fx-bag-content {
+  display: block !important;
+  position: fixed;
+  right: 16px;
+  top: 64px;
+  bottom: 64px;
+  width: min(940px, calc(100vw - 32px));
+  overflow: auto;
+  z-index: 9;
+  pointer-events: auto;
+  background: rgba(11, 19, 28, .97);
+  border: 1px solid #294055;
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .6);
+}
+#fx-shell.fx-in-battle.fx-run-bag-open #fx-bag-content > .layout { gap: 12px; }
+#fx-shell.fx-in-battle.fx-run-bag-open #fx-bag-content > section.panel { margin-top: 12px; }
+#fx-shell.fx-run-bag-hint {
+  position: fixed;
+  right: 18px;
+  top: 70px;
+  z-index: 7;
+  pointer-events: none;
+  color: #ffd166;
+  font-size: 11px;
+  background: rgba(11, 19, 28, .88);
+  border: 1px solid #294055;
+  border-radius: 8px;
+  padding: 5px 10px;
+}

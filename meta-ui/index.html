@@ -115,6 +115,9 @@
     <span class="status" id="status"></span>
   </div>
 
+  <!-- The 4174 shell reuses this whole block as the IN-RUN bag overlay. In the
+       standalone page it is just a plain wrapper, so drag/drop is unchanged. -->
+  <div id="fx-bag-content">
   <div class="layout">
     <section class="panel" style="width:230px">
       <div class="panel-title"><h2>装备栏</h2><small>10 槽</small></div>
@@ -151,6 +154,7 @@
       后续物品属性由 Excel 配置表提供，本页目前使用代码里的 <code>ITEM_DEFS</code>。
     </div>
   </section>
+  </div>
 
 <script src="./inventory.js"></script>
 <script>

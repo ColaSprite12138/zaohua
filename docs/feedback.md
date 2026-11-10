@@ -198,3 +198,19 @@
 - Evidence: 全量单测 **72 passed**；`node scripts/verify-shell.cjs` **16/16**（出征借出→通关归还→二次出征→阵亡丢失→返回局外）；`node scripts/verify-meta-ui.cjs` **13/13**；`python scripts/export_tables.py --check` 与 `build-meta-ui.mjs --check` 通过；掉落跑批 31000 次/池「偏差 >1% 或漏项 = 0」；`playthrough` 35 步 / `resize` 4 步。
 - Status: implemented
 - Note: 明确**未做**：局外天赋接入同一份存档、旧容量式 `Inventory` 骨架迁移、`release/forgeax-game-web.zip` 重打（用户本轮未选，先不做）。**已知限制**：`project package` 产出的 Web ZIP 在壳层注入之前生成，因此不含单页流程；正式分发包需改成「先注入再打包」或单独处理，等用户确认再做。`verify-all.sh` 已把注入放在最后一步，保证 4174 预览的 `dist/` 可用。
+
+### 2026-11-11 — 本地账号存档与战局内背包
+
+- Scope: `assets/meta/` / `assets/game/game.pack.ts` / `meta-ui/` / `scripts/`
+- Request: 「增加一个登录存盘功能。需要注册账号登录账号，账号下的产出需要存盘。由于我们没有服务器，做成本地存档就可以了。另外，支持战局内可以打开背包，调整穿戴的道具」。选项确认：**先提交上一轮只读探针、8 怪实战局挂起**；存档＝**localStorage 多账号**；局内背包＝**不冻结 + 立即生效**；入口＝**强制先登录**。
+- Design: `assets/meta/account.ts`（零 import、全同步）持 `localStorage['forgeax.accounts.v1']`，按用户名隔离 `InventoryState`，密码只存 salt + SHA-256 摘要；`scripts/build-meta-ui.mjs` 扩展成同时生成 `inventory.js` / `account.js`。`meta-ui/auth-ui.js` 把 `#fx-auth` 遮罩挂到 `document.body`，未登录拒 `deploy`；`shell-bridge.js` 的唯一 `onRender` 钩子 `syncBadge()` 负责每次 render 自动存盘。局内背包复用 `meta-ui/index.html` 里新加的 `#fx-bag-content` 容器，B/I 打开浮层、ESC 关闭；装备槽变化经 `equip` 消息直达 Worker 的 `weaponSlots`。`game.pack.ts` 新增 `lock` / `unlock` / `equip` 三个 BroadcastChannel 分支，`game.state` 仍是唯一 read projection。
+- Actual pitfalls (均已修):
+  1. **主窗口脚本先于 Engine Worker 启动**：DOMContentLoaded 发的 `lock` / `hello` 在 Worker 建好 channel 之前就丢了，真实 4174 冒烟发现登录遮罩期间怪物仍在追人（13/14）。修复＝Worker 建立 channel 后**主动广播一次 `ready`**，登录层收到后重发幂等 `lock`；`unlock` 仍只在登录跃迁时发一次（否则会重开正在打的局）。
+  2. `crypto.subtle.digest` 异步且仅在 secure context 可用，而 `verify-shell.cjs` 跑 `file://` + `--virtual-time-budget` → 账号 API 全部做成**同步**，自实现 FIPS 180-4 SHA-256，并用单测逐用例比对 Node `crypto`。
+  3. 登录遮罩若放进 `#fx-shell`，会被 `.fx-in-battle > *` 的 `display:none !important` 吞掉，战斗中无法切换账号 → 运行时 `document.body.appendChild`。
+  4. 局内 `equip` 若直接发 `[!!equipped[0], !!equipped[1]]`，会把没被操作的槽里**出征借出的武器**清成徒手 → 只发变化的槽，未变化的用 `null` 哨兵；deploy 借出置空前必须重置基线，否则「借出」被误判成一次卸下。
+  5. 原 `verify-shell.cjs` 断言「阵亡丢失带出装备 1 件」被局内换装（通关后两个槽都有武器）打破 → 改成按 `S.cleared.weapon0/weapon1` **动态推导**期望值，断言更严而不是放宽或删除。
+  6. 独立 `file://` 页若引入账号脚本会与 4174 不同源、且破坏「双击可用」→ `account.js` / `auth-ui.js` 只由 `inject-shell.mjs` 注入，独立页 13/13 保持不动。
+- Evidence: `verify-all.sh` ALL GREEN（84 单测 / 35 playthrough / 4 resize / 28 单页 / 13 独立页）；真实 4174 硬件 WebGPU 冒烟 `artifacts/verify/smoke-login-bag.json` **14/14 全通过**（登录遮罩冻结、刷新后存档保持、局内背包不冻结、换装立即让 `weaponSlots[0]` 变为 longsword）。
+- Status: implemented
+- Note: **已知边界**：出征时 `buildLoadout()` 借空两个武器槽，局内背包看到的是空槽（借出武器在 `borrowed` 快照里）；阵亡时借出装备与本局战利品照常丢失，但局内从账号背包装上的武器仍留在存档中，如需「阵亡也丢局内换装」要用户确认后再改 `settleRun`。账号存档无跨设备导入导出；正式 Web ZIP 仍在注入前打包，不含登录与局内背包。

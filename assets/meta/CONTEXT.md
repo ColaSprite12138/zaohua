@@ -6,7 +6,9 @@
 
 跨局持久化的系统：局外养成、多种货币、外围关卡（即**战斗入口**的节点图）；
 **背包 / 仓库 / 装备栏**（格子拖放与穿戴）及其独立可视化页面 `meta-ui/index.html`；
-**搜打撤带入/带回结算**（`buildLoadout` / `settleRun`）与 4174 单页的**唯一权威 `InventoryState`**。
+**搜打撤带入/带回结算**（`buildLoadout` / `settleRun`）与 4174 单页的**唯一权威 `InventoryState`**；
+**本地账号与存档**（`account.ts`：注册 / 登录 / 切换、按账号隔离的 localStorage 存档）；
+**战局内背包**（B / I 打开同一份背包浮层，不冻结战斗，换装立即生效并写回存档）。
 
 ## 不负责
 
@@ -46,6 +48,37 @@
 所以注入必须是全流程最后一步，`verify-all.sh` 放在 `package` 之后），
 CSS 由 `scopeCss()` 限定到 `#fx-shell`；`--check` 防注入块漂移。
 
+## 本地账号与存档契约（2026-11-11）
+
+| 项 | 权威 |
+|:--|:--|
+| 存储 | `localStorage['forgeax.accounts.v1']`，一个 `AccountDb`：按用户名隔离的 `state` + `salt` / `hash` / `createdAt` + `lastUser` |
+| 密码 | **同步** SHA-256(`salt:password`) 十六进制摘要，绝不明文、不上传；`sha256Hex()` 与 Node `crypto` 逐用例比对 |
+| 会话 | 模块级 `session`；**每次刷新必须重新登录**，`lastUser` 只预填用户名 |
+| 强制登录 | `meta-ui/auth-ui.js` 把 `#fx-auth` 遮罩挂到 `document.body`（不放在 `#fx-shell` 内，否则战斗模式的隐藏规则会吞掉它）；未登录 `deploy` 被拒 |
+| 自动存盘 | `shell-bridge.js` 的 `syncBadge()` 是唯一 `host.onRender` 钩子：每次 `render()`（拖放 / 换装 / 结算 / 登录）都 `MetaAuth.persist()` |
+| 数据容错 | `loadDb()` 遇损坏 JSON / 版本不符 / 缺字段记录时降级为空库；`normalizeState()` 遇缺字段存档回退 demo 数据，**不崩页面** |
+| 引擎同步 | 未登录遮罩期间 `auth-ui.js` 发 `lock`（Worker 冻结 step + 结算）；登录成功只发**一次** `unlock`（Worker `reset(state)`），避免 `hello` 握手重发导致重开一局 |
+
+`assets/meta/account.ts` **零 import**，与 `inventory.ts` 一样由 `scripts/build-meta-ui.mjs`
+转译成普通脚本 `meta-ui/account.js`。`auth-ui.js` 只由 `inject-shell.mjs` 注入 4174 页面；
+**独立双击页不引用这两个文件**，保持 `file://` 可开、无服务器、无账号依赖（该页仍是演示页，
+改动不进账号存档 —— `file://` 与 `localhost:4174` 不同源，这是刻意的取舍）。
+
+## 战局内背包契约（2026-11-11，用户选择：不冻结 + 立即生效）
+
+- `meta-ui/index.html` 把 `.layout`（装备栏 / 背包 / 仓库）和待分配区包进 `#fx-bag-content`；
+  战斗中按 **B / I**（或顶栏「背包」按钮）打开，以右侧浮层显示，ESC 关闭。
+- **不冻结**：`#fx-shell.fx-in-battle` 仍 `pointer-events:none`，只有浮层 `auto`；
+  浮层外的点击照常打到 ForgeAX canvas，怪物继续追击，Worker 不收任何 pause/freeze 消息。
+- **立即生效**：`syncBadge()` 比较 `equipped[0/1]` 与 `activeWeaponSlot` 的基线，仅把**发生变化**的槽
+  经 `BroadcastChannel` 发 `equip { slots: [bool|null, bool|null], activeWeaponSlot }`；
+  `null` ＝「保留该槽出征时借出的武器」，避免把借出装备覆盖掉。
+- `game.pack.ts` 收到 `equip` 后直接改 `state.weaponSlots` / `activeWeaponSlot`，本局伤害与攻击距离立刻变化。
+- **借出/归还边界**：`buildLoadout()` 出征时把两个武器槽置空，所以局内背包看到的是空武器槽；
+  局内从背包装上的物品属于账号资产，结算时 `settleRun()` 归还借出武器会优先填空槽、满则进 `loose`，
+  **永不静默丢物品**。阵亡时借出装备与本局战利品照常丢失；局内从背包装上的武器仍留在账号存档中。
+
 ## 旧骨架
 
 `index.ts` 的 `Wallet` / `Inventory(capacity)` / `MetaNode` / `MetaProgress` 是最早的容量式占位，
@@ -58,23 +91,28 @@ CSS 由 `scopeCss()` 限定到 `#fx-shell`；`--check` 防注入块漂移。
 `equipItem` / `unequipItem` / `setActiveWeapon` / `activeWeapon` / `coveredCells` /
 `registerItemDefs` / `buildLoadout` / `settleRun`（+ `AuthoredItem` / `BorrowedLoadout` / `Settlement` / `SettlementReport` 类型）。
 
+`account.ts`：`STORAGE_KEY` / `sha256Hex` / `emptyDb` / `loadDb` / `saveDb` / `listUsers` / `lastUser` /
+`validateName` / `validatePassword` / `register` / `login` / `logout` / `currentUser` /
+`loadState` / `saveState`（+ `AccountDb` / `AccountRecord` / `AuthResult` 类型）。全部**同步**。
+
 ## 依赖方向
 
-`inventory.ts` **零 import**（纯逻辑，可独立转译到浏览器）。禁止 import `combat/` / `battle/` 实现。
+`inventory.ts` 与 `account.ts` 都 **零 import**（纯逻辑，可独立转译到浏览器）。禁止 import `combat/` / `battle/` 实现。
+`account.ts` 不认识 `InventoryState`，存档用 `unknown` 承载，避免耦合与循环依赖。
 `meta-ui/index.html` 只能调用 `window.MetaInventory` 的导出，不得复制业务规则。
 
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/meta/__tests__      # 24 条（inventory 14 + run-settlement 7 + meta 3）
-node scripts/build-meta-ui.mjs --check                     # 生成物与源码同步
+./node_modules/.bin/vitest run assets/meta/__tests__      # 36 条（inventory 14 + run-settlement 7 + meta 3 + account 12）
+node scripts/build-meta-ui.mjs --check                     # 两个生成物与源码同步
 node scripts/verify-meta-ui.cjs                            # 独立页面 13 条真实拖放断言
 node scripts/inject-shell.mjs --check                      # dist 注入块与源同步
-node scripts/verify-shell.cjs                              # 4174 单页 16 条（出征/通关/阵亡/返回）
+node scripts/verify-shell.cjs                              # 4174 单页 28 条（登录/存档/局内背包/出征/通关/阵亡/返回）
 ```
 
-`scripts/build-meta-ui.mjs` 把 `inventory.ts` 用 `ts.transpileModule` 转成普通脚本写入
-`meta-ui/inventory.js`（已提交，保证双击 `file://` 可开，无 ESM / 无 CORS / 无打包器）。
+`scripts/build-meta-ui.mjs` 把 `inventory.ts` / `account.ts` 用 `ts.transpileModule` 转成普通脚本写入
+`meta-ui/inventory.js` / `meta-ui/account.js`（已提交，保证双击 `file://` 可开，无 ESM / 无 CORS / 无打包器）。
 改了 `.ts` 必须重跑；`verify.sh meta` 会自动拦住漂移。
 
 ## 待办（用户后续决定，本轮未做）
@@ -82,7 +120,9 @@ node scripts/verify-shell.cjs                              # 4174 单页 16 条�
 - 局外**天赋**接入同一份存档（用户提到「装备天赋」，本轮只做装备 / 背包 / 掉落互通）。
 - 旧容量式 `Inventory` 骨架的迁移或删除。
 - `bytes` 导出（当前表转换产物是 TS 常量数组）。
-- 磁盘持久化：当前**刻意只在内存**，刷新页面回到 demo 数据；用户本轮确认按内存直传做。
+- 账号存档的跨浏览器 / 跨设备迁移（当前纯本机 localStorage，无导入导出）。
 - 引擎启动失败（fatal path）时启动遮罩仍会拦截 top bar 的点击，需要时再决定是否把壳层加入白名单。
+- 正式 Web ZIP 在壳层注入之前打包，不含单页流程（含登录与局内背包），需要「先注入再打包」。
 
-已完成（2026-11-11）：Excel 表 → `generated/*.ts` → `registerItemDefs`；局外↔战斗 4174 单页连续流程与搜打撤结算。
+已完成（2026-11-11）：Excel 表 → `generated/*.ts` → `registerItemDefs`；局外↔战斗 4174 单页连续流程与搜打撤结算；
+本地多账号注册/登录/切换 + 按账号隔离的本地存档 + 战局内不冻结且立即生效的背包换装。
