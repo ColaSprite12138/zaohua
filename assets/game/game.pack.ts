@@ -75,7 +75,11 @@ export const game: Plugin = {
     if (typeof BroadcastChannel !== 'undefined') {
       channel = new BroadcastChannel(RUN_CHANNEL);
       channel.onmessage = (event: MessageEvent) => {
-        const msg = event.data as { type?: string; deployment?: Deployment } | null;
+        const msg = event.data as {
+          type?: string;
+          deployment?: Deployment;
+          requestId?: number;
+        } | null;
         if (!msg || typeof msg !== 'object') return;
         if (msg.type === 'deploy') {
           deployRun(state, msg.deployment ?? {});
@@ -84,6 +88,30 @@ export const game: Plugin = {
           channel?.postMessage({ type: 'deployed', monsterCount: state.monsterCount });
         } else if (msg.type === 'hello') {
           channel?.postMessage({ type: 'ready' });
+        } else if (msg.type === 'probe') {
+          // Read-only observability seam for REAL 4174 acceptance runs. The
+          // projection registry lives in this Worker's module scope, so an
+          // external harness cannot call `game.state` directly. This branch
+          // only serialises the current state; it never mutates gameplay and
+          // deliberately does NOT register another read projection, which
+          // would break `project play`'s "single projection" resolution.
+          const extent = host?.drawingBufferSize?.() ?? null;
+          channel?.postMessage({
+            type: 'state',
+            requestId: msg.requestId,
+            state: projection(state),
+            // `projection()` exposes only the first drop (a legacy playthrough
+            // field). A real multi-monster run needs every drop location to
+            // walk over and pick the loot up.
+            drops: state.drops.map((d) => ({
+              x: d.x / VIEW_W,
+              y: d.y / VIEW_H,
+              itemId: d.itemId ?? null,
+              name: d.name ?? null,
+              quality: d.quality ?? null,
+            })),
+            extent,
+          });
         }
       };
     }
