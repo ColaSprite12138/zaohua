@@ -7,7 +7,8 @@
 # fails here instead of silently shipping.
 #
 # Usage (from the project root, in Git Bash):
-#   bash scripts/verify-all.sh
+#   bash scripts/verify-all.sh          # full gate: before release / cross-module change
+#   bash scripts/verify.sh              # incremental gate for everyday changes
 # Output: artifacts/verify/summary.txt plus per-command .json / .stderr.log
 #
 # NOTE: pnpm is NOT on this machine's PATH. Always use ./node_modules/.bin/*.
@@ -94,8 +95,10 @@ tests=$(node -e '
   const m=t.match(/Tests\s+(\d+)\s+passed/);
   process.stdout.write(m ? m[1] : "");
 ' "$OUT/test.stderr.log" 2>/dev/null || true)
-[ "$tests" = "13" ] || die "单测数量应为 13，实际 ${tests:-未读到}（断言被删？）"
-log "[ OK ] test :: 13 passed"
+# A FLOOR, not an exact count: modules keep adding their own tests. Deleting
+# assertions to make the suite green still falls below the 13-test baseline.
+[ "${tests:-0}" -ge 13 ] || die "单测数量应 ≥ 13（基线，防止删断言），实际 ${tests:-未读到}"
+log "[ OK ] test :: $tests passed（下限 13）"
 
 log "[RUN ] typecheck"
 if ! "$TSC" --noEmit > "$OUT/tsc.out" 2> "$OUT/tsc.err"; then

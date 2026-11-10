@@ -4,7 +4,7 @@ import {
   step,
   type GameState,
   type StepInput,
-} from '../game/simulation.ts';
+} from '../simulation.ts';
 
 const input = (over: Partial<StepInput> = {}): StepInput => ({
   mouse: undefined,

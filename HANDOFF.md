@@ -12,17 +12,24 @@
 |:--|:--|
 | 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad |
 | 怎么开 | 双击 `open-2.5d-game.bat`（独立 Chrome profile + 硬件 WebGPU，端口 4174） |
-| 怎么验 | `bash scripts/verify-all.sh`（一条命令跑完 7 项护栏，并对单测数 / 步骤数设下限） |
+| 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc` |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量 7 项，对单测数 / 步骤数设下限 |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
 | 怎么还原 | `git checkout HEAD -- <path>`；整包兜底见「可回滚基线」 |
 
 文档权威顺序（冲突时以上者为准）：
 
 1. **本文件** — 当前功能契约与保护清单
-2. `README.md` — 交互契约、点击分类、验收脚本逐条说明、坐标映射原理
-3. `docs/feedback.md` — 14 条历史决策与踩坑，每条含根因与证据；**不要重复踩**
-4. `.workbuddy/memory/YYYY-MM-DD.md` — 工作流水账，只作线索，不是规范
-5. `AGENTS.md` — ForgeAX 引擎模板自带的**通用** SDK 规范（顶部另有本工程的 Git 提交纪律）；查引擎 API 时才读
+2. **`assets/<模块>/CONTEXT.md`** — 该模块的契约、不变量、对外接口、依赖方向、独立验收；
+   配套 `EXPERIENCE.md` 是该模块独立经验库（踩坑按模块追加，不混进全局 feedback 编号）
+3. `README.md` — 工程结构、交互契约、点击分类、验收脚本逐条说明、坐标映射原理
+4. `docs/feedback.md` — 14 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**
+5. `.workbuddy/memory/YYYY-MM-DD.md` — 工作流水账，只作线索，不是规范
+6. `AGENTS.md` — ForgeAX 引擎模板自带的**通用** SDK 规范（顶部另有本工程的 Git 提交纪律）；查引擎 API 时才读
+
+工程分五个模块：`combat/`（战斗，最重）/ `battle/`（局内关卡）/ `meta/`（局外系统）/
+`talent/`（局外天赋养成）/ `resource/`（人工 Excel 数据表），另有 `shared/`（常量）与
+`game/`（引擎装配）。目录图与依赖方向见 `README.md`「工程结构」。
 
 ## 当前功能契约（改这里就是覆写已有功能）
 
@@ -45,9 +52,9 @@
 
 ## 保护清单（改之前先说清改什么、为什么）
 
-1. `assets/game/simulation.ts` 的 `StepInput`（`pointerDown` / `pointerHeld` / `pointerUp`）、三态移动、单体攻击指令 —— 这是全部交互语义的唯一来源。
+1. 交互语义唯一来源：`assets/combat/state.ts` 的 `StepInput`（`pointerDown` / `pointerHeld` / `pointerUp`）、`assets/combat/movement.ts` 的三态移动与点击分类、`assets/combat/attack.ts` 的单体攻击指令。`assets/game/simulation.ts` **只是纯 re-export 兼容门面**，禁止在这里写玩法逻辑。
 2. `assets/game/game.pack.ts` 每帧用 `host.drawingBufferSize()` 把物理像素换算回逻辑坐标。Worker 里没有 `document`，`gameHost.canvas` 是 `undefined`；**不要**改回 `VIEW_W/VIEW_H` 常量分母。
-3. `scripts/playthrough.mjs` / `scripts/playthrough-resize.mjs` 的断言与 `assets/__tests__/movement.test.ts` 的 13 条断言 —— **不允许为了让脚本变绿而放宽断言或改游戏逻辑迎合测试**。断言减少必须解释。
+3. `scripts/playthrough.mjs` / `scripts/playthrough-resize.mjs` 的断言，以及 `assets/combat/__tests__/`、`assets/{battle,meta,talent,resource}/__tests__/` 的独立单测 —— **不允许为了让脚本变绿而放宽断言或改游戏逻辑迎合测试**。断言减少必须解释。
 4. `open-2.5d-game.bat` 的 `URL=http://localhost:4174/` —— 预览服务**只监听 IPv6 `[::1]:4174`**，`127.0.0.1` 恒为 000；改成 127.0.0.1 会让启动探测永远失败。见 feedback 第 14 条。
 5. `open-2.5d-game.bat` 默认硬件 GPU、独立 `--user-data-dir`；`--use-webgpu-adapter=swiftshader` 只能由 `FX_SOFTWARE_GPU=1` 显式开启。
 6. 引擎通用红线见 `AGENTS.md`：不手改 `dist/`、`pack-index.json`、`.forgeax/`，不新增并行 manifest/入口。
@@ -56,18 +63,24 @@
 
 ## 改完必跑（任何一项不绿 = 不许交付）
 
-一句话等价命令：`bash scripts/verify-all.sh`，输出在 `artifacts/verify/summary.txt`。
+**日常用增量**（用户 2026-11-10 决策：不必每次跑全量）：`bash scripts/verify.sh`。
+它从 git 改动推断受影响模块，只跑该模块 `__tests__/` 的独立单测，始终跑一次全局 `tsc`；
+只有 combat 的 `.ts` 改动才额外跑浏览器 playthrough；命中 `assets/shared/`、`assets/game/`、
+构建配置或未知路径时自动转全量。输出 `artifacts/verify/incremental-summary.txt`。
+也可显式 `bash scripts/verify.sh combat meta`，或 `bash scripts/verify.sh --all` 强制全量。
+
+**发版前 / 跨模块改动用全量**：`bash scripts/verify-all.sh`，输出 `artifacts/verify/summary.txt`。
 脚本带**并发锁**：两个会话同时跑时第二个以 `exit 2` 拒绝启动（打印 `[BUSY]`），
 避免两份验收写同一份汇总与 play 报告、证据互相覆盖；退出时自动清理锁。
-它除了跑下面 7 项，还强制 `test` 恰为 13 条、`playthrough` ≥ 32 步、`resize` ≥ 4 步 ——
-**新会话删断言让测试变绿，会在这里失败**。
+它除了跑下面 7 项，还强制 `test` ≥ 13 条（基线，新增模块测试会更多）、`playthrough` ≥ 32 步、
+`resize` ≥ 4 步 —— **新会话删断言让测试变绿，会在这里失败**。
 
 `pnpm` 不在本机 PATH，一律用本地 shim：`./node_modules/.bin/forgeax`、`./node_modules/.bin/tsc`。
 `build` / `package` 需要 `CODEBUDDY_SAFE_DELETE_ENABLED=0`（Vite 安全删除在本环境会拦）。
 
 ```bash
 ./node_modules/.bin/forgeax project check --json
-./node_modules/.bin/forgeax project test --json          # 13/13
+./node_modules/.bin/forgeax project test --json          # 29/29（下限 13）
 ./node_modules/.bin/tsc --noEmit                        # 0 error
 CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project build --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
@@ -80,7 +93,7 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project package --ou
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | 13 项全过 |
+| `test` | 29 项全过（下限 13：combat 14 + battle 4 + meta 3 + talent 3 + resource 3 + 模板 2） |
 | `tsc --noEmit` | 0 error |
 | `build` | `ok` |
 | `playthrough` 1600x900 / 1899x1062 | `passed:true`、32 steps、0 errors |
@@ -93,10 +106,10 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project package --ou
 
 下表把「当前功能契约」逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 11 条 movement + 2 条 `empty-project` = 13 条；浏览器
-验收 12 个命名场景（报告展开为 32 steps）。
+删断言不会让这张表悄悄失效。单测 29 条＝combat 14（movement 11 + modifiers 3）、battle 4、
+meta 3、talent 3、resource 3、模板 2；全量下限 13 条。浏览器验收 12 个命名场景（报告展开为 32 steps）。
 
-| 功能契约 | 单测 `assets/__tests__/movement.test.ts` | 浏览器 `scripts/playthrough.mjs` |
+| 功能契约 | 单测 `assets/combat/__tests__/movement.test.ts` | 浏览器 `scripts/playthrough.mjs` |
 |:--|:--|:--|
 | 悬停不动 | `hovering the pointer never moves the player` | `hovering the pointer does not move the player` |
 | 点地面只移动、不挥砍 | `a click on the ground moves there, stops, and never attacks` | `a click on the ground moves but never attacks` |
@@ -157,10 +170,10 @@ git show <hash>:<path>               # 取回某个旧版本的文件内容
 
 ## 新会话标准开局
 
-1. 读 `HANDOFF.md`；按需再读 README 的操作表与 `docs/feedback.md` 相关条目。
-2. 先跑 `bash scripts/check-drift.sh` 看漂移，再跑 `bash scripts/verify-all.sh` 确认**接手时就是绿的**，别把历史遗留的红灯当成自己改坏的。
-3. 改代码前说明改什么、为什么；改完再跑一遍，对比步骤数 / 断言数，任何减少都要解释。
-4. 追加 `docs/feedback.md`、更新本文件的「当前功能契约」与验收基线数字，最后重新打包 + 刷新 4174。
+1. 读 `HANDOFF.md`；按改动模块读该模块的 `CONTEXT.md` / `EXPERIENCE.md`；按需再读 README 操作表与 `docs/feedback.md`。
+2. 先跑 `bash scripts/check-drift.sh` 看漂移，再跑 `bash scripts/verify.sh`（增量）确认**接手时就是绿的**，别把历史遗留的红灯当成自己改坏的。
+3. 改代码前说明改什么、为什么；改完再跑一次 `bash scripts/verify.sh`，对比步骤数 / 断言数，任何减少都要解释。发版或跨模块改动才跑 `verify-all.sh`。
+4. 踩坑按模块追加 `assets/<模块>/EXPERIENCE.md`，跨模块的才写 `docs/feedback.md`；更新对应 `CONTEXT.md`、本文件的「当前功能契约」与验收基线数字。
 5. **做完即提交并推送**（含更新后的 HANDOFF），给下一次接手留一个新的还原点：
    `git add -A` → `git commit -m "..."` → `git push origin main`。推送失败要显式报告，
    禁止 `push --force`。这是用户 2026-11-10 的硬性要求：**后面的所有改动，做完后都先向 git 提交一份**。

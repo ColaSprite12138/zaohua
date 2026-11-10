@@ -1,0 +1,20 @@
+# 数据表目录（人工维护的唯一数据入口）
+
+这里放**人工修改的 Excel 表**，是数值与配置的唯一权威源。程序不直接读 `.xlsx`。
+
+## 约定
+
+- 文件名：小写 snake_case + `.xlsx`，例如 `combat_damage.xlsx`、`monster_stats.xlsx`。
+  由 `assets/resource/__tests__/tables.test.ts` 强制校验。
+- 每个文件的第一个 Sheet 为数据 Sheet，首行是字段名（英文 snake_case），第二行起是数据；
+  第一列为主键 `id`（字符串，全表唯一）。其余 Sheet 视为说明，不参与导出。
+- 单元格只写基础类型：整数 / 小数 / 字符串 / 布尔（`TRUE`/`FALSE`）。
+  公式、合并单元格、宏、条件格式一律禁止 —— 导出器不做求值。
+- **禁止手工修改 `generated/` 里的任何文件**：那是转换产物，重新导出即被覆盖。
+- 新增表后，在对应模块的 `CONTEXT.md` 里登记「表名 → 消费方」，否则视为无人使用的数据。
+
+## 后续转换（尚未实现）
+
+计划由脚本把 `.xlsx` 转成程序易读结构（JSON / TypeScript 常量 / bytes），输出到
+`assets/resource/generated/`，模块只 import 生成物、import 路径固定。
+转换脚本与列格式定义到位前，游戏逻辑继续读代码里的常量；**不允许绕过本目录在代码里散落数值表**。

@@ -134,12 +134,35 @@ chrome.exe --user-data-dir=D:\tools\zaohua\forgeax-game\.chrome-webgpu-hw ^
 若帧率仍只有个位数，在**新开的那个窗口**访问 `chrome://gpu` 确认 WebGPU 状态为
 Hardware accelerated。完整诊断记录见 `docs/feedback.md`。
 
+## 工程结构（五模块 + 两层）
+
+| 目录 | 职责 | 子知识库 | 独立验收 |
+|:--|:--|:--|:--|
+| `assets/combat/` | **最重**：技能交互、怪物、武器、玩家技能、数值运行时；天赋效果的**执行** | `CONTEXT.md` / `EXPERIENCE.md` | `vitest run assets/combat/__tests__` + `scripts/playthrough*.mjs` |
+| `assets/battle/` | 局内关卡：地图、触发器、关卡事件、单局目标、机关 | 同上 | `vitest run assets/battle/__tests__` |
+| `assets/meta/` | 局外：养成、背包、外围关卡（战斗入口）、货币 | 同上 | `vitest run assets/meta/__tests__` |
+| `assets/talent/` | 局外天赋养成与选择；只输出 `effectIds`，**不算效果数值** | 同上 | `vitest run assets/talent/__tests__` |
+| `assets/resource/` | 人工 Excel 数据表（唯一数值入口），后续转成程序结构 | 同上 | `vitest run assets/resource/__tests__` |
+| `assets/shared/` | 常量与纯类型，所有模块可单向 import | — | 改动触发全量验收 |
+| `assets/game/` | 引擎装配与渲染；`simulation.ts` 是纯 re-export 兼容门面 | — | 改动触发全量验收 |
+
+依赖方向单向：`shared/` ← 各模块；`talent/` --(effectIds)--> `combat/modifiers.ts`。
+`battle/` `meta/` `talent/` **不得 import `combat/` 内部文件**。
+文档权威顺序：`HANDOFF.md` > 模块 `CONTEXT.md` > 本 README / `docs/feedback.md`。
+`EXPERIENCE.md` 是各模块独立经验库，踩坑按模块追加，不混进全局 feedback 编号。
+
+> 命名红线：`battle/` ＝**单局内**关卡，`meta/` ＝**跨局**节点图 / 战斗入口。两者都叫「关卡」，先分清再动手。
+
 ## 运行与验收
 
-新会话接手工程时先读 [`HANDOFF.md`](HANDOFF.md)（当前功能契约与保护清单）。下面的检查可以
-用一条命令跑完：`bash scripts/verify-all.sh`，输出在 `artifacts/verify/summary.txt`。它除了
-逐项执行，还会强制 `test` 恰为 13 条、`playthrough` ≥ 32 步、`resize` ≥ 4 步 —— **删断言让
-测试变绿会直接失败**。
+新会话接手工程时先读 [`HANDOFF.md`](HANDOFF.md)（当前功能契约与保护清单），再按改动模块读
+对应的 `assets/<模块>/CONTEXT.md`。
+
+**日常改动跑增量验收**：`bash scripts/verify.sh` —— 从 git 改动推断受影响模块，只跑该模块的
+独立单测（combat 代码改动才额外跑浏览器 playthrough），并始终跑一次全局 `tsc`。
+命中 `shared/` / 引擎层 / 构建配置、或显式 `--all` 时自动转全量。
+**发版前 / 跨模块改动跑全量**：`bash scripts/verify-all.sh`，输出在 `artifacts/verify/summary.txt`；
+它强制单测 ≥ 13 条、`playthrough` ≥ 32 步、`resize` ≥ 4 步 —— **删断言让测试变绿会直接失败**。
 
 ```bash
 pnpm exec forgeax project check --json

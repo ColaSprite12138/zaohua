@@ -6,6 +6,13 @@
 > **后面的所有改动，做完后都先向 git 提交一份** —— `git add -A` → `git commit -m "..."` → `git push origin main`；
 > 不留未提交改动、不攒批。推送失败必须显式报告，禁止 `push --force`。完整版见 `HANDOFF.md` 与工作区根 `AGENTS.md`。
 
+> **工程结构（2026-11-10 模块化重构）**：玩法代码按 `assets/combat|battle|meta|talent|resource/` 分模块，
+> 每模块有 `CONTEXT.md`（契约 / 不变量 / 依赖方向 / 独立验收）、`EXPERIENCE.md`（独立经验库）与
+> `__tests__/`（独立单测）。**改哪个模块先读哪个模块的 `CONTEXT.md`**；权威顺序是
+> `HANDOFF.md` > 模块 `CONTEXT.md` > README / `docs/feedback.md`。
+> 日常改动跑 `bash scripts/verify.sh`（增量）；发版 / 跨模块改动才跑 `bash scripts/verify-all.sh`。
+> 目录图与依赖方向见 `README.md`「工程结构」。
+
 AI-first TypeScript game on `@forgeax/engine`. Hard rules and routing here;
 open a reference only when its task applies. Never read whole large `SKILL.md` files;
 stop after their short start section unless the task needs more.
