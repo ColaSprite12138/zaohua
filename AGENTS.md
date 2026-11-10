@@ -1,6 +1,10 @@
 # ForgeaX Game Project Guide
 
-> **本工程交接先读 [`HANDOFF.md`](HANDOFF.md)**：当前已实现的功能契约、保护清单、改完必跑的验收、可回滚基线都在那里。本文是 ForgeAX 引擎模板自带的通用 SDK 规范，不含本工程特性。
+> **本工程交接先读 [`HANDOFF.md`](HANDOFF.md)**：当前已实现的功能契约、保护清单、改完必跑的验收、可回滚基线都在那里。本文其余部分是 ForgeAX 引擎模板自带的通用 SDK 规范，不含本工程特性。
+
+> **Git 提交纪律（用户 2026-11-10 明确要求，硬性）**：远端 `origin` = `git@github.com:ColaSprite12138/zaohua.git`（`main`）。
+> **后面的所有改动，做完后都先向 git 提交一份** —— `git add -A` → `git commit -m "..."` → `git push origin main`；
+> 不留未提交改动、不攒批。推送失败必须显式报告，禁止 `push --force`。完整版见 `HANDOFF.md` 与工作区根 `AGENTS.md`。
 
 AI-first TypeScript game on `@forgeax/engine`. Hard rules and routing here;
 open a reference only when its task applies. Never read whole large `SKILL.md` files;

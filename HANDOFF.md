@@ -3,7 +3,7 @@
 > 工程路径：`D:\tools\zaohua\forgeax-game`
 > 状态：**2026-11-10 全套验收通过**（详见「验收基线」）
 > 这份文件记录**当前已实现的功能与不可回退的约束**。新会话先读它，再动手。
-> 改了功能 → 必须同步改本文件，追加 `docs/feedback.md`，并提交到 git。
+> 改了功能 → 必须同步改本文件，追加 `docs/feedback.md`，**做完即提交并推送到 `origin/main`**。
 > 工作区级总索引：`D:\tools\zaohua\AGENTS.md`（工作区地图、跨工程硬约束、备份边界）；本文件是工程级交接。
 
 ## 30 秒定位
@@ -22,7 +22,7 @@
 2. `README.md` — 交互契约、点击分类、验收脚本逐条说明、坐标映射原理
 3. `docs/feedback.md` — 14 条历史决策与踩坑，每条含根因与证据；**不要重复踩**
 4. `.workbuddy/memory/YYYY-MM-DD.md` — 工作流水账，只作线索，不是规范
-5. `AGENTS.md` — ForgeAX 引擎模板自带的**通用** SDK 规范，**不含本工程特性**；只有查引擎 API 时才读
+5. `AGENTS.md` — ForgeAX 引擎模板自带的**通用** SDK 规范（顶部另有本工程的 Git 提交纪律）；查引擎 API 时才读
 
 ## 当前功能契约（改这里就是覆写已有功能）
 
@@ -131,7 +131,8 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project package --ou
 
 ## 可回滚基线（两层）
 
-**第一层：git（首选）**。工程于 2026-11-10 纳入 git，`main` 首个提交是完整源码基线。
+**第一层：git（首选）**。工程于 2026-11-10 纳入 git，`main` 首个提交是完整源码基线；
+远端 `origin` = `git@github.com:ColaSprite12138/zaohua.git`，同日已推送，本地与远端一致。
 
 ```bash
 bash scripts/check-drift.sh          # 接手先看：相对 HEAD 改了什么，保护清单有没有被动
@@ -160,4 +161,6 @@ git show <hash>:<path>               # 取回某个旧版本的文件内容
 2. 先跑 `bash scripts/check-drift.sh` 看漂移，再跑 `bash scripts/verify-all.sh` 确认**接手时就是绿的**，别把历史遗留的红灯当成自己改坏的。
 3. 改代码前说明改什么、为什么；改完再跑一遍，对比步骤数 / 断言数，任何减少都要解释。
 4. 追加 `docs/feedback.md`、更新本文件的「当前功能契约」与验收基线数字，最后重新打包 + 刷新 4174。
-5. **把改动提交到 git**（含更新后的 HANDOFF），给下一次接手留一个新的还原点。
+5. **做完即提交并推送**（含更新后的 HANDOFF），给下一次接手留一个新的还原点：
+   `git add -A` → `git commit -m "..."` → `git push origin main`。推送失败要显式报告，
+   禁止 `push --force`。这是用户 2026-11-10 的硬性要求：**后面的所有改动，做完后都先向 git 提交一份**。
