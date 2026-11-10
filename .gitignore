@@ -1,0 +1,21 @@
+dist/
+node_modules/
+.forgeax/
+.assetlib/
+artifacts/
+.game-builder/state/
+.game-builder/covers/
+.game-builder/artifacts/
+.game-builder/reference/
+
+# Local browser profiles and runtime probes: each is tens of MB, never source.
+.chrome-*/
+.probe-*
+.package.json.backup-*
+
+# Editor / AI-tool mirrors of skills/ (often symlinks; not authoritative).
+.agents/
+.claude/
+.codebuddy/
+.cursor/
+.workbuddy/

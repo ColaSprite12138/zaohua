@@ -1,0 +1,8 @@
+# This host has core.autocrlf=true. Force LF in the working tree so that a
+# restored .sh / .py / .mjs / .ts file stays runnable in Git Bash.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.zip binary
+*.wasm binary

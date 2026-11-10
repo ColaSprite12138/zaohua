@@ -1,0 +1,11 @@
+{
+  "id": "forgeax-game",
+  "name": "forgeax-game",
+  "schemaVersion": "3.0.0",
+  "assetLibraries": [
+    "@forgeax/engine/content"
+  ],
+  "roots": {
+    "engine": "f24174e9-a2b4-5376-943e-1814b229c1c3"
+  }
+}
