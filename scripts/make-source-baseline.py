@@ -28,7 +28,7 @@ STEM = "forgeax-game-source-baseline"
 # Everything needed to rebuild the project from scratch, including the
 # assertion suites (they are the real anti-regression guard) and the local
 # vendor SDK that package.json refers to with `file:./vendor/...`.
-INCLUDE_DIRS = ("assets", "scripts", "docs", "skills", "vendor", ".game-builder")
+INCLUDE_DIRS = ("assets", "scripts", "docs", "skills", "vendor", ".game-builder", "meta-ui")
 INCLUDE_FILES = (
     "README.md",
     "AGENTS.md",

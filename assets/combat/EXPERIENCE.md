@@ -15,6 +15,22 @@
 - `swingAtTarget` / `resolveAttackOrder` 增加 `CombatModifiers` 参数但默认 `NO_MODIFIERS`，
   保证新增扩展点不改变任何既有数值与断言。
 
+## 2026-11-10 · 双武器槽与 1/2 切换
+
+- **扩展装备位时保留旧投影字段名**：`equippedWeapon` 被 32 步 playthrough 三处断言依赖，
+  改成"当前激活槽武器"的语义即可零改动兼容；删字段或改名会连带改大量脚本。
+- **单一取值入口**：`activeWeapon(s)` 统一供 `attack.ts` / `paint.ts` / `projection` /
+  `checkCleared` 使用。若某处直接读 `weaponSlots[0]` 或 `some(Boolean)`，切到空槽后
+  仍会打长剑伤害，而且只在"按 2 之后"才复现。
+- `checkCleared` 用 `weaponSlots.some(...)`（是否拿到过武器）而**不是** `activeWeapon`：
+  用后者时玩家切到空槽会导致通关提示永远不触发，属于无意义的行为回归。
+- `StepInput.switchWeapon` 设为**可选**：老单测的 `input()` 构造器用 `Partial<StepInput>`
+  提供默认字段，改必填会连累 11 条 movement 单测一起编译失败。
+- `game.pack.ts` 把 `justPressedCode('Digit1'/'Digit2')` 映射成 `0 | 1 | null`；
+  浏览器验收必须真的 `play.keyboard.press('Digit2')` 再 `advance(0.15)`，
+  光靠单测调 `step()` 覆盖不到引擎键盘码映射这一层。
+- vitest 的 `toBe()` 不收第二个 message 参数，带说明请改用 `node:assert/strict`。
+
 ## 历史踩坑（迁移自 docs/feedback.md，详见原文第 11–13 条）
 
 - `justReleased` 释放沿要等引擎下一帧才结算，playthrough 点敌人后需 `play.wait(100)` 再读投影。

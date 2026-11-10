@@ -23,7 +23,7 @@
 2. **`assets/<模块>/CONTEXT.md`** — 该模块的契约、不变量、对外接口、依赖方向、独立验收；
    配套 `EXPERIENCE.md` 是该模块独立经验库（踩坑按模块追加，不混进全局 feedback 编号）
 3. `README.md` — 工程结构、交互契约、点击分类、验收脚本逐条说明、坐标映射原理
-4. `docs/feedback.md` — 14 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**
+4. `docs/feedback.md` — 15 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**
 5. `.workbuddy/memory/YYYY-MM-DD.md` — 工作流水账，只作线索，不是规范
 6. `AGENTS.md` — ForgeAX 引擎模板自带的**通用** SDK 规范（顶部另有本工程的 Git 提交纪律）；查引擎 API 时才读
 
@@ -33,13 +33,34 @@
 
 ## 当前功能契约（改这里就是覆写已有功能）
 
+### 战斗内（canvas 游戏）
+
 | 输入 | 行为 |
 |:--|:--|
 | 悬停鼠标 | 完全不动，不产生移动指令 |
 | 单击地面 | 设落点走过去停下，**不挥砍** |
 | 单击敌人 | 锁定；距离不够先自动接近，**进攻击距离才挥砍一次**；**只扣这一只**的血 |
 | 长按左键 | 落点实时跟随光标；松开停止跟随、按最后落点走完停下；**全程不攻击** |
+| **1 / 2** | **切换当前使用的武器槽**；只有激活槽那把参与攻击，空槽＝徒手（22 伤害 / 140 范围） |
 | 空格 / R | 闪避（无敌 + 冷却 + 残影） / 重开 |
+
+击杀骷髅掉长剑，走近拾取即**自动装入第一个空武器槽**（战斗内穿戴）；两槽满则折算 80 分。
+`game.state` 新增 `weaponSlots` / `activeWeaponSlot`；`equippedWeapon` **保留旧字段名**，语义改为
+"当前激活槽的武器"，所以既有 32 步断言不破。
+
+### 局外（独立页面 `meta-ui/index.html`，双击可开）
+
+| 项 | 规格 |
+|:--|:--|
+| 背包 | 5 列 × 8 行 = 40 格 |
+| 仓库 | 16 列 × 10 行 = 160 格 |
+| 长剑 | 2 列 × 3 行 = 6 格（后续由 Excel 配置表提供） |
+| 装备栏 | 10 槽：2 武器（1/2 切换激活）+ 2 戒指 + 项链 + 护手 + 头盔 + 胸甲 + 裤子 + 靴子 |
+| 拖放 | 待分配区 ↔ 背包 ↔ 仓库 ↔ 装备栏任意方向；越界/重叠拒绝且状态不变；类型不匹配的槽拒绝穿戴 |
+
+**逻辑唯一权威** `assets/meta/inventory.ts`；`meta-ui/inventory.js` 是
+`node scripts/build-meta-ui.mjs` 的生成物（已提交，保证双击即用），`--check` 防止两者漂移。
+两个入口**各自持有独立状态、尚未做存档互通**：独立页面是局外配置/演示，战斗内是单局运行时状态。
 
 关键取舍（都是用户明确拍板或实测修正过的，别"顺手优化"）：
 
@@ -47,19 +68,23 @@
 - 点击分类优先级：**掉落物 → 存活敌人身体框 → 地面**。掉落物优先是为了让压在骷髅脚下的长剑能被拾取。
 - 攻击**没有**锥形范围、软锁定、溅射；`attackOrder + targetEnemy` 单体结算，一次点击只挥一次。
 - 闪避期间鼠标不改写落点、攻击指令不结算。
-- 初始两只骷髅、主武器槽空；击杀掉长剑，走近装备后范围 140→170、伤害 22→46。
+- 初始两只骷髅、**两个武器槽都空**；击杀掉长剑，走近装进第一个空槽；激活槽为长剑时范围 140→170、伤害 22→46。
+- 局外页与战斗内**不做状态同步**（本轮范围，用户尚未要求存档互通）；`1/2` 在两边都切换各自状态的激活槽。
 - `GameState.moveMode` 三态：`idle` / `point` / `follow`；`game.state` 投影暴露 `moveMode`、`target`、`followingPointer`、`attackOrder`、`attackTarget`、`skeletons`（坐标/血量/存活）。
 
 ## 保护清单（改之前先说清改什么、为什么）
 
-1. 交互语义唯一来源：`assets/combat/state.ts` 的 `StepInput`（`pointerDown` / `pointerHeld` / `pointerUp`）、`assets/combat/movement.ts` 的三态移动与点击分类、`assets/combat/attack.ts` 的单体攻击指令。`assets/game/simulation.ts` **只是纯 re-export 兼容门面**，禁止在这里写玩法逻辑。
+1. 交互语义唯一来源：`assets/combat/state.ts` 的 `StepInput`（`pointerDown` / `pointerHeld` / `pointerUp` / `switchWeapon`）、`assets/combat/movement.ts` 的三态移动与点击分类、`assets/combat/attack.ts` 的单体攻击指令、`assets/meta/inventory.ts` 的格子/装备规则。`assets/game/simulation.ts` **只是纯 re-export 兼容门面**，禁止在这里写玩法逻辑。
+   战斗与局外**共用 weapon slot 语义**（2 槽 + 1 激活），但各自持有状态；`meta-ui/inventory.js` 是生成物，改逻辑改 `.ts` 后必须重跑 `build-meta-ui.mjs`。
 2. `assets/game/game.pack.ts` 每帧用 `host.drawingBufferSize()` 把物理像素换算回逻辑坐标。Worker 里没有 `document`，`gameHost.canvas` 是 `undefined`；**不要**改回 `VIEW_W/VIEW_H` 常量分母。
 3. `scripts/playthrough.mjs` / `scripts/playthrough-resize.mjs` 的断言，以及 `assets/combat/__tests__/`、`assets/{battle,meta,talent,resource}/__tests__/` 的独立单测 —— **不允许为了让脚本变绿而放宽断言或改游戏逻辑迎合测试**。断言减少必须解释。
 4. `open-2.5d-game.bat` 的 `URL=http://localhost:4174/` —— 预览服务**只监听 IPv6 `[::1]:4174`**，`127.0.0.1` 恒为 000；改成 127.0.0.1 会让启动探测永远失败。见 feedback 第 14 条。
 5. `open-2.5d-game.bat` 默认硬件 GPU、独立 `--user-data-dir`；`--use-webgpu-adapter=swiftshader` 只能由 `FX_SOFTWARE_GPU=1` 显式开启。
 6. 引擎通用红线见 `AGENTS.md`：不手改 `dist/`、`pack-index.json`、`.forgeax/`，不新增并行 manifest/入口。
+7. `meta-ui/index.html` 必须保持**双击可用**（`file://`、无服务器、普通 `<script src>`）：不要改成 ESM `type="module"`、不要加 fetch、不要引入打包器。浏览器验收脚本强制用独立 `--user-data-dir`，否则 Windows 会复用日常 Chrome 导致 dump 到执行前的 DOM。
+8. 独立页面验收只认 `scripts/verify-meta-ui.cjs` 的结果（模拟真实 DragEvent），不要退化成"只检查 DOM 存在"。
 
-`scripts/check-drift.sh` 会把上面 1–6 涉及的文件单独列出来，接手时先看它。
+`scripts/check-drift.sh` 会把上面 1–8 涉及的文件单独列出来，接手时先看它。
 
 ## 改完必跑（任何一项不绿 = 不许交付）
 
@@ -72,15 +97,18 @@
 **发版前 / 跨模块改动用全量**：`bash scripts/verify-all.sh`，输出 `artifacts/verify/summary.txt`。
 脚本带**并发锁**：两个会话同时跑时第二个以 `exit 2` 拒绝启动（打印 `[BUSY]`），
 避免两份验收写同一份汇总与 play 报告、证据互相覆盖；退出时自动清理锁。
-它除了跑下面 7 项，还强制 `test` ≥ 13 条（基线，新增模块测试会更多）、`playthrough` ≥ 32 步、
+它除了跑下面 7 项 + meta-ui 页面验收，还强制 `test` ≥ 50 条、`playthrough` ≥ 35 步、
 `resize` ≥ 4 步 —— **新会话删断言让测试变绿，会在这里失败**。
+`verify.sh` 命中 `meta` 时额外跑 `build-meta-ui.mjs --check` 与 `verify-meta-ui.cjs`（13 条浏览器断言）。
 
 `pnpm` 不在本机 PATH，一律用本地 shim：`./node_modules/.bin/forgeax`、`./node_modules/.bin/tsc`。
 `build` / `package` 需要 `CODEBUDDY_SAFE_DELETE_ENABLED=0`（Vite 安全删除在本环境会拦）。
 
 ```bash
 ./node_modules/.bin/forgeax project check --json
-./node_modules/.bin/forgeax project test --json          # 29/29（下限 13）
+./node_modules/.bin/forgeax project test --json          # 50/50（下限 50）
+node scripts/build-meta-ui.mjs --check                  # 生成物与源码同步
+node scripts/verify-meta-ui.cjs                         # 独立页面 13/13（真实拖放）
 ./node_modules/.bin/tsc --noEmit                        # 0 error
 CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project build --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
@@ -93,12 +121,13 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project package --ou
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | 29 项全过（下限 13：combat 14 + battle 4 + meta 3 + talent 3 + resource 3 + 模板 2） |
+| `test` | 50 项全过（下限 50：combat 21 + meta 17 + battle 4 + talent 3 + resource 3 + 模板 2） |
 | `tsc --noEmit` | 0 error |
+| `meta-ui` | 生成物同步 + 独立页面浏览器验收 13/13 |
 | `build` | `ok` |
-| `playthrough` 1600x900 / 1899x1062 | `passed:true`、32 steps、0 errors |
+| `playthrough` 1600x900 | `passed:true`、35 steps、0 errors |
 | `playthrough-resize` 1700x1000 | `passed:true`、4 steps、0 errors |
-| `package` | sha256 校验通过，包内 README + feedback 14 条齐全 |
+| `package` | sha256 校验通过，包内 README + feedback 齐全 |
 
 主验收必含**非 1280x720 视口**：坐标映射的回归只在 drawing buffer 尺寸变化时暴露。
 
@@ -106,8 +135,9 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project package --ou
 
 下表把「当前功能契约」逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 29 条＝combat 14（movement 11 + modifiers 3）、battle 4、
-meta 3、talent 3、resource 3、模板 2；全量下限 13 条。浏览器验收 12 个命名场景（报告展开为 32 steps）。
+删断言不会让这张表悄悄失效。单测 50 条＝combat 21（movement 11 + modifiers 3 + weapons 7）、
+meta 17（meta 3 + inventory 14）、battle 4、talent 3、resource 3、模板 2；全量下限 50 条。
+浏览器验收 13 个命名场景（报告展开为 35 steps），另有独立页面 13 条断言。
 
 | 功能契约 | 单测 `assets/combat/__tests__/movement.test.ts` | 浏览器 `scripts/playthrough.mjs` |
 |:--|:--|:--|
@@ -123,6 +153,8 @@ meta 3、talent 3、resource 3、模板 2；全量下限 13 条。浏览器验�
 | 点远处敌人先接近、进距离才挥砍 | `clicking a distant enemy approaches first and swings only in range` | `clicking a distant enemy approaches, then swings once in range` |
 | 掉落物优先于敌人判定（且不误伤点敌人） | `clicking a drop that sits under an enemy walks to loot, not to attack` + `a body-centre click still attacks the enemy even with a drop at its feet` | `click the drop to walk over it and equip the main weapon` |
 | 装备后近战仍可用 | — | `armed melee still works on a clicked enemy` |
+| 两武器槽 / 1·2 切换 / 空槽徒手 / 只按激活槽结算 | `assets/combat/__tests__/weapons.test.ts`（7 条） | `Digit1 / Digit2 switch which weapon slot is in use` |
+| 背包 5×8、仓库 16×10、长剑 2×3、10 装备槽、占格碰撞/越界、跨容器拖放、穿脱、类型校验 | `assets/meta/__tests__/inventory.test.ts`（14 条） | `scripts/verify-meta-ui.cjs`（13 条真实拖放断言） |
 | 初始状态 / reload 可玩 | `empty-project.test.ts`（2 条工程契约） | `spawn: ...` + `reload preserves a playable frame` |
 
 ## 已知陷阱速查
@@ -141,6 +173,9 @@ meta 3、talent 3、resource 3、模板 2；全量下限 13 条。浏览器验�
 | `pnpm: command not found` / build 被拦 | 用 `./node_modules/.bin/*`；build / package 带 `CODEBUDDY_SAFE_DELETE_ENABLED=0` |
 | 两个窗口同时跑 `verify-all.sh`，汇总和截图互相覆盖 | 已加 `.verify-all.lock`：第二个实例报 `[BUSY]` 并 `exit 2`；别同时开两个验收 |
 | git 还原后 `.sh` 报 `\r: command not found` | 本机 `core.autocrlf=true`；`.gitattributes` 已强制 `eol=lf`，别删它 |
+| 独立页面验收输出 `PENDING` / `loose=1` | Windows 复用日常 Chrome 实例，dump 到执行前 DOM；必须独立 `--user-data-dir` |
+| 改了 `inventory.ts` 页面行为没变 | 忘记重跑 `node scripts/build-meta-ui.mjs`；`--check` 会拦住 |
+| 自测脚本报 `$ is not defined` | `const $` 声明在 `try` 块内，块外访问越界；写结果用 `document.getElementById` 直接调用 |
 
 ## 可回滚基线（两层）
 

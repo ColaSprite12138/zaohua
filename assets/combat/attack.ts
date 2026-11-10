@@ -6,7 +6,9 @@
 
 import { burst, say, setTarget } from './effects.ts';
 import type { CombatModifiers } from './modifiers.ts';
-import { MELEE_RANGE_ARMED, MELEE_RANGE_BARE, type GameState } from './state.ts';
+import {
+  activeWeapon, MELEE_RANGE_ARMED, MELEE_RANGE_BARE, type GameState,
+} from './state.ts';
 
 /** Clickable body box of a living skeleton (art spans about [-21,21] x [-57,0]). */
 export function hitTestEnemy(s: GameState, x: number, y: number): number | null {
@@ -42,7 +44,7 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   const ddx = sk.x - p.x;
   const ddy = sk.y - p.y;
   const d = Math.hypot(ddx, ddy) || 1;
-  const armed = s.equipped === 'longsword';
+  const armed = activeWeapon(s) === 'longsword';
   const aim = Math.atan2(ddy, ddx);
 
   p.attackCd = 0.4;
@@ -78,7 +80,7 @@ export function resolveAttackOrder(s: GameState, mods: CombatModifiers): void {
     clearAttackOrder(s);
     return;
   }
-  const baseRange = s.equipped === 'longsword' ? MELEE_RANGE_ARMED : MELEE_RANGE_BARE;
+  const baseRange = activeWeapon(s) === 'longsword' ? MELEE_RANGE_ARMED : MELEE_RANGE_BARE;
   const range = baseRange + mods.meleeRangeBonus();
   const d = Math.hypot(sk.x - s.player.x, sk.y - s.player.y);
   if (d > range - 8) {

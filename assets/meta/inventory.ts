@@ -1,0 +1,301 @@
+/**
+ * META — grid inventory, stash and equipment.
+ *
+ * PURE LOGIC: no DOM, no engine, no imports. This file is the single source of
+ * truth. `scripts/build-meta-ui.mjs` transpiles it verbatim into
+ * `meta-ui/inventory.js` so the standalone page cannot drift from unit tests.
+ *
+ * Grid convention: the first number of "N x M" is COLUMNS (width), the second
+ * is ROWS (height). Bag = 5 cols x 8 rows (40 cells), stash = 16 cols x 10
+ * rows (160 cells). A longsword occupies 2 cols x 3 rows. If the design later
+ * wants rows x cols instead, only BAG / STASH need to change.
+ *
+ * Item definitions live here only until the Excel table arrives. When
+ * `assets/resource/tables/items.xlsx` is supplied, a converter will generate
+ * ITEM_DEFS; nothing else in this file should need to change.
+ */
+
+export type ContainerId = 'bag' | 'stash';
+
+export interface GridSpec {
+  readonly cols: number;
+  readonly rows: number;
+  readonly label: string;
+}
+
+export const BAG: GridSpec = { cols: 5, rows: 8, label: '背包' };
+export const STASH: GridSpec = { cols: 16, rows: 10, label: '仓库' };
+
+export const CONTAINERS: Record<ContainerId, GridSpec> = {
+  bag: BAG,
+  stash: STASH,
+};
+
+export type EquipKind =
+  | 'weapon'
+  | 'ring'
+  | 'necklace'
+  | 'gloves'
+  | 'helmet'
+  | 'chest'
+  | 'pants'
+  | 'boots';
+
+export interface ItemDef {
+  readonly id: string;
+  readonly name: string;
+  /** Footprint in grid cells. */
+  readonly cols: number;
+  readonly rows: number;
+  /** Which equipment slot kind accepts this item; null = not equippable. */
+  readonly equip: EquipKind | null;
+  readonly color: string;
+  readonly glyph: string;
+}
+
+/** Temporary code-side catalog. Replaced by the generated Excel table later. */
+export const ITEM_DEFS: Record<string, ItemDef> = {
+  longsword: {
+    id: 'longsword',
+    name: '长剑',
+    cols: 2,
+    rows: 3,
+    equip: 'weapon',
+    color: '#ffd166',
+    glyph: '⚔',
+  },
+};
+
+export interface EquipSlotDef {
+  readonly id: string;
+  readonly label: string;
+  readonly accepts: EquipKind;
+  /** Weapon slots are switchable with the 1 / 2 keys. */
+  readonly hotkey: '1' | '2' | null;
+}
+
+/**
+ * Ten slots: 2 weapons (only one active at a time), 2 rings, 1 necklace,
+ * 1 gloves, 1 helmet, 1 chest, 1 pants, 1 boots.
+ * Indices 0 and 1 ARE the weapon slots; do not reorder them.
+ */
+export const EQUIP_SLOTS: readonly EquipSlotDef[] = [
+  { id: 'weapon1', label: '主武器 ①', accepts: 'weapon', hotkey: '1' },
+  { id: 'weapon2', label: '副武器 ②', accepts: 'weapon', hotkey: '2' },
+  { id: 'ring1', label: '戒指 I', accepts: 'ring', hotkey: null },
+  { id: 'ring2', label: '戒指 II', accepts: 'ring', hotkey: null },
+  { id: 'necklace', label: '项链', accepts: 'necklace', hotkey: null },
+  { id: 'gloves', label: '护手', accepts: 'gloves', hotkey: null },
+  { id: 'helmet', label: '头盔', accepts: 'helmet', hotkey: null },
+  { id: 'chest', label: '胸甲', accepts: 'chest', hotkey: null },
+  { id: 'pants', label: '裤子', accepts: 'pants', hotkey: null },
+  { id: 'boots', label: '靴子', accepts: 'boots', hotkey: null },
+];
+
+export const WEAPON_SLOT_INDICES = [0, 1] as const;
+
+export interface ItemInstance {
+  readonly uid: string;
+  readonly defId: string;
+}
+
+export interface PlacedItem extends ItemInstance {
+  container: ContainerId;
+  col: number;
+  row: number;
+}
+
+export interface InventoryState {
+  /** Items not yet put into a grid (the drag source / loot tray). */
+  loose: ItemInstance[];
+  bag: PlacedItem[];
+  stash: PlacedItem[];
+  /** Parallel to EQUIP_SLOTS. */
+  equipped: (ItemInstance | null)[];
+  /** Which of the two weapon slots is currently in use in battle. */
+  activeWeaponSlot: 0 | 1;
+}
+
+export function itemDef(defId: string): ItemDef {
+  const def = ITEM_DEFS[defId];
+  if (def === undefined) throw new Error(`unknown item def: ${defId}`);
+  return def;
+}
+
+export function createInventoryState(seedSwords = 3): InventoryState {
+  const loose: ItemInstance[] = [];
+  for (let i = 0; i < seedSwords; i += 1) {
+    loose.push({ uid: `sword-${i + 1}`, defId: 'longsword' });
+  }
+  return {
+    loose,
+    bag: [],
+    stash: [],
+    equipped: EQUIP_SLOTS.map(() => null),
+    activeWeaponSlot: 0,
+  };
+}
+
+function listOf(state: InventoryState, container: ContainerId): PlacedItem[] {
+  return container === 'bag' ? state.bag : state.stash;
+}
+
+/** Rectangular footprint overlap + bounds check. Atomic: never mutates. */
+export function canPlace(
+  state: InventoryState,
+  container: ContainerId,
+  defId: string,
+  col: number,
+  row: number,
+  ignoreUid?: string,
+): boolean {
+  if (!Number.isInteger(col) || !Number.isInteger(row)) return false;
+  const grid = CONTAINERS[container];
+  const def = itemDef(defId);
+  if (col < 0 || row < 0 || col + def.cols > grid.cols || row + def.rows > grid.rows) {
+    return false;
+  }
+  for (const other of listOf(state, container)) {
+    if (other.uid === ignoreUid) continue;
+    const od = itemDef(other.defId);
+    const overlapX = col < other.col + od.cols && col + def.cols > other.col;
+    const overlapY = row < other.row + od.rows && row + def.rows > other.row;
+    if (overlapX && overlapY) return false;
+  }
+  return true;
+}
+
+export type ItemLocation =
+  | { readonly where: 'loose'; readonly item: ItemInstance; readonly index: number }
+  | { readonly where: 'grid'; readonly item: PlacedItem; readonly index: number; readonly container: ContainerId }
+  | { readonly where: 'equipped'; readonly item: ItemInstance; readonly index: number };
+
+export function findItem(state: InventoryState, uid: string): ItemLocation | null {
+  const l = state.loose.findIndex((it) => it.uid === uid);
+  if (l >= 0) return { where: 'loose', item: state.loose[l]!, index: l };
+  for (const container of ['bag', 'stash'] as const) {
+    const i = listOf(state, container).findIndex((it) => it.uid === uid);
+    if (i >= 0) {
+      return { where: 'grid', item: listOf(state, container)[i]!, index: i, container };
+    }
+  }
+  const e = state.equipped.findIndex((it) => it?.uid === uid);
+  if (e >= 0) return { where: 'equipped', item: state.equipped[e]!, index: e };
+  return null;
+}
+
+function detach(state: InventoryState, loc: ItemLocation): ItemInstance {
+  if (loc.where === 'loose') {
+    state.loose.splice(loc.index, 1);
+    return loc.item;
+  }
+  if (loc.where === 'grid') {
+    listOf(state, loc.container).splice(loc.index, 1);
+    return { uid: loc.item.uid, defId: loc.item.defId };
+  }
+  state.equipped[loc.index] = null;
+  return loc.item;
+}
+
+/**
+ * Move ANY item (loose / grid / equipped / other container) to a grid cell.
+ * Validates first, then commits — a rejected move leaves state untouched.
+ */
+export function placeItem(
+  state: InventoryState,
+  uid: string,
+  container: ContainerId,
+  col: number,
+  row: number,
+): boolean {
+  const loc = findItem(state, uid);
+  if (loc === null) return false;
+  if (!canPlace(state, container, loc.item.defId, col, row, uid)) return false;
+  const item = detach(state, loc);
+  listOf(state, container).push({ uid: item.uid, defId: item.defId, container, col, row });
+  return true;
+}
+
+/** Alias with clearer intent for cross-container dragging. */
+export const moveItem = placeItem;
+
+/** Drop an item back into the loose tray (e.g. dragged off the grids). */
+export function unplaceItem(state: InventoryState, uid: string): boolean {
+  const loc = findItem(state, uid);
+  if (loc === null || loc.where === 'loose') return false;
+  const item = detach(state, loc);
+  state.loose.push(item);
+  return true;
+}
+
+/**
+ * Equip an item into a slot. Type must match. If the slot is occupied, the
+ * previous item tries to take the source position; if that is impossible it
+ * falls back to the loose tray (never silently deleted).
+ */
+export function equipItem(state: InventoryState, uid: string, slotIndex: number): boolean {
+  const slot = EQUIP_SLOTS[slotIndex];
+  const loc = findItem(state, uid);
+  if (slot === undefined || loc === null) return false;
+  if (itemDef(loc.item.defId).equip !== slot.accepts) return false;
+  if (loc.where === 'equipped' && loc.index === slotIndex) return false;
+
+  const displaced = state.equipped[slotIndex] ?? null;
+  const item = detach(state, loc);
+  state.equipped[slotIndex] = item;
+
+  if (displaced !== null) {
+    let restored = false;
+    if (loc.where === 'grid'
+      && canPlace(state, loc.container, displaced.defId, loc.item.col, loc.item.row)) {
+      listOf(state, loc.container).push({
+        uid: displaced.uid,
+        defId: displaced.defId,
+        container: loc.container,
+        col: loc.item.col,
+        row: loc.item.row,
+      });
+      restored = true;
+    }
+    if (!restored) state.loose.push(displaced);
+  }
+  return true;
+}
+
+/** Remove from an equipment slot into a specific grid cell. */
+export function unequipItem(
+  state: InventoryState,
+  slotIndex: number,
+  container: ContainerId,
+  col: number,
+  row: number,
+): boolean {
+  const current = state.equipped[slotIndex];
+  if (current === undefined || current === null) return false;
+  if (!canPlace(state, container, current.defId, col, row)) return false;
+  state.equipped[slotIndex] = null;
+  listOf(state, container).push({
+    uid: current.uid, defId: current.defId, container, col, row,
+  });
+  return true;
+}
+
+export function setActiveWeapon(state: InventoryState, slot: 0 | 1): 0 | 1 {
+  state.activeWeaponSlot = slot;
+  return state.activeWeaponSlot;
+}
+
+/** The ONE weapon that is currently in use. Both slots may hold a weapon. */
+export function activeWeapon(state: InventoryState): ItemInstance | null {
+  return state.equipped[state.activeWeaponSlot === 0 ? 0 : 1] ?? null;
+}
+
+/** Cells covered by a placed item, for UI highlighting. */
+export function coveredCells(item: PlacedItem): { col: number; row: number }[] {
+  const def = itemDef(item.defId);
+  const cells: { col: number; row: number }[] = [];
+  for (let r = 0; r < def.rows; r += 1) {
+    for (let c = 0; c < def.cols; c += 1) cells.push({ col: item.col + c, row: item.row + r });
+  }
+  return cells;
+}

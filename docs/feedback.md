@@ -164,3 +164,19 @@
 - Status: fixed
 - Fix: **URL 保持 `localhost`，绝不改成 `127.0.0.1`** —— preview 只绑定 IPv6 回环，改了就永远探测不到 200。`:probe` 加 `--max-time 3` 上限；循环缩到 30 轮且**每轮打印** `waiting for 4174 ... [i/30]`；启动命令把 stdout/stderr 重定向到 `artifacts\preview-4174.log`；失败分支打印 `netstat -ano | findstr ":4174"` 端口占用与日志内容；bat 头部注释写明 IPv6 这条约束。另把过时的 `Controls: move mouse to walk, left click = melee` 更新为当前的「点地面移动 / 长按跟随 / 点敌人定向近战」
 - Note: 这次排查同时暴露一个更大的风险——换一个新会话后，引擎模板自带的 `AGENTS.md` 不含本工程的任何功能契约，且工程没有 `.git`，一旦被覆写无法回滚。因此新增 `HANDOFF.md`（当前功能契约与保护清单）、`scripts/verify-all.sh`（一条命令跑完 7 项验收，且对单测数与 playthrough 步骤数设**下限**，防止「删断言让测试变绿」）、`scripts/make-source-baseline.py` + `release/forgeax-game-source-baseline-*.zip`（源码可回滚基线），并在 `AGENTS.md` 顶部加指针。写 `verify-all.sh` 时还踩到一个小坑：vitest 把 `Tests 13 passed` 写进 stderr 且夹带 ANSI 颜色码，纯 grep 匹配不到，必须先剥离 `\x1b\[[0-9;]*[mK]`
+
+### 2026-11-10 — 增加局外背包 / 仓库 / 装备栏与战斗内双武器切换
+
+- Scope: `meta/`（新增格子系统） / `combat/`（双武器槽） / `game/`（HUD 与键盘） / `meta-ui/`（新独立页面）
+- Request: 背包 5×8、仓库 16×10、物品可拖入，长剑先默认占 2×3（后续 Excel 配置表提供物品属性）；装备栏 2 武器（同时只能用一把、数字键 1/2 切换）+ 2 戒指 + 项链 + 护手 + 头盔 + 胸甲 + 裤子 + 靴子。用户拍板：独立页面承载局外 UI（双击可开），装备穿戴局外与战斗内都可进行，**1/2 切换属战斗内功能**；日常只跑增量验收。
+- Design: `assets/meta/inventory.ts` 零 import 纯逻辑（网格 / 矩形碰撞 / 装备槽 / 激活槽）是唯一权威；`scripts/build-meta-ui.mjs` 用 `ts.transpileModule` 生成 `meta-ui/inventory.js` 并写入源码 SHA-256，`--check` 防漂移；页面用普通 `<script src>` 挂 `window.MetaInventory`，因此 `file://` 双击可用、不需要 ESM / fetch / 打包器。战斗内 `GameState.weaponSlots` + `activeWeaponSlot`，`activeWeapon(s)` 是攻击数值唯一取值口；**`projection.equippedWeapon` 保留旧字段名**、语义改为当前激活槽，既有 32 步断言零改动通过。
+- Actual pitfalls (均已修，详见 `assets/meta/EXPERIENCE.md` 与 `assets/combat/EXPERIENCE.md`):
+  1. 独立页面用 `display:grid; gap:2px` 铺格子，占格物品按 `col*cell` 绝对定位 → 仓库第 16 列累积约 30px 错位；改 `gap:0` + 每格 `box-shadow: inset` 画分隔线。
+  2. `buildTray()` 每轮 `render()` 都重绑 `dragover/drop`，事件逐次叠加；拆到只执行一次的 `bindTray()`。
+  3. 无头 Chrome 未指定 `--user-data-dir` 时复用日常 Chrome，`--dump-dom` 返回执行前 DOM，结果停在 `PENDING` 却又能看到部分渲染，极易误判；验收脚本强制独立 profile。
+  4. 诊断脚本把 `const $` 声明在 `try` 块内，块外写结果抛 `ReferenceError: $ is not defined`；改用 `document.getElementById` 并让 `window.onerror` 也写结果 div。
+  5. 拖放自测的 `dragstart` 一度传目标网格坐标，页面据此推导错误抓取格偏移，跨容器拖动报"放不下"——是诊断脚本的错，不是页面 bug。
+  6. vitest `toBe()` 只收 1 个参数，带说明文字会触发 `tsc` TS2554，改用 `node:assert/strict`。
+- Evidence: `assets/meta/__tests__/inventory.test.ts` 14 条、`assets/combat/__tests__/weapons.test.ts` 7 条；`node scripts/verify-meta-ui.cjs` 13/13（真实 DragEvent：放入、重叠拒绝、越界拒绝、背包↔仓库、穿戴、1/2、类型不匹配拒绝）；`scripts/playthrough.mjs` 35 步 / `playthrough-resize.mjs` 4 步，`passed:true`、0 errors；`bash scripts/verify.sh combat meta` 全绿。
+- Status: implemented
+- Note: **两个入口各自持有独立状态，尚未做存档互通**（本轮范围外，等 Excel 表到位一并设计）；`checkCleared` 故意用 `weaponSlots.some(...)` 而非 `activeWeapon`，否则切到空槽会让通关提示永远不触发。`equipItem` 换下已占用槽的物品时必须回来源格位或 `loose`，否则静默丢物品。

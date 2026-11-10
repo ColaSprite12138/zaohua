@@ -13,11 +13,33 @@ engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas �
 | 单击左键（地面） | 设定落点，人物走到该点停下；**不挥砍** |
 | 单击左键（敌人） | 锁定该敌人；距离不够先自动接近，**进入攻击距离才挥砍一次**；只对该目标造成伤害 |
 | 长按左键 | 落点实时跟随光标，人物始终朝鼠标方向前进；松开后停止跟随，按最后落点走完并停下；**长按不攻击** |
+| **1 / 2** | 切换当前使用的武器槽；只有激活槽那把参与攻击，空槽＝徒手 |
 | 空格 | 闪避，短暂无敌，带冷却与残影 |
 | R | 重新开始 |
 
-初始场上两只骷髅、主武器槽为空。击杀骷髅掉落长剑，走近拾取即装备到主武器槽；装备后
-攻击范围（140 → 170）与伤害（22 → 46）提升。
+初始场上两只骷髅、**两个武器槽都空**。击杀骷髅掉落长剑，走近拾取自动装入第一个空槽；
+激活槽为长剑时攻击范围（140 → 170）与伤害（22 → 46）提升，两槽都满后再拾取折算 80 分。
+`game.state` 投影的 `equippedWeapon` 保留旧字段名，语义为「当前激活槽的武器」。
+
+### 局外系统（独立页面）
+
+**双击 `meta-ui/index.html`** 即可打开（无需服务器、无需游戏、无需构建）：
+
+| 项 | 规格 |
+|:--|:--|
+| 背包 | 5 列 × 8 行（40 格） |
+| 仓库 | 16 列 × 10 行（160 格） |
+| 长剑占格 | 2 列 × 3 行（6 格），后续由 Excel 配置表提供 |
+| 装备栏 | 10 槽：2 武器（1/2 切换）+ 2 戒指 + 项链 + 护手 + 头盔 + 胸甲 + 裤子 + 靴子 |
+
+物品可在**待分配区 ↔ 背包 ↔ 仓库 ↔ 装备栏**任意拖动；绿色预览＝可放，红色＝越界或重叠；
+类型不匹配的装备槽会拒绝穿戴，槽位被占用时被换下的物品回到来源格位或待分配区。
+规则唯一权威是 `assets/meta/inventory.ts`（纯 TS、零依赖），页面加载的
+`meta-ui/inventory.js` 由 `node scripts/build-meta-ui.mjs` 转译生成并已提交，
+因此逻辑不写两份；`node scripts/build-meta-ui.mjs --check` 防止两者漂移。
+
+> 两个入口目前**各自持有独立状态**：独立页面是局外配置/演示，canvas 游戏是单局运行时；
+> 存档互通尚未实现（等 Excel 配置表到位后一并设计）。
 
 ### 点击分类与移动语义
 
@@ -140,7 +162,8 @@ Hardware accelerated。完整诊断记录见 `docs/feedback.md`。
 |:--|:--|:--|:--|
 | `assets/combat/` | **最重**：技能交互、怪物、武器、玩家技能、数值运行时；天赋效果的**执行** | `CONTEXT.md` / `EXPERIENCE.md` | `vitest run assets/combat/__tests__` + `scripts/playthrough*.mjs` |
 | `assets/battle/` | 局内关卡：地图、触发器、关卡事件、单局目标、机关 | 同上 | `vitest run assets/battle/__tests__` |
-| `assets/meta/` | 局外：养成、背包、外围关卡（战斗入口）、货币 | 同上 | `vitest run assets/meta/__tests__` |
+| `assets/meta/` | 局外：养成、格子背包/仓库/装备栏、外围关卡（战斗入口）、货币 | 同上 | `vitest run assets/meta/__tests__` + `scripts/verify-meta-ui.cjs` |
+| `meta-ui/` | 局外系统独立可视化页面（双击 `index.html` 可开） | 逻辑归 `assets/meta/` | `node scripts/verify-meta-ui.cjs` |
 | `assets/talent/` | 局外天赋养成与选择；只输出 `effectIds`，**不算效果数值** | 同上 | `vitest run assets/talent/__tests__` |
 | `assets/resource/` | 人工 Excel 数据表（唯一数值入口），后续转成程序结构 | 同上 | `vitest run assets/resource/__tests__` |
 | `assets/shared/` | 常量与纯类型，所有模块可单向 import | — | 改动触发全量验收 |
@@ -162,9 +185,12 @@ Hardware accelerated。完整诊断记录见 `docs/feedback.md`。
 独立单测（combat 代码改动才额外跑浏览器 playthrough），并始终跑一次全局 `tsc`。
 命中 `shared/` / 引擎层 / 构建配置、或显式 `--all` 时自动转全量。
 **发版前 / 跨模块改动跑全量**：`bash scripts/verify-all.sh`，输出在 `artifacts/verify/summary.txt`；
-它强制单测 ≥ 13 条、`playthrough` ≥ 32 步、`resize` ≥ 4 步 —— **删断言让测试变绿会直接失败**。
+它强制单测 ≥ 50 条、`playthrough` ≥ 35 步、`resize` ≥ 4 步，并跑独立页面浏览器验收
+—— **删断言让测试变绿会直接失败**。
 
 ```bash
+node scripts/build-meta-ui.mjs --check     # 局外页面生成物与源码同步
+node scripts/verify-meta-ui.cjs            # 局外页面 13 条真实拖放断言
 pnpm exec forgeax project check --json
 pnpm test
 pnpm typecheck
@@ -184,8 +210,14 @@ pnpm exec forgeax project preview --port 4174 --json
 **任意视口下点击四个象限→人物同向行走**、**单击落点到达后停下且之后悬停不再启动**、
 **长按左键实时改落点并折返、松开后落点冻结且全程零攻击**、**点击远处敌人先接近、进入
 攻击距离才挥砍一次、旁观骷髅不掉血**、范围内二次点击立即挥砍、点击敌人击杀产出长剑、
-拾取装备、空格闪避、装备后近战、reload 重置。断言读 `game.state` read projection，不依赖
-画面识别；每个需求保存一张命名截图到 `artifacts/play/scripts/playthrough/`。
+拾取装备、**按 1/2 切换武器槽（切到空槽＝徒手，切换不触发攻击）**、空格闪避、装备后近战、
+reload 重置。断言读 `game.state` read projection，不依赖画面识别；每个需求保存一张命名
+截图到 `artifacts/play/scripts/playthrough/`。
+
+`scripts/verify-meta-ui.cjs` 是独立页面的浏览器验收：把 `index.html` 复制成临时页并注入
+真实 `DragEvent` 序列，用无头 Chrome `--dump-dom` 读回结果，断言 40/160 格渲染、10 装备槽、
+拖入背包、重叠与越界拒绝、背包↔仓库移动、穿戴、1/2 切换、类型不匹配穿戴拒绝共 13 条。
+必须带独立 `--user-data-dir`，否则 Windows 复用日常 Chrome 会 dump 到执行前的 DOM。
 
 > 移动类步骤前会按 R 重开隔离敌人：骷髅会主动追击，大视口上耗时较长时可能走到地面落点
 > 上，把「点地面」误判成「点敌人」。点敌人时用投影里的实时骷髅坐标（身体中心 `y-30`），

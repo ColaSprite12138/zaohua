@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>局外系统 · 背包 / 仓库 / 装备栏</title>
+<style>
+  :root {
+    --bg: #0b131c; --panel: #111e2a; --panel2: #162635; --line: #294055;
+    --cell: #0e1a25; --cell-hover: #1a3042; --text: #dbe9f5; --muted: #8fa9bb;
+    --gold: #ffd166; --cyan: #67e8f9; --red: #ff7b7b; --green: #4ade80;
+    --sword: #ffd166;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: var(--bg); color: var(--text);
+    font: 14px/1.6 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  }
+  h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: .5px; }
+  h2 { margin: 0 0 10px; font-size: 15px; color: var(--cyan); font-weight: 700; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 18px; }
+  .sub code { color: var(--gold); }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 16px; }
+  button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 14px; cursor: pointer; font: inherit; font-size: 12px;
+  }
+  button:hover { border-color: var(--cyan); color: var(--cyan); }
+  .status { color: var(--gold); font-size: 12px; min-height: 20px; }
+  .status.bad { color: var(--red); }
+  .layout { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 16px;
+  }
+  .panel-title { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .panel-title small { color: var(--muted); font-size: 11px; font-weight: 400; }
+  .equip-grid { display: grid; grid-template-columns: repeat(2, 84px); gap: 10px; margin-top: 4px; }
+  .equip-slot {
+    height: 84px; border: 1px dashed var(--line); border-radius: 10px;
+    background: var(--cell); position: relative; display: flex;
+    flex-direction: column; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 11px; text-align: center; cursor: pointer;
+  }
+  .equip-slot .slot-label { font-size: 11px; }
+  .equip-slot .slot-key { position: absolute; top: 4px; left: 6px; font-size: 10px; color: var(--muted); }
+  .equip-slot.weapon { border-style: solid; }
+  .equip-slot.active { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(255,209,102,.25) inset; }
+  .equip-slot.active::after {
+    content: "使用中"; position: absolute; bottom: 3px; font-size: 9px; color: var(--gold);
+  }
+  .equip-slot.dragover { border-color: var(--cyan); background: var(--cell-hover); }
+  .equip-slot.filled { color: var(--text); border-style: solid; }
+  .grid-wrap { position: relative; width: max-content; }
+  .grid {
+    position: relative; display: grid; gap: 0; padding: 0;
+    width: max-content; border-radius: 8px;
+    box-shadow: 0 0 0 1px var(--line);
+  }
+  /* Cells draw their own 1px separator so every cell is EXACTLY size x size:
+     an item's pixel origin is col*size / row*size with zero accumulated drift. */
+  .grid .cell { background: var(--cell); box-shadow: inset -1px -1px 0 var(--line); }
+  .grid.dragover { box-shadow: 0 0 0 2px var(--cyan); }
+  .item {
+    position: absolute; border-radius: 7px; border: 1px solid var(--sword);
+    background: linear-gradient(150deg, rgba(255,209,102,.28), rgba(255,209,102,.08));
+    color: var(--sword); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; cursor: grab;
+    user-select: none; overflow: hidden; z-index: 2;
+  }
+  .item:active { cursor: grabbing; }
+  .item .glyph { font-size: 20px; line-height: 1.1; }
+  .item .name { font-size: 11px; font-weight: 700; }
+  .item .size { font-size: 9px; opacity: .8; }
+  .item.dragging { opacity: .35; }
+  .preview {
+    position: absolute; border-radius: 7px; border: 2px solid var(--green);
+    background: rgba(74,222,128,.16); z-index: 3; pointer-events: none; display: none;
+  }
+  .preview.bad { border-color: var(--red); background: rgba(255,123,123,.16); }
+  .tray {
+    display: flex; gap: 10px; flex-wrap: wrap; min-height: 92px; margin-top: 6px;
+    padding: 10px; border: 1px dashed var(--line); border-radius: 10px; background: var(--cell);
+  }
+  .tray.dragover { border-color: var(--cyan); }
+  .tray .loose-item {
+    width: 88px; height: 70px; border: 1px solid var(--sword); border-radius: 8px;
+    background: linear-gradient(150deg, rgba(255,209,102,.28), rgba(255,209,102,.08));
+    color: var(--sword); display: flex; flex-direction: column; align-items: center;
+    justify-content: center; cursor: grab; user-select: none;
+  }
+  .tray .loose-item .glyph { font-size: 20px; }
+  .tray .loose-item .name { font-size: 11px; font-weight: 700; }
+  .tray .loose-item.dragging { opacity: .35; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 8px; max-width: 300px; }
+  .legend { margin-top: 14px; color: var(--muted); font-size: 11px; line-height: 1.9; }
+  .legend code { color: var(--gold); }
+  kbd {
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 4px;
+    padding: 1px 6px; font: inherit; color: var(--gold);
+  }
+</style>
+</head>
+<body>
+  <h1>局外系统 · 背包 / 仓库 / 装备栏</h1>
+  <div class="sub">
+    独立页面，双击即可打开（不依赖游戏、不依赖服务器）。逻辑来自
+    <code>assets/meta/inventory.ts</code>，由 <code>scripts/build-meta-ui.mjs</code> 生成
+    <code>inventory.js</code>，与单元测试同一份源码。
+  </div>
+
+  <div class="toolbar">
+    <button id="add-sword">＋ 补充一把长剑</button>
+    <button id="reset">重置演示数据</button>
+    <span class="status" id="status"></span>
+  </div>
+
+  <div class="layout">
+    <section class="panel" style="width:230px">
+      <div class="panel-title"><h2>装备栏</h2><small>10 槽</small></div>
+      <div class="equip-grid" id="equip"></div>
+      <div class="hint">
+        拖物品到槽位即可穿戴（类型必须匹配）；从已穿戴的槽位拖回格子即卸下。
+        两个武器槽用 <kbd>1</kbd> <kbd>2</kbd> 切换当前使用。
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><h2>背包</h2><small>5 × 8 = 40 格</small></div>
+      <div class="grid-wrap" id="wrap-bag">
+        <div class="grid" id="grid-bag"></div>
+        <div class="preview" id="preview-bag"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title"><h2>仓库</h2><small>16 × 10 = 160 格</small></div>
+      <div class="grid-wrap" id="wrap-stash">
+        <div class="grid" id="grid-stash"></div>
+        <div class="preview" id="preview-stash"></div>
+      </div>
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top:18px">
+    <div class="panel-title"><h2>待分配物品</h2><small>拖到背包或仓库</small></div>
+    <div class="tray" id="tray"></div>
+    <div class="legend">
+      长剑默认占 <b>2 列 × 3 行 = 6 格</b>；拖放时显示绿色（可放）/ 红色（越界或重叠）落点预览。
+      物品可在待分配区 ↔ 背包 ↔ 仓库 ↔ 装备栏之间任意拖动。
+      后续物品属性由 Excel 配置表提供，本页目前使用代码里的 <code>ITEM_DEFS</code>。
+    </div>
+  </section>
+
+<script src="./inventory.js"></script>
+<script>
+(function () {
+  'use strict';
+  const M = window.MetaInventory;
+  const CELL = { bag: 46, stash: 34 };
+  let state = M.createInventoryState(3);
+  let drag = null; // { uid, grabCol, grabRow }
+
+  const $ = (id) => document.getElementById(id);
+  function say(msg, bad) {
+    const el = $('status');
+    el.textContent = msg;
+    el.className = 'status' + (bad ? ' bad' : '');
+  }
+
+  function gridOf(container) { return container === 'bag' ? state.bag : state.stash; }
+
+  /** Start a drag, recording which cell of the item the cursor grabbed. */
+  function startDrag(e, node, item, size) {
+    const rect = node.getBoundingClientRect();
+    const grabCol = size ? Math.floor((e.clientX - rect.left) / size) : 0;
+    const grabRow = size ? Math.floor((e.clientY - rect.top) / size) : 0;
+    drag = { uid: item.uid, grabCol, grabRow };
+    e.dataTransfer.setData('text/plain', item.uid);
+    e.dataTransfer.effectAllowed = 'move';
+    node.classList.add('dragging');
+  }
+
+  function makeItemNode(item, w, h, size) {
+    const def = M.itemDef(item.defId);
+    const node = document.createElement('div');
+    node.className = 'item';
+    node.draggable = true;
+    node.dataset.uid = item.uid;
+    node.style.width = w + 'px';
+    node.style.height = h + 'px';
+    node.innerHTML = '<span class="glyph">' + def.glyph + '</span>'
+      + '<span class="name">' + def.name + '</span>'
+      + '<span class="size">' + def.cols + '×' + def.rows + '</span>';
+    node.addEventListener('dragstart', (e) => startDrag(e, node, item, size));
+    node.addEventListener('dragend', () => {
+      node.classList.remove('dragging');
+      drag = null;
+      clearPreview();
+      render();
+    });
+    return node;
+  }
+
+  function buildGrid(container) {
+    const spec = M.CONTAINERS[container];
+    const size = CELL[container];
+    const el = $('grid-' + container);
+    const wrap = $('wrap-' + container);
+    el.style.gridTemplateColumns = 'repeat(' + spec.cols + ', ' + size + 'px)';
+    el.style.gridTemplateRows = 'repeat(' + spec.rows + ', ' + size + 'px)';
+    el.innerHTML = '';
+    for (let i = 0; i < spec.cols * spec.rows; i += 1) {
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      el.appendChild(cell);
+    }
+    wrap.querySelectorAll('.grid-item').forEach((n) => n.remove());
+    for (const item of gridOf(container)) {
+      const def = M.itemDef(item.defId);
+      const node = makeItemNode(item, def.cols * size - 2, def.rows * size - 2, size);
+      node.classList.add('grid-item');
+      node.style.left = (item.col * size + 1) + 'px';
+      node.style.top = (item.row * size + 1) + 'px';
+      wrap.appendChild(node);
+    }
+  }
+
+  function buildEquip() {
+    const el = $('equip');
+    el.innerHTML = '';
+    M.EQUIP_SLOTS.forEach((slot, index) => {
+      const item = state.equipped[index];
+      const isWeapon = slot.accepts === 'weapon';
+      const active = isWeapon && state.activeWeaponSlot === (index === 0 ? 0 : 1);
+      const node = document.createElement('div');
+      node.className = 'equip-slot' + (isWeapon ? ' weapon' : '')
+        + (active ? ' active' : '') + (item ? ' filled' : '');
+      node.dataset.slot = String(index);
+
+      if (item) {
+        const def = M.itemDef(item.defId);
+        node.innerHTML = '<span class="glyph" style="font-size:20px">' + def.glyph + '</span>'
+          + '<span class="slot-label">' + def.name + '</span>';
+        node.draggable = true;
+        node.addEventListener('dragstart', (e) => startDrag(e, node, item, 0));
+        node.addEventListener('dragend', () => {
+          node.classList.remove('dragging');
+          drag = null;
+          clearPreview();
+          render();
+        });
+      } else {
+        node.innerHTML = '<span class="slot-label">' + slot.label + '</span>';
+      }
+      if (slot.hotkey) {
+        const key = document.createElement('span');
+        key.className = 'slot-key';
+        key.textContent = slot.hotkey;
+        node.appendChild(key);
+      }
+      node.addEventListener('click', () => {
+        if (isWeapon) {
+          M.setActiveWeapon(state, index === 0 ? 0 : 1);
+          say('已切换当前武器：' + slot.label);
+          render();
+        }
+      });
+      node.addEventListener('dragover', (e) => { e.preventDefault(); node.classList.add('dragover'); });
+      node.addEventListener('dragleave', () => node.classList.remove('dragover'));
+      node.addEventListener('drop', (e) => {
+        e.preventDefault();
+        node.classList.remove('dragover');
+        const uid = e.dataTransfer.getData('text/plain') || (drag && drag.uid);
+        if (!uid) return;
+        const ok = M.equipItem(state, uid, index);
+        say(ok ? '已穿戴到 ' + slot.label : '不能穿戴到 ' + slot.label + '（物品类型不匹配或槽位相同）', !ok);
+        render();
+      });
+      el.appendChild(node);
+    });
+  }
+
+  function buildTray() {
+    const el = $('tray');
+    el.innerHTML = '';
+    state.loose.forEach((item) => {
+      const def = M.itemDef(item.defId);
+      const node = document.createElement('div');
+      node.className = 'loose-item';
+      node.draggable = true;
+      node.dataset.uid = item.uid;
+      node.innerHTML = '<span class="glyph">' + def.glyph + '</span>'
+        + '<span class="name">' + def.name + ' ' + def.cols + '×' + def.rows + '</span>';
+      node.addEventListener('dragstart', (e) => startDrag(e, node, item, 0));
+      node.addEventListener('dragend', () => {
+        node.classList.remove('dragging');
+        drag = null;
+        clearPreview();
+        render();
+      });
+      el.appendChild(node);
+    });
+    if (state.loose.length === 0) {
+      el.innerHTML = '<span class="hint">空 · 点击上方「补充一把长剑」，或从格子 / 装备栏拖回这里</span>';
+    }
+  }
+
+  function clearPreview() {
+    for (const c of ['bag', 'stash']) {
+      $('preview-' + c).style.display = 'none';
+      $('grid-' + c).classList.remove('dragover');
+    }
+  }
+
+  function bindGrid(container) {
+    const el = $('grid-' + container);
+    const wrap = $('wrap-' + container);
+    const preview = $('preview-' + container);
+    const size = CELL[container];
+    wrap.addEventListener('dragover', (e) => {
+      if (!drag) return;
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const col = Math.floor((e.clientX - rect.left) / size) - drag.grabCol;
+      const row = Math.floor((e.clientY - rect.top) / size) - drag.grabRow;
+      const found = M.findItem(state, drag.uid);
+      if (!found) return;
+      const def = M.itemDef(found.item.defId);
+      const ok = M.canPlace(state, container, found.item.defId, col, row, drag.uid);
+      el.classList.add('dragover');
+      preview.className = 'preview' + (ok ? '' : ' bad');
+      preview.style.display = 'block';
+      preview.style.left = (col * size) + 'px';
+      preview.style.top = (row * size) + 'px';
+      preview.style.width = (def.cols * size) + 'px';
+      preview.style.height = (def.rows * size) + 'px';
+      wrap.dataset.col = String(col);
+      wrap.dataset.row = String(row);
+    });
+    wrap.addEventListener('dragleave', (e) => {
+      if (!wrap.contains(e.relatedTarget)) {
+        preview.style.display = 'none';
+        el.classList.remove('dragover');
+      }
+    });
+    wrap.addEventListener('drop', (e) => {
+      e.preventDefault();
+      clearPreview();
+      const uid = e.dataTransfer.getData('text/plain') || (drag && drag.uid);
+      const col = Number(wrap.dataset.col);
+      const row = Number(wrap.dataset.row);
+      drag = null;
+      if (!uid || !Number.isInteger(col) || !Number.isInteger(row)) return;
+      const ok = M.placeItem(state, uid, container, col, row);
+      say(ok ? '已放入' + M.CONTAINERS[container].label + ' (' + col + ', ' + row + ')'
+        : '放不下：超出边界或与其他物品重叠', !ok);
+      render();
+    });
+  }
+
+  function bindTray() {
+    const el = $('tray');
+    el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('dragover'); });
+    el.addEventListener('dragleave', () => el.classList.remove('dragover'));
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      el.classList.remove('dragover');
+      const uid = e.dataTransfer.getData('text/plain') || (drag && drag.uid);
+      drag = null;
+      if (!uid) return;
+      const ok = M.unplaceItem(state, uid);
+      say(ok ? '已放回待分配区' : '该物品已在待分配区', !ok);
+      render();
+    });
+  }
+
+  function render() {
+    buildGrid('bag');
+    buildGrid('stash');
+    buildEquip();
+    buildTray();
+    const active = M.activeWeapon(state);
+    $('status').title = active ? '当前武器：' + M.itemDef(active.defId).name : '当前空手';
+  }
+
+  $('add-sword').addEventListener('click', () => {
+    state.loose.push({ uid: 'sword-' + Date.now(), defId: 'longsword' });
+    say('已补充一把长剑，可以拖到背包 / 仓库 / 装备栏');
+    render();
+  });
+  $('reset').addEventListener('click', () => {
+    state = M.createInventoryState(3);
+    say('已重置演示数据');
+    render();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '1' || e.key === '2') {
+      M.setActiveWeapon(state, e.key === '1' ? 0 : 1);
+      say('已切换当前武器槽：' + e.key);
+      render();
+    }
+  });
+
+  bindGrid('bag');
+  bindGrid('stash');
+  bindTray();
+  render();
+  say('拖动长剑开始：绿色预览＝可放，红色＝放不下');
+})();
+</script>
+</body>
+</html>

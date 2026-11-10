@@ -96,9 +96,17 @@ tests=$(node -e '
   process.stdout.write(m ? m[1] : "");
 ' "$OUT/test.stderr.log" 2>/dev/null || true)
 # A FLOOR, not an exact count: modules keep adding their own tests. Deleting
-# assertions to make the suite green still falls below the 13-test baseline.
-[ "${tests:-0}" -ge 13 ] || die "单测数量应 ≥ 13（基线，防止删断言），实际 ${tests:-未读到}"
-log "[ OK ] test :: $tests passed（下限 13）"
+# assertions to make the suite green still falls below the 50-test baseline
+# (2026-11-10: +14 grid/equipment, +7 dual weapon slots).
+[ "${tests:-0}" -ge 50 ] || die "单测数量应 ≥ 50（基线，防止删断言），实际 ${tests:-未读到}"
+log "[ OK ] test :: $tests passed（下限 50）"
+
+log "[RUN ] meta-ui :: generated script + standalone page acceptance"
+node scripts/build-meta-ui.mjs --check >> "$SUMMARY" 2>&1 \
+  || die "meta-ui/inventory.js 与 assets/meta/inventory.ts 不同步"
+node scripts/verify-meta-ui.cjs >> "$SUMMARY" 2>&1 \
+  || { tail -n 25 "$SUMMARY"; die "meta-ui 独立页面浏览器验收失败"; }
+log "[ OK ] meta-ui :: 页面验收通过"
 
 log "[RUN ] typecheck"
 if ! "$TSC" --noEmit > "$OUT/tsc.out" 2> "$OUT/tsc.err"; then
@@ -113,7 +121,7 @@ run_json build "$FX" project build --json
 run_json playthrough "$FX" project play \
   --script scripts/playthrough.mjs \
   --viewports "1600x900,1280x600" --json
-check_report playthrough artifacts/play/scripts/playthrough/play.json 32
+check_report playthrough artifacts/play/scripts/playthrough/play.json 35
 
 run_json resize "$FX" project play \
   --script scripts/playthrough-resize.mjs --json

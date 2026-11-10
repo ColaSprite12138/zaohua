@@ -14,7 +14,16 @@ export interface StepInput {
   readonly pointerHeld: boolean;
   readonly pointerUp: boolean;
   readonly dodge: boolean;
+  /** Digit1 / Digit2 select which of the two weapon slots is in use. */
+  readonly switchWeapon?: 0 | 1 | null;
   readonly restart: boolean;
+}
+
+export type WeaponId = 'longsword';
+
+/** The single weapon currently in use; null = bare hands. */
+export function activeWeapon(s: GameState): WeaponId | null {
+  return s.weaponSlots[s.activeWeaponSlot];
 }
 
 export const CLICK_HOLD_SECONDS = 0.35;
@@ -85,7 +94,9 @@ export interface GameState {
   press: { x: number; y: number; elapsed: number; hold: boolean } | null;
   skeletons: Skeleton[];
   drops: Drop[];
-  equipped: 'longsword' | null;
+  /** Two equippable weapon slots; only `activeWeaponSlot` is used in melee. */
+  weaponSlots: [WeaponId | null, WeaponId | null];
+  activeWeaponSlot: 0 | 1;
   gameOver: boolean;
   cleared: boolean;
   particles: Particle[];
@@ -112,7 +123,8 @@ export function createState(): GameState {
     press: null,
     skeletons: [],
     drops: [],
-    equipped: null,
+    weaponSlots: [null, null],
+    activeWeaponSlot: 0,
     gameOver: false,
     cleared: false,
     particles: [],
@@ -136,7 +148,8 @@ export function reset(s: GameState): void {
   s.hp = s.maxHp;
   s.score = 0;
   s.kills = 0;
-  s.equipped = null;
+  s.weaponSlots = [null, null];
+  s.activeWeaponSlot = 0;
   s.gameOver = false;
   s.cleared = false;
   s.drops.length = 0;

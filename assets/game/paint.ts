@@ -1,6 +1,7 @@
 /** Canvas 2D painter for the 2.5D scene. Drawn into a CanvasTexture (Engine pixels). */
 
 import {
+  activeWeapon,
   GROUND_TOP,
   VIEW_H,
   VIEW_W,
@@ -208,7 +209,7 @@ function drawSword(
 
 function drawPlayer(g: Painter, s: GameState): void {
   const p = s.player;
-  const armed = s.equipped === 'longsword';
+  const armed = activeWeapon(s) === 'longsword';
   const bob = Math.sin(s.t * 9) * (Math.hypot(p.vx, p.vy) > 20 ? 2.5 : 1);
 
   for (const mark of p.trail) {
@@ -513,26 +514,37 @@ function hud(g: Painter, s: GameState): void {
   text(g, `击杀 ${s.kills}  ·  剩余骷髅 ${s.skeletons.filter((sk) => sk.alive).length}`, VIEW_W - 40, 72, 13, '#a9c4d6', 'right', '600');
   text(g, s.cleared ? '试炼完成' : s.gameOver ? '挑战失败' : '进行中', VIEW_W - 40, 91, 11, s.cleared ? '#4ade80' : '#8fa9bb', 'right', '600');
 
-  // Bottom-centre: main weapon slot.
-  const slotX = VIEW_W / 2 - 132;
+  // Bottom-centre: two weapon slots. Only the active one drives melee.
+  const slotX = VIEW_W / 2 - 148;
   const slotY = VIEW_H - 92;
   g.fillStyle = 'rgba(8,16,24,0.78)';
-  roundRect(g, slotX, slotY, 264, 72, 14);
+  roundRect(g, slotX, slotY, 296, 72, 14);
   g.fill();
-  g.strokeStyle = s.equipped ? '#ffd166' : 'rgba(150,180,205,0.4)';
-  g.lineWidth = 2;
-  roundRect(g, slotX, slotY, 264, 72, 14);
+  g.strokeStyle = 'rgba(150,180,205,0.4)';
+  g.lineWidth = 1.5;
+  roundRect(g, slotX, slotY, 296, 72, 14);
   g.stroke();
-  g.fillStyle = s.equipped ? 'rgba(255,209,102,0.14)' : 'rgba(255,255,255,0.05)';
-  roundRect(g, slotX + 10, slotY + 10, 52, 52, 10);
-  g.fill();
-  if (s.equipped) drawSword(g, slotX + 36, slotY + 46, -0.35, 36, true);
-  else {
-    text(g, '—', slotX + 36, slotY + 36, 24, '#6f8798', 'center', '600');
+  for (let i = 0; i < 2; i += 1) {
+    const bx = slotX + 8 + i * 74;
+    const active = s.activeWeaponSlot === i;
+    const weapon = s.weaponSlots[i];
+    g.fillStyle = active
+      ? 'rgba(255,209,102,0.16)'
+      : weapon ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)';
+    roundRect(g, bx, slotY + 9, 68, 54, 9);
+    g.fill();
+    g.strokeStyle = active ? '#ffd166' : 'rgba(150,180,205,0.35)';
+    g.lineWidth = active ? 2.2 : 1;
+    roundRect(g, bx, slotY + 9, 68, 54, 9);
+    g.stroke();
+    if (weapon) drawSword(g, bx + 34, slotY + 46, -0.35, 32, true);
+    else text(g, '—', bx + 34, slotY + 42, 21, '#6f8798', 'center', '600');
+    text(g, String(i + 1), bx + 9, slotY + 24, 11, active ? '#ffd166' : '#6f8798', 'left', '700');
   }
-  text(g, '主武器槽', slotX + 76, slotY + 26, 12, '#8fa9bb', 'left', '600');
-  text(g, s.equipped ? '长剑' : '空', slotX + 76, slotY + 48, 19, s.equipped ? '#ffd166' : '#dbe9f5', 'left', '700');
-  text(g, s.equipped ? '范围 / 伤害 ↑' : '走近掉落物装备', VIEW_W / 2 + 118, slotY + 48, 11, '#8fa9bb', 'right', '600');
+  text(g, '武器槽', slotX + 160, slotY + 24, 12, '#8fa9bb', 'left', '600');
+  const used = activeWeapon(s);
+  text(g, used ? '长剑' : '空手', slotX + 160, slotY + 47, 19, used ? '#ffd166' : '#dbe9f5', 'left', '700');
+  text(g, '按 1 / 2 切换', VIEW_W / 2 + 140, slotY + 48, 11, '#8fa9bb', 'right', '600');
 
   // Bottom-right: controls.
   g.fillStyle = 'rgba(8,16,24,0.60)';

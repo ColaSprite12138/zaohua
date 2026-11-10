@@ -12,9 +12,9 @@ import { tickParticles, tickToast } from './effects.ts';
 import { applyDodge, classifyPointer, walk } from './movement.ts';
 import { NO_MODIFIERS, type CombatModifiers } from './modifiers.ts';
 import {
-  createState, reset, type GameState, type StepInput,
+  activeWeapon, createState, reset, type GameState, type StepInput,
 } from './state.ts';
-import { checkCleared, updateDrops } from './weapons.ts';
+import { checkCleared, switchWeaponSlot, updateDrops } from './weapons.ts';
 
 function tickTimers(s: GameState, dt: number): void {
   const p = s.player;
@@ -43,6 +43,10 @@ export function step(
   s.t += dt;
   tickTimers(s, dt);
 
+  // 1 / 2 only changes which slot is in use; it never moves items or attacks.
+  if (input.switchWeapon !== undefined && input.switchWeapon !== null) {
+    switchWeaponSlot(s, input.switchWeapon);
+  }
   classifyPointer(s, dt, input);
   applyDodge(s, input.dodge);
   walk(s, dt);
@@ -73,7 +77,11 @@ export function projection(s: GameState) {
     attackOrder: s.attackOrder,
     drops: s.drops.map((drop) => drop.kind),
     dropAt: first ? { x: first.x / VIEW_W, y: first.y / VIEW_H } : null,
-    equippedWeapon: s.equipped,
+    // Legacy field name kept for the existing 32-step playthrough: it now
+    // reports the ACTIVE slot, i.e. the one weapon actually used in melee.
+    equippedWeapon: activeWeapon(s),
+    weaponSlots: [...s.weaponSlots],
+    activeWeaponSlot: s.activeWeaponSlot,
     player: { x: s.player.x / VIEW_W, y: s.player.y / VIEW_H },
     moveMode: s.moveMode,
     followingPointer: s.moveMode === 'follow',
@@ -86,7 +94,7 @@ export function projection(s: GameState) {
   };
 }
 
-export { createState, reset };
+export { activeWeapon, createState, reset };
 export type {
   Drop, GameState, MoveMode, Particle, Player, Skeleton, StepInput,
 } from './state.ts';

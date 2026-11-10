@@ -117,6 +117,9 @@ export const game: Plugin = {
               pointerDown: mouse?.justPressed(0) ?? false,
               pointerHeld: mouse?.button(0) ?? false,
               pointerUp: mouse?.justReleased(0) ?? false,
+              switchWeapon: snapshot?.keyboard?.justPressedCode('Digit1') ?? false
+                ? 0
+                : (snapshot?.keyboard?.justPressedCode('Digit2') ?? false) ? 1 : null,
               dodge: snapshot?.keyboard?.justPressedCode('Space') ?? false,
               restart: snapshot?.keyboard?.justPressedCode('KeyR') ?? false,
             });

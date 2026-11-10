@@ -15,6 +15,7 @@ export {
   reset,
   step,
   projection,
+  activeWeapon,
   NO_MODIFIERS,
   CLICK_HOLD_SECONDS,
   CLICK_DRAG_PIXELS,

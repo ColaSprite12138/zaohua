@@ -82,7 +82,8 @@ else
         add_module combat
         case "$f" in *.ts) combat_play=1 ;; esac ;;
       assets/battle/*)   add_module battle ;;
-      assets/meta/*)     add_module meta ;;
+      assets/meta/*|meta-ui/*|scripts/verify-meta-ui.cjs|scripts/build-meta-ui.mjs)
+        add_module meta ;;
       assets/talent/*)   add_module talent ;;
       assets/resource/*) add_module resource ;;
       assets/shared/*|assets/game/*|assets/__tests__/*|forge.json|package.json|pnpm-lock.yaml|tsconfig.json|vitest.config.ts|open-2.5d-game.bat)
@@ -103,6 +104,20 @@ fi
 
 log "=== verify (增量) 开始 $(date '+%Y-%m-%d %H:%M:%S') ==="
 log "[SCOPE] 模块：${modules:-（无）}｜combat 浏览器验收：$( [ "$combat_play" -eq 1 ] && echo 是 || echo 否 )"
+
+# The standalone meta page is transpiled from assets/meta/inventory.ts. Check
+# the generated script is in sync, then run its own headless-browser drag/drop
+# acceptance. Both are the meta module's independent verification.
+case " $modules " in
+  *" meta "*)
+    log "[RUN ] meta :: generated browser script in sync"
+    node scripts/build-meta-ui.mjs --check >> "$SUMMARY" 2>&1 \
+      || die "meta-ui/inventory.js 与 inventory.ts 不同步"
+    log "[RUN ] meta :: standalone page browser acceptance"
+    node scripts/verify-meta-ui.cjs >> "$SUMMARY" 2>&1 \
+      || { tail -n 20 "$SUMMARY"; die "meta-ui 独立页面浏览器验收失败"; }
+    ;;
+esac
 
 log "[RUN ] typecheck（全局，秒级）"
 "$TSC" --noEmit > "$OUT/incremental-tsc.out" 2> "$OUT/incremental-tsc.err" \
@@ -148,7 +163,7 @@ if [ "$combat_play" -eq 1 ]; then
   "$FX" project play --script scripts/playthrough.mjs \
     --viewports "1600x900,1280x600" --json > "$OUT/inc-playthrough.json" 2> "$OUT/inc-playthrough.err" \
     || { tail -n 20 "$OUT/inc-playthrough.json" "$OUT/inc-playthrough.err"; die "playthrough 非零退出"; }
-  check_play playthrough artifacts/play/scripts/playthrough/play.json 32
+  check_play playthrough artifacts/play/scripts/playthrough/play.json 35
 
   log "[RUN ] combat :: playthrough-resize（1700x1000）"
   "$FX" project play --script scripts/playthrough-resize.mjs --json \

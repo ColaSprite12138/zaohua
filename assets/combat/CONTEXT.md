@@ -21,9 +21,17 @@
 | 单击地面 | 只设定落点、走过去停下；`attacks` 不增加 |
 | 单击敌人 | 锁定该敌人 + 压入一条攻击指令；距离不够先接近，**进距离才挥砍一次，只扣这一只的血** |
 | 长按左键 | 落点实时跟随光标，人物持续前进；**不攻击**；松开按最后落点走完停下 |
+| **1 / 2** | 切换当前武器槽；只有激活槽的武器参与攻击，空槽＝徒手 |
 | 空格 / R | 闪避（短暂无敌）/ 重开 |
 
 短按判定 `<0.35s` 且位移 `<12px`；点击分流优先级 **掉落物 → 存活敌人身体框 → 地面**。
+
+**双武器槽**：`GameState.weaponSlots: [WeaponId|null, WeaponId|null]` + `activeWeaponSlot: 0|1`，
+`activeWeapon(s)` 是唯一取值入口。走近掉落的长剑自动装入第一个空槽（战斗内穿戴），
+两槽满折算 80 分。`1/2` 在 `game.pack.ts` 读 `justPressedCode('Digit1'|'Digit2')`，
+经 `StepInput.switchWeapon` 传入 `step()`。
+`projection.equippedWeapon` **保留旧字段名**，改为返回 `activeWeapon(s)`（兼容既有断言）；
+新增 `weaponSlots` / `activeWeaponSlot`。`reset()` 清空两槽并回到槽 1。
 
 ## 不变量（任一破坏 = 验收必须红）
 
@@ -32,6 +40,8 @@
 3. 长按绝不产生 `attackOrder`；闪避期间不改写落点、不结算攻击。
 4. 掉落物点击优先于敌人，否则压在骷髅脚下的长剑永远捡不到。
 5. `assets/game/simulation.ts` 是**兼容门面**，只做 re-export，禁止在此写玩法逻辑。
+6. 攻击数值/范围只读 `activeWeapon(s)`，禁止直接读 `weaponSlots[0]` 或任何"是否装备过任何武器"的判断 —— 否则切到空槽仍会打出长剑伤害。
+7. `equippedWeapon` 投影字段名不得改（32 步 playthrough 依赖），语义＝当前激活槽武器。
 
 ## 目录与依赖方向（单向，禁止反向 import）
 
@@ -51,7 +61,8 @@ combat/simulation.ts       ← 编排 step/projection，唯一对外门面
 
 ## 对外接口
 
-`createState()` / `reset(s)` / `step(s, dt, input, modifiers?)` / `projection(s)` / `NO_MODIFIERS`。
+`createState()` / `reset(s)` / `step(s, dt, input, modifiers?)` / `projection(s)` / `NO_MODIFIERS` /
+`activeWeapon(s)` / `switchWeaponSlot(s, slot)`（后者在 `weapons.ts`）。
 引擎层从 `assets/game/simulation.ts` 门面 import；新代码应直接 import 本模块。
 
 ## 独立验收

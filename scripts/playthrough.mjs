@@ -275,6 +275,29 @@ export default async function playthrough(play) {
     await play.screenshot('longsword-equipped');
   });
 
+  await play.step('Digit1 / Digit2 switch which weapon slot is in use', async () => {
+    const before = await play.state('game.state');
+    assert.deepEqual(before.weaponSlots, ['longsword', null], 'first sword occupies slot 1 only');
+    assert.equal(before.activeWeaponSlot, 0, 'slot 1 is active by default');
+    assert.equal(before.equippedWeapon, 'longsword');
+
+    await play.keyboard.press('Digit2');
+    await play.advance(0.15);
+    const slot2 = await play.state('game.state');
+    assert.equal(slot2.activeWeaponSlot, 1, 'Digit2 selects slot 2');
+    assert.deepEqual(slot2.weaponSlots, ['longsword', null], 'switching never moves items');
+    assert.equal(slot2.equippedWeapon, null, 'empty slot 2 means bare hands');
+    await play.screenshot('weapon-slot-2-bare-hands');
+
+    await play.keyboard.press('Digit1');
+    await play.advance(0.15);
+    const slot1 = await play.state('game.state');
+    assert.equal(slot1.activeWeaponSlot, 0, 'Digit1 selects slot 1 again');
+    assert.equal(slot1.equippedWeapon, 'longsword', 'the sword is usable again');
+    assert.equal(slot1.attacks, before.attacks, 'switching never triggers an attack');
+    await play.screenshot('weapon-slot-1-armed');
+  });
+
   await play.step('space dodges', async () => {
     await play.keyboard.press('Space');
     const s = await play.state('game.state');
