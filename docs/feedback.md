@@ -180,3 +180,21 @@
 - Evidence: `assets/meta/__tests__/inventory.test.ts` 14 条、`assets/combat/__tests__/weapons.test.ts` 7 条；`node scripts/verify-meta-ui.cjs` 13/13（真实 DragEvent：放入、重叠拒绝、越界拒绝、背包↔仓库、穿戴、1/2、类型不匹配拒绝）；`scripts/playthrough.mjs` 35 步 / `playthrough-resize.mjs` 4 步，`passed:true`、0 errors；`bash scripts/verify.sh combat meta` 全绿。
 - Status: implemented
 - Note: **两个入口各自持有独立状态，尚未做存档互通**（本轮范围外，等 Excel 表到位一并设计）；`checkCleared` 故意用 `weaponSlots.some(...)` 而非 `activeWeapon`，否则切到空槽会让通关提示永远不触发。`equipItem` 换下已占用槽的物品时必须回来源格位或 `loose`，否则静默丢物品。
+
+### 2026-11-11 — 接 Excel 数据表、权重掉落与 4174 单页连续流程
+
+- Scope: `resource/` / `combat/` / `meta/` / `game/` / `meta-ui/` / `scripts/`
+- Request: 用户在 `xls/` 新增 `item.xlsx`、`loot.xlsx`，要求「场景里多生成一些怪物，测一下掉落产出」，并问「把局内局外所有逻辑合并成 4174 单页连续流程好做吗」。选项确认：表按既有约定搬移并规范、「加怪掉落 + 单页合并一起做」、搜打撤规则＝**标准（失败丢失）**。
+- Design: 三张人工表落在 `assets/resource/tables/`（`item` / `monster_loot` / `loot_pool`，英文 snake_case 表头、首列唯一 `id`、单 Sheet）；`scripts/export_tables.py`（纯标准库 OOXML）生成 `assets/resource/generated/*.ts`，`--check` 防漂移、文件头记源 SHA-256。`combat/loot.ts` 按「怪物→池→权重」掉落，Mulberry32 固定种子 `0x5eed1234` 保证可复现；`spawnSkeletons(count)` 默认仍是 2 只（保护 35 步 playthrough），多怪由 `deployRun({ monsterCount })` 注入。单页流程＝主窗口 `window.MetaShell` 持唯一 `InventoryState`，经 `BroadcastChannel('forgeax-arena-run')` 与 Engine Worker 传 `deploy` / `result`；`buildLoadout()` 借出两个武器槽，`settleRun()` 通关归还+战利品入库、阵亡永久丢失。`scripts/inject-shell.mjs` 在 **build 之后**把局外 UI 注入 `dist/index.html`（`dist/` 是生成物，每次 build 会被清空）。
+- Actual pitfalls (均已修):
+  1. 用户表放在 `xls/`、中文表头、`loot.xlsx` 双 Sheet，与 `assets/resource/CONTEXT.md` 约定冲突 → **先确认再搬移**，只规范结构、数值逐字段校验不改；原始 `xls/` 加进 `.gitignore` 不作权威源。
+  2. `scripts/verify-shell.cjs` 初版保留整份 `dist/index.html`（只删 module script），ForgeAX 启动遮罩在 `window` **捕获阶段**对 `click` 调 `stopImmediatePropagation()`（引擎未启动 `inputEnabled=false`），合成点击全被吞 → 自测页改成只含 shell 块的**最小骨架页**。诊断时 `dispatchEvent(new Event('__probe'))` 能触发而任何 `type='click'` 都不能，是定位关键。
+  3. BroadcastChannel 投递是**排队 task 不是 timer**，Chrome `--virtual-time-budget` 下固定 `setTimeout(60)` 会先于消息触发，结算快照拍到「出征中」 → 改为**条件轮询等状态迁移**。
+  4. 模拟 Worker 的 `deployed` ack 可能晚于 `result` 到达，把结算日志覆盖回「出征中」 → 发 result 前先等 ack 被处理。
+  5. `loot-report.mjs` 初版**镜像了一份 roll 算法**（影子逻辑）→ 重写为直接 import 真实 `combat/loot.ts::rollLoot`，用 `node --experimental-strip-types` 运行；`--samples` 太小（1000）会因方差触发 1% 阈值，验收固定 31000/池。
+  6. `RunResult` 用 `interface` + `readonly` 数组不满足 `GameProjectionValue` 的索引签名 / 可变数组约束 → 改 `type` + 可变字段。`scopeCss()` 必须把独立页的全局 CSS 限定到 `#fx-shell`，否则污染引擎页面。
+  7. 额外注册 `run.result` read projection 后 `game.state` 不再是唯一 projection，`project play` 的默认读取解析失败，35 步 playthrough 首步即报 `state-unavailable: Several read projections are registered (game.state, run.result); pass the id.`（**即使脚本已显式写 `play.state('game.state')`**，隐式读取路径仍会炸）→ 移除没有任何验收使用的 `run.result` / `run.deploy` seam，`game.state` 保持唯一；结算与部署本就走 BroadcastChannel。这是全量验收抓到的真实回归，增量验收覆盖不到。
+  8. 全量验收 ALL GREEN 后 curl 4174 却返回 **44892 B、无注入 marker**：`project package`（以及 `play`）和 `build` 一样会**重建 `dist/`**，把壳层冲掉。证据：注入后 `dist/index.html` 85008 B；package 后退回 44892 B，`FORGEAX_META_SHELL_BEGIN` 计数 0，验收 Web ZIP 内 `index.html` 同样 44892 B / 0 marker → 把注入 + `--check` + `verify-shell.cjs` 移到 `verify-all.sh` **最后一步**（package 之后），保证 4174 所服务的 `dist/` 最终含壳层。
+- Evidence: 全量单测 **72 passed**；`node scripts/verify-shell.cjs` **16/16**（出征借出→通关归还→二次出征→阵亡丢失→返回局外）；`node scripts/verify-meta-ui.cjs` **13/13**；`python scripts/export_tables.py --check` 与 `build-meta-ui.mjs --check` 通过；掉落跑批 31000 次/池「偏差 >1% 或漏项 = 0」；`playthrough` 35 步 / `resize` 4 步。
+- Status: implemented
+- Note: 明确**未做**：局外天赋接入同一份存档、旧容量式 `Inventory` 骨架迁移、`release/forgeax-game-web.zip` 重打（用户本轮未选，先不做）。**已知限制**：`project package` 产出的 Web ZIP 在壳层注入之前生成，因此不含单页流程；正式分发包需改成「先注入再打包」或单独处理，等用户确认再做。`verify-all.sh` 已把注入放在最后一步，保证 4174 预览的 `dist/` 可用。

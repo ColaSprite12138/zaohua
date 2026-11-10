@@ -37,3 +37,14 @@
 - 敌人会追到落点旁，四象限地面点击可能被判成点敌人 → 移动类验收步骤前按 R 重开隔离。
 - Worker 里没有 `document` / `gameHost.canvas`，输入坐标必须用每帧 `host.drawingBufferSize()`
   换算；用固定 1280×720 分母会让大窗口下人物往反方向跑。`game/` 层负责这件事，combat 只吃逻辑坐标。
+
+## 2026-11-11 · 权重掉落与多怪部署
+
+- **掉落数值只从 `resource/generated/*.ts` 读，禁止在 combat 里硬编码**：怪物 → `monster_loot.loot_pool_id` → `loot_pool` 权重 → `item` 属性。`rollLoot(monsterId, rng)` 是唯一抽取入口，`loot-report.mjs` 必须直接 import 它，不要另写一份镜像算法（影子逻辑会让报告全绿但战斗实际错）。
+- **固定种子可复现**：`makeRng(seed)` 用 Mulberry32，`createState({ seed })` / `deployRun({ seed })` / `reset()` 都从 `runSeed` 重建 rng；R 重开后 loot 序列必须一致，这是单测之一。
+- **默认仍 2 只怪**：`spawnSkeletons(count)` 前两只保留原坐标，额外怪按网格生成并交替 `100001` / `200001`；多怪只通过 `deployRun()` 或 `createState({ monsterCount })` 注入。否则 35 步 playthrough 的 `skeletonsAlive === 2` 断言会红。
+- `Drop.kind` 保留 `'longsword'` 作为**视觉/兼容类别**，真实物品身份走 `drop.itemId`；`WeaponId` 也保持 `'longsword'` 表示「armed vs bare」，不要改成表里的 12 个 id，否则 11 条 movement + 7 条 weapons 单测全要重写。
+- **槽满也要计入战利品**：两槽已满时拾取折算 80 分，但 `carriedItems.push(drop.itemId)` 必须先执行，否则搜打撤结算会漏掉这件战利品。
+- `GameProjectionValue` 不接受 `interface`（缺索引签名）也不接受 `readonly T[]`（要求可变数组）；`RunResult` 用 `type` + 可变字段。`projection()` 加字段只能**追加**，旧字段 `equippedWeapon` 不能改名。
+- 跑批报告样本量要够：`--samples 1000` 时尾部稀有项偏差可到 1.3%，会因方差本身触发 1% 阈值；验收固定 31000/池（总权重 31，每格期望 ≥1000 次）。
+- **`game.state` 必须是唯一 read projection**：曾为「Play 验收驱动部署」额外注册 `run.result` / `run.deploy`，结果 `project play` 以「唯一 projection」解析默认读取，多一个就让 35 步 playthrough 首步报 `state-unavailable`（脚本里明明都写了 `play.state('game.state')`）。部署与结算走 BroadcastChannel 即可，不要为了「将来可能有用」加 projection seam。这只有全量验收能抓到。

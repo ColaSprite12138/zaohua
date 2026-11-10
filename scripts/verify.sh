@@ -45,6 +45,9 @@ add_module() {
 
 combat_play=0
 force_full=0
+shell_check=0
+tables_check=0
+loot_report=0
 
 if [ "$#" -gt 0 ]; then
   for m in "$@"; do
@@ -52,7 +55,9 @@ if [ "$#" -gt 0 ]; then
       *" $m "*) add_module "$m" ;;
       *) die "未知模块：$m（可用：$ALL_MODULES）" ;;
     esac
-    [ "$m" = "combat" ] && combat_play=1
+    [ "$m" = "combat" ] && { combat_play=1; loot_report=1; }
+    [ "$m" = "meta" ] && shell_check=1
+    [ "$m" = "resource" ] && tables_check=1
   done
   log "[MODE] 显式指定模块：$modules"
 else
@@ -82,10 +87,16 @@ else
         add_module combat
         case "$f" in *.ts) combat_play=1 ;; esac ;;
       assets/battle/*)   add_module battle ;;
-      assets/meta/*|meta-ui/*|scripts/verify-meta-ui.cjs|scripts/build-meta-ui.mjs)
-        add_module meta ;;
+      assets/meta/*|meta-ui/*|scripts/verify-meta-ui.cjs|scripts/build-meta-ui.mjs|scripts/inject-shell.mjs|scripts/verify-shell.cjs)
+        add_module meta
+        shell_check=1 ;;
       assets/talent/*)   add_module talent ;;
-      assets/resource/*) add_module resource ;;
+      assets/resource/*|scripts/export_tables.py)
+        add_module resource
+        tables_check=1 ;;
+      scripts/loot-report.mjs)
+        add_module combat
+        loot_report=1 ;;
       assets/shared/*|assets/game/*|assets/__tests__/*|forge.json|package.json|pnpm-lock.yaml|tsconfig.json|vitest.config.ts|open-2.5d-game.bat)
         force_full=1 ;;
       scripts/playthrough*)
@@ -116,8 +127,35 @@ case " $modules " in
     log "[RUN ] meta :: standalone page browser acceptance"
     node scripts/verify-meta-ui.cjs >> "$SUMMARY" 2>&1 \
       || { tail -n 20 "$SUMMARY"; die "meta-ui 独立页面浏览器验收失败"; }
+    if [ "$shell_check" -eq 1 ]; then
+      log "[RUN ] meta :: 4174 single-page shell (inject + browser acceptance)"
+      if [ -f dist/index.html ]; then
+        node scripts/inject-shell.mjs >> "$SUMMARY" 2>&1 || die "注入单页壳层失败"
+        node scripts/inject-shell.mjs --check >> "$SUMMARY" 2>&1 || die "单页壳层注入块过期"
+        node scripts/verify-shell.cjs >> "$SUMMARY" 2>&1 \
+          || { tail -n 25 "$SUMMARY"; die "4174 单页壳层浏览器验收失败"; }
+      else
+        log "[SKIP] dist/index.html 不存在（尚未 build），单页壳层验收由 verify-all.sh 覆盖"
+      fi
+    fi
     ;;
 esac
+
+# Authored .xlsx tables are the human-editable source of truth; generated/*.ts
+# must be byte-identical to a fresh export.
+if [ "$tables_check" -eq 1 ]; then
+  log "[RUN ] resource :: xlsx -> generated/ 同步检查"
+  python scripts/export_tables.py --check >> "$SUMMARY" 2>&1 \
+    || die "generated/*.ts 与 tables/*.xlsx 不同步，运行 python scripts/export_tables.py"
+fi
+
+# Loot is statistical, so keep the sample large: small samples fail the 1%
+# tolerance by variance alone.
+if [ "$loot_report" -eq 1 ]; then
+  log "[RUN ] combat :: 掉落权重跑批（真实 rollLoot，31000 次/池）"
+  node --experimental-strip-types scripts/loot-report.mjs --samples 31000 >> "$SUMMARY" 2>&1 \
+    || die "掉落跑批偏差超 1% 或漏项"
+fi
 
 log "[RUN ] typecheck（全局，秒级）"
 "$TSC" --noEmit > "$OUT/incremental-tsc.out" 2> "$OUT/incremental-tsc.err" \

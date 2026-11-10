@@ -158,7 +158,15 @@
   'use strict';
   const M = window.MetaInventory;
   const CELL = { bag: 46, stash: 34 };
-  let state = M.createInventoryState(3);
+  // Optional host hook: the 4174 single-page shell injects this page and needs
+  // to SHARE the very same InventoryState object (memory, not a copy). When
+  // opened standalone via file:// the hook is absent and behaviour is unchanged.
+  const host = window.MetaShell ?? (window.MetaShell = {});
+  if (typeof M.registerItemDefs === 'function' && host.authoredItems) {
+    M.registerItemDefs(host.authoredItems);
+  }
+  let state = host.state ?? M.createInventoryState(3);
+  host.state = state;
   let drag = null; // { uid, grabCol, grabRow }
 
   const $ = (id) => document.getElementById(id);
@@ -382,7 +390,16 @@
     buildTray();
     const active = M.activeWeapon(state);
     $('status').title = active ? '当前武器：' + M.itemDef(active.defId).name : '当前空手';
+    if (host.onRender) host.onRender();
   }
+
+  // The shell settles a run by REPLACING the state object; expose a setter so
+  // every subsequent render / drag uses the same authoritative instance.
+  host.setState = (next) => { state = next; host.state = next; drag = null; render(); };
+  host.render = () => render();
+  host.say = (msg, bad) => say(msg, bad);
+  host.getState = () => state;
+  host.M = M;
 
   $('add-sword').addEventListener('click', () => {
     state.loose.push({ uid: 'sword-' + Date.now(), defId: 'longsword' });
@@ -390,9 +407,8 @@
     render();
   });
   $('reset').addEventListener('click', () => {
-    state = M.createInventoryState(3);
+    host.setState(M.createInventoryState(3));
     say('已重置演示数据');
-    render();
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === '1' || e.key === '2') {

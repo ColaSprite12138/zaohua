@@ -5,6 +5,7 @@
  */
 
 import { burst, say, setTarget } from './effects.ts';
+import { rollLoot } from './loot.ts';
 import type { CombatModifiers } from './modifiers.ts';
 import {
   activeWeapon, MELEE_RANGE_ARMED, MELEE_RANGE_BARE, type GameState,
@@ -65,9 +66,32 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
     sk.alive = false;
     s.kills += 1;
     s.score += 100;
-    s.drops.push({ x: sk.x, y: sk.y, kind: 'longsword', t: 0 });
-    burst(s, sk.x, sk.y - 24, '#e8e4d8', 22, 210);
-    say(s, '骷髅被击杀 · 掉落「长剑」');
+    // Weighted roll from the authored loot table. `kind` stays 'longsword'
+    // (visual category) so the existing drop art and playthrough assertions
+    // remain valid; the authored identity rides in itemId/name/quality.
+    const loot = rollLoot(sk.monsterId, s.rng);
+    if (loot !== null) {
+      s.lootLog.push({
+        monsterId: sk.monsterId,
+        itemId: loot.itemId,
+        name: loot.name,
+        quality: loot.quality,
+        damageMin: loot.damageMin,
+        damageMax: loot.damageMax,
+        poolId: loot.poolId,
+      });
+      s.drops.push({
+        x: sk.x, y: sk.y, kind: 'longsword', t: 0,
+        itemId: loot.itemId, name: loot.name, quality: loot.quality,
+        monsterId: sk.monsterId,
+      });
+      burst(s, sk.x, sk.y - 24, '#e8e4d8', 22, 210);
+      say(s, `骷髅被击杀 · 掉落「${loot.name}」(${loot.quality})`);
+    } else {
+      // Authored data is inconsistent (unknown monster / empty pool). Do not
+      // spawn an unlabelled drop; surface it as a toast instead.
+      say(s, `骷髅被击杀 · 掉落表未配置 (monsterId=${sk.monsterId})`);
+    }
   }
 }
 

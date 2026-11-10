@@ -15,6 +15,7 @@ export {
   reset,
   step,
   projection,
+  deployRun,
   activeWeapon,
   NO_MODIFIERS,
   CLICK_HOLD_SECONDS,
@@ -31,4 +32,5 @@ export type {
   Player,
   Skeleton,
   StepInput,
+  Deployment,
 } from '../combat/simulation.ts';

@@ -22,15 +22,19 @@ export function updateDrops(s: GameState, dt: number): void {
     drop.t += dt;
     if (Math.hypot(drop.x - p.x, drop.y - p.y) < 50) {
       s.drops.splice(i, 1);
+      // Authored loot is carried back to the meta inventory on settlement,
+      // regardless of which weapon slot it occupies during the run.
+      if (drop.itemId !== undefined) s.carriedItems.push(drop.itemId);
+      const label = drop.name ? `「${drop.name}」` : '长剑';
       const empty = s.weaponSlots.findIndex((w) => w === null);
       if (empty >= 0) {
         s.weaponSlots[empty] = 'longsword';
         s.score += 60;
-        say(s, `已装备武器槽 ${empty + 1}：长剑 · 按 1 / 2 切换`);
+        say(s, `已装备武器槽 ${empty + 1}：${label} · 按 1 / 2 切换`);
         burst(s, p.x, p.y - 30, '#ffd166', 20, 175);
       } else {
         s.score += 80;
-        say(s, '两个武器槽已满 · 长剑转化为 80 分');
+        say(s, `两个武器槽已满 · ${label} 转化为 80 分（仍计入战利品）`);
       }
     }
   }

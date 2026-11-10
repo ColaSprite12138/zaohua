@@ -7,6 +7,7 @@
 
 技能交互、怪物设计、武器设计、玩家技能设计、数值的**运行时部分**。
 天赋在战斗内的**效果执行**也归本模块（`modifiers.ts`）：`talent/` 只产出稳定的 `effectIds`，由 combat 解释。
+击杀掉落也归本模块：`loot.ts` 消费 `resource/generated/*.ts` 的「怪物→掉落池→权重」表，产出带 authored `itemId` 的 `Drop`。
 
 ## 不负责
 
@@ -33,6 +34,23 @@
 `projection.equippedWeapon` **保留旧字段名**，改为返回 `activeWeapon(s)`（兼容既有断言）；
 新增 `weaponSlots` / `activeWeaponSlot`。`reset()` 清空两槽并回到槽 1。
 
+**数据表驱动的掉落与多怪**（2026-11-11）：
+
+| 项 | 权威 |
+|:--|:--|
+| 怪物种类 | `Skeleton.monsterId`（`100001` 骷髅剑士 / `200001` 骷髅弓手），对应 `monster_loot.xlsx` 的掉落池 |
+| 掉落算法 | `loot.ts::rollLoot(monsterId, rng)` 按 `loot_pool.xlsx` 权重累计抽取；两池各 6 件、权重 `10/8/6/4/2/1` |
+| 随机源 | `makeRng(seed)` Mulberry32，`runSeed` 默认 `0x5eed1234`；`reset()` 重建，保证 R 重开 loot 序列一致 |
+| 战利品记录 | `GameState.lootLog`（掉落明细）、`carriedItems`（已拾取的 authored id）、`monsterCount` / `runSeed` |
+| 多怪部署 | `spawnSkeletons(count)` 默认 **2**（保护 35 步 playthrough），额外怪按网格生成；`deployRun(s, { monsterCount, seed, armedWeapons, activeWeaponSlot })` 从单页壳层注入 |
+
+`Drop.kind` 仍为 `'longsword'`，只是**视觉/兼容类别**；真实物品身份走 `drop.itemId` / `name` / `quality`。
+`WeaponId` 仍是 `'longsword'`（armed vs bare），不换成表里的 12 个 id。`projection()` 追加
+`monsterCount` / `runSeed` / `lootLog` / `carriedItems` / `dropItems`，**不得改旧字段名**。
+引擎层通过 `game.pack.ts` 的 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、在清场/阵亡时发 `result`。
+**`game.state` 必须保持唯一 read projection**：`project play` 以「唯一注册的 projection」解析默认读取，
+多注册一个（哪怕是 `run.result`）会让全部 35 步 playthrough 报 `state-unavailable`。
+
 ## 不变量（任一破坏 = 验收必须红）
 
 1. `projection()` 的字段名与归一化范围不得变 —— playthrough 断言直接读它。
@@ -42,6 +60,9 @@
 5. `assets/game/simulation.ts` 是**兼容门面**，只做 re-export，禁止在此写玩法逻辑。
 6. 攻击数值/范围只读 `activeWeapon(s)`，禁止直接读 `weaponSlots[0]` 或任何"是否装备过任何武器"的判断 —— 否则切到空槽仍会打出长剑伤害。
 7. `equippedWeapon` 投影字段名不得改（32 步 playthrough 依赖），语义＝当前激活槽武器。
+8. 掉落数值只读 `resource/generated/*.ts`；`loot.ts` 是唯一抽取入口，报告脚本不得镜像算法。
+9. `createState()` / `spawnSkeletons()` 默认怪数必须保持 **2**；多怪只能由 `deployRun()` 或显式 `RunConfig` 注入。
+10. 两武器槽已满时拾取折算 80 分，但**仍要写入 `carriedItems`**，否则搜打撤结算会漏战利品。
 
 ## 目录与依赖方向（单向，禁止反向 import）
 
@@ -54,21 +75,25 @@ combat/attack.ts           ← state + effects + modifiers(类型)
 combat/movement.ts         ← state + effects + attack
 combat/enemies.ts          ← state + effects
 combat/weapons.ts          ← state + effects
-combat/simulation.ts       ← 编排 step/projection，唯一对外门面
+combat/loot.ts             ← resource/generated/*.ts（只消费生成物，不读 xlsx）
+combat/simulation.ts       ← 编排 step/projection/deployRun，唯一对外门面
 ```
 
 `battle/` `meta/` `talent/` **不得 import combat 内部文件**；跨模块只通过 `shared/` 与 `combat/modifiers.ts` 的接口。
 
 ## 对外接口
 
-`createState()` / `reset(s)` / `step(s, dt, input, modifiers?)` / `projection(s)` / `NO_MODIFIERS` /
-`activeWeapon(s)` / `switchWeaponSlot(s, slot)`（后者在 `weapons.ts`）。
+`createState(config?: RunConfig)` / `reset(s)` / `step(s, dt, input, modifiers?)` / `projection(s)` /
+`NO_MODIFIERS` / `activeWeapon(s)` / `switchWeaponSlot(s, slot)`（`weapons.ts`） /
+`deployRun(s, config?: Deployment)` / `spawnSkeletons(count)` / `makeRng(seed)` / `rollLoot(monsterId, rng)` /
+`itemRow(id)` / `monsterRow(id)` / `poolEntries(poolId)` / `theoreticalDistribution(poolId)`。
 引擎层从 `assets/game/simulation.ts` 门面 import；新代码应直接 import 本模块。
 
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 32 条（含 loot 13）
+node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json
 ```

@@ -6,6 +6,7 @@
  */
 
 import { GROUND_TOP, VIEW_H, VIEW_W } from '../shared/constants.ts';
+import { makeRng } from './loot.ts';
 
 export interface StepInput {
   /** Pointer in logical canvas pixels (top-left origin). */
@@ -19,7 +20,17 @@ export interface StepInput {
   readonly restart: boolean;
 }
 
+/**
+ * Runtime "armed vs bare" category. Authored item identity (the 12 item ids in
+ * `item.xlsx`) travels in `Drop.itemId` / `GameState.carriedItems` instead, so
+ * the existing melee range / damage contract and all playthrough assertions
+ * keep working while loot can resolve to any authored item.
+ */
 export type WeaponId = 'longsword';
+
+/** Default arena population. Overridable per run via `createState`. */
+export const DEFAULT_MONSTER_COUNT = 2;
+export const DEFAULT_RUN_SEED = 0x5eed1234;
 
 /** The single weapon currently in use; null = bare hands. */
 export function activeWeapon(s: GameState): WeaponId | null {
@@ -54,13 +65,32 @@ export interface Skeleton {
   attackCd: number;
   hit: number;
   bob: number;
+  /** Authored monster id from `monster_loot.xlsx`; drives the loot pool. */
+  monsterId: string;
 }
 
 export interface Drop {
   x: number;
   y: number;
+  /** Visual / compatibility category: every weapon drop is drawn as a sword. */
   kind: 'longsword';
   t: number;
+  /** Authored item id, present when this drop came from a weighted loot roll. */
+  itemId?: string;
+  name?: string;
+  quality?: string;
+  monsterId?: string;
+}
+
+/** One weighted loot roll, recorded for the run report and settlement. */
+export interface LootRecord {
+  monsterId: string;
+  itemId: string;
+  name: string;
+  quality: string;
+  damageMin: number;
+  damageMax: number;
+  poolId: number;
 }
 
 export interface Player {
@@ -101,9 +131,24 @@ export interface GameState {
   cleared: boolean;
   particles: Particle[];
   toast: { text: string; life: number } | null;
+  /** Arena population for this run (overridable at deployment). */
+  monsterCount: number;
+  /** Deterministic seed: identical seed + identical kills = identical loot. */
+  runSeed: number;
+  /** Seeded PRNG, rebuilt on reset. Not projected (functions are not JSON). */
+  rng: () => number;
+  /** Every weighted roll this run, in order. Drives the loot report. */
+  lootLog: LootRecord[];
+  /** Authored item ids actually walked over and picked up (run settlement). */
+  carriedItems: string[];
 }
 
-export function createState(): GameState {
+export interface RunConfig {
+  readonly monsterCount?: number;
+  readonly seed?: number;
+}
+
+export function createState(config: RunConfig = {}): GameState {
   const state: GameState = {
     t: 0,
     attacks: 0,
@@ -129,17 +174,43 @@ export function createState(): GameState {
     cleared: false,
     particles: [],
     toast: null,
+    monsterCount: Math.max(1, Math.floor(config.monsterCount ?? DEFAULT_MONSTER_COUNT)),
+    runSeed: config.seed ?? DEFAULT_RUN_SEED,
+    rng: makeRng(config.seed ?? DEFAULT_RUN_SEED),
+    lootLog: [],
+    carriedItems: [],
   };
   reset(state);
   return state;
 }
 
-/** Monster design lives here for now: two skeletons, 66 HP each. */
-export function spawnSkeletons(): Skeleton[] {
-  return [
-    { x: 880, y: 430, hp: 66, maxHp: 66, alive: true, attackCd: 0.8, hit: 0, bob: 0 },
-    { x: 1010, y: 560, hp: 66, maxHp: 66, alive: true, attackCd: 1.6, hit: 0, bob: 1.4 },
-  ];
+/**
+ * Spawn `count` skeletons. The first two keep the original coordinates so all
+ * existing playthrough steps (which click the first living skeleton) stay
+ * valid. Extra monsters form a loose grid on the right half of the arena.
+ * Monster ids alternate between the two authored types so a mixed pack
+ * exercises both loot pools.
+ */
+export function spawnSkeletons(count = DEFAULT_MONSTER_COUNT): Skeleton[] {
+  const fixed: readonly [number, number][] = [[880, 430], [1010, 560]];
+  const out: Skeleton[] = [];
+  const n = Math.max(1, Math.floor(count));
+  for (let i = 0; i < n; i += 1) {
+    const extra = i - fixed.length;
+    const col = extra % 3;
+    const row = Math.floor(extra / 3);
+    const x = i < fixed.length ? fixed[i]![0] : 700 + col * 175;
+    const y = i < fixed.length ? fixed[i]![1] : 320 + row * 130;
+    out.push({
+      x, y,
+      hp: 66, maxHp: 66, alive: true,
+      attackCd: 0.8 + (i % 4) * 0.25,
+      hit: 0,
+      bob: (i % 3) * 1.4,
+      monsterId: i % 2 === 0 ? '100001' : '200001',
+    });
+  }
+  return out;
 }
 
 export function reset(s: GameState): void {
@@ -154,6 +225,11 @@ export function reset(s: GameState): void {
   s.cleared = false;
   s.drops.length = 0;
   s.particles.length = 0;
+  // A run restart must reproduce the same loot sequence for the same seed,
+  // while keeping the configured monster count (R does not change deployment).
+  s.rng = makeRng(s.runSeed);
+  s.lootLog.length = 0;
+  s.carriedItems.length = 0;
   s.toast = { text: '单击地面移动 · 单击敌人攻击 · 长按跟随光标 · 空格闪避', life: 4.2 };
   s.moveMode = 'idle';
   s.targetEnemy = null;
@@ -174,7 +250,7 @@ export function reset(s: GameState): void {
   p.attackAim = 0;
   p.trail.length = 0;
   s.target = { x: 400, y: 470 };
-  s.skeletons = spawnSkeletons();
+  s.skeletons = spawnSkeletons(s.monsterCount);
 }
 
 // Re-exported so combat render/engine code keeps a single source for the view box.

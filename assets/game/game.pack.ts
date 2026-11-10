@@ -24,10 +24,30 @@ import {
 } from '@forgeax/engine/render';
 import { createPrimitiveMesh } from '@forgeax/engine/geometry';
 
-import { createState, projection, step, VIEW_H, VIEW_W } from './simulation.ts';
+import {
+  createState, deployRun, projection, step, VIEW_H, VIEW_W,
+  type Deployment,
+} from './simulation.ts';
 import { paint } from './paint.ts';
 
 const PACKAGE_ID = definePackageId('019fb7ce-3d00-7000-8000-000000000001');
+
+/**
+ * Same-origin channel between the single-page meta shell (main window) and
+ * this Engine Worker. BroadcastChannel is a Web standard available in both
+ * realms, so no engine-private API or extra frontend root is required.
+ */
+export const RUN_CHANNEL = 'forgeax-arena-run';
+
+// `type` (not `interface`) so it satisfies the JSON-shaped GameProjectionValue
+// index signature required by registerRead.
+export type RunResult = {
+  outcome: 'cleared' | 'gameOver';
+  carriedItems: string[];
+  lootLog: { monsterId: string; itemId: string; name: string; quality: string }[];
+  kills: number;
+  monsterCount: number;
+};
 
 export const game: Plugin = {
   name: 'game/arena',
@@ -47,7 +67,44 @@ export const game: Plugin = {
     const painter = context as unknown as CanvasRenderingContext2D;
     const state = createState();
 
+    // Meta <-> run bridge. `lastResult` is posted to the shell exactly once
+    // per run (on cleared / gameOver) and read back by playthrough assertions.
+    let lastResult: RunResult | null = null;
+    let resultSent = false;
+    let channel: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      channel = new BroadcastChannel(RUN_CHANNEL);
+      channel.onmessage = (event: MessageEvent) => {
+        const msg = event.data as { type?: string; deployment?: Deployment } | null;
+        if (!msg || typeof msg !== 'object') return;
+        if (msg.type === 'deploy') {
+          deployRun(state, msg.deployment ?? {});
+          lastResult = null;
+          resultSent = false;
+          channel?.postMessage({ type: 'deployed', monsterCount: state.monsterCount });
+        } else if (msg.type === 'hello') {
+          channel?.postMessage({ type: 'ready' });
+        }
+      };
+    }
+
+    const settleIfFinished = (): void => {
+      if (resultSent || (!state.cleared && !state.gameOver)) return;
+      resultSent = true;
+      lastResult = {
+        outcome: state.gameOver ? 'gameOver' : 'cleared',
+        carriedItems: [...state.carriedItems],
+        lootLog: state.lootLog.map((r) => ({
+          monsterId: r.monsterId, itemId: r.itemId, name: r.name, quality: r.quality,
+        })),
+        kills: state.kills,
+        monsterCount: state.monsterCount,
+      };
+      channel?.postMessage({ type: 'result', result: lastResult });
+    };
+
     ctx.effect(function* () {
+      yield () => { channel?.close(); channel = null; };
       const texture = new CanvasTexture(surface, { flipY: false });
       yield () => texture.dispose();
 
@@ -110,6 +167,7 @@ export const game: Plugin = {
             // (the only state with continuous cursor following). Hovering with
             // no button produces no order at all.
             const mouse = snapshot?.mouse;
+            const restart = snapshot?.keyboard?.justPressedCode('KeyR') ?? false;
             step(state, dt, {
               mouse: pointer
                 ? { x: (pointer.x / canvasW) * VIEW_W, y: (pointer.y / canvasH) * VIEW_H }
@@ -121,8 +179,14 @@ export const game: Plugin = {
                 ? 0
                 : (snapshot?.keyboard?.justPressedCode('Digit2') ?? false) ? 1 : null,
               dodge: snapshot?.keyboard?.justPressedCode('Space') ?? false,
-              restart: snapshot?.keyboard?.justPressedCode('KeyR') ?? false,
+              restart,
             });
+            // An in-run restart (R) starts a fresh settlement window.
+            if (restart) {
+              lastResult = null;
+              resultSent = false;
+            }
+            settleIfFinished();
             paint(painter, state);
             texture.update();
           },
@@ -134,10 +198,17 @@ export const game: Plugin = {
         id: 'game.state',
         title: '2.5D arena state',
         description:
-          'Player position, health, score, kills, living skeletons, drops, equipped main weapon and cooldowns.',
+          'Player position, health, score, kills, living skeletons, drops, equipped main weapon, cooldowns and loot log.',
         read: () => projection(state),
       });
       if (unregister !== undefined) yield unregister;
+
+      // `game.state` MUST stay the ONLY read projection. ForgeAX `project play`
+      // resolves an unqualified read by "the single registered projection"; a
+      // second one makes every playthrough step fail with state-unavailable,
+      // even though the scripts pass 'game.state' explicitly. Run results and
+      // deployments travel over BroadcastChannel (see the bridge above), so
+      // they need no projection seam here.
     }, 'game/arena');
   },
 };

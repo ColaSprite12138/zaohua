@@ -96,17 +96,22 @@ tests=$(node -e '
   process.stdout.write(m ? m[1] : "");
 ' "$OUT/test.stderr.log" 2>/dev/null || true)
 # A FLOOR, not an exact count: modules keep adding their own tests. Deleting
-# assertions to make the suite green still falls below the 50-test baseline
-# (2026-11-10: +14 grid/equipment, +7 dual weapon slots).
-[ "${tests:-0}" -ge 50 ] || die "单测数量应 ≥ 50（基线，防止删断言），实际 ${tests:-未读到}"
-log "[ OK ] test :: $tests passed（下限 50）"
+# assertions to make the suite green still falls below the 72-test baseline
+# (2026-11-10: +14 grid/equipment, +7 dual weapon slots;
+#  2026-11-11: +13 weighted loot, +7 run settlement, +2 table integrity).
+[ "${tests:-0}" -ge 72 ] || die "单测数量应 ≥ 72（基线，防止删断言），实际 ${tests:-未读到}"
+log "[ OK ] test :: $tests passed（下限 72）"
 
 log "[RUN ] meta-ui :: generated script + standalone page acceptance"
 node scripts/build-meta-ui.mjs --check >> "$SUMMARY" 2>&1 \
   || die "meta-ui/inventory.js 与 assets/meta/inventory.ts 不同步"
 node scripts/verify-meta-ui.cjs >> "$SUMMARY" 2>&1 \
   || { tail -n 25 "$SUMMARY"; die "meta-ui 独立页面浏览器验收失败"; }
-log "[ OK ] meta-ui :: 页面验收通过"
+python scripts/export_tables.py --check >> "$SUMMARY" 2>&1 \
+  || die "generated/*.ts 与 tables/*.xlsx 不同步，运行 python scripts/export_tables.py"
+node --experimental-strip-types scripts/loot-report.mjs --samples 31000 >> "$SUMMARY" 2>&1 \
+  || die "掉落跑批偏差超 1% 或漏项"
+log "[ OK ] meta-ui / tables / loot :: 页面与数据表验收通过"
 
 log "[RUN ] typecheck"
 if ! "$TSC" --noEmit > "$OUT/tsc.out" 2> "$OUT/tsc.err"; then
@@ -131,6 +136,19 @@ run_json package "$FX" project package --output "$OUT/forgeax-game-web.zip" --js
 ( cd "$OUT" && sha256sum -c forgeax-game-web.zip.sha256 ) >> "$SUMMARY" 2>&1 \
   || die "package：sha256 校验失败"
 log "[ OK ] package :: sha256 校验通过（验收包在 $OUT/，不动 release/）"
+
+# `project build`, `project play` AND `project package` ALL regenerate dist/.
+# Injecting right after build is not enough: package wipes it again, and the
+# 4174 preview (which serves dist/) would silently lose the single-page flow.
+# Therefore the injection + its acceptance MUST be the LAST step of the gate.
+# NOTE: the packaged web ZIP is produced before this injection, so it does NOT
+# contain the shell. Repackaging a distributable bundle is a separate step.
+log "[RUN ] single-page shell :: inject into final dist + browser acceptance"
+node scripts/inject-shell.mjs >> "$SUMMARY" 2>&1 || die "注入单页壳层失败"
+node scripts/inject-shell.mjs --check >> "$SUMMARY" 2>&1 || die "单页壳层注入块过期"
+node scripts/verify-shell.cjs >> "$SUMMARY" 2>&1 \
+  || { tail -n 25 "$SUMMARY"; die "4174 单页壳层浏览器验收失败"; }
+log "[ OK ] single-page shell :: dist/ 已注入，4174 单页可用"
 
 log "=== ALL GREEN $(date '+%Y-%m-%d %H:%M:%S') ==="
 log "如步骤数高于基线，说明新增了断言：请同步更新 HANDOFF.md 的验收基线数字。"

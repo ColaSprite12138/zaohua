@@ -38,8 +38,35 @@ engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas �
 `meta-ui/inventory.js` 由 `node scripts/build-meta-ui.mjs` 转译生成并已提交，
 因此逻辑不写两份；`node scripts/build-meta-ui.mjs --check` 防止两者漂移。
 
-> 两个入口目前**各自持有独立状态**：独立页面是局外配置/演示，canvas 游戏是单局运行时；
-> 存档互通尚未实现（等 Excel 配置表到位后一并设计）。
+### 4174 单页连续流程（搜打撤）
+
+`open-2.5d-game.bat` 打开的 **4174 同一个页面**现已合并成连续流程：局外配装 → 出征 → 战斗 → 结算。
+主窗口 `window.MetaShell.state` 持唯一权威 `InventoryState`，局外 UI 与 `shell-bridge.js` 共享它；
+Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、在清场/阵亡时发 `result`。
+不同标签页 / Worker 是独立 JS 堆，`file://` 与 `http://localhost:4174` 也不同源，所以**不做磁盘存档**，
+内存直传即可；刷新页面回到 demo 数据是有意的。
+
+| 阶段 | 规则 |
+|:--|:--|
+| 出征 | 顶栏填怪物数（默认 8，1–24），`buildLoadout()` 只借出两个武器槽（非武器装备留局外） |
+| 战斗 | `#fx-shell` 透明且指针穿透，点击直达 canvas；掉落按 `item.xlsx` / `loot_pool.xlsx` 权重结算 |
+| 通关 | 归还借出武器，战利品按 `背包 → 仓库 → 待分配区` 入库，永不静默丢弃 |
+| 阵亡 | **借出装备与本局战利品永久丢失**（标准搜打撤） |
+
+`scripts/inject-shell.mjs` 把局外 UI 注入 `dist/index.html`；**`build` / `play` / `package` 都会重建 `dist/`**，
+所以注入必须是全流程最后一步（`verify-all.sh` 已放在 `package` 之后）。`scopeCss()` 把独立页 CSS
+限定到 `#fx-shell`，`--check` 防漂移。注意 `project package` 产出的 Web ZIP 在注入前生成，**不含壳层**；
+正式分发包需另行处理。独立 `file://` 页仍可双击，行为不变。
+
+### 人工数据表 → 生成物
+
+`assets/resource/tables/` 是唯一人工入口（小写 snake_case 文件名、英文 snake_case 表头、首列唯一
+`id`、单 Sheet、禁公式）：`item.xlsx`（12 件物品）/ `monster_loot.xlsx`（怪物 → 掉落池）/
+`loot_pool.xlsx`（每池 6 件、权重 `10/8/6/4/2/1`）。`python scripts/export_tables.py` 用纯标准库
+OOXML 生成 `assets/resource/generated/*.ts`（文件头记源 SHA-256，**禁止手改**），`--check` 防漂移；
+`combat/loot.ts` 与 `meta/registerItemDefs()` 只消费生成物。
+`node --experimental-strip-types scripts/loot-report.mjs --samples 31000` 直接调真实 `rollLoot()`
+跑批，验证实测分布与理论权重偏差 < 1%。
 
 ### 点击分类与移动语义
 
@@ -163,9 +190,9 @@ Hardware accelerated。完整诊断记录见 `docs/feedback.md`。
 | `assets/combat/` | **最重**：技能交互、怪物、武器、玩家技能、数值运行时；天赋效果的**执行** | `CONTEXT.md` / `EXPERIENCE.md` | `vitest run assets/combat/__tests__` + `scripts/playthrough*.mjs` |
 | `assets/battle/` | 局内关卡：地图、触发器、关卡事件、单局目标、机关 | 同上 | `vitest run assets/battle/__tests__` |
 | `assets/meta/` | 局外：养成、格子背包/仓库/装备栏、外围关卡（战斗入口）、货币 | 同上 | `vitest run assets/meta/__tests__` + `scripts/verify-meta-ui.cjs` |
-| `meta-ui/` | 局外系统独立可视化页面（双击 `index.html` 可开） | 逻辑归 `assets/meta/` | `node scripts/verify-meta-ui.cjs` |
+| `meta-ui/` | 独立可视化页面（双击 `index.html` 可开）+ 4174 单页壳层 `shell.css` / `shell-bridge.js` | 逻辑归 `assets/meta/` | `verify-meta-ui.cjs`（独立页 13 条）、`verify-shell.cjs`（单页 16 条） |
 | `assets/talent/` | 局外天赋养成与选择；只输出 `effectIds`，**不算效果数值** | 同上 | `vitest run assets/talent/__tests__` |
-| `assets/resource/` | 人工 Excel 数据表（唯一数值入口），后续转成程序结构 | 同上 | `vitest run assets/resource/__tests__` |
+| `assets/resource/` | 人工 Excel 数据表（唯一数值入口）→ `generated/*.ts`；`export_tables.py` 转换 | 同上 | `vitest run assets/resource/__tests__` + `export_tables.py --check` + `loot-report.mjs` |
 | `assets/shared/` | 常量与纯类型，所有模块可单向 import | — | 改动触发全量验收 |
 | `assets/game/` | 引擎装配与渲染；`simulation.ts` 是纯 re-export 兼容门面 | — | 改动触发全量验收 |
 
@@ -185,12 +212,16 @@ Hardware accelerated。完整诊断记录见 `docs/feedback.md`。
 独立单测（combat 代码改动才额外跑浏览器 playthrough），并始终跑一次全局 `tsc`。
 命中 `shared/` / 引擎层 / 构建配置、或显式 `--all` 时自动转全量。
 **发版前 / 跨模块改动跑全量**：`bash scripts/verify-all.sh`，输出在 `artifacts/verify/summary.txt`；
-它强制单测 ≥ 50 条、`playthrough` ≥ 35 步、`resize` ≥ 4 步，并跑独立页面浏览器验收
-—— **删断言让测试变绿会直接失败**。
+它强制单测 ≥ 72 条、`playthrough` ≥ 35 步、`resize` ≥ 4 步，并跑独立页面与 4174 单页浏览器验收
+—— **删断言让测试变绿会直接失败**。注入 + 单页验收是全流程最后一步（build/play/package 都会重建 dist）。
 
 ```bash
 node scripts/build-meta-ui.mjs --check     # 局外页面生成物与源码同步
+python scripts/export_tables.py --check     # xlsx 与 generated/*.ts 同步
+node --experimental-strip-types scripts/loot-report.mjs --samples 31000   # 真实 rollLoot 跑批
 node scripts/verify-meta-ui.cjs            # 局外页面 13 条真实拖放断言
+node scripts/inject-shell.mjs --check      # dist 单页注入块与源同步
+node scripts/verify-shell.cjs              # 4174 单页 16 条（出征/通关/阵亡/返回）
 pnpm exec forgeax project check --json
 pnpm test
 pnpm typecheck
@@ -198,6 +229,7 @@ pnpm exec forgeax project build --json
 pnpm exec forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 pnpm exec forgeax project play --script scripts/playthrough-resize.mjs --json
 pnpm exec forgeax project package --output release/forgeax-game-web.zip --json
+node scripts/inject-shell.mjs              # 最后一步：build/play/package 都会重建 dist
 pnpm exec forgeax project preview --port 4174 --json
 ```
 
@@ -218,6 +250,11 @@ reload 重置。断言读 `game.state` read projection，不依赖画面识别�
 真实 `DragEvent` 序列，用无头 Chrome `--dump-dom` 读回结果，断言 40/160 格渲染、10 装备槽、
 拖入背包、重叠与越界拒绝、背包↔仓库移动、穿戴、1/2 切换、类型不匹配穿戴拒绝共 13 条。
 必须带独立 `--user-data-dir`，否则 Windows 复用日常 Chrome 会 dump 到执行前的 DOM。
+
+`scripts/verify-shell.cjs` 是 4174 单页壳层的浏览器验收：从 `dist/index.html` 抽出注入块，构造
+**只含壳层的最小骨架页**（不能保留整份引擎页——启动遮罩会在 window 捕获阶段拦截所有 `click`），
+用 `BroadcastChannel` 模拟 Engine Worker，断言出征借出武器、通关归还+战利品入库、二次出征、
+阵亡永久丢失、返回局外共 16 条。等消息用**条件轮询**而非固定延时，因为投递是排队 task。
 
 > 移动类步骤前会按 R 重开隔离敌人：骷髅会主动追击，大视口上耗时较长时可能走到地面落点
 > 上，把「点地面」误判成「点敌人」。点敌人时用投影里的实时骷髅坐标（身体中心 `y-30`），

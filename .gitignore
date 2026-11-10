@@ -19,3 +19,6 @@ artifacts/
 .codebuddy/
 .cursor/
 .workbuddy/
+
+# Legacy authoring copies: authoritative tables now live in assets/resource/tables/.
+xls/

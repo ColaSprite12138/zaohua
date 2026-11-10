@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Create a restorable, source-only baseline of this project.
 
-Why this exists: the project has no .git. A fresh AI session can overwrite
-game logic with no way back. This zip is the rollback point. It deliberately
-excludes node_modules/, dist/, browser profiles and probe artifacts.
+Why this exists: a second rollback layer BESIDES git (useful when the workspace
+is moved to a machine without .git, or the repo itself is lost). A fresh AI
+session can overwrite game logic with no way back. It deliberately excludes
+node_modules/, dist/, browser profiles and probe artifacts.
 
 Usage (from anywhere):
     python scripts/make-source-baseline.py
