@@ -89,6 +89,28 @@ combat/simulation.ts       ← 编排 step/projection/deployRun，唯一对外�
 `itemRow(id)` / `monsterRow(id)` / `poolEntries(poolId)` / `theoreticalDistribution(poolId)`。
 引擎层从 `assets/game/simulation.ts` 门面 import；新代码应直接 import 本模块。
 
+## 攻击规格与资源预留（架构层，2026-11-12 新增，**尚未接入运行时**）
+
+| 文件 | 职责 |
+|:--|:--|
+| `attack-spec.ts` | `AttackSpec`（`kind` / `damage` / `range` / `cooldown` / `costKind` / `projectileSpeed`）、`weaponSpec(itemId)`、`monsterSpec(monsterId)`、`PROJECTILE_SPEED=420` |
+| `cost.ts` | `CostPolicy` 接口、`costPolicyFor(owner, playerPolicy?)`、`NO_COST`、`costKindOf()` |
+| `projectiles.ts` | `Projectile` / `createProjectile()` / `advanceProjectiles()` 纯函数、可注入 `CollisionQuery` |
+
+- **攻击方式由激活武器槽的 `AttackSpec.kind` 决定**，不设独立开火键；`fire()` 只按 `kind`
+  分派，不按 `owner` 分支 —— 玩家与怪物共用同一条路径。加新攻击方式＝加 `kind` + resolver；
+  加新怪 / 新武器＝加一条 spec 映射。
+- 资源规划（owner 拍板）：近战消耗武器耐久、远程消耗箭矢、法术消耗法力；**怪物一律不消耗**。
+  `spell` 只在类型层预留，本轮**不实现**；耐久 / 箭矢 / 法力尚无权威数据源，故只留策略接口，
+  `NO_COST` 是明确的「本次不扣减」策略，不是待填占位。
+- 武器分类依据：`tables/item.xlsx` 无 `attack_kind` 列，当前 `1xxxx`=剑 / `2xxxx`=弓
+  （`loot.test.ts` 已断言池 2 全为 `/^2000/`）。**唯一解释点是 `weaponSpec()`**；
+  未来表加显式列只改这一处。
+- 子弹射程无限：只因命中合法目标 / 地形阻挡 / 飞出世界而销毁。`advanceProjectiles()` 按
+  8px 子步推进防穿透；`NO_COLLISION` 保持旧竞技场行为，地图运行时接好后再注入真实格子查询。
+- 当前消费方：`assets/combat/__tests__/{attack-spec,projectiles}.test.ts`（19 条）。
+  **`step()` / `attack.ts` / `enemies.ts` / `paint.ts` 尚未引用**，35 步 playthrough 不受影响。
+
 ## 独立验收
 
 ```bash
