@@ -9,11 +9,11 @@
 
 import { item } from '../resource/generated/item.ts';
 import { weapon } from '../resource/generated/weapon.ts';
-import { monster_loot } from '../resource/generated/monster_loot.ts';
+import { monster } from '../resource/generated/monster.ts';
 import { loot_pool } from '../resource/generated/loot_pool.ts';
 
 export type ItemId = (typeof item)[number]['id'];
-export type MonsterId = (typeof monster_loot)[number]['id'];
+export type MonsterId = (typeof monster)[number]['id'];
 
 export interface LootEntry {
   readonly itemId: ItemId;
@@ -33,7 +33,7 @@ export interface LootRoll {
 
 const ITEM_BY_ID = new Map(item.map((row) => [row.id as string, row]));
 const WEAPON_BY_ID = new Map(weapon.map((row) => [row.id as string, row]));
-const MONSTER_BY_ID = new Map(monster_loot.map((row) => [row.id as string, row]));
+const MONSTER_BY_ID = new Map(monster.map((row) => [row.id as string, row]));
 
 export function itemRow(id: string) {
   return ITEM_BY_ID.get(id);

@@ -24,13 +24,20 @@ python scripts/export_tables.py --check    # CI/验收：生成物过期或成�
 文件头记录源 `.xlsx` 的 SHA-256；模块只 import 生成物，import 路径固定为
 `../resource/generated/<表名>.ts`。
 
+**包完整性护栏（2026-11-12）**：导出器实际只读 workbook / rels / 第一个 sheet /
+sharedStrings，**不读 `styles.xml`**。曾有两张表的 `styles.xml` 把 `<border>` 误写成
+`<border/>` 却让 `--check` 一直绿，Excel 每次打开都提示「修复并删除该部件」。
+现在 `export_tables.py::validate_package()` 在导出与 `--check` 时校验所有 `.xml` / `.rels`
+部件可解析、关系目标齐全、恰好一个 Sheet；`tables.test.ts` 另做一次独立的包级标签配对检查。
+**不要手工拼 OOXML 部件**；新增 / 修改表请用 Excel 另存，或跑完上述两道检查再提交。
+
 ## 现有表
 
 | 表 | 字段 | 消费方 |
 |:--|:--|:--|
 | `item.xlsx` | `id, name, item_type, stack_size` | `combat` / `meta`（身份、类型、堆叠） |
 | `weapon.xlsx` | `id, quality, weapon_subtype, damage_min, damage_max` | `combat`（伤害、攻击方式）、`meta`（品质颜色） |
-| `monster_loot.xlsx` | `id, name, loot_pool_id` | `combat`（怪物 → 掉落池） |
+| `monster.xlsx` | `id, name, loot_pool_id` | `combat`（怪物 → 掉落池） |
 | `loot_pool.xlsx` | `id, loot_pool_id, item_id, weight` | `combat`（权重掉落） |
 
 **`item` / `weapon` 必须按 `id` join**：`item.xlsx` 只放物品通用信息，`weapon.xlsx` 只放武器

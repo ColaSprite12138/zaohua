@@ -380,3 +380,37 @@
 - Status: fixed
 - Note: 本条只解决**表拆分 + 攻击方式权威来源**；`30001` 仍按默认武器格位注册进局外目录
   （格位尺寸 / 装备类型待策划补列，勿擅自扩展）。
+
+### 2026-11-12 — Excel 打开表就提示「修复：已删除 /xl/styles.xml」
+
+- Scope: asset / build
+- Reproduction: 用 Excel 打开 `tables/loot_pool.xlsx` 或 `monster_loot.xlsx`，弹窗
+  「已完成文件级别的验证和修复。已删除的部件：有 XML 错误的 /xl/styles.xml（样式）」，
+  错误为「元素结束标记中的名称必须与开始标记中的元素类型相匹配。行 1，列 404」。
+- Expected: 表直接打开，不弹修复框。
+- Actual: 两个 xlsx 的 `xl/styles.xml` 是早期一次性脚本手写的最小模板，把
+  `<borders count="1"><border>...` 误写成 `<border/>`，后面仍保留 `</border>`，标签不匹配。
+  `export_tables.py` 只读 workbook.xml / rels / 第一个 sheet / sharedStrings.xml，
+  **完全不解析 styles.xml**；`tables.test.ts` 只查文件名 + 生成物 SHA-256 + 行数，
+  因此 `--check` 与全套验收一直绿，缺陷只在 Excel 的严格 OOXML 校验下暴露。
+  Excel 的「修复」＝删掉 styles.xml，数据不丢，但每次打开都弹框。
+- Resolution: 两处 `<border/>` → `<border>`，其余字节不动；按用户要求把
+  `monster_loot.xlsx` 改名 **`monster.xlsx`**（生成物 `monster.ts` / 常量 `monster` / 类型 `MonsterRow`），
+  同步 17 处引用（`combat/loot.ts`、`loot-report.mjs`、`import_map.py`、
+  `make_sample_map.py`、`tables.test.ts`、`map.test.ts`、`state.ts` 及各 CONTEXT / README / HANDOFF）。
+  `docs/feedback.md` 的历史条目保留当时旧表名，不改写历史。
+  加**双层护栏**：`export_tables.py::validate_package()`（导出与 `--check` 都跑：所有 `.xml`/`.rels`
+  可解析、Content_Types 与关系目标存在、恰好一个 Sheet）＋ `tables.test.ts` 用 Node 标准库
+  手写 ZIP central-directory 读取 + 标签配对检查。另把两处文件名断言改为过滤 Excel 的
+  `~$` 锁文件，避免开着表时误报。
+- Evidence: 四张表全部件 `ET.fromstring` 通过；故意把 styles.xml 改坏放一张探针表，
+  `export_tables.py --check` exit=1（`malformed OOXML part xl/styles.xml`）、
+  `vitest tables.test.ts` exit=1（`mismatched </border>`），探针随即删除。
+  正常态 `export_tables.py --check` / `import_map.py --check` / `tsc` 0 error /
+  掉落跑批偏差 0 全绿。
+- Status: fixed
+- Note: 修 xlsx 会改变源 SHA-256，必须重跑 `python scripts/export_tables.py` 刷新
+  `generated/*.ts` 文件头（数据行不变）。**改表前先关 Excel**：它独占文件，
+  写入会 `WinError 5` / `Errno 13`，`os.replace` 与直接覆盖都会被拒绝。
+  另：Windows Python 的临时目录在 C:、工程在 D:，`os.replace` 跨盘会 `WinError 17`，
+  临时文件要放在工程盘内。

@@ -23,6 +23,9 @@
 - 第一个 Sheet 为数据 Sheet，首行字段名（英文 snake_case），第一列主键 `id`（全表唯一）。
 - 单元格只写整数 / 小数 / 字符串 / 布尔；导出器不求值公式，遇到公式直接失败。
 - 新增表后必须在**消费方模块的 `CONTEXT.md`** 登记「表名 → 消费方」。
+- `.xlsx` 必须是**完整合法 OOXML 包**：`scripts/export_tables.py::validate_package()` 会校验所有
+  `.xml` / `.rels` 部件可解析、`[Content_Types].xml` 与 workbook 关系目标都存在、恰好一个 Sheet；
+  `tables.test.ts` 另用 Node 标准库做一次独立包校验。两边都挡「Excel 能修但打开就弹框」的坏表。
 - 转换命令与 `--check` 防漂移见 `tables/README.md`；`scripts/verify.sh` 已接入。
 
 ## 现有表与消费方登记
@@ -31,7 +34,7 @@
 |:--|:--|:--|
 | `item.xlsx` | `combat/`、`meta/` | 13 行物品通用信息 `id / name / item_type / stack_size`：12 件武器 + `30001` 弓箭（`item_type=弹药`、堆叠 10） |
 | `weapon.xlsx` | `combat/`、`meta/` | 13 行武器专属信息 `id / quality / weapon_subtype / damage_min / damage_max`；`weapon_subtype` 是攻击方式**唯一权威** |
-| `monster_loot.xlsx` | `combat/` | 怪物 id → 掉落池 id（骷髅剑士 → 1，骷髅弓手 → 2） |
+| `monster.xlsx` | `combat/`、`battle/`（地图引用校验） | 怪物 id → 掉落池 id（骷髅剑士 → 1，骷髅弓手 → 2）；2026-11-12 由 `monster_loot.xlsx` 改名，生成物为 `monster.ts` / 常量 `monster` |
 | `loot_pool.xlsx` | `combat/` | 掉落池内各物品的权重（10/8/6/4/2/1） |
 
 **拆表契约（2026-11-12，用户选 A 方案）**：`item.xlsx` 与 `weapon.xlsx` 各为单 Sheet、按 `id`
@@ -52,8 +55,9 @@
 python scripts/export_tables.py --check
 ```
 
-校验：表目录与 README 存在、文件名合规、生成物与源表一一对应且不过期、
-每个生成物都有同名源表（无孤儿）、`id` 唯一。
+校验：表目录与 README 存在、文件名合规（忽略 Excel 的 `~$` 锁文件）、生成物与源表一一对应
+且不过期、每个生成物都有同名源表（无孤儿）、`id` 唯一、两张表 1:1 join、
+`weapon_subtype` 权威与 `30001` 弹药、**以及每张 `.xlsx` 的所有 OOXML 部件标签配对正确**。
 
 ## 地图源（LDtk，独立于数值表）
 
@@ -65,7 +69,7 @@ python scripts/export_tables.py --check
 
 - IntGrid 值：`0` 地面（可走）/ `1` 墙（挡走 + 挡视线）/ `2` 道路（可走）/ `3` 深渊（挡走 + 挡视线）。
   当前「阻挡格一律挡走也挡视线」，尚未区分矮墙等只挡走不挡视线的类型。
-- 实体：`PlayerSpawn` 恰好一个；`Monster` 的 `monsterId` **必须引用** `tables/monster_loot.xlsx` 的 id，
+- 实体：`PlayerSpawn` 恰好一个；`Monster` 的 `monsterId` **必须引用** `tables/monster.xlsx` 的 id，
   数值仍由数值表唯一权威，地图文件不重复写数值。
 - 转换：`python scripts/import_map.py` 生成、`--check` 防漂移。校验：LDtk 1.5.x 版本、
   `externalLevels=false`、单关卡、尺寸 / 值域、`PlayerSpawn` 唯一、实体落点可走、

@@ -102,8 +102,8 @@ tests=$(node -e '
 #              +15 platform KV save tests; then -4 LOCAL-save-only tests
 #              removed when local persistence was deleted on user instruction.
 #              The 11 remaining platform KV tests stay as green as before.
-#  2026-11-12: +6 LDtk map, +19 attack-spec/projectiles, +2 table-split/subtype
-#              -> 110 total. The floor stays at 83 on purpose: it is a guard
+#  2026-11-12: +6 LDtk map, +19 attack-spec/projectiles, +2 table-split/subtype,
+#              +1 OOXML package guard -> 111 total. The floor stays at 83 on purpose: it is a guard
 #              against deleting assertions, not a target to keep raising.)
 [ "${tests:-0}" -ge 83 ] || die "单测数量应 ≥ 83（基线，防止删断言），实际 ${tests:-未读到}"
 log "[ OK ] test :: $tests passed（下限 83）"

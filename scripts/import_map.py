@@ -4,7 +4,7 @@
 The .ldtk project is the human-authored source (LDtk 1.5.3). The Terrain
 IntGrid layer becomes a per-row terrain string, the Entities layer becomes a
 typed spawn/monster list. Nothing in here invents gameplay numbers: monsterId
-must already exist in generated/monster_loot.ts.
+must already exist in generated/monster.ts.
 
     python scripts/import_map.py            # regenerate
     python scripts/import_map.py --check   # fail if the generated file is stale
@@ -24,7 +24,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAPS = os.path.join(ROOT, 'assets', 'resource', 'maps')
 SOURCE = os.path.join(MAPS, 'arena.ldtk')
 OUTPUT = os.path.join(MAPS, 'arena.generated.ts')
-MONSTER_TABLE = os.path.join(ROOT, 'assets', 'resource', 'generated', 'monster_loot.ts')
+MONSTER_TABLE = os.path.join(ROOT, 'assets', 'resource', 'generated', 'monster.ts')
 
 VALID_TILES = {0, 1, 2, 3}
 WALKABLE = {0, 2}
@@ -43,7 +43,7 @@ def load_monster_ids():
         text = fh.read()
     ids = set(re.findall(r'\{\s*id:\s*"([^"]+)"', text))
     if not ids:
-        fail('could not read any monster id from generated/monster_loot.ts')
+        fail('could not read any monster id from generated/monster.ts')
     return ids
 
 
@@ -133,7 +133,7 @@ def read_entities(entities, cols, rows, grid, grid_size, monster_ids):
             mid = fields.get('monsterId')
             if not isinstance(mid, str) or mid not in monster_ids:
                 fail('Monster at (%d,%d) has monsterId %r; add it to '
-                     'tables/monster_loot.xlsx then run export_tables.py' % (col, row, mid))
+                     'tables/monster.xlsx then run export_tables.py' % (col, row, mid))
             if grid[row][col] not in WALKABLE:
                 fail('Monster at (%d,%d) is not walkable' % (col, row))
             wave = fields.get('wave', 1)

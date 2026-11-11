@@ -24,7 +24,7 @@
 2. **`assets/<模块>/CONTEXT.md`** — 该模块的契约、不变量、对外接口、依赖方向、独立验收；
    配套 `EXPERIENCE.md` 是该模块独立经验库（踩坑按模块追加，不混进全局 feedback 编号）
 3. `README.md` — 工程结构、交互契约、点击分类、验收脚本逐条说明、坐标映射原理
-4. `docs/feedback.md` — 17 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**
+4. `docs/feedback.md` — 18 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**
 5. `.workbuddy/memory/YYYY-MM-DD.md` — 工作流水账，只作线索，不是规范
 6. `AGENTS.md` — ForgeAX 引擎模板自带的**通用** SDK 规范（顶部另有本工程的 Git 提交纪律）；查引擎 API 时才读
 
@@ -49,7 +49,7 @@
 `game.state` 新增 `weaponSlots` / `activeWeaponSlot`；`equippedWeapon` **保留旧字段名**，语义改为
 "当前激活槽的武器"，所以既有 32 步断言不破。
 
-**掉落已改为数据表驱动**（2026-11-11）：怪物 `monsterId` → `monster_loot.xlsx` 的池 → `loot_pool.xlsx`
+**掉落已改为数据表驱动**（2026-11-11）：怪物 `monsterId` → `monster.xlsx` 的池 → `loot_pool.xlsx`
 权重 `10/8/6/4/2/1` → `item.xlsx` + `weapon.xlsx` 按 `id` join 的 13 行物品属性，
 `combat/loot.ts::rollLoot()` 是唯一抽取入口，Mulberry32 固定种子 `0x5eed1234` 保证可复现。
 `Drop.kind` 仍是 `'longsword'`（视觉/兼容类别），真实身份走 `drop.itemId`。
@@ -65,6 +65,14 @@
 **攻击方式以 `weapon_subtype` 为唯一权威**（`attack-spec.ts::SUBTYPE_SPEC`：`近战` / `远程`），
 禁止用 `1xxxx`/`2xxxx` id 前缀推断；未来加「法术」只需加一行映射。
 `weaponSpec('30001')`、未知 id、空槽一律回落 `BARE_HANDS`。
+
+**表名与包完整性契约**（2026-11-12）：`monster_loot.xlsx` 已改名 **`monster.xlsx`**，
+生成物 `monster.ts` / 常量 `monster` / 类型 `MonsterRow`；`import_map.py` 的怪物 id
+引用完整性校验、`loot-report.mjs`、`tables.test.ts` / `map.test.ts` 全部同步。
+`docs/feedback.md` 的历史条目**保留当时旧表名**，不改写历史。
+四张表都必须是**完整合法 OOXML 包**：`export_tables.py::validate_package()`（导出与 `--check`）
++ `tables.test.ts` 的包级标签配对检查双层拦截；已用故意损坏的 `styles.xml` 反向验证两层都会红。
+**不要手工拼 OOXML 部件**，改表请用 Excel 另存或跑完这两道检查。
 
 ### 局外（独立页面 `meta-ui/index.html`，双击可开）
 
@@ -190,14 +198,14 @@ node scripts/inject-shell.mjs --check
 node scripts/verify-shell.cjs                            # 4174 单页 29/29
 ```
 
-验收基线（2026-11-12 02:08:39 `bash scripts/verify-all.sh` ALL GREEN，新会话应以实际输出为准）：
+验收基线（2026-11-12 02:27:23 `bash scripts/verify-all.sh` ALL GREEN，新会话应以实际输出为准）：
 
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **110** 项全过（`verify-all.sh` 下限仍为 **83**：combat 54 + meta 35 + battle 4 + talent 3 + resource 12 + 模板 2。新增来源：LDtk 地图 6、攻击架构 20、拆表 join 2；account 单测 15 → 11 是 2026-11-11 删本地存盘后的历史基线） |
+| `test` | **111** 项全过（`verify-all.sh` 下限仍为 **83**：combat 54 + meta 35 + battle 4 + talent 3 + resource 13 + 模板 2。新增来源：LDtk 地图 6、攻击架构 20、拆表 join 2、OOXML 包护栏 1；account 单测 15 → 11 是 2026-11-11 删本地存盘后的历史基线） |
 | `tsc --noEmit` | 0 error |
-| `tables` | `export_tables.py --check` 四张表与 `generated/*.ts` 一致 |
+| `tables` | `export_tables.py --check` 四张表与 `generated/*.ts` 一致，且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
 | `meta-ui` | 生成物同步 + 独立页面浏览器验收 13/13 |
 | `build` | `ok` |
@@ -213,10 +221,10 @@ node scripts/verify-shell.cjs                            # 4174 单页 29/29
 
 下表把「当前功能契约」逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 110 条＝combat 54（movement 11 + modifiers 3 + weapons 7 +
+删断言不会让这张表悄悄失效。单测 111 条＝combat 54（movement 11 + modifiers 3 + weapons 7 +
 loot 13 + attack-spec 10 + projectiles 10）、
 meta 35（meta 3 + inventory 14 + run-settlement 7 + platform-KV account 11）、battle 4、talent 3、
-resource 12（tables 6 + map 6）、模板 2；全量下限 83 条（下限不随新增断言抬高）。
+resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不随新增断言抬高）。
 浏览器验收：playthrough 13 个命名场景（展开 35 steps）、独立页 13 条、4174 单页 29 条
 （含 7 条平台身份 / KV 存档 + 1 条「无宿主不写盘」+ 2 条平台 lifecycle）。
 真实硬件 WebGPU 冒烟（历史一次性脚本）：`node artifacts/smoke-login-bag.mjs` 覆盖「强制登录 / 刷新后存档」，

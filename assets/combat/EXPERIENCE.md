@@ -40,7 +40,7 @@
 
 ## 2026-11-11 · 权重掉落与多怪部署
 
-- **掉落数值只从 `resource/generated/*.ts` 读，禁止在 combat 里硬编码**：怪物 → `monster_loot.loot_pool_id` → `loot_pool` 权重 → `item` 属性。`rollLoot(monsterId, rng)` 是唯一抽取入口，`loot-report.mjs` 必须直接 import 它，不要另写一份镜像算法（影子逻辑会让报告全绿但战斗实际错）。
+- **掉落数值只从 `resource/generated/*.ts` 读，禁止在 combat 里硬编码**：怪物 → `monster.loot_pool_id` → `loot_pool` 权重 → `item` 属性。`rollLoot(monsterId, rng)` 是唯一抽取入口，`loot-report.mjs` 必须直接 import 它，不要另写一份镜像算法（影子逻辑会让报告全绿但战斗实际错）。
 - **固定种子可复现**：`makeRng(seed)` 用 Mulberry32，`createState({ seed })` / `deployRun({ seed })` / `reset()` 都从 `runSeed` 重建 rng；R 重开后 loot 序列必须一致，这是单测之一。
 - **默认仍 2 只怪**：`spawnSkeletons(count)` 前两只保留原坐标，额外怪按网格生成并交替 `100001` / `200001`；多怪只通过 `deployRun()` 或 `createState({ monsterCount })` 注入。否则 35 步 playthrough 的 `skeletonsAlive === 2` 断言会红。
 - `Drop.kind` 保留 `'longsword'` 作为**视觉/兼容类别**，真实物品身份走 `drop.itemId`；`WeaponId` 也保持 `'longsword'` 表示「armed vs bare」，不要改成表里的 12 个 id，否则 11 条 movement + 7 条 weapons 单测全要重写。

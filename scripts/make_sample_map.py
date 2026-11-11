@@ -249,7 +249,7 @@ def main():
         'tutorialDesc': (
             'ForgeAX arena sample. Paint the Terrain IntGrid layer: 0 = floor (walkable), '
             '1 = wall, 2 = road (walkable), 3 = void. Drag exactly one PlayerSpawn and any '
-            'number of Monster entities; monsterId must match an id in monster_loot.xlsx. '
+            'number of Monster entities; monsterId must match an id in monster.xlsx. '
             'After saving run: python scripts/import_map.py'
         ),
         'customCommands': [], 'flags': [], 'worlds': [],

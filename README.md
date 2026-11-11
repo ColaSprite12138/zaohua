@@ -93,13 +93,15 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 
 `assets/resource/tables/` 是唯一人工入口（小写 snake_case 文件名、英文 snake_case 表头、首列唯一
 `id`、单 Sheet、禁公式）：`item.xlsx`（13 行物品通用信息）/ `weapon.xlsx`（13 行武器数值与
-`weapon_subtype`）/ `monster_loot.xlsx`（怪物 → 掉落池）/ `loot_pool.xlsx`（每池 6 件、
+`weapon_subtype`）/ `monster.xlsx`（怪物 → 掉落池）/ `loot_pool.xlsx`（每池 6 件、
 权重 `10/8/6/4/2/1`）。**`item` 与 `weapon` 按 `id` join**：运行时唯一入口是
 `combat/loot.ts::authoredItem()`，局外注入在 `scripts/inject-shell.mjs`；`weapon_subtype`
 （`近战` / `远程` / `子弹`）是攻击方式唯一权威，`30001` 是弹药而非可发射武器。
 `python scripts/export_tables.py` 用纯标准库 OOXML 生成 `assets/resource/generated/*.ts`
 （文件头记源 SHA-256，**禁止手改**），`--check` 防漂移；`combat/loot.ts` 与
-`meta/registerItemDefs()` 只消费生成物。
+`meta/registerItemDefs()` 只消费生成物。导出器与 `tables.test.ts` 另做双层 OOXML 包完整性
+校验（包含 `styles.xml`），防止「Excel 打开弹修复框但 `--check` 仍绿」；**改表请用 Excel 另存，
+不要手工拼 OOXML 部件**。
 `node --experimental-strip-types scripts/loot-report.mjs --samples 31000` 直接调真实 `rollLoot()`
 跑批，验证实测分布与理论权重偏差 < 1%。
 

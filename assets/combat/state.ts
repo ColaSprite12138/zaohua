@@ -65,7 +65,7 @@ export interface Skeleton {
   attackCd: number;
   hit: number;
   bob: number;
-  /** Authored monster id from `monster_loot.xlsx`; drives the loot pool. */
+  /** Authored monster id from `monster.xlsx`; drives the loot pool. */
   monsterId: string;
 }
 

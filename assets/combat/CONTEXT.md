@@ -38,7 +38,7 @@
 
 | 项 | 权威 |
 |:--|:--|
-| 怪物种类 | `Skeleton.monsterId`（`100001` 骷髅剑士 / `200001` 骷髅弓手），对应 `monster_loot.xlsx` 的掉落池 |
+| 怪物种类 | `Skeleton.monsterId`（`100001` 骷髅剑士 / `200001` 骷髅弓手），对应 `monster.xlsx` 的掉落池 |
 | 掉落算法 | `loot.ts::rollLoot(monsterId, rng)` 按 `loot_pool.xlsx` 权重累计抽取；两池各 6 件、权重 `10/8/6/4/2/1` |
 | 随机源 | `makeRng(seed)` Mulberry32，`runSeed` 默认 `0x5eed1234`；`reset()` 重建，保证 R 重开 loot 序列一致 |
 | 战利品记录 | `GameState.lootLog`（掉落明细）、`carriedItems`（已拾取的 authored id）、`monsterCount` / `runSeed` |

@@ -105,6 +105,50 @@ def read_sheet(path):
         return rows
 
 
+def validate_package(path):
+    """Gate the WHOLE xlsx package, not just the parts the exporter reads.
+
+    read_sheet() only touches workbook.xml / rels / the first worksheet /
+    sharedStrings.xml. A hand-written styles.xml with a mismatched tag used to
+    pass --check forever while Excel showed its "we found a problem with some
+    content" repair dialog on every open (2026-11-12, loot_pool + monster).
+    """
+    try:
+        with zipfile.ZipFile(path) as z:
+            names = set(z.namelist())
+            for name in sorted(names):
+                if name.endswith('.xml') or name.endswith('.rels'):
+                    try:
+                        ET.fromstring(z.read(name))
+                    except ET.ParseError as exc:
+                        fail('%s: malformed OOXML part %s (%s)' % (path, name, exc))
+            ct = ET.fromstring(z.read('[Content_Types].xml'))
+            for node in ct:
+                part = node.get('PartName')
+                if part and part.lstrip('/') not in names:
+                    fail('%s: [Content_Types].xml references missing part %s' % (path, part))
+            rels = ET.fromstring(z.read('xl/_rels/workbook.xml.rels'))
+            for rel in rels:
+                if rel.get('TargetMode') == 'External':
+                    continue
+                target = rel.get('Target')
+                if not target:
+                    continue
+                t = target.lstrip('/')
+                if not t.startswith('xl/'):
+                    t = 'xl/' + t
+                if t not in names:
+                    fail('%s: relationship %s points at missing %s' % (path, rel.get('Id'), t))
+            wb = ET.fromstring(z.read('xl/workbook.xml'))
+            sheets = wb.find(MAIN + 'sheets')
+            count = 0 if sheets is None else len(sheets)
+            if count != 1:
+                fail('%s: expected exactly one data sheet, found %d (exporter reads only the first)'
+                     % (path, count))
+    except (zipfile.BadZipFile, KeyError) as exc:
+        fail('%s: not a usable .xlsx package (%s)' % (path, exc))
+
+
 def parse_table(path):
     rows = read_sheet(path)
     if not rows:
@@ -180,6 +224,7 @@ def main():
     for src in sources:
         name = src[:-5]
         path = os.path.join(TABLES, src)
+        validate_package(path)
         with open(path, 'rb') as fh:
             digest = hashlib.sha256(fh.read()).hexdigest()
         fields, records = parse_table(path)

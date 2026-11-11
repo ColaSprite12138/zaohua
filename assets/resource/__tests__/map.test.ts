@@ -81,10 +81,10 @@ describe('LDtk arena map contract', () => {
     expect(new Set(arena.monsters.map((m) => m.id)).size).toBe(arena.monsters.length);
   });
 
-  it('every monsterId resolves to a row in monster_loot.xlsx', async () => {
+  it('every monsterId resolves to a row in monster.xlsx', async () => {
     const arena = await loadMap();
-    const { monster_loot } = await import('../generated/monster_loot.ts');
-    const ids = new Set(monster_loot.map((row) => row.id));
+    const { monster } = await import('../generated/monster.ts');
+    const ids = new Set(monster.map((row) => row.id));
     for (const m of arena.monsters) expect(ids.has(m.monsterId)).toBe(true);
   });
 

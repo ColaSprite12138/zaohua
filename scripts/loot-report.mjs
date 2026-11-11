@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   authoredItem, makeRng, poolEntries, rollLoot, theoreticalDistribution,
 } from '../assets/combat/loot.ts';
-import { monster_loot } from '../assets/resource/generated/monster_loot.ts';
+import { monster as monsterRows } from '../assets/resource/generated/monster.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const argv = process.argv.slice(2);
@@ -29,7 +29,7 @@ const asJson = argv.includes('--json');
 
 const report = [];
 let failures = 0;
-for (const monster of monster_loot) {
+for (const monster of monsterRows) {
   const monsterId = String(monster.id);
   const poolId = monster.loot_pool_id;
   const rng = makeRng(SEED);

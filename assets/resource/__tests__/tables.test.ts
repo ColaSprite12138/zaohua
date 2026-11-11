@@ -1,10 +1,64 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { inflateRawSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 const tablesDir = fileURLToPath(new URL('../tables/', import.meta.url));
 const generatedDir = fileURLToPath(new URL('../generated/', import.meta.url));
 const TABLE_NAME = /^[a-z][a-z0-9_]*\.xlsx$/;
+
+/**
+ * Minimal ZIP central-directory reader (Node has no zip module). Enough to
+ * inflate every .xml / .rels part of our small authored workbooks; no ZIP64,
+ * no encryption, no data descriptors are used by these files.
+ */
+function xlsxXmlParts(buf: Buffer): { name: string; text: string }[] {
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 0x10000 - 22); i -= 1) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+  }
+  if (eocd < 0) throw new Error('not a ZIP: no end-of-central-directory record');
+  const count = buf.readUInt16LE(eocd + 10);
+  let cursor = buf.readUInt32LE(eocd + 16);
+  const parts: { name: string; text: string }[] = [];
+  for (let n = 0; n < count; n += 1) {
+    if (buf.readUInt32LE(cursor) !== 0x02014b50) throw new Error('bad central directory entry');
+    const method = buf.readUInt16LE(cursor + 10);
+    const compressed = buf.readUInt32LE(cursor + 20);
+    const nameLen = buf.readUInt16LE(cursor + 28);
+    const extraLen = buf.readUInt16LE(cursor + 30);
+    const commentLen = buf.readUInt16LE(cursor + 32);
+    const local = buf.readUInt32LE(cursor + 42);
+    const name = buf.subarray(cursor + 46, cursor + 46 + nameLen).toString('utf8');
+    if (/\.(xml|rels)$/.test(name)) {
+      const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+      const raw = buf.subarray(start, start + compressed);
+      parts.push({ name, text: (method === 0 ? raw : inflateRawSync(raw)).toString('utf8') });
+    }
+    cursor += 46 + nameLen + extraLen + commentLen;
+  }
+  return parts;
+}
+
+/** Tag-balance check: catches the `<border/>` ... `</border>` repair prompt. */
+function assertWellFormedXml(file: string, part: { name: string; text: string }): void {
+  const stack: string[] = [];
+  const tokens = /<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<[^>]*>/g;
+  for (const token of part.text.match(tokens) ?? []) {
+    if (token.startsWith('<?') || token.startsWith('<!--')) continue;
+    if (token.startsWith('</')) {
+      const closing = token.slice(2, -1).trim();
+      const opening = stack.pop();
+      if (opening !== closing) {
+        throw new Error(`${file}!/${part.name}: mismatched </${closing}> (open was ${opening ?? 'none'})`);
+      }
+    } else if (!token.endsWith('/>')) {
+      const m = /^<\s*([^\s/>]+)/.exec(token);
+      if (m) stack.push(m[1]!);
+    }
+  }
+  if (stack.length) throw new Error(`${file}!/${part.name}: unclosed tags ${stack.join(', ')}`);
+}
 
 describe('resource table contract', () => {
   it('has a tables directory with the authoring README', () => {
@@ -13,7 +67,10 @@ describe('resource table contract', () => {
   });
 
   it('accepts only lowercase snake_case .xlsx source tables', () => {
-    const files = readdirSync(tablesDir).filter((f) => f !== 'README.md');
+    // Excel leaves ~$<name>.xlsx lock files while a table is open; those are
+    // host artifacts, not authored tables.
+    const files = readdirSync(tablesDir)
+      .filter((f) => f !== 'README.md' && !f.startsWith('~$'));
     expect(files.every((f) => TABLE_NAME.test(f))).toBe(true);
     expect(new Set(files).size).toBe(files.length);
   });
@@ -21,7 +78,9 @@ describe('resource table contract', () => {
   it('ships exactly one generated .ts per source table, no orphans', () => {
     expect(existsSync(generatedDir)).toBe(true);
     const sources = new Set(
-      readdirSync(tablesDir).filter((f) => f.endsWith('.xlsx')).map((f) => f.replace(/\.xlsx$/, '')),
+      readdirSync(tablesDir)
+        .filter((f) => f.endsWith('.xlsx') && !f.startsWith('~$'))
+        .map((f) => f.replace(/\.xlsx$/, '')),
     );
     const outputs = new Set(
       readdirSync(generatedDir).filter((f) => f.endsWith('.ts')).map((f) => f.replace(/\.ts$/, '')),
@@ -37,14 +96,14 @@ describe('resource table contract', () => {
     }
   });
 
-  it('item / weapon / monster_loot / loot_pool data survive the conversion', async () => {
+  it('item / weapon / monster / loot_pool data survive the conversion', async () => {
     const { item } = await import('../generated/item.ts');
     const { weapon } = await import('../generated/weapon.ts');
-    const { monster_loot } = await import('../generated/monster_loot.ts');
+    const { monster } = await import('../generated/monster.ts');
     const { loot_pool } = await import('../generated/loot_pool.ts');
     expect(item).toHaveLength(13);
     expect(weapon).toHaveLength(13);
-    expect(monster_loot).toHaveLength(2);
+    expect(monster).toHaveLength(2);
     expect(loot_pool).toHaveLength(12);
     expect(new Set(item.map((r) => r.id)).size).toBe(13);
     expect(new Set(weapon.map((r) => r.id)).size).toBe(13);
@@ -82,5 +141,23 @@ describe('resource table contract', () => {
     expect(subtypes.get('20006')).toBe('远程');
     expect(subtypes.get('30001')).toBe('子弹');
     expect([...new Set(subtypes.values())].sort()).toEqual(['子弹', '近战', '远程']);
+  });
+
+  it('every source .xlsx is a well-formed OOXML package Excel can open', () => {
+    // Regression guard: a hand-written styles.xml once had `<border/>` followed
+    // by `</border>`. The exporter never reads styles.xml, so --check stayed
+    // green while Excel offered to "repair" (delete the part) on every open.
+    const files = readdirSync(tablesDir)
+      .filter((f) => f.endsWith('.xlsx') && !f.startsWith('~$'));
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const parts = xlsxXmlParts(readFileSync(`${tablesDir}${file}`));
+      expect(parts.length, `${file}: no XML parts found`).toBeGreaterThan(0);
+      expect(
+        parts.some((p) => p.name === 'xl/styles.xml'),
+        `${file}: Excel deletes a broken styles.xml on repair; it must be present`,
+      ).toBe(true);
+      for (const part of parts) assertWellFormedXml(file, part);
+    }
   });
 });
