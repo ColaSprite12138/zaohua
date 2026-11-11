@@ -48,6 +48,26 @@ python scripts/export_tables.py --check
 校验：表目录与 README 存在、文件名合规、生成物与源表一一对应且不过期、
 每个生成物都有同名源表（无孤儿）、`id` 唯一。
 
+## 地图源（LDtk，独立于数值表）
+
+| 路径 | 谁改 | 说明 |
+|:--|:--|:--|
+| `maps/arena.ldtk` | **人工**（LDtk 1.5.3） | 唯一地图权威源；`Terrain` IntGrid 层 + `Entities` 实体层，无 tileset |
+| `maps/arena.generated.ts` | `scripts/import_map.py` | 生成物，**禁止手改**；文件头记录源 SHA-256 |
+| `scripts/make_sample_map.py` | 仅重建示例基线 | 不是构建链一环；地图被人工编辑后不要重跑 |
+
+- IntGrid 值：`0` 地面（可走）/ `1` 墙（挡走 + 挡视线）/ `2` 道路（可走）/ `3` 深渊（挡走 + 挡视线）。
+  当前「阻挡格一律挡走也挡视线」，尚未区分矮墙等只挡走不挡视线的类型。
+- 实体：`PlayerSpawn` 恰好一个；`Monster` 的 `monsterId` **必须引用** `tables/monster_loot.xlsx` 的 id，
+  数值仍由数值表唯一权威，地图文件不重复写数值。
+- 转换：`python scripts/import_map.py` 生成、`--check` 防漂移。校验：LDtk 1.5.x 版本、
+  `externalLevels=false`、单关卡、尺寸 / 值域、`PlayerSpawn` 唯一、实体落点可走、
+  从出生点连通可达、`monsterId` 引用完整性。
+- **生成物刻意放 `maps/` 而非 `generated/`**：`export_tables.py` 会删除 `generated/`
+  里没有同名 `.xlsx` 的孤儿文件，放进去会被清掉并让 `--check` 失败。
+- 当前消费方：`assets/resource/__tests__/map.test.ts`（结构、SHA-256、落点与引用完整性）。
+  运行时接线（世界坐标 / 相机 / 小地图 / 碰撞 / 寻路）尚未接入。
+
 ## 待办（用户已明确「后面再做」，勿擅自开工）
 
 - 若后续需要打包体积/加载速度优化，可增加 bytes 格式导出；当前 TS 常量已满足需求。

@@ -91,7 +91,7 @@ else
         add_module meta
         shell_check=1 ;;
       assets/talent/*)   add_module talent ;;
-      assets/resource/*|scripts/export_tables.py)
+      assets/resource/*|assets/resource/maps/*|scripts/export_tables.py|scripts/import_map.py|scripts/make_sample_map.py)
         add_module resource
         tables_check=1 ;;
       scripts/loot-report.mjs)
@@ -142,11 +142,16 @@ case " $modules " in
 esac
 
 # Authored .xlsx tables are the human-editable source of truth; generated/*.ts
-# must be byte-identical to a fresh export.
+# must be byte-identical to a fresh export. The LDtk map has its own chain
+# (maps/arena.ldtk -> maps/arena.generated.ts) and must not be mixed into
+# generated/, where export_tables.py deletes anything without an .xlsx source.
 if [ "$tables_check" -eq 1 ]; then
   log "[RUN ] resource :: xlsx -> generated/ 同步检查"
   python scripts/export_tables.py --check >> "$SUMMARY" 2>&1 \
     || die "generated/*.ts 与 tables/*.xlsx 不同步，运行 python scripts/export_tables.py"
+  log "[RUN ] resource :: arena.ldtk -> maps/arena.generated.ts 同步检查"
+  python scripts/import_map.py --check >> "$SUMMARY" 2>&1 \
+    || die "maps/arena.generated.ts 与 arena.ldtk 不同步，运行 python scripts/import_map.py"
 fi
 
 # Loot is statistical, so keep the sample large: small samples fail the 1%
