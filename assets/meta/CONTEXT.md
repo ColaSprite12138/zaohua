@@ -48,6 +48,25 @@
 所以注入必须是全流程最后一步，`verify-all.sh` 放在 `package` 之后），
 CSS 由 `scopeCss()` 限定到 `#fx-shell`；`--check` 防注入块漂移。
 
+### Builder 产物链（2026-11-11 晚，发布到造化平台的前提）
+
+`forgeax project package` 内部**重新 build 覆盖 `dist/`**、没有 post-build hook，`verifyDist` 还逐字节校验
+产物，所以「先注入再打包」在引擎侧做不到。但 Game Builder 的 `buildForgeaxPlayer`
+（runtime `cli.js:24817`）**优先执行工程 `package.json#scripts.package`**，这是官方留给工程的唯一接缝：
+
+| 步骤 | 负责 |
+|:--|:--|
+| ① `forgeax project package` 产出纯净 Web ZIP | `scripts/package-with-shell.mjs` 调官方 CLI |
+| ② 解包 / 重打包 ZIP 容器 | `scripts/zip-io.py`（Node 无内置 ZIP；内容决策不放在这里） |
+| ③ 壳层写进 `index.html` | `inject-shell.mjs` 导出的 `injectInto(html)`（与 4174 同一份块） |
+| ④ 同步 `forgeax-dist.json` 里 `index.html` 的 `bytes` / `sha256` | `package-with-shell.mjs` |
+| ⑤ 输出 `--output` 指定路径 | Builder 之后解包到 `.game-builder/artifacts/forgeax-player` |
+
+Builder 解包后往 `<head>` 注入 `data-zaohua-platform-init` 平台 bootstrap（`html.replace` 只替换引擎的
+module script），壳层在 `</body>` 前，两者互不干扰。实测玩家产物 `index.html` 同时含
+`FORGEAX_META_SHELL_BEGIN` 与 `data-zaohua-platform-init`，必需校验 5/5 通过。
+`inject-shell.mjs` 带 CLI 守卫：import 它不会碰 `dist/`，4174 注入行为不变。
+
 ## 本地账号与存档契约（2026-11-11）
 
 | 项 | 权威 |
@@ -122,7 +141,10 @@ node scripts/verify-shell.cjs                              # 4174 单页 28 条�
 - `bytes` 导出（当前表转换产物是 TS 常量数组）。
 - 账号存档的跨浏览器 / 跨设备迁移（当前纯本机 localStorage，无导入导出）。
 - 引擎启动失败（fatal path）时启动遮罩仍会拦截 top bar 的点击，需要时再决定是否把壳层加入白名单。
-- 正式 Web ZIP 在壳层注入之前打包，不含单页流程（含登录与局内背包），需要「先注入再打包」。
+- ~~正式 Web ZIP 在壳层注入之前打包，不含单页流程（含登录与局内背包）~~ — **2026-11-11 晚已解决**：
+  `scripts.package` 由 `package-with-shell.mjs` 接管，Builder 预览 / 上传的玩家产物已带壳层（见上节）。
+  **遗留**：`verify-all.sh` 仍直接调 CLI `project package` 产出 `artifacts/verify/forgeax-game-web.zip`，
+  那份验收 ZIP 不含壳层；是否让全量验收也走新脚本，待用户确认（本轮未改 `verify-all.sh`）。
 
 已完成（2026-11-11）：Excel 表 → `generated/*.ts` → `registerItemDefs`；局外↔战斗 4174 单页连续流程与搜打撤结算；
 本地多账号注册/登录/切换 + 按账号隔离的本地存档 + 战局内不冻结且立即生效的背包换装。

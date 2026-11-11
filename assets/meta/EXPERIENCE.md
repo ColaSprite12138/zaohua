@@ -55,3 +55,30 @@
 - **老断言写死的数值会被新功能打破**：原 `verify-shell.cjs` 断言「阵亡丢失带出装备 1 件」，局内背包换装后通关会留下 2 把武器，第二次出征借出 2 件 → 红灯。正确做法是把期望值改成按 `S.cleared.weapon0/weapon1` 动态推导（断言更严），而不是把数字改大或删断言。
 - **独立页刻意不加账号**：`file://` 与 `http://localhost:4174` 不同源，账号库存不进去；给双击页加登录只会破坏「无服务器演示页」和 13 条拖放验收。账号脚本只由 `inject-shell.mjs` 注入 4174。
 - **已知边界**：局内背包看到的是被借空的武器槽（借出武器在 `borrowed` 快照里，不在 `InventoryState`）；阵亡时借出装备与本局战利品照常丢失，但局内从账号背包装上的武器仍留在存档中。要改成「阵亡也丢局内换装」需用户确认后再动 `settleRun`。
+
+## 2026-11-11 晚 · 壳层接进 Builder 产物链（发布到造化平台）
+
+- **官方 package 没有注入点**：`forgeax project package`（devkit `commands-CKFSB2ND.mjs:2877`）内部直接
+  `buildCommand()` 重建 `dist/`；`project.package` schema 只有 `root/output/format/compress/json`，
+  无 post-build hook；`verifyDist` 逐字节比对 dist 与 `forgeax-dist.json`（mismatch/undeclared 即报错），
+  私改 dist 也会被拒。`project build --html-head` 虽能注入 `</head>`，但 package 调 build 时**不传**
+  `htmlHead`，`readBuildHtmlHead()` 在 undefined 时返回空串，对 ZIP 完全无效。
+- **真正的接缝在工程侧**：Game Builder 的 `buildForgeaxPlayer`（runtime `cli.js:24817`）先看
+  `pkg.scripts?.package` —— 有就跑 `pnpm run package --format web-zip --output <archive>`，
+  否则才直接调 CLI。改 `scripts.package` 即可接管整条发布产物链，不用改引擎、也不用改插件 runtime。
+- **必须同步 manifest**：`forgeax-dist.json` 的 `artifacts[]` 每条带 `path/bytes/sha256`；只改
+  `index.html` 而不更新 `bytes`（字节数，中文会让字符数 ≠ 字节数）与 `sha256`，平台校验会失败。
+  `bytes` 用 `Buffer.from(html, 'utf8').length`。
+- **两条入口共用一份壳层块**：`inject-shell.mjs` 导出 `injectInto(html)` / `hasShellBlock(html)`，
+  并加 CLI 守卫（比较 `process.argv[1]` 与 `fileURLToPath(import.meta.url)`），否则被 import 时会
+  顺手改掉 `dist/`。4174 的 `node scripts/inject-shell.mjs` / `--check` 行为保持不变。
+- **Node 无内置 ZIP**：本机无 `zip.exe`，`fflate` 只在 pnpm 隔离目录、工程根 import 不到；
+  改用 Python 标准库 `zipfile` 做纯容器读写（`scripts/zip-io.py`），内容决策全留在 Node，
+  避免长出第二套壳层逻辑；重打包沿用官方 1980-01-01 时间戳。
+- **平台 bootstrap 与壳层不冲突**：`adaptForgeaxBuildOutput` 的 `locateEngineModule()` 只找
+  `type="module" src="/assets/index-*.js"`，`rewriteEngineScript()` 只 `html.replace(该 block, tag)`；
+  壳层是 `</body>` 前的经典 `<script>`，不会被误判或覆盖。实测玩家产物 108501 B，
+  `FORGEAX_META_SHELL_BEGIN`=1、`data-zaohua-platform-init`=1，必需校验 5/5 通过。
+- **`preview_start(validate:true)` 不一定触发构建**：同根已有预览会话时 MCP 会复用旧 host，
+  不重新 build；`preview_reload(validate:true)` 才走完整 `buildForgeaxPlayer`。
+  排查「玩家产物没生成」先看 `.game-builder/artifacts/forgeax-player/` 是否存在。

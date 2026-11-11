@@ -214,3 +214,18 @@
 - Evidence: `verify-all.sh` ALL GREEN（84 单测 / 35 playthrough / 4 resize / 28 单页 / 13 独立页）；真实 4174 硬件 WebGPU 冒烟 `artifacts/verify/smoke-login-bag.json` **14/14 全通过**（登录遮罩冻结、刷新后存档保持、局内背包不冻结、换装立即让 `weaponSlots[0]` 变为 longsword）。
 - Status: implemented
 - Note: **已知边界**：出征时 `buildLoadout()` 借空两个武器槽，局内背包看到的是空槽（借出武器在 `borrowed` 快照里）；阵亡时借出装备与本局战利品照常丢失，但局内从账号背包装上的武器仍留在存档中，如需「阵亡也丢局内换装」要用户确认后再改 `settleRun`。账号存档无跨设备导入导出；正式 Web ZIP 仍在注入前打包，不含登录与局内背包。
+
+### 2026-11-11 — 壳层接进 Game Builder 发布产物链
+
+- Scope: `package.json` / `scripts/inject-shell.mjs` / `scripts/package-with-shell.mjs`（新）/ `scripts/zip-io.py`（新）/ HANDOFF / meta CONTEXT + EXPERIENCE / 本文件。
+- Request: 用户确认「游戏最终要发布到造化平台」，问能否在平台适配版基础上不卡；开了 Chrome 硬件加速后选 **A**「先把壳层接进 Builder 产物链（登录 / 配装 / 结算一起带过去），再谈发布」。此前已知限制：Builder 预览 / 上传用 `project package` 玩家产物，不含「构建后注入 dist」的单页壳层。
+- Design: 查证后确认引擎侧无解 —— `project package` 内部重新 build 覆盖 `dist/`、schema 无 post-build hook、`verifyDist` 逐字节校验 dist、`--html-head` 只在 `project build` 生效且 package 调 build 时不传。真正的接缝是 Game Builder `buildForgeaxPlayer`（runtime `cli.js:24817`）**优先执行 `package.json#scripts.package`**。于是把 `scripts.package` 换成 `node scripts/package-with-shell.mjs`：官方 package 产 ZIP → Python `zipfile` 解包 → `inject-shell.mjs` 导出的 `injectInto()` 写壳层 → 同步 `forgeax-dist.json` 里 index.html 的 `bytes`/`sha256` → 重打包到 `--output`。`inject-shell.mjs` 加 CLI 守卫，import 不再碰 `dist/`，4174 注入与 `--check` 行为不变。
+- Actual pitfalls（均已处理）:
+  1. 官方 package 重建 dist，所以「先注入再打包」必然被覆盖；也不能私改 dist（`verifyDist` 会拒）。只能改**产物 ZIP**。
+  2. `forgeax-dist.json` 的 `artifacts[]` 带 `bytes`/`sha256`，改了 `index.html` 不同步就会被校验拦；`bytes` 必须是**字节数**（中文让字符数 ≠ 字节数）。
+  3. `inject-shell.mjs` 顶层原本直接 `process.exitCode = main()`，被 import 就会改 dist；加 `process.argv[1]` 与 `fileURLToPath(import.meta.url)` 比较的 CLI 守卫。
+  4. Node 无内置 ZIP、本机无 `zip.exe`、`fflate` 在 pnpm 隔离目录无法从工程根 import → 用 Python 标准库 `zipfile` 做纯容器 I/O，内容决策留在 Node，避免第二套壳层逻辑。
+  5. `preview_start(validate:true)` 在同根已有会话时会**复用旧 host**、不触发 `buildForgeaxPlayer`；改用 `preview_reload(validate:true)` 才真正生成 `.game-builder/artifacts/forgeax-player/`。
+- Evidence: 本地 `node scripts/package-with-shell.mjs --format web-zip --output artifacts/shell-web.zip` → `index.html` 108267 B、`FORGEAX_META_SHELL_BEGIN`=1 / `fx-shell`=84 / `forgeax-arena-run`=2，manifest `bytes` 与 `sha256` 与实际**全 match**，105 条目含 README + feedback、ZIP `testzip()` 无损坏、包内不含平台 bootstrap（Builder 解包后才注入）。端到端 `preview_reload(validate:true)` → 玩家产物 `index.html` 108501 B，**壳层=1 且平台 bootstrap=1 共存**，必需校验 5/5 通过（iframe loaded / offline provider / SDK initialized / no runtime error / single-page）。`bash scripts/verify-all.sh` **ALL GREEN**：84 单测 / 35 playthrough / 4 resize / typecheck 0 error / package sha256 / 单页壳层注入，dist marker 恢复为 1。
+- Status: implemented
+- Note: **遗留（等用户确认，本轮未做）**：① `verify-all.sh` 仍直接调 CLI，验收包 `artifacts/verify/forgeax-game-web.zip` 不含壳层，是否让全量验收也走 `scripts.package`；② 发布仍需登录（`logged_in:false`）；③ 校验的「可玩」层需用户实际游玩到 `game.loaded`；④ 4174 服务进程本轮未启动（`curl` = 000），要玩仍双击 `open-2.5d-game.bat`。Builder 普通预览仍会重建 `dist/` 并注入平台 bootstrap，与 4174 抢同一目录，两条链路不要同时用。

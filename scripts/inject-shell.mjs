@@ -2,8 +2,12 @@
  * Inject the meta (out-of-run) UI into the ForgeAX build output, turning the
  * 4174 preview into ONE continuous page: prep -> battle -> settlement.
  *
- *   node scripts/inject-shell.mjs            # inject (idempotent)
+ *   node scripts/inject-shell.mjs            # inject into dist/index.html (idempotent)
  *   node scripts/inject-shell.mjs --check   # fail if dist is stale / missing
+ *
+ * Also exports injectInto(html) / hasShellBlock(html) for
+ * `scripts/package-with-shell.mjs`, which patches the packaged Web ZIP.
+ * Importing this module never touches dist/.
  *
  * `dist/index.html` is a generated artifact and is wiped on every build, so
  * this script MUST run after `forgeax project build` (wired into verify.sh /
@@ -114,6 +118,31 @@ ${markup}
 ${END}`;
 }
 
+/**
+ * Insert or refresh the meta shell block in ANY ForgeAX-generated HTML.
+ * The 4174 dist injector below and scripts/package-with-shell.mjs (which patches
+ * the packaged Web ZIP) share this single implementation, so the two entry
+ * points can never drift apart.
+ */
+export function injectInto(html) {
+  const block = buildBlock();
+  const start = html.indexOf(BEGIN);
+  const end = html.indexOf(END);
+  const hasBlock = start >= 0 && end > start;
+  if (!hasBlock && !html.includes('</body>')) {
+    throw new Error('meta shell: HTML has neither an existing block nor a </body> anchor');
+  }
+  return hasBlock
+    ? html.slice(0, start) + block + html.slice(end + END.length)
+    : html.replace('</body>', `${block}\n</body>`);
+}
+
+export function hasShellBlock(html) {
+  const start = html.indexOf(BEGIN);
+  const end = html.indexOf(END);
+  return start >= 0 && end > start;
+}
+
 function main() {
   const check = process.argv.includes('--check');
   if (!existsSync(distHtml)) {
@@ -121,13 +150,8 @@ function main() {
     return 1;
   }
   const current = readFileSync(distHtml, 'utf8');
-  const block = buildBlock();
-  const start = current.indexOf(BEGIN);
-  const end = current.indexOf(END);
-  const hasBlock = start >= 0 && end > start;
-  const injected = hasBlock
-    ? current.slice(0, start) + block + current.slice(end + END.length)
-    : current.replace('</body>', `${block}\n</body>`);
+  const injected = injectInto(current);
+  const hasBlock = hasShellBlock(current);
 
   if (check) {
     if (!hasBlock || current !== injected) {
@@ -147,4 +171,7 @@ function main() {
   return 0;
 }
 
-process.exitCode = main();
+// Only mutate dist/ when invoked directly. Importing this module must be side-effect
+// free: package-with-shell.mjs imports injectInto() to patch a ZIP, not dist/.
+const isCli = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isCli) process.exitCode = main();

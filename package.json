@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "forgeax dev start",
     "build": "forgeax project build --json",
-    "package": "forgeax project package",
+    "package": "node scripts/package-with-shell.mjs",
     "serve": "forgeax project preview",
     "preview": "forgeax project preview",
     "doctor": "forgeax project check",
