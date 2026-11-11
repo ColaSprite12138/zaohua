@@ -89,7 +89,8 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 - `meta-ui/index.html` 把 `.layout`（装备栏 / 背包 / 仓库）和待分配区包进 `#fx-bag-content`；
   战斗中按 **B / I**（或顶栏「背包」按钮）打开，以右侧浮层显示，ESC 关闭。
 - **不冻结**：`#fx-shell.fx-in-battle` 仍 `pointer-events:none`，只有浮层 `auto`；
-  浮层外的点击照常打到 ForgeAX canvas，怪物继续追击，Worker 不收任何 pause/freeze 消息。
+  浮层外的点击照常打到 ForgeAX canvas，怪物继续追击；**局内背包本身不发 pause/freeze**
+  （平台 lifecycle 的 pause/resume 是另一条独立契约，见下节）。
 - **立即生效**：`syncBadge()` 比较 `equipped[0/1]` 与 `activeWeaponSlot` 的基线，仅把**发生变化**的槽
   经 `BroadcastChannel` 发 `equip { slots: [bool|null, bool|null], activeWeaponSlot }`；
   `null` ＝「保留该槽出征时借出的武器」，避免把借出装备覆盖掉。
@@ -97,6 +98,23 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 - **借出/归还边界**：`buildLoadout()` 出征时把两个武器槽置空，所以局内背包看到的是空武器槽；
   局内从背包装上的物品属于账号资产，结算时 `settleRun()` 归还借出武器会优先填空槽、满则进 `loose`，
   **永不静默丢物品**。阵亡时借出装备与本局战利品照常丢失；局内从背包装上的武器仍留在账号存档中。
+
+## 平台 lifecycle 契约（2026-11-11 晚，发布准备）
+
+- **入口唯一**：`assets/runtime/zaohua-platform-init.js` 是 Builder 编译的非 Pack ESM 入口，
+  声明 `['game.loading','game.lifecycle']`、调 `game.loading()`、`lifecycle.register()`，
+  并在 Worker 广播 `ready` 后发一次 `game.loaded()`。Pack / HTML 入口都不行（apply 晚于
+  `app.start()`，Worker 无 `window.PlatformClient`）。
+- **adapter 在壳层**：`shell-bridge.js` 挂 `window.MetaShell.platformAdapter`，
+  `pause()` / `resume()` 经 `forgeax-arena-run` 频道发 `pause` / `resume` 消息，
+  `getState()` 返回 `{paused}`；收到 `ready` 时补发一次 `pause`（BroadcastChannel 无积压）。
+- **Worker 独立冻结位**：`game.pack.ts` 的 `paused` 与登录遮罩的 `locked` 完全独立；
+  `paused` 只让每帧跳过 `step()` 与结算，**不 reset 任何局内状态**。
+  `unlock` 仍只由登录成功触发一次。
+- **局内背包不冻结**：B / I 打开的浮层不发 pause，怪物继续追击；这里新增的 pause
+  只来自造化平台宿主的生命周期指令，两者语义不同。
+- **护栏**：`verify-shell.cjs` 的 2 条平台断言（30 条总数）验证 adapter 状态翻转与
+  `pause`/`resume` 频道消息确实送达模拟 Worker；改这块必须保持这两条为绿。
 
 ## 旧骨架
 

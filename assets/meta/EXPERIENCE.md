@@ -89,3 +89,24 @@
 - **重打包必须重算 `.sha256`**：官方 package 写的 `<archive>.sha256` 描述的是纯净 ZIP；
   注入壳层后字节变了，`sha256sum -c` 必然失败。脚本重打包后自己写一份
   `<hex>  <basename>`，与交付 ZIP 一致；验收里再加一条 marker + manifest 断言，防止「包能过校验但没壳层」。
+
+## 平台 lifecycle / 发布校验（2026-11-11 晚）
+
+- **6 项适配检查不是猜出来的**：离线宿主 `webgame-host-offline/dist/index.js` 的
+  `ValidationTracker` 按 `initialize({capabilities})` 选入检查；`lifecycleRegistered` 看
+  `lifecycle.register()` 上报的 `getState()`，`pause/resumeAcknowledged` 由宿主**主动**发
+  `lifecycle.pause.request`（3 s 超时）并校验 ack 里 `payload.paused` 翻转，
+  `game.loading/loaded` 看 SDK 事件，`responsiveLayoutConfirmed` 是宿主按预设视口检查
+  iframe 内 `documentElement/body` 的 `overflowX/Y` —— **游戏侧无需为响应式调 API**。
+- **真实暂停必须落到 Worker**：Pack 在 Engine Worker realm，没有 `window.PlatformClient`
+  （SDK 会退化 devStub），所以 `initialize` / `register` 只能放非 Pack 入口；Worker 侧的
+  `step()` 冻结由同一个 `forgeax-arena-run` 频道的 `pause` / `resume` 分支完成。
+- **BroadcastChannel 没有消息积压**：宿主的 pause 可能早于 Worker 启动到达，
+  所以 `shell-bridge.js` 在收到 `ready` 时要重发一次 `pause`；否则「getState 变了但战斗还在跑」。
+- **`paused` 与 `locked` 必须分开**：`locked` 的 `unlock` 会 `reset(state)`，把 resume 复用成
+  unlock 会直接重开正在打的一局。`paused` 只控制每帧是否调 `step()`，不改任何局内状态。
+- **`game.loaded()` 的边界**：非 Pack 入口在引擎 bundle import **之前**执行，正好可以先挂
+  `ready` 监听；Worker 启动广播 `ready` 后发一次 `loaded()`，既满足「可玩后」也满足校验窗口。
+- **可测性决定落点**：把 adapter 放在经典脚本 `shell-bridge.js` 而不是 ESM 入口，
+  `verify-shell.cjs` 的最小骨架页才能真实驱动 pause/resume 并断言频道消息；
+  ESM 入口只保留 `globalThis.MetaShell?.platformAdapter` 的 fallback，防止壳层缺失时握手失败。

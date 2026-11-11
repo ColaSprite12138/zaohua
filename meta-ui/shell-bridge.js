@@ -130,6 +130,25 @@
   }
   host.onRender = syncBadge;
 
+  /* --------------------- platform lifecycle adapter --------------------- */
+  // Game Builder's non-Pack runtime entry (assets/runtime/zaohua-platform-init.js)
+  // registers this adapter with the platform SDK. The host sends real pause /
+  // resume requests during publishing validation, and getState() must flip
+  // while the arena actually stops -- so forward the state over the SAME run
+  // channel instead of only keeping a local flag.
+  var platformPaused = false;
+  host.platformAdapter = {
+    pause: function () {
+      platformPaused = true;
+      if (channel) channel.postMessage({ type: 'pause' });
+    },
+    resume: function () {
+      platformPaused = false;
+      if (channel) channel.postMessage({ type: 'resume' });
+    },
+    getState: function () { return { paused: platformPaused }; },
+  };
+
   /* ------------------------------ channel ------------------------------ */
   try {
     channel = new BroadcastChannel(CHANNEL);
@@ -143,6 +162,9 @@
       if (!msg || typeof msg !== 'object') return;
       if (msg.type === 'ready') {
         log('引擎已就绪 · 配装后点「出征」');
+        // The Worker boots AFTER the platform bootstrap. BroadcastChannel has
+        // no backlog, so re-assert a pause that arrived before it existed.
+        if (platformPaused) channel.postMessage({ type: 'pause' });
       } else if (msg.type === 'deployed') {
         log('出征中 · ' + msg.monsterCount + ' 只怪物 · 清场或阵亡后自动结算');
       } else if (msg.type === 'result') {

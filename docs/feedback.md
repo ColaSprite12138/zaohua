@@ -250,3 +250,41 @@
 - Status: implemented
 - Note: `release/` 目录不被验收改动；`verify-all.sh` 最后一步仍是「注入 dist + 单页浏览器验收」，
   因为 4174 服务的是 `dist/` 而不是 ZIP。
+
+### 2026-11-11 — 发布就绪的 6 项平台适配（用户明确「现在发布，继续流程」后）
+
+- Scope: `assets/runtime/zaohua-platform-init.js` / `meta-ui/shell-bridge.js` /
+  `assets/game/game.pack.ts` / `scripts/verify-shell.cjs` + HANDOFF / meta CONTEXT + EXPERIENCE。
+- Request: 用户确认 platform=**pc** / generate_materials=**false**（工程 `support_mobile:false`、键鼠操作）。
+  `get_publish_readiness` 报 `ready:false`：`playable` pending + 平台适配 6 项 failed
+  （lifecycleRegistered / pauseAcknowledged / resumeAcknowledged / gameLoadingCalled /
+  gameLoadedCalled / responsiveLayoutConfirmed）。用户授权「按插件要求改，做完验收」。
+- Design: 只读查清宿主校验逻辑后，改动落在 4 个文件：
+  ① 非 Pack ESM 入口声明 `['game.loading','game.lifecycle']`、调 `game.loading()`、
+  `lifecycle.register()`、监听 Worker `ready` 发一次 `game.loaded()`；
+  ② `shell-bridge.js` 提供 `MetaShell.platformAdapter`，pause/resume 经 `forgeax-arena-run`
+  频道转发并在 `ready` 时补发（BroadcastChannel 无积压）；
+  ③ `game.pack.ts` 加独立 `paused` 冻结位，每帧 `if (!locked && !paused)` 才 `step()`；
+  ④ `verify-shell.cjs` 新增 2 条真实断言（28 → **30**），覆盖状态翻转与频道消息。
+- Actual pitfalls（均已处理）:
+  1. **Pack 不能放 `initialize`**：`game.pack.ts` 的 `apply()` 在 `app.start()` 之后，且 Worker
+     realm 无 `window.PlatformClient`，SDK 会退化 `devStub`。唯一正统入口是
+     `assets/runtime/zaohua-platform-init.js`（Builder 编译时内联进 `zaohua-game-init.js`）。
+  2. **暂停与 `locked` 不能复用**：`unlock` 会 `reset(state)` 重开一局；resume 若走 unlock，
+     校验器看到的 `getState()` 虽然翻了，玩家的一局却没了。
+  3. **宿主会主动发 pause**：不是游戏自己上报即可，`ValidationTracker` 在 `lifecycle.registered`
+     通过后发 `lifecycle.pause.request` 并校验 ack 的 `payload.paused`，3 s 超时；
+     adapter 必须同步可完成、且 `getState()` 在整个可玩期保持注册。
+  4. **`responsiveLayoutConfirmed` 不需要游戏 API**：宿主按预设视口检查 iframe 内
+     `documentElement/body` 的 client/scroll 与 `overflowX/Y`（必须都为 false），
+     所以本轮**刻意不改 CSS**，先跑校验看实测再决定，避免过度改动。
+  5. 登录 CLI 必须用正式 runtime：`skill/scripts/game-builder-cli.mjs` 在 WorkBuddy 下报
+     "this Skill is not inside a Game Builder Plugin"；embedded server 只有 `name:"default"`，
+     凭据桶 `--agent workbuddy`。首次 Device Authorization 因用户未点授权 10 分钟超时
+     （`oauth_timeout`，可重试），上传仍未做。
+- Evidence: `bash scripts/verify-all.sh` **ALL GREEN**（2026-11-11 22:02）：84 单测 / 35 playthrough /
+  4 resize / typecheck 0 error / build / package sha256 + 壳层 / 单页注入；`verify-shell.cjs` **30/30**
+  （新增 2 条平台断言均 OK）；`dist/index.html` marker=1、验收 ZIP 内 `index.html` 109309 B / marker=1，
+  两条产物链都带上了新的 `shell-bridge.js`。
+- Status: implemented
+- Note: 上传是**不可逆外部动作**，本轮不做；`logged_in:false` 需用户在浏览器完成 OAuth 授权。

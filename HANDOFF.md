@@ -131,7 +131,9 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
 
 12. `assets/meta/account.ts` **零 import、全同步**（自实现 SHA-256；不要换回 `crypto.subtle`，`verify-shell.cjs` 跑在 `file://` + 虚拟时间下）。`meta-ui/account.js` / `auth-ui.js` 只由 `inject-shell.mjs` 注入 4174，**独立双击页不得引用**。`#fx-auth` 必须挂 `document.body`；`unlock` 每次登录**只发一次**（Worker 收到会 `reset(state)`，重发会重开正在打的局）。`lock` / `unlock` / `equip` 只走 BroadcastChannel，别加 projection seam；`equip` 的 `slots[i] === null` 表示「保留该槽借出的武器」，不要改成布尔全覆盖。
 
-`scripts/check-drift.sh` 会把上面 1–12 涉及的文件单独列出来，接手时先看它。
+13. **平台 lifecycle 契约（2026-11-11 发布准备）**：`assets/runtime/zaohua-platform-init.js` 是 Builder 编译的**唯一非 Pack 运行时入口**，只声明 `game.loading` / `game.lifecycle` 两个真实实现的 capability（多声明会造出永远过不了的校验项）。lifecycle adapter 由 `meta-ui/shell-bridge.js` 挂在 `window.MetaShell.platformAdapter`，经 `BroadcastChannel` 发 `pause` / `resume`；`game.pack.ts` 用**独立的 `paused` 冻结位**跳过 `step()`，**不得复用 `locked`**（`unlock` 会 `reset(state)` 重开一局）。`game.loaded()` 在 Worker 广播 `ready` 后发一次，即单页壳层可交互的边界。`verify-shell.cjs` 的 2 条平台断言保护它，改这块必须保持这两条为绿。
+
+`scripts/check-drift.sh` 会把上面 1–13 涉及的文件单独列出来，接手时先看它。
 
 ## 改完必跑（任何一项不绿 = 不许交付）
 
@@ -147,7 +149,7 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
 它除了跑下面各项 + meta-ui 页面验收，还强制 `test` ≥ **84** 条、`playthrough` ≥ 35 步、
 `resize` ≥ 4 步 —— **新会话删断言让测试变绿，会在这里失败**。
 `verify.sh` 按模块附加：命中 `meta` 跑 `build-meta-ui.mjs --check`、`verify-meta-ui.cjs`（13 条真实拖放）
-与 `inject-shell.mjs --check` + `verify-shell.cjs`（16 条单页断言）；命中 `resource` 跑
+与 `inject-shell.mjs --check` + `verify-shell.cjs`（30 条单页断言）；命中 `resource` 跑
 `export_tables.py --check`；命中 `combat` 跑 31000 次/池掉落跑批。
 `verify-all.sh` 把壳层注入 + 单页验收放在**全流程最后一步**：`build` / `play` / `package`
 **都会重建 `dist/`**，只在 build 后注入会被后面的 `package` 冲掉，4174 又变回无壳层页面。
@@ -169,7 +171,7 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project build --json
 node scripts/package-with-shell.mjs --format web-zip --output release/forgeax-game-web.zip
 node scripts/inject-shell.mjs                           # 最后一步：build/play/package 都会重建 dist
 node scripts/inject-shell.mjs --check
-node scripts/verify-shell.cjs                            # 4174 单页 28/28
+node scripts/verify-shell.cjs                            # 4174 单页 30/30
 ```
 
 验收基线（2026-11-11 最后一次完整运行，新会话应以 `verify-all.sh` 的实际输出为准）：
@@ -183,7 +185,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 28/28
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
 | `meta-ui` | 生成物同步 + 独立页面浏览器验收 13/13 |
 | `build` | `ok` |
-| `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **28/28**（含登录/存档/局内背包） |
+| `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **30/30**（含登录/存档/局内背包） |
 | `playthrough` 1600x900 | `passed:true`、35 steps、0 errors |
 | `playthrough-resize` 1700x1000 | `passed:true`、4 steps、0 errors |
 | `package` | sha256 校验通过，包内 README + feedback 齐全 |
@@ -197,7 +199,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 28/28
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
 删断言不会让这张表悄悄失效。单测 84 条＝combat 34（movement 11 + modifiers 3 + weapons 7 + loot 13）、
 meta 36（meta 3 + inventory 14 + run-settlement 7 + account 12）、battle 4、talent 3、resource 5、模板 2；全量下限 84 条。
-浏览器验收：playthrough 13 个命名场景（展开 35 steps）、独立页 13 条、4174 单页 28 条。
+浏览器验收：playthrough 13 个命名场景（展开 35 steps）、独立页 13 条、4174 单页 30 条（含 2 条平台 lifecycle）。
 真实硬件 WebGPU 冒烟（一次性）：`node artifacts/smoke-login-bag.mjs`，覆盖强制登录、刷新后存档、局内背包不冻结与换装立即生效。
 
 | 功能契约 | 单测 `assets/combat/__tests__/movement.test.ts` | 浏览器 `scripts/playthrough.mjs` |
@@ -218,8 +220,9 @@ meta 36（meta 3 + inventory 14 + run-settlement 7 + account 12）、battle 4、
 | 背包 5×8、仓库 16×10、长剑 2×3、10 装备槽、占格碰撞/越界、跨容器拖放、穿脱、类型校验 | `assets/meta/__tests__/inventory.test.ts`（14 条） | `scripts/verify-meta-ui.cjs`（13 条真实拖放断言） |
 | 表结构 / 生成物 SHA-256 / 权重梯 / 引用完整性 | `assets/resource/__tests__/tables.test.ts`（5 条）+ `export_tables.py --check` | `scripts/loot-report.mjs`（31000 次/池，偏差 >1% 即失败） |
 | 权重掉落、固定种子可复现、多怪部署、战利品记录 | `assets/combat/__tests__/loot.test.ts`（13 条） | — |
-| 单页借出 / 通关归还 / 阵亡丢失 / 返回局外 | `assets/meta/__tests__/run-settlement.test.ts`（7 条） | `scripts/verify-shell.cjs`（16 条，含出征广播与战斗态切换） |
+| 单页借出 / 通关归还 / 阵亡丢失 / 返回局外 | `assets/meta/__tests__/run-settlement.test.ts`（7 条） | `scripts/verify-shell.cjs`（30 条，含出征广播、战斗态切换与平台 lifecycle） |
 | 初始状态 / reload 可玩 | `empty-project.test.ts`（2 条工程契约） | `spawn: ...` + `reload preserves a playable frame` |
+| 平台 lifecycle：pause/resume 真实停战斗、状态可翻转、消息送达 Worker | — | `scripts/verify-shell.cjs`：`platform lifecycle adapter flips paused and stays registered` + `pause/resume are forwarded to the Engine Worker over the run channel` |
 
 ## 已知陷阱速查
 

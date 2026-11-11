@@ -24,7 +24,8 @@
  * It also drives the mandatory login through the REAL overlay UI (register,
  * auto-save, simulated refresh, account isolation) and the in-run bag (B opens
  * it without freezing the arena, drag-equipping emits an immediate `equip`
- * message, ESC closes it): 28 assertions in total.
+ * message, ESC closes it), plus the platform lifecycle adapter (pause/resume
+ * forwarded to the Engine Worker): 30 assertions in total.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -78,7 +79,7 @@ const SELFTEST = `
 (function () {
   var out = {
     steps: {}, ok: false, error: null,
-    auth: {}, bag: {}, equipMessages: [], lockMessages: [],
+    auth: {}, bag: {}, equipMessages: [], lockMessages: [], platformMessages: [],
   };
   var resultEl = document.getElementById('selftest-result');
   var publish = function () { resultEl.textContent = JSON.stringify(out); };
@@ -101,6 +102,7 @@ const SELFTEST = `
       out.equipMessages.push({ slots: msg.slots, activeWeaponSlot: msg.activeWeaponSlot });
     }
     if (msg && (msg.type === 'lock' || msg.type === 'unlock')) out.lockMessages.push(msg.type);
+    if (msg && (msg.type === 'pause' || msg.type === 'resume')) out.platformMessages.push(msg.type);
   };
 
   var M = window.MetaInventory, H = window.MetaShell;
@@ -252,6 +254,20 @@ const SELFTEST = `
       document.getElementById('fx-back').click();
       snap('backToMeta');
 
+      // ---- platform lifecycle: real pause/resume over the run channel ----
+      // Driven LAST so it cannot disturb deploy / settlement assertions.
+      var adapter = H.platformAdapter;
+      out.platform = { hasAdapter: !!adapter, before: adapter ? adapter.getState().paused : null };
+      if (adapter) {
+        adapter.pause();
+        out.platform.afterPause = adapter.getState().paused;
+        await waitFor(function () { return out.platformMessages.indexOf('pause') >= 0; });
+        adapter.resume();
+        out.platform.afterResume = adapter.getState().paused;
+        await waitFor(function () { return out.platformMessages.indexOf('resume') >= 0; });
+        out.platform.messages = out.platformMessages.slice();
+      }
+
       out.ok = true;
     } catch (err) {
       out.error = String(err && err.stack || err);
@@ -352,6 +368,14 @@ const checks = [
       && S.gameOver.log.indexOf('丢失带出装备 ' + expectedLoss + ' 件') >= 0,
     { log: S.gameOver.log, expectedLoss }],
   ['returning to meta keeps the inventory usable', S.backToMeta.inBattle === false, S.backToMeta],
+  ['platform lifecycle adapter flips paused and stays registered',
+    result.platform.hasAdapter === true && result.platform.before === false
+      && result.platform.afterPause === true && result.platform.afterResume === false,
+    result.platform],
+  ['pause/resume are forwarded to the Engine Worker over the run channel',
+    !!result.platform.messages && result.platform.messages.indexOf('pause') >= 0
+      && result.platform.messages.indexOf('resume') >= 0,
+    result.platform.messages],
 ];
 let failed = 0;
 for (const [name, ok, detail] of checks) {

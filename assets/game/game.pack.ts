@@ -75,6 +75,9 @@ export const game: Plugin = {
     // otherwise the skeletons would quietly kill an unattended player before
     // anyone has logged in. `unlock` resets to a clean run on successful auth.
     let locked = false;
+    // Platform lifecycle pause (publishing validation). Kept INDEPENDENT of
+    // `locked`: `unlock` resets to a fresh run, which a resume must never do.
+    let paused = false;
     let channel: BroadcastChannel | null = null;
     if (typeof BroadcastChannel !== 'undefined') {
       channel = new BroadcastChannel(RUN_CHANNEL);
@@ -105,6 +108,10 @@ export const game: Plugin = {
             lastResult = null;
             resultSent = false;
           }
+        } else if (msg.type === 'pause') {
+          paused = true;
+        } else if (msg.type === 'resume') {
+          paused = false;
         } else if (msg.type === 'equip') {
           // In-run bag changes. `null` = leave that slot's BORROWED weapon
           // alone; true/false = the player armed/unarmed that slot in the bag.
@@ -231,9 +238,9 @@ export const game: Plugin = {
             // no button produces no order at all.
             const mouse = snapshot?.mouse;
             const restart = snapshot?.keyboard?.justPressedCode('KeyR') ?? false;
-            // Login overlay: freeze simulation AND settlement, but keep painting
-            // so the canvas behind the overlay still shows a live frame.
-            if (!locked) {
+            // Login overlay AND platform lifecycle pause: freeze simulation and
+            // settlement, but keep painting so the canvas shows a live frame.
+            if (!locked && !paused) {
               step(state, dt, {
                 mouse: pointer
                   ? { x: (pointer.x / canvasW) * VIEW_W, y: (pointer.y / canvasH) * VIEW_H }
