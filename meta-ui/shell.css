@@ -88,8 +88,8 @@
 #fx-shell.fx-in-battle .fx-bar { pointer-events: auto; background: rgba(17, 30, 42, .92); }
 
 /* --------------------------- identity chip ------------------------------ */
-/* No login overlay: identity comes from the platform host, with a local-dev
-   fallback for stand-alone development. */
+/* No login overlay and no local save: the player chip is driven entirely by
+   the platform host via MetaShell.mountPlatformStore(). */
 #fx-shell .fx-account { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8fa9bb; }
 #fx-shell .fx-account b { color: #ffd166; }
 #fx-shell .fx-save-mode {

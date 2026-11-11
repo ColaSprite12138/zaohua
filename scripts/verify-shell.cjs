@@ -21,13 +21,15 @@
  *   cleared  -> weapons returned + authored loot banked
  *   gameOver -> borrowed weapons and loot permanently lost
  *
- * It also drives the platform identity + KV save contract (no login overlay,
- * one versioned blob per render, simulated refresh from the local mirror,
- * corrupt-save fallback, mountPlatform switching to a mocked platform write)
- * and the in-run bag (B opens it without freezing the arena, drag-equipping
- * emits an immediate `equip` message, ESC closes it), plus the platform
- * lifecycle adapter (pause/resume forwarded to the Engine Worker):
- * 30 assertions in total. Real account isolation is only verifiable on the
+ * It also checks that NO local save happens without a platform host, then
+ * drives the platform KV contract over a mocked bridge (no login overlay,
+ * corrupt/future-version fallback, mountPlatform identity switch, one
+ * versioned pure-JSON blob per render). There is no local mirror and no
+ * simulated refresh any more: persistence is verified after publishing.
+ * Also covers the in-run bag (B opens it without freezing the arena,
+ * drag-equipping emits an immediate `equip` message, ESC closes it) and the
+ * platform lifecycle adapter (pause/resume forwarded to the Engine Worker):
+ * 29 assertions in total. Real account isolation is only verifiable on the
  * published platform, NOT here.
  */
 const fs = require('node:fs');
@@ -151,44 +153,32 @@ const SELFTEST = `
 
   (async function () {
     try {
-      // ---- platform identity + KV save: NO local login/registration ----
-      // The classic shell starts in local-dev mode; the Builder ESM entry
-      // pushes the real identity later via MetaShell.mountPlatformStore().
+      // ---- NO local save; platform KV contract over a mocked bridge ----
+      // Outside the platform host the shell starts from the default inventory
+      // and writes NOTHING. The Builder ESM entry mounts the platform adapter
+      // only when user.current / storage are actually available.
       var slots = M.EQUIP_SLOTS.length;
-      var localAdapter = A.createLocalAdapter();
       var fallback = function () { return M.createInventoryState(3); };
 
       out.store.noLoginOverlay = !document.getElementById('fx-auth');
       out.store.deployNeedsNoLogin = !document.getElementById('fx-deploy').disabled
         && !/请先登录/.test(logText());
-      out.store.localDevIdentity = Store.mode() === 'local'
-        && Store.currentUser() === A.DEV_USER
+      var noLocalSave = Store.mode() !== 'platform'
+        && Store.writeCount() === 0
         && H.getState().loose.length === 3;
 
-      // Every render writes ONE versioned KV blob. The queue writes in a
-      // microtask, so wait for the local mirror before reading it back.
+      // Build the known 4-item state used by deploy/settlement below. Rendering
+      // here must NOT produce any write (no platform adapter yet).
       H.getState().loose.push({ uid: 'save-probe', defId: 'longsword' });
       H.render();
-      await waitFor(function () { return localAdapter.read() !== null; });
-      var saved = Store.lastSaved();
-      out.store.kvEnvelope = !!saved && saved.schemaVersion === A.SCHEMA_VERSION
-        && A.isValidInventoryState(saved.state, slots)
-        && saved.state.loose.length === 4;
+      out.store.noLocalSave = noLocalSave
+        && Store.writeCount() === 0
+        && Store.lastSaved() === null;
 
-      // Simulated refresh: in-memory state is dropped, the mirror is reloaded.
-      var refreshed = Store.simulateRefresh();
-      out.store.refreshRestored = refreshed.loose.length === 4
-        && A.readSave(localAdapter, fallback, slots).loose.length === 4;
-
-      // A corrupt / future-version blob must fall back, never throw.
-      localAdapter.write({ schemaVersion: 99, state: { loose: [] } });
-      out.store.corruptFallback = Store.simulateRefresh().loose.length === 3;
-
-      // Restore the 4-item save so deploy/settlement below sees the old state.
-      var good = H.getState();
-      good.loose.push({ uid: 'save-probe-2', defId: 'longsword' });
-      localAdapter.write(A.encodeSave(good));
-      Store.simulateRefresh();
+      // Corrupt / future-version blobs fall back without touching any store.
+      out.store.corruptFallback =
+        A.decodeSave({ schemaVersion: 99, state: { loose: [] } }, fallback, slots).loose.length === 3
+        && A.decodeSave(null, fallback, slots).loose.length === 3;
 
       // Mock the platform bridge: real identity shape + a single KV writer.
       var platformWrites = [];
@@ -203,12 +193,21 @@ const SELFTEST = `
       H.getState().loose.push({ uid: 'platform-probe', defId: 'longsword' });
       H.render();
       await waitFor(function () { return platformWrites.length >= 1; });
+      var written = platformWrites[0] || null;
+      out.store.kvEnvelope = !!written && written.schemaVersion === A.SCHEMA_VERSION
+        && A.isValidInventoryState(written.state, slots)
+        && written.state.loose.length === 5;
       out.store.platformKvWrite = platformWrites.length === 1
-        && platformWrites[0].schemaVersion === A.SCHEMA_VERSION
-        && platformWrites[0].state.loose.length === 5
-        && JSON.stringify(platformWrites[0]) === JSON.stringify(A.encodeSave(H.getState()));
-      // Back to local-dev so the rest of the flow sees the known 4-item state.
-      Store.simulateRefresh();
+        && !!written
+        && JSON.stringify(written) === JSON.stringify(A.encodeSave(H.getState()));
+
+      // Restore the known 4-item state for the deploy/settlement flow below.
+      // This render still reaches the mocked platform writer, but the KV
+      // assertions above have already been captured.
+      platformWrites.length = 0;
+      var restored = M.createInventoryState(3);
+      restored.loose.push({ uid: 'save-probe', defId: 'longsword' });
+      H.setState(restored);
 
       out.authoredRegistered = (function () {
         try { return M.itemDef('10006').name === '霜之哀伤'; } catch (e) { return false; }
@@ -354,12 +353,10 @@ const checks = [
     result.store.noLoginOverlay === true, result.store],
   ['deploy no longer requires a local login',
     result.store.deployNeedsNoLogin === true, result.store],
-  ['without a host the shell uses a local-dev identity and default inventory',
-    result.store.localDevIdentity === true, result.store],
+  ['without a platform host there is no local save and no writes',
+    result.store.noLocalSave === true, result.store],
   ['every render writes one versioned KV envelope',
     result.store.kvEnvelope === true, result.store],
-  ['a simulated refresh restores the saved inventory from the mirror',
-    result.store.refreshRestored === true, result.store],
   ['a corrupt or future-version save falls back without throwing',
     result.store.corruptFallback === true, result.store],
   ['mountPlatform switches to the platform identity and loads its blob',

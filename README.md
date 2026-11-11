@@ -66,12 +66,16 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 存盘是**单 key `forgeax.save.v1` + 一个 `{schemaVersion:1, state}` 纯 JSON blob**（整个 `InventoryState`）：
 平台不解析结构，schema 与迁移由游戏自己负责。
 
+**发布到造化平台之前没有平台用户与云存储能力**（用户 2026-11-11 拍板）：本地只验证基础玩法，
+**不验证存盘与鉴权**；工程里没有任何本地存盘 / 本地账号逻辑。平台云存档代码保留，
+发布后由宿主注入 `user.current` / `storage` 时才会生效。
+
 | 项 | 说明 |
 |:--|:--|
 | 身份 | 平台 `user.current`；`assets/runtime/zaohua-platform-init.js` 在 `initialize()` 后读身份并推给壳层。`meta-ui/auth-ui.js` 登录遮罩已删除 |
 | 存盘 | 每次 `render()`（拖放 / 换装 / 出征结算）由 `shell-bridge.js#syncBadge()` 调 `MetaStore.persist()`，写队列串行合并，防止旧写覆盖新写 |
-| 本地开发 | 无平台宿主时用 `DEV_USER='local-dev'` + 浏览器存储镜像 `__forgeax_local_save__`（同一 envelope 形状），**本地可验存盘 / 刷新恢复 / 损坏兜底 / 平台桥切换** |
-| 上线才验 | **多账号数据隔离、跨设备恢复**只在发布到造化平台后可验（用户 2026-11-11 明确） |
+| 本地（无宿主） | **完全不存盘**：首屏用默认 `InventoryState(3)`，`MetaStore.persist()` 直接返回，顶栏玩家名 `—`、存档徽标隐藏。没有本地 adapter / 镜像 key / 本地开发身份 / `simulateRefresh()` |
+| 上线才验 | **存盘本身、多账号数据隔离、跨设备恢复**都只在发布到造化平台后可验（用户 2026-11-11 明确） |
 | 数据容错 | 损坏 JSON / 版本不符 / 缺字段一律回退 `createInventoryState(3)`，不崩页面 |
 | 纯 JSON | `encodeSave()` 强制一次 `JSON.parse(JSON.stringify(...))`：宿主预览用 `structuredClone`、平台用 `JSON.stringify`，Date/Map 会变形 |
 
@@ -82,7 +86,7 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 
 战斗内按 **B / I**（或顶栏「背包」按钮）打开同一份格子背包浮层，**战斗不会暂停**：怪物继续行动，
 浮层外的鼠标点击照常落到 canvas。拖放换装后，发生变化的武器槽经 `BroadcastChannel` 发 `equip`
-给 Worker，本局伤害 / 攻击距离**立即生效**，同时写回存档；ESC 关闭。
+给 Worker，本局伤害 / 攻击距离**立即生效**；平台环境下同时写回 KV 存档（本地不写盘）；ESC 关闭。
 `equip.slots[i] === null` 表示保留该槽出征时借出的武器，避免覆盖。
 
 ### 人工数据表 → 生成物

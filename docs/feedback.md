@@ -318,3 +318,38 @@
 - Status: implemented
 - Note: 平台 ESM 入口新增的 `user.current` / `storage` 声明**未在本轮跑 Builder validate 预览**；
   发布前需重跑 `preview_reload(validate:true)` 确认 `initialize()` 的两项连通性。上传未做。
+
+### 2026-11-11 晚 — 删光本地存盘，平台 KV 云存档保留（用户选 A）
+
+- Decision: 用户重申「**发布到造化平台之前，没有平台用户和云存储能力，所以不验证相关功能，
+  只验证基础玩法；所有涉及本地存盘的逻辑与断言全部删光，一切以本次结论为准**」，
+  随后纠正「**平台的云存档功能要保留，只删本地存盘逻辑，注意审题**」。
+  给出 A/B 二选一后用户选 **A：只删本地存盘相关，平台 KV 存储逻辑与断言保留**。
+- 改动范围（删）：`assets/meta/account.ts` 的 `createLocalAdapter` / `LOCAL_KEY` / `DEV_USER` /
+  `DEV_DISPLAY_NAME` / `StorageLike` / `defaultStorage`；`meta-ui/account.js` 重新生成；
+  `meta-ui/platform-store.js` 的本地降级分支、`simulateRefresh()`、首屏读盘（写队列默认 `null`）；
+  `meta-ui/shell-bridge.js` 的 `local-dev` 身份与「本地存档」徽标；`shell.css` / `build-meta-ui.mjs` 注释；
+  `account.test.ts` 4 条本地 adapter 用例（15 → 11）；`verify-shell.cjs` 的 `refreshRestored`
+  断言与整段本地镜像驱动（30 → 29）；`verify-all.sh` 单测下限 84 → 83。
+- 改动范围（**保留**）：`assets/runtime/zaohua-platform-init.js` 的 `user.current` / `storage`
+  capability 与 `MetaShell.mountPlatformStore()` 调用；`SAVE_KEY='forgeax.save.v1'`、
+  `encodeSave/decodeSave`、`createSaveQueue`、`writeSave`、`mountPlatform()` 桥。
+- Actual pitfalls:
+  1. 首屏状态由 `meta-ui/index.html` 内联脚本 `host.state ?? M.createInventoryState(3)` 初始化，
+     删掉 `apply(A.readSave(...))` 后 4174 页面照常可用，不需要补任何初始化。
+  2. `verify-shell.cjs` 前半段原本用 `localAdapter` + 三次 `simulateRefresh()` 造出「4 件 loose」
+     状态供后半段 deploy/settlement 断言使用 → 改为构造状态 + mock `mountPlatform` +
+     `H.setState(restored)` 还原；**还原前必须清空 mock 写入数组**，否则 `platformKvWrite === 1`
+     会被还原时那次 render 写入破坏。
+  3. 删断言会撞 `verify-all.sh` 的 84 下限，须同步降到 83 并在注释里逐条解释变化。
+  4. 范围歧义必须先确认：语气强 / 强调多次 ≠ 范围明确。先出「保留清单 + 删除清单」等一句话确认，
+     避免把平台云存档一起删掉（用户已把这条立为跨工程硬规矩）。
+- Evidence: `bash scripts/verify-all.sh` **ALL GREEN**（2026-11-11 23:51:42）：
+  **83** 单测（下限 83）/ 35 playthrough / 4 resize / typecheck 0 error / build /
+  package sha256 + 壳层（manifest OK, `index.html 100574 bytes`）/ 独立页 13/13 /
+  `verify-shell.cjs` **29/29**。dist 与验收 ZIP 的 `index.html` 均 100574 B、marker=1，
+  `createLocalAdapter` / `LOCAL_KEY` / `DEV_USER` / `simulateRefresh` / `__forgeax_local_save__` /
+  「本地存档」全部为 0；`mountPlatformStore` 与 `SAVE_KEY` 仍在（平台 KV 保留）。
+- Status: implemented
+- Note: **未上传造化平台**；平台身份 / 云存档的真实读写、账号数据隔离、跨设备恢复按用户结论
+  发布到平台后再验。新增 capability 仍未跑 Builder validate 预览，发布前需重跑。

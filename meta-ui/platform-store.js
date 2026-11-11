@@ -1,21 +1,22 @@
 /**
  * Platform identity + KV save bridge for the injected single-page shell.
  *
- * There is NO local login/registration any more. The player identity comes
- * from the platform container via `user.getCurrent()`; the save is one opaque
- * KV blob (`forgeax.save.v1`) written through `storage.get/set`.
+ * There is NO local login/registration and NO local save. The player identity
+ * comes from the platform container via `user.getCurrent()`; the save is one
+ * opaque KV blob (`forgeax.save.v1`) written through `storage.get/set`.
+ * Outside the platform host (the 4174 preview) the shell starts from the
+ * default inventory and writes nothing at all.
  *
  * Classic scripts in the shell run BEFORE the Builder ESM platform entry
  * (module scripts are deferred, inline classic scripts are not), so this file
- * starts in a local-development mode and exposes `mountPlatform()`. The ESM
- * entry awaits `initialize()`, `user.getCurrent()` and `storage.get()` and
- * then pushes the resolved identity + adapter down here.
+ * exposes `mountPlatform()` but stays dormant until the ESM entry has awaited
+ * `initialize()`, `user.getCurrent()` and `storage.get()` and pushes the
+ * resolved identity + adapter down here.
  *
  * Browser-facing contract:
  *   window.MetaStore.currentUser() / displayName() / mode()
- *   window.MetaStore.persist()            -> write the current InventoryState
+ *   window.MetaStore.persist()            -> no-op until a platform adapter exists
  *   window.MetaStore.mountPlatform(bridge)-> switch to the real platform KV
- *   window.MetaStore.simulateRefresh()    -> local-only reload (test helper)
  *   window.MetaShell.mountPlatformStore   -> same as MetaStore.mountPlatform
  */
 (function () {
@@ -31,15 +32,9 @@
 
   var slots = M.EQUIP_SLOTS.length;
   var fallback = function () { return M.createInventoryState(3); };
-  var adapter = A.createLocalAdapter();
-  var queue = null;
-  var identity = { id: A.DEV_USER, name: A.DEV_DISPLAY_NAME, mode: 'local' };
+  var queue = null; // stays null until the platform adapter is mounted
+  var identity = { id: '', name: '', mode: 'off' };
   var applying = false;
-
-  function setQueue(writeFn) {
-    queue = A.createSaveQueue(writeFn);
-  }
-  setQueue(function (env) { return adapter.write(env); });
 
   /** Replacing state must not itself count as a user edit / extra write. */
   function apply(state) {
@@ -54,23 +49,16 @@
   var Store = {
     mode: function () { return identity.mode; },
     currentUser: function () { return identity.id; },
-    displayName: function () { return identity.name; },
+    displayName: function () { return identity.name || '—'; },
     saveKey: function () { return A.SAVE_KEY; },
     persist: function () {
+      // No platform host => no queue => no write. This is the ONLY reason the
+      // 4174 preview can play the game without persisting anything.
       if (applying || !queue) return null;
       return A.writeSave(queue, host.getState());
     },
     lastSaved: function () { return queue ? queue.last() : null; },
     writeCount: function () { return queue ? queue.calls() : 0; },
-
-    /** Discard in-memory identity/state and reload from the LOCAL adapter. */
-    simulateRefresh: function () {
-      identity = { id: A.DEV_USER, name: A.DEV_DISPLAY_NAME, mode: 'local' };
-      adapter = A.createLocalAdapter();
-      setQueue(function (env) { return adapter.write(env); });
-      apply(A.readSave(adapter, fallback, slots));
-      return host.getState();
-    },
 
     /**
      * bridge = { userId, displayName, initial, write(envelope), read() }
@@ -84,13 +72,7 @@
         name: String(bridge.displayName || bridge.userId || 'anonymous'),
         mode: 'platform',
       };
-      adapter = {
-        read: function () {
-          return bridge.initial !== undefined ? bridge.initial : null;
-        },
-        write: function (env) { return bridge.write(env); },
-      };
-      setQueue(function (env) { return adapter.write(env); });
+      queue = A.createSaveQueue(function (env) { return bridge.write(env); });
       apply(A.decodeSave(bridge.initial, fallback, slots));
       return true;
     },
@@ -99,6 +81,6 @@
   window.MetaStore = Store;
   host.mountPlatformStore = Store.mountPlatform;
 
-  // Synchronous first paint: no overlay, no password, no pending Promise.
-  apply(A.readSave(adapter, fallback, slots));
+  // No first-paint read: meta-ui/index.html already initialised the default
+  // InventoryState. Without a platform host there is nothing to load or write.
 })();

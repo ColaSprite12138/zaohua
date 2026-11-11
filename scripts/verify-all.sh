@@ -96,12 +96,14 @@ tests=$(node -e '
   process.stdout.write(m ? m[1] : "");
 ' "$OUT/test.stderr.log" 2>/dev/null || true)
 # A FLOOR, not an exact count: modules keep adding their own tests. Deleting
-# assertions to make the suite green still falls below the 84-test baseline
+# assertions to make the suite green still falls below the 83-test baseline
 # (2026-11-10: +14 grid/equipment, +7 dual weapon slots;
 #  2026-11-11: +13 weighted loot, +7 run settlement, +2 table integrity,
-#              +12 local accounts / save data).
-[ "${tests:-0}" -ge 84 ] || die "单测数量应 ≥ 84（基线，防止删断言），实际 ${tests:-未读到}"
-log "[ OK ] test :: $tests passed（下限 84）"
+#              +15 platform KV save tests; then -4 LOCAL-save-only tests
+#              removed when local persistence was deleted on user instruction.
+#              The 11 remaining platform KV tests stay as green as before.)
+[ "${tests:-0}" -ge 83 ] || die "单测数量应 ≥ 83（基线，防止删断言），实际 ${tests:-未读到}"
+log "[ OK ] test :: $tests passed（下限 83）"
 
 log "[RUN ] meta-ui :: generated script + standalone page acceptance"
 node scripts/build-meta-ui.mjs --check >> "$SUMMARY" 2>&1 \

@@ -12,7 +12,8 @@
  *
  * `account.js` is NOT referenced by the standalone page (that page stays a
  * serverless demo). scripts/inject-shell.mjs injects it into the 4174 shell,
- * where the platform KV save envelope + local-development adapter live.
+ * where the platform KV save envelope and write queue live. There is NO local
+ * adapter: outside the platform host the shell persists nothing.
  */
 import { createRequire } from 'node:module';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';

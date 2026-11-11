@@ -87,17 +87,20 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
 **注入必须是全流程最后一步**，`verify-all.sh` 已放在 `package` 之后；否则 4174 会静默丢掉单页流程。
 独立 `file://` 页仍走 `createInventoryState()` 缺省路径，行为不变。
 
-### 平台身份、KV 存档与战局内背包（2026-11-11 晚改造）
+### 平台身份、KV 存档与战局内背包（2026-11-11 晚改造，同日按用户结论再收紧）
 
-用户拍板：**去掉自研注册/登录，直接用造化平台玩家身份；存盘按平台 KV 结构；本地只验功能与存盘，账号数据隔离发布到平台后再验证**。
+用户拍板：**去掉自研注册/登录，直接用造化平台玩家身份；存盘按平台 KV 结构**。
+随后重申收口：**发布到造化平台之前没有平台用户与云存储能力，本地只验证基础玩法；
+所有本地存盘逻辑与相关断言全部删除，平台云存档代码保留、上线后再验**。
 `meta-ui/auth-ui.js` 已删除，`#fx-auth` 遮罩与「未登录禁止出征」一并取消。
 
 | 项 | 契约 |
 |:--|:--|
 | 身份 | `user.current` → `user.getCurrent()`；`assets/runtime/zaohua-platform-init.js` 在 `initialize()` 后读身份并推给壳层。**游戏内无注册 / 密码 / 登录**，平台按用户命名空间隔离 |
 | 存盘 | **单 key `forgeax.save.v1` + 一个 `{schemaVersion:1, state}` 纯 JSON blob**（整个 `InventoryState`）。`assets/meta/account.ts`（零 import）负责 envelope、结构校验、版本/损坏兜底与写队列；`shell-bridge.js#syncBadge()`（唯一 `onRender` 钩子）每次 `render()` 调 `MetaStore.persist()` |
-| 平台入口 | ESM 入口声明 `user.current` + `storage`，`await storage.get(SAVE_KEY)` 后调 `MetaShell.mountPlatformStore({ userId, initial, read, write })`。**经典壳层脚本先于 deferred ESM 入口执行**，故 `meta-ui/platform-store.js` 先本地降级、再由 `mountPlatform()` 切换；`initial` 是已 await 的值，壳层不处理 Promise |
-| 本地验证 | 无宿主时 `MetaStore` 用 `DEV_USER='local-dev'` + `createLocalAdapter()`（浏览器存储 `__forgeax_local_save__`，同一 envelope 形状），可验存盘 / 刷新恢复 / 损坏兜底 / 平台桥切换。**多账号隔离与跨设备恢复只在发布到平台后可验** |
+| 平台入口 | ESM 入口声明 `user.current` + `storage`，`await storage.get(SAVE_KEY)` 后调 `MetaShell.mountPlatformStore({ userId, initial, read, write })`。**经典壳层脚本先于 deferred ESM 入口执行**，故 `meta-ui/platform-store.js` 暴露 `mountPlatform()` 但**默认休眠**；`initial` 是已 await 的值，壳层不处理 Promise |
+| 本地（无宿主） | **完全不存盘**：`MetaStore` 写队列为 `null`，`persist()` 直接返回，首屏用独立页已初始化的默认 `InventoryState(3)`。没有本地 adapter、没有镜像 key、没有 `local-dev` 身份、没有 `simulateRefresh()`；顶栏玩家名显示 `—`、存档徽标隐藏。**持久化 / 账号隔离 / 跨设备恢复只在发布到平台后验** |
+| 纯 JSON 红线 | 宿主预览用 `structuredClone`、平台/devStub 用 `JSON.stringify`，所以 `encodeSave()` 强制一次 `JSON.parse(JSON.stringify(...))`；存档里不得出现 Date / Map / class 实例 |
 | 纯 JSON 红线 | 宿主预览用 `structuredClone`、平台/devStub 用 `JSON.stringify`，所以 `encodeSave()` 强制一次 `JSON.parse(JSON.stringify(...))`；存档里不得出现 Date / Map / class 实例 |
 | 冻结 | Worker 的 `lock` / `unlock` 分支保留为协议兼容，但遮罩删除后**没有生产者**；平台 pause/resume 走独立 `paused` 冻结位（保护清单 13） |
 | 局内背包 | `B` / `I` / 顶栏按钮打开 `#fx-bag-content` 浮层，ESC 关闭；战斗继续推进，浮层外点击仍到 canvas |
@@ -131,7 +134,7 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
     **发布产物另走一条路**：`package.json#scripts.package` = `scripts/package-with-shell.mjs`，对官方 Web ZIP 解包 → 注入壳层 → 同步 `forgeax-dist.json` 的 `bytes`/`sha256` → 重打包；Game Builder 预览 / 上传自动调用它（`buildForgeaxPlayer` 优先用工程 script）。**`verify-all.sh` 的 `package` 步骤也走同一脚本**：`--json` 时 stdout 只输出一行 `{"ok":true,...}` 供 `run_json` 解析（引擎自身的 JSON 转 stderr），并重算与重打包后字节匹配的 `.zip.sha256`；验收包 `artifacts/verify/forgeax-game-web.zip` 已含壳层，且新增断言检查 marker + manifest（`release/` 不被验收改动）。两条入口共用 `inject-shell.mjs` 导出的 `injectInto()`，改壳层只需维护一处。
 11. `assets/game/game.pack.ts` 里 **`game.state` 必须保持唯一 read projection**：`project play` 以「唯一注册」解析默认读取，多注册一个（哪怕 `run.result`）会让 35 步 playthrough 首步报 `state-unavailable`。部署 / 结算只走 BroadcastChannel，别加 projection seam。2026-11-11 追加的只读 `probe` → `state` 消息只是把 `projection(state)`（外加全部掉落点坐标）序列化到主窗口，**不注册新 projection**，供真实 4174 页面端到端取证；不要把它改成 `registerRead`。
 
-12. **平台身份 + KV 存档契约（2026-11-11 晚改造，替换原「本地账号」条款）**：`assets/meta/account.ts` 零 import，产出 `meta-ui/account.js`（`build-meta-ui.mjs` 生成、`--check` 防漂移）；只负责 envelope / 结构校验 / 版本兜底 / 写队列 / 本地 adapter，**不含登录、密码、SHA-256**。`SAVE_KEY='forgeax.save.v1'` 是平台唯一 key，`LOCAL_KEY='__forgeax_local_save__'` 是本地镜像，**两者不可混用**；`encodeSave()` 强制纯 JSON（宿主预览用 `structuredClone`、平台/devStub 用 `JSON.stringify`，Date/Map 会变形）。`meta-ui/platform-store.js` 与 `account.js` 只由 `inject-shell.mjs` 注入 4174，独立双击页不得引用。经典壳层脚本先于 deferred ESM 入口执行，所以身份切换只能是 `MetaShell.mountPlatformStore()` **由 ESM 推下来**；`initial` 必须是已 await 的值。`lock` / `unlock` / `equip` 只走 BroadcastChannel，别加 projection seam；`equip` 的 `slots[i] === null` 表示「保留该槽借出的武器」，不要改成布尔全覆盖。
+12. **平台身份 + KV 存档契约（2026-11-11 晚改造，替换原「本地账号」条款；同日按用户结论删光本地存盘）**：`assets/meta/account.ts` 零 import，产出 `meta-ui/account.js`（`build-meta-ui.mjs` 生成、`--check` 防漂移）；只负责 envelope / 结构校验 / 版本兜底 / 写队列，**不含登录、密码、SHA-256，也不含任何本地 adapter / 镜像 key / 本地开发身份**。`SAVE_KEY='forgeax.save.v1'` 是**唯一**存档 key；`encodeSave()` 强制纯 JSON（宿主预览用 `structuredClone`、平台/devStub 用 `JSON.stringify`，Date/Map 会变形）。`meta-ui/platform-store.js` 与 `account.js` 只由 `inject-shell.mjs` 注入 4174，独立双击页不得引用。经典壳层脚本先于 deferred ESM 入口执行，所以身份切换只能是 `MetaShell.mountPlatformStore()` **由 ESM 推下来**；`initial` 必须是已 await 的值。**平台桥未挂载时 `MetaStore.persist()` 必须什么都不写**（`verify-shell.cjs` 的 `noLocalSave` 断言守着），不要重新引入任何本地镜像 / localStorage 兜底。`lock` / `unlock` / `equip` 只走 BroadcastChannel，别加 projection seam；`equip` 的 `slots[i] === null` 表示「保留该槽借出的武器」，不要改成布尔全覆盖。
 
 13. **平台 lifecycle 契约（2026-11-11 发布准备）**：`assets/runtime/zaohua-platform-init.js` 是 Builder 编译的**唯一非 Pack 运行时入口**，声明 `game.loading` / `game.lifecycle` / `user.current` / `storage` 四个真实实现的 capability（多声明会造出永远过不了的校验项；少声明则调 SDK API 会报 `Capability was not declared`）。lifecycle adapter 由 `meta-ui/shell-bridge.js` 挂在 `window.MetaShell.platformAdapter`，经 `BroadcastChannel` 发 `pause` / `resume`；`game.pack.ts` 用**独立的 `paused` 冻结位**跳过 `step()`，**不得复用 `locked`**（`unlock` 会 `reset(state)` 重开一局）。`game.loaded()` 在 Worker 广播 `ready` 后发一次，即单页壳层可交互的边界。`verify-shell.cjs` 的 2 条平台断言保护它，改这块必须保持这两条为绿。
 
@@ -148,10 +151,10 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
 **发版前 / 跨模块改动用全量**：`bash scripts/verify-all.sh`，输出 `artifacts/verify/summary.txt`。
 脚本带**并发锁**：两个会话同时跑时第二个以 `exit 2` 拒绝启动（打印 `[BUSY]`），
 避免两份验收写同一份汇总与 play 报告、证据互相覆盖；退出时自动清理锁。
-它除了跑下面各项 + meta-ui 页面验收，还强制 `test` ≥ **84** 条、`playthrough` ≥ 35 步、
+它除了跑下面各项 + meta-ui 页面验收，还强制 `test` ≥ **83** 条、`playthrough` ≥ 35 步、
 `resize` ≥ 4 步 —— **新会话删断言让测试变绿，会在这里失败**。
 `verify.sh` 按模块附加：命中 `meta` 跑 `build-meta-ui.mjs --check`、`verify-meta-ui.cjs`（13 条真实拖放）
-与 `inject-shell.mjs --check` + `verify-shell.cjs`（30 条单页断言）；命中 `resource` 跑
+与 `inject-shell.mjs --check` + `verify-shell.cjs`（29 条单页断言）；命中 `resource` 跑
 `export_tables.py --check`；命中 `combat` 跑 31000 次/池掉落跑批。
 `verify-all.sh` 把壳层注入 + 单页验收放在**全流程最后一步**：`build` / `play` / `package`
 **都会重建 `dist/`**，只在 build 后注入会被后面的 `package` 冲掉，4174 又变回无壳层页面。
@@ -161,7 +164,7 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
 
 ```bash
 ./node_modules/.bin/forgeax project check --json
-./node_modules/.bin/forgeax project test --json          # 84/84（下限 84）
+./node_modules/.bin/forgeax project test --json          # 83/83（下限 83）
 node scripts/build-meta-ui.mjs --check                  # 生成物与源码同步
 python scripts/export_tables.py --check                  # xlsx 与 generated/*.ts 同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000   # 真实 rollLoot 跑批
@@ -173,7 +176,7 @@ CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project build --json
 node scripts/package-with-shell.mjs --format web-zip --output release/forgeax-game-web.zip
 node scripts/inject-shell.mjs                           # 最后一步：build/play/package 都会重建 dist
 node scripts/inject-shell.mjs --check
-node scripts/verify-shell.cjs                            # 4174 单页 30/30
+node scripts/verify-shell.cjs                            # 4174 单页 29/29
 ```
 
 验收基线（2026-11-11 最后一次完整运行，新会话应以 `verify-all.sh` 的实际输出为准）：
@@ -181,13 +184,13 @@ node scripts/verify-shell.cjs                            # 4174 单页 30/30
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **87** 项全过（`verify-all.sh` 下限仍为 **84**：combat 34 + meta 39 + battle 4 + talent 3 + resource 5 + 模板 2。原 account 12 条重写为 15 条 KV 存档单测） |
+| `test` | **83** 项全过（`verify-all.sh` 下限 **83**：combat 34 + meta 35 + battle 4 + talent 3 + resource 5 + 模板 2。account 单测 15 → 11：删 4 条**本地存盘专属**用例，11 条平台 KV 契约用例保持为绿） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` 三张表与 `generated/*.ts` 一致 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
 | `meta-ui` | 生成物同步 + 独立页面浏览器验收 13/13 |
 | `build` | `ok` |
-| `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **30/30**（含 8 条平台身份 / KV 存档、2 条平台 lifecycle、局内背包） |
+| `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **29/29**（含 7 条平台身份 / KV 存档、1 条「无宿主不写盘」、2 条平台 lifecycle、局内背包） |
 | `playthrough` 1600x900 | `passed:true`、35 steps、0 errors |
 | `playthrough-resize` 1700x1000 | `passed:true`、4 steps、0 errors |
 | `package` | sha256 校验通过，包内 README + feedback 齐全 |
@@ -199,12 +202,12 @@ node scripts/verify-shell.cjs                            # 4174 单页 30/30
 
 下表把「当前功能契约」逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 84 条＝combat 34（movement 11 + modifiers 3 + weapons 7 + loot 13）、
-meta 36（meta 3 + inventory 14 + run-settlement 7 + account 12）、battle 4、talent 3、resource 5、模板 2；全量下限 84 条。
-浏览器验收：playthrough 13 个命名场景（展开 35 steps）、独立页 13 条、4174 单页 30 条
-（含 8 条平台身份 / KV 存档 + 2 条平台 lifecycle）。
+删断言不会让这张表悄悄失效。单测 83 条＝combat 34（movement 11 + modifiers 3 + weapons 7 + loot 13）、
+meta 35（meta 3 + inventory 14 + run-settlement 7 + platform-KV account 11）、battle 4、talent 3、resource 5、模板 2；全量下限 83 条。
+浏览器验收：playthrough 13 个命名场景（展开 35 steps）、独立页 13 条、4174 单页 29 条
+（含 7 条平台身份 / KV 存档 + 1 条「无宿主不写盘」+ 2 条平台 lifecycle）。
 真实硬件 WebGPU 冒烟（历史一次性脚本）：`node artifacts/smoke-login-bag.mjs` 覆盖「强制登录 / 刷新后存档」，
-**该脚本按已删除的本地登录流程编写，现已不适用**；本轮改造的本地验收以 `verify-shell.cjs` 的 30 条为准。
+**该脚本按已删除的本地登录流程编写，现已不适用**；本轮改造的本地验收以 `verify-shell.cjs` 的 29 条为准。
 
 | 功能契约 | 单测 `assets/combat/__tests__/movement.test.ts` | 浏览器 `scripts/playthrough.mjs` |
 |:--|:--|:--|

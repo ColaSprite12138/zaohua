@@ -67,9 +67,11 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 `FORGEAX_META_SHELL_BEGIN` 与 `data-zaohua-platform-init`，必需校验 5/5 通过。
 `inject-shell.mjs` 带 CLI 守卫：import 它不会碰 `dist/`，4174 注入行为不变。
 
-## 平台身份与 KV 存档契约（2026-11-11 晚改造，替换原「本地账号」节）
+## 平台身份与 KV 存档契约（2026-11-11 晚改造，替换原「本地账号」节；同日按用户结论再收紧）
 
-用户拍板：删掉自研注册/登录，直接用造化平台玩家身份；存盘按平台 KV；**本地只验功能与存盘，账号数据隔离发布到平台后再验证**。
+用户拍板：删掉自研注册/登录，直接用造化平台玩家身份；存盘按平台 KV。
+随后重申收口：**发布到造化平台之前没有平台用户与云存储能力，本地只验证基础玩法，不验存盘与鉴权；
+所有本地存盘逻辑与相关断言全部删除，平台云存档代码保留、上线后再验**。
 
 | 项 | 权威 |
 |:--|:--|
@@ -77,9 +79,10 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 | 存储 | **单 key `forgeax.save.v1` + 一个 `{schemaVersion:1, state}` 纯 JSON blob**（整个 `InventoryState`）。平台不解析结构，schema / 版本 / 迁移由 `assets/meta/account.ts` 独占 |
 | 写路径 | `shell-bridge.js#syncBadge()`（唯一 `onRender` 钩子）每次 `render()` → `MetaStore.persist()` → `writeSave()` → 写队列（串行 + 合并，防止旧写覆盖新写） |
 | 读路径 | ESM 入口 `zaohua-platform-init.js` await `storage.get(SAVE_KEY)` → `MetaShell.mountPlatformStore({ userId, initial, read, write })`；`initial` 是已 await 的值，经典壳层不处理 Promise |
-| 时序 | **经典壳层脚本先于 deferred ESM 模块执行**：`meta-ui/platform-store.js` 先本地降级（`DEV_USER='local-dev'` + `createLocalAdapter()` 浏览器存储 `__forgeax_local_save__`，同一 envelope 形状），再由 `mountPlatform()` 切平台 adapter 并重建状态 |
+| 时序 | **经典壳层脚本先于 deferred ESM 模块执行**：`meta-ui/platform-store.js` 暴露 `mountPlatform()` 但**默认休眠**（写队列为 `null`），由 ESM 推下已 await 的 `initial` 后才建立写队列并重建状态；壳层不处理 Promise |
 | 数据容错 | `decodeSave()` 对 null / 非对象 / 版本不符 / 结构损坏一律回退 `createInventoryState(3)`；`encodeSave()` 强制 `JSON.parse(JSON.stringify(...))`，因为宿主预览 `structuredClone` 与平台 `JSON.stringify` 对 Date/Map 行为不同 |
-| 本地验证边界 | 本地可验存盘 / 刷新恢复 / 损坏兜底 / 平台桥切换 / 纯 JSON 写入；**账号数据隔离、跨设备恢复只在发布到平台后可验** |
+| 本地（无宿主） | **完全不存盘**：首屏用独立页已初始化的默认 `InventoryState(3)`，`MetaStore.persist()` 直接返回。没有本地 adapter / 镜像 key / `local-dev` 身份 / `simulateRefresh()`；顶栏玩家名 `—`、存档徽标隐藏 |
+| 验证边界 | **本地只验基础玩法**（`verify-shell.cjs` 里 1 条 `noLocalSave` 断言保证无宿主时零写入）+ 平台 KV 纯逻辑单测（envelope / 结构校验 / 版本兜底 / 写队列，用 mock bridge 不落盘）；**存盘本身、账号隔离、跨设备恢复发布到平台后才验** |
 | 引擎同步 | 登录遮罩删除后 Worker 的 `lock` / `unlock` **无生产者**（保留为协议兼容）；平台 pause/resume 走独立 `paused` 冻结位 |
 
 `assets/meta/account.ts` **零 import**，与 `inventory.ts` 一样由 `scripts/build-meta-ui.mjs`
@@ -117,7 +120,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
   `lock` / `unlock` 分支保留但**没有生产者**，`paused` 是唯一的冻结来源。
 - **局内背包不冻结**：B / I 打开的浮层不发 pause，怪物继续追击；这里新增的 pause
   只来自造化平台宿主的生命周期指令，两者语义不同。
-- **护栏**：`verify-shell.cjs` 的 2 条平台断言（30 条总数）验证 adapter 状态翻转与
+- **护栏**：`verify-shell.cjs` 的 2 条平台断言（29 条总数）验证 adapter 状态翻转与
   `pause`/`resume` 频道消息确实送达模拟 Worker；改这块必须保持这两条为绿。
 
 ## 旧骨架
@@ -145,11 +148,11 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/meta/__tests__      # 39 条（inventory 14 + run-settlement 7 + meta 3 + account 15）
+./node_modules/.bin/vitest run assets/meta/__tests__      # 35 条（inventory 14 + run-settlement 7 + meta 3 + platform-KV account 11）
 node scripts/build-meta-ui.mjs --check                     # 两个生成物与源码同步
 node scripts/verify-meta-ui.cjs                            # 独立页面 13 条真实拖放断言
 node scripts/inject-shell.mjs --check                      # dist 注入块与源同步
-node scripts/verify-shell.cjs                              # 4174 单页 30 条（平台身份/KV 存档/局内背包/出征/通关/阵亡/返回/lifecycle）
+node scripts/verify-shell.cjs                              # 4174 单页 29 条（无宿主不写盘/平台身份/KV 存档/局内背包/出征/通关/阵亡/返回/lifecycle）
 ```
 
 `scripts/build-meta-ui.mjs` 把 `inventory.ts` / `account.ts` 用 `ts.transpileModule` 转成普通脚本写入
@@ -161,7 +164,7 @@ node scripts/verify-shell.cjs                              # 4174 单页 30 条�
 - 局外**天赋**接入同一份存档（用户提到「装备天赋」，本轮只做装备 / 背包 / 掉落互通）。
 - 旧容量式 `Inventory` 骨架的迁移或删除。
 - `bytes` 导出（当前表转换产物是 TS 常量数组）。
-- 平台云存档的**跨设备恢复与多账号隔离**实测（用户明确：发布到造化平台后再验，本地不验）。
+- 平台云存档的**首次真实读写、跨设备恢复与多账号隔离**实测（用户明确：发布到造化平台后再验，本地不验；本地连存盘行为都不验）。
 - 引擎启动失败（fatal path）时启动遮罩仍会拦截 top bar 的点击，需要时再决定是否把壳层加入白名单。
 - ~~正式 Web ZIP 在壳层注入之前打包，不含单页流程（含身份与局内背包）~~ — **2026-11-11 晚已解决**：
   `scripts.package` 由 `package-with-shell.mjs` 接管，Builder 预览 / 上传的玩家产物已带壳层（见上节）。
@@ -170,5 +173,5 @@ node scripts/verify-shell.cjs                              # 4174 单页 30 条�
   验收包 `artifacts/verify/forgeax-game-web.zip` 含壳层，另有断言检查 marker + manifest。`release/` 不被验收改动。
 
 已完成（2026-11-11）：Excel 表 → `generated/*.ts` → `registerItemDefs`；局外↔战斗 4174 单页连续流程与搜打撤结算；
-**平台玩家身份 + 单 key KV 云存档（本地镜像可验）** + 战局内不冻结且立即生效的背包换装。
-（中间曾做过一版本地多账号注册/登录，2026-11-11 晚按用户要求整体删除。）
+**平台玩家身份 + 单 key KV 云存档（本地零存盘，上线后才验）** + 战局内不冻结且立即生效的背包换装。
+（中间曾做过一版「本地多账号注册/登录」与一版「本地镜像存盘」，2026-11-11 晚按用户要求依次整体删除。）

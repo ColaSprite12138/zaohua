@@ -138,3 +138,24 @@
   本地可验：无登录、KV envelope、刷新恢复、损坏兜底、mountPlatform、平台纯 JSON 写入；
   账号隔离不写成本地断言。
 - 独立 `file://` 演示页仍不引用 `account.js` / `platform-store.js`，保持双击可开。
+
+## 2026-11-11 晚（续）— 删光本地存盘，平台 KV 保留（用户选 A）
+
+- **范围判断（用户强调「注意审题」）**：「删掉本地存盘逻辑」≠「删掉整套身份/存盘体系」。
+  平台 `user.current` / `storage` 单 key KV、envelope、写队列、`mountPlatform()` 桥全部保留；
+  只删 `createLocalAdapter` / `LOCAL_KEY` / `DEV_USER` / `DEV_DISPLAY_NAME` /
+  `simulateRefresh` / 本地降级首屏读盘 / 「本地存档」徽标。
+- **无宿主时如何不写盘**：`platform-store.js` 的写队列保持 `null`，`persist()` 直接 return。
+  不要给本地塞「空 adapter」或 localStorage 兜底 —— 那等于又造了一份本地存盘。
+  首屏状态由 `meta-ui/index.html` 内联脚本 `host.state ?? M.createInventoryState(3)` 初始化，
+  删掉首屏 `apply(A.readSave(...))` 后 4174 页面照常可用。
+- **断言驱动要重写，不是删几行**：`verify-shell.cjs` 前半段原本用 `localAdapter` +
+  三次 `simulateRefresh()` 造出「4 件 loose」状态供后续 deploy/settlement 断言使用。
+  删本地存盘后改为：先验 `noLocalSave` → 构造 4 件状态 → mock `mountPlatform` 验 KV →
+  `H.setState(restored)` 还原成 4 件，保证后半段玩法断言不变。
+  **还原前必须清空 mock 写入数组**，否则 `platformKvWrite === 1` 会被还原时那次写入破坏。
+- **数字变化必须解释**：单测 87 → 83（删 4 条本地 adapter 用例，11 条平台 KV 用例保留），
+  `verify-all.sh` 下限 84 → 83；单页 30 → 29（删 `refreshRestored`，
+  `localDevIdentity` 改写成 `noLocalSave`）。保护清单「断言减少必须解释」按此逐条对齐。
+- **顺序纪律（用户新立的硬规矩）**：问清范围再动手。语气强 / 强调多次 ≠ 范围明确。
+  本次先给「保留清单 + 删除清单」让用户一句话确认，才避免了把平台云存档一起删掉。

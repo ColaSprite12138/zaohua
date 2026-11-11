@@ -7,21 +7,18 @@
  * ONE key holding ONE JSON blob (the whole InventoryState) instead of one key
  * per field: that is the shape the platform namespace isolates per user.
  *
- * This module is dependency-free (no imports, no DOM APIs beyond an optional
- * localStorage-like object) so it can be transpiled into a classic browser
- * script for the injected shell AND unit-tested directly in Node. All data
- * helpers are synchronous and pure; only the save queue is asynchronous.
+ * This module is dependency-free (no imports) so it can be transpiled into a
+ * classic browser script for the injected shell AND unit-tested in Node. All
+ * data helpers are synchronous and pure; only the save queue is asynchronous.
  *
- * Local development has no platform host: `createLocalAdapter()` mirrors the
- * same envelope into browser storage under LOCAL_KEY, so save/load can be
- * verified locally. Real account isolation is only verifiable after publishing.
+ * There is NO local save. Outside the platform host (the 4174 preview) the
+ * shell starts from the default inventory and writes nothing; the Builder ESM
+ * entry mounts the platform adapter only when `user.current` / `storage` are
+ * actually available. Persistence is verified after publishing, not locally.
  */
 
 export const SAVE_KEY = 'forgeax.save.v1';
-export const LOCAL_KEY = '__forgeax_local_save__';
 export const SCHEMA_VERSION = 1;
-export const DEV_USER = 'local-dev';
-export const DEV_DISPLAY_NAME = '本地开发席位';
 
 export interface SaveEnvelope {
   schemaVersion: number;
@@ -35,28 +32,10 @@ export interface SaveAdapter {
   write(envelope: SaveEnvelope): Promise<void> | void;
 }
 
-interface StorageLike {
-  getItem(key: string): string | null;
-  setItem(key: string, value: string): void;
-}
-
 export interface SaveQueue {
   push(envelope: SaveEnvelope): void;
   calls(): number;
   last(): SaveEnvelope | null;
-}
-
-const memoryFallback = new Map<string, string>();
-
-function defaultStorage(): StorageLike {
-  const g = globalThis as unknown as { localStorage?: StorageLike };
-  const ls = g.localStorage;
-  if (ls && typeof ls.getItem === 'function' && typeof ls.setItem === 'function') return ls;
-  // Node / restricted file:// contexts: keep the adapter usable in memory only.
-  return {
-    getItem: (k) => memoryFallback.get(k) ?? null,
-    setItem: (k, v) => { memoryFallback.set(k, v); },
-  };
 }
 
 /* --------------------------- envelope / schema --------------------------- */
@@ -105,28 +84,7 @@ export function readSave(
   return decodeSave(adapter.read(), fallback, slotCount);
 }
 
-/* ------------------------------ adapters --------------------------------- */
-
-/** Local-development mirror. Same envelope shape, browser-storage backed. */
-export function createLocalAdapter(storage: StorageLike = defaultStorage()): SaveAdapter {
-  return {
-    read() {
-      try {
-        const raw = storage.getItem(LOCAL_KEY);
-        return raw ? (JSON.parse(raw) as unknown) : null;
-      } catch {
-        return null;
-      }
-    },
-    write(envelope) {
-      try {
-        storage.setItem(LOCAL_KEY, JSON.stringify(envelope));
-      } catch {
-        /* quota / disabled storage must never break a live run */
-      }
-    },
-  };
-}
+/* ------------------------------ write queue ------------------------------ */
 
 /**
  * Serialise writes and coalesce bursts: `storage.set` is async, so an older

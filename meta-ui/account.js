@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/account.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: dc1361c6225db526d52477272e30258e46f11ae5e6b9b1a6030cf4ee38858fea
+ * Source SHA-256: c4fe5be301515a0aef38ac3c6359b517fc1771a72680860fed966095893ae1cd
  */
 (function (root) {
 "use strict";
@@ -17,41 +17,25 @@ var exports = module.exports;
  * ONE key holding ONE JSON blob (the whole InventoryState) instead of one key
  * per field: that is the shape the platform namespace isolates per user.
  *
- * This module is dependency-free (no imports, no DOM APIs beyond an optional
- * localStorage-like object) so it can be transpiled into a classic browser
- * script for the injected shell AND unit-tested directly in Node. All data
- * helpers are synchronous and pure; only the save queue is asynchronous.
+ * This module is dependency-free (no imports) so it can be transpiled into a
+ * classic browser script for the injected shell AND unit-tested in Node. All
+ * data helpers are synchronous and pure; only the save queue is asynchronous.
  *
- * Local development has no platform host: `createLocalAdapter()` mirrors the
- * same envelope into browser storage under LOCAL_KEY, so save/load can be
- * verified locally. Real account isolation is only verifiable after publishing.
+ * There is NO local save. Outside the platform host (the 4174 preview) the
+ * shell starts from the default inventory and writes nothing; the Builder ESM
+ * entry mounts the platform adapter only when `user.current` / `storage` are
+ * actually available. Persistence is verified after publishing, not locally.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DEV_DISPLAY_NAME = exports.DEV_USER = exports.SCHEMA_VERSION = exports.LOCAL_KEY = exports.SAVE_KEY = void 0;
+exports.SCHEMA_VERSION = exports.SAVE_KEY = void 0;
 exports.encodeSave = encodeSave;
 exports.isValidInventoryState = isValidInventoryState;
 exports.decodeSave = decodeSave;
 exports.readSave = readSave;
-exports.createLocalAdapter = createLocalAdapter;
 exports.createSaveQueue = createSaveQueue;
 exports.writeSave = writeSave;
 exports.SAVE_KEY = 'forgeax.save.v1';
-exports.LOCAL_KEY = '__forgeax_local_save__';
 exports.SCHEMA_VERSION = 1;
-exports.DEV_USER = 'local-dev';
-exports.DEV_DISPLAY_NAME = '本地开发席位';
-const memoryFallback = new Map();
-function defaultStorage() {
-    const g = globalThis;
-    const ls = g.localStorage;
-    if (ls && typeof ls.getItem === 'function' && typeof ls.setItem === 'function')
-        return ls;
-    // Node / restricted file:// contexts: keep the adapter usable in memory only.
-    return {
-        getItem: (k) => memoryFallback.get(k) ?? null,
-        setItem: (k, v) => { memoryFallback.set(k, v); },
-    };
-}
 /* --------------------------- envelope / schema --------------------------- */
 /**
  * Force a plain-JSON round trip. The Builder preview host uses
@@ -90,29 +74,7 @@ function decodeSave(raw, fallback, slotCount) {
 function readSave(adapter, fallback, slotCount) {
     return decodeSave(adapter.read(), fallback, slotCount);
 }
-/* ------------------------------ adapters --------------------------------- */
-/** Local-development mirror. Same envelope shape, browser-storage backed. */
-function createLocalAdapter(storage = defaultStorage()) {
-    return {
-        read() {
-            try {
-                const raw = storage.getItem(exports.LOCAL_KEY);
-                return raw ? JSON.parse(raw) : null;
-            }
-            catch {
-                return null;
-            }
-        },
-        write(envelope) {
-            try {
-                storage.setItem(exports.LOCAL_KEY, JSON.stringify(envelope));
-            }
-            catch {
-                /* quota / disabled storage must never break a live run */
-            }
-        },
-    };
-}
+/* ------------------------------ write queue ------------------------------ */
 /**
  * Serialise writes and coalesce bursts: `storage.set` is async, so an older
  * write must not land after a newer one and roll the save back. Consecutive
