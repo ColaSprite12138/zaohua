@@ -37,22 +37,50 @@ describe('resource table contract', () => {
     }
   });
 
-  it('item / monster_loot / loot_pool data survive the conversion', async () => {
+  it('item / weapon / monster_loot / loot_pool data survive the conversion', async () => {
     const { item } = await import('../generated/item.ts');
+    const { weapon } = await import('../generated/weapon.ts');
     const { monster_loot } = await import('../generated/monster_loot.ts');
     const { loot_pool } = await import('../generated/loot_pool.ts');
-    expect(item).toHaveLength(12);
+    expect(item).toHaveLength(13);
+    expect(weapon).toHaveLength(13);
     expect(monster_loot).toHaveLength(2);
     expect(loot_pool).toHaveLength(12);
-    expect(new Set(item.map((r) => r.id)).size).toBe(12);
+    expect(new Set(item.map((r) => r.id)).size).toBe(13);
+    expect(new Set(weapon.map((r) => r.id)).size).toBe(13);
     // Weight ladder 10/8/6/4/2/1 in both pools = 31 each.
     for (const poolId of [1, 2]) {
       const rows = loot_pool.filter((r) => r.loot_pool_id === poolId);
       expect(rows.map((r) => r.weight)).toEqual([10, 8, 6, 4, 2, 1]);
       expect(rows.reduce((n, r) => n + r.weight, 0)).toBe(31);
     }
-    // Every loot item id resolves to a real item row.
-    const ids = new Set(item.map((r) => r.id));
-    for (const row of loot_pool) expect(ids.has(row.item_id)).toBe(true);
+    // The two tables are a strict 1:1 join by id, and every droppable item has
+    // BOTH rows (name from item, quality/damage from weapon).
+    const ids = item.map((r) => r.id as string).sort();
+    const weaponIds = weapon.map((r) => r.id as string).sort();
+    expect(weaponIds).toEqual(ids);
+    for (const row of loot_pool) {
+      expect(ids).toContain(row.item_id);
+      expect(weaponIds).toContain(row.item_id);
+    }
+  });
+
+  it('weapon_subtype is the attack-kind authority and 30001 is ammunition', async () => {
+    const { item } = await import('../generated/item.ts');
+    const { weapon } = await import('../generated/weapon.ts');
+    const ammo = item.find((r) => r.id === '30001');
+    expect(ammo?.name).toBe('弓箭');
+    expect(ammo?.item_type).toBe('弹药');
+    expect(ammo?.stack_size).toBe(10);
+    // Every other row is still a weapon, stackable only one at a time.
+    expect(item.filter((r) => r.item_type !== '武器')).toHaveLength(1);
+
+    const subtypes = new Map(weapon.map((r) => [r.id as string, r.weapon_subtype]));
+    expect(subtypes.get('10001')).toBe('近战');
+    expect(subtypes.get('10006')).toBe('近战');
+    expect(subtypes.get('20001')).toBe('远程');
+    expect(subtypes.get('20006')).toBe('远程');
+    expect(subtypes.get('30001')).toBe('子弹');
+    expect([...new Set(subtypes.values())].sort()).toEqual(['子弹', '近战', '远程']);
   });
 });

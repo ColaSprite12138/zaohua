@@ -20,7 +20,7 @@
  *   meta-ui/platform-store.js -> platform identity + save bridge (shell only)
  *   meta-ui/shell.css       -> scoped shell chrome
  *   meta-ui/shell-bridge.js -> deploy / settlement / in-run bag over BroadcastChannel
- *   resource/generated/item.ts -> authored item catalog as JSON
+ *   resource/generated/{item,weapon}.ts -> joined item catalog as JSON
  *
  * account.js / platform-store.js are intentionally NOT referenced by the
  * standalone file:// page: that page stays a double-clickable, serverless demo
@@ -89,11 +89,28 @@ function extractMetaPage() {
 
 function buildBlock() {
   const { styles, markup, script } = extractMetaPage();
-  const rows = generatedRows('item.ts', 'item');
+  // item.xlsx owns identity (name / item_type / stack_size); weapon.xlsx owns
+  // combat attributes (quality / damage / weapon_subtype). Join by id before
+  // handing rows to registerItemDefs(), so quality-based colours and damage
+  // numbers do not silently disappear after the table split.
+  const itemRows = generatedRows('item.ts', 'item');
+  const weaponRows = generatedRows('weapon.ts', 'weapon');
+  const weaponsById = new Map(weaponRows.map((r) => [String(r.id), r]));
+  const rows = itemRows.map((r) => {
+    const w = weaponsById.get(String(r.id));
+    return {
+      ...r,
+      quality: w ? w.quality : '',
+      damage_min: w ? w.damage_min : 0,
+      damage_max: w ? w.damage_max : 0,
+      weapon_subtype: w ? w.weapon_subtype : null,
+    };
+  });
   const sources = [
     'meta-ui/index.html', 'meta-ui/inventory.js', 'meta-ui/account.js',
     'meta-ui/platform-store.js', 'meta-ui/shell.css', 'meta-ui/shell-bridge.js',
     'assets/resource/generated/item.ts',
+    'assets/resource/generated/weapon.ts',
   ];
   const digest = createHash('sha256')
     .update(sources.map((f) => read(f)).join('\n---\n'))

@@ -1,7 +1,7 @@
 # HANDOFF — 2.5D 骷髅竞技场
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-11 全套验收通过**（详见「验收基线」；4174 已合并为局外→战斗→结算单页流程）
+> 状态：**2026-11-12 全套验收通过**（详见「验收基线」；4174 已合并为局外→战斗→结算单页流程）
 > 这份文件记录**当前已实现的功能与不可回退的约束**。新会话先读它，再动手。
 > 改了功能 → 必须同步改本文件，追加 `docs/feedback.md`，**做完即提交并推送到 `origin/main`**。
 > 工作区级总索引：`D:\tools\zaohua\AGENTS.md`（工作区地图、跨工程硬约束、备份边界）；本文件是工程级交接。
@@ -13,7 +13,7 @@
 | 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad |
 | 怎么开 | 双击 `open-2.5d-game.bat`（独立 Chrome profile + 硬件 WebGPU，端口 4174）；4174 单页含「局外配装 → 出征 → 结算」顶栏。局外独立演示页仍可双击 `meta-ui/index.html` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（≥84）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 110）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；Game Builder 预览 / 上传经 `package.json#scripts.package` 自动调用，产物**含单页壳层** |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
 | 怎么还原 | `git checkout HEAD -- <path>`；整包兜底见「可回滚基线」 |
@@ -24,7 +24,7 @@
 2. **`assets/<模块>/CONTEXT.md`** — 该模块的契约、不变量、对外接口、依赖方向、独立验收；
    配套 `EXPERIENCE.md` 是该模块独立经验库（踩坑按模块追加，不混进全局 feedback 编号）
 3. `README.md` — 工程结构、交互契约、点击分类、验收脚本逐条说明、坐标映射原理
-4. `docs/feedback.md` — 16 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**
+4. `docs/feedback.md` — 17 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**
 5. `.workbuddy/memory/YYYY-MM-DD.md` — 工作流水账，只作线索，不是规范
 6. `AGENTS.md` — ForgeAX 引擎模板自带的**通用** SDK 规范（顶部另有本工程的 Git 提交纪律）；查引擎 API 时才读
 
@@ -50,10 +50,21 @@
 "当前激活槽的武器"，所以既有 32 步断言不破。
 
 **掉落已改为数据表驱动**（2026-11-11）：怪物 `monsterId` → `monster_loot.xlsx` 的池 → `loot_pool.xlsx`
-权重 `10/8/6/4/2/1` → `item.xlsx` 的 12 件物品属性，`combat/loot.ts::rollLoot()` 是唯一抽取入口，
-Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'longsword'`（视觉/兼容类别），
-真实身份走 `drop.itemId`。`lootLog` / `carriedItems` 记录本局战利品。
+权重 `10/8/6/4/2/1` → `item.xlsx` + `weapon.xlsx` 按 `id` join 的 13 行物品属性，
+`combat/loot.ts::rollLoot()` 是唯一抽取入口，Mulberry32 固定种子 `0x5eed1234` 保证可复现。
+`Drop.kind` 仍是 `'longsword'`（视觉/兼容类别），真实身份走 `drop.itemId`。
+`lootLog` / `carriedItems` 记录本局战利品。
 **默认仍是 2 只怪**（保护 35 步 playthrough）；多怪由 `deployRun({ monsterCount })` 从单页顶栏注入。
+
+**表拆分与攻击方式契约**（2026-11-12，用户选 A 方案）：`tables/item.xlsx`
+（`id/name/item_type/stack_size`）与 `tables/weapon.xlsx`
+（`id/quality/weapon_subtype/damage_min/damage_max`）各 13 行、单 Sheet、按 `id` 严格 1:1 join。
+**join 点只有两个**：`combat/loot.ts::authoredItem()`（战斗）与 `scripts/inject-shell.mjs`（局外目录注入）；
+`scripts/loot-report.mjs` 走前者，不得另写一份。
+`30001` 是 `item_type=弹药` / `weapon_subtype=子弹` 的弹药，**不是可发射武器本体**。
+**攻击方式以 `weapon_subtype` 为唯一权威**（`attack-spec.ts::SUBTYPE_SPEC`：`近战` / `远程`），
+禁止用 `1xxxx`/`2xxxx` id 前缀推断；未来加「法术」只需加一行映射。
+`weaponSpec('30001')`、未知 id、空槽一律回落 `BARE_HANDS`。
 
 ### 局外（独立页面 `meta-ui/index.html`，双击可开）
 
@@ -179,14 +190,14 @@ node scripts/inject-shell.mjs --check
 node scripts/verify-shell.cjs                            # 4174 单页 29/29
 ```
 
-验收基线（2026-11-11 最后一次完整运行，新会话应以 `verify-all.sh` 的实际输出为准）：
+验收基线（2026-11-12 02:08:39 `bash scripts/verify-all.sh` ALL GREEN，新会话应以实际输出为准）：
 
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **83** 项全过（`verify-all.sh` 下限 **83**：combat 34 + meta 35 + battle 4 + talent 3 + resource 5 + 模板 2。account 单测 15 → 11：删 4 条**本地存盘专属**用例，11 条平台 KV 契约用例保持为绿） |
+| `test` | **110** 项全过（`verify-all.sh` 下限仍为 **83**：combat 54 + meta 35 + battle 4 + talent 3 + resource 12 + 模板 2。新增来源：LDtk 地图 6、攻击架构 20、拆表 join 2；account 单测 15 → 11 是 2026-11-11 删本地存盘后的历史基线） |
 | `tsc --noEmit` | 0 error |
-| `tables` | `export_tables.py --check` 三张表与 `generated/*.ts` 一致 |
+| `tables` | `export_tables.py --check` 四张表与 `generated/*.ts` 一致 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
 | `meta-ui` | 生成物同步 + 独立页面浏览器验收 13/13 |
 | `build` | `ok` |
@@ -202,8 +213,10 @@ node scripts/verify-shell.cjs                            # 4174 单页 29/29
 
 下表把「当前功能契约」逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 83 条＝combat 34（movement 11 + modifiers 3 + weapons 7 + loot 13）、
-meta 35（meta 3 + inventory 14 + run-settlement 7 + platform-KV account 11）、battle 4、talent 3、resource 5、模板 2；全量下限 83 条。
+删断言不会让这张表悄悄失效。单测 110 条＝combat 54（movement 11 + modifiers 3 + weapons 7 +
+loot 13 + attack-spec 10 + projectiles 10）、
+meta 35（meta 3 + inventory 14 + run-settlement 7 + platform-KV account 11）、battle 4、talent 3、
+resource 12（tables 6 + map 6）、模板 2；全量下限 83 条（下限不随新增断言抬高）。
 浏览器验收：playthrough 13 个命名场景（展开 35 steps）、独立页 13 条、4174 单页 29 条
 （含 7 条平台身份 / KV 存档 + 1 条「无宿主不写盘」+ 2 条平台 lifecycle）。
 真实硬件 WebGPU 冒烟（历史一次性脚本）：`node artifacts/smoke-login-bag.mjs` 覆盖「强制登录 / 刷新后存档」，

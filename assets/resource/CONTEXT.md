@@ -29,9 +29,16 @@
 
 | 表 | 消费方 | 用途 |
 |:--|:--|:--|
-| `item.xlsx` | `combat/`、`meta/` | 12 件物品（巨剑 / 弓 × 白绿蓝紫橙暗金），伤害范围与品质 |
+| `item.xlsx` | `combat/`、`meta/` | 13 行物品通用信息 `id / name / item_type / stack_size`：12 件武器 + `30001` 弓箭（`item_type=弹药`、堆叠 10） |
+| `weapon.xlsx` | `combat/`、`meta/` | 13 行武器专属信息 `id / quality / weapon_subtype / damage_min / damage_max`；`weapon_subtype` 是攻击方式**唯一权威** |
 | `monster_loot.xlsx` | `combat/` | 怪物 id → 掉落池 id（骷髅剑士 → 1，骷髅弓手 → 2） |
 | `loot_pool.xlsx` | `combat/` | 掉落池内各物品的权重（10/8/6/4/2/1） |
+
+**拆表契约（2026-11-12，用户选 A 方案）**：`item.xlsx` 与 `weapon.xlsx` 各为单 Sheet、按 `id`
+严格 1:1 join。`combat/loot.ts::authoredItem()` 是运行时唯一 join 点，
+`scripts/inject-shell.mjs` 是局外目录注入的 join 点；`attack-spec.ts::weaponSpec()` 只读
+`weapon_subtype`。`30001` 的 `weapon_subtype=子弹` 表示弹药而非可发射武器，
+**禁止退回 id 前缀判断**（`1xxxx`=剑 / `2xxxx`=弓 只是历史命名习惯）。
 
 ## 依赖方向
 
@@ -71,4 +78,5 @@ python scripts/export_tables.py --check
 ## 待办（用户已明确「后面再做」，勿擅自开工）
 
 - 若后续需要打包体积/加载速度优化，可增加 bytes 格式导出；当前 TS 常量已满足需求。
-- 物品表目前只有伤害与品质；后续策划补充格位尺寸、图标、装备类型时，需同步扩展列格式与消费方。
+- 物品表目前只有身份 / 堆叠 / 品质 / 伤害 / 子类型；后续策划补充格位尺寸、图标、装备类型时，
+  需同步扩展列格式与消费方（当前 `30001` 弹药仍按默认武器格位注册，属已知待办，勿擅自改）。

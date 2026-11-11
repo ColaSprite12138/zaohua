@@ -353,3 +353,30 @@
 - Status: implemented
 - Note: **未上传造化平台**；平台身份 / 云存档的真实读写、账号数据隔离、跨设备恢复按用户结论
   发布到平台后再验。新增 capability 仍未跑 Builder validate 预览，发布前需重跑。
+
+### 2026-11-12 — 用户手改 `item.xlsx` 拆出两个 Sheet，导出器只读第一个
+
+- Scope: asset / build
+- Reproduction: 用户把 `tables/item.xlsx` 改成 `item` + `weapons` 两个 Sheet、表头换中文
+  （`物品类型` / `堆叠数量` / `武器子类型`）、新增 `30001`；跑
+  `python scripts/export_tables.py --check` 报
+  `column 3 header '物品类型' is not snake_case`，且第二个 Sheet 完全不参与导出。
+- Expected: 道具通用信息与武器专属数值各自成表、表头符合单 Sheet / snake_case 约定；
+  攻击方式由 `weapon_subtype` 决定，`30001` 归为弹药。
+- Actual: `export_tables.py::read_sheet()` 只解析 `workbook.xml` 第一个 sheet，单工作簿多 Sheet
+  会静默丢数据。另：Windows Python 不认 Git Bash 的 `/tmp/...`，临时脚本写文件直接
+  `FileNotFoundError`，须改用 `tempfile.gettempdir()`。
+- Resolution: 用户选 **A 方案** —— 基于原 OOXML 复制部件拆成两个单 Sheet 工作簿
+  `item.xlsx`（`id,name,item_type,stack_size`）与 `weapon.xlsx`
+  （`id,quality,weapon_subtype,damage_min,damage_max`），`30001` 的 `item_type` 改「弹药」，
+  `weapon_subtype` 保留「子弹」。两表按 `id` 严格 1:1 join，join 点收敛到
+  `combat/loot.ts::authoredItem()` 与 `scripts/inject-shell.mjs`；`loot-report.mjs` 改走前者。
+  `weaponSpec()` 改为查 `SUBTYPE_SPEC[weapon_subtype]`，移除 `itemId.startsWith('2')`
+  前缀判断 —— 旧逻辑会把 `30001` 误判成近战武器。
+- Evidence: `tsc --noEmit` 0 error；全量 `vitest run` **110 passed**；
+  `loot-report.mjs --samples 31000` 偏差 / 漏项 **0**；`export_tables.py --check` 四张表全绿；
+  `tables.test.ts` 新增「两表 id 集合 1:1」「`30001` 是弹药」断言，
+  `attack-spec.test.ts` 新增「`weaponSpec('30001') === BARE_HANDS`」反例断言。
+- Status: fixed
+- Note: 本条只解决**表拆分 + 攻击方式权威来源**；`30001` 仍按默认武器格位注册进局外目录
+  （格位尺寸 / 装备类型待策划补列，勿擅自扩展）。

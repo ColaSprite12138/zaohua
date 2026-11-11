@@ -8,6 +8,7 @@
  */
 
 import { item } from '../resource/generated/item.ts';
+import { weapon } from '../resource/generated/weapon.ts';
 import { monster_loot } from '../resource/generated/monster_loot.ts';
 import { loot_pool } from '../resource/generated/loot_pool.ts';
 
@@ -31,14 +32,56 @@ export interface LootRoll {
 }
 
 const ITEM_BY_ID = new Map(item.map((row) => [row.id as string, row]));
+const WEAPON_BY_ID = new Map(weapon.map((row) => [row.id as string, row]));
 const MONSTER_BY_ID = new Map(monster_loot.map((row) => [row.id as string, row]));
 
 export function itemRow(id: string) {
   return ITEM_BY_ID.get(id);
 }
 
+export function weaponRow(id: string) {
+  return WEAPON_BY_ID.get(id);
+}
+
 export function monsterRow(id: string) {
   return MONSTER_BY_ID.get(id);
+}
+
+/**
+ * The two authored tables are split by concern and MUST be joined by id:
+ *   `item.xlsx`   -> identity (`name`), `item_type`, `stack_size`
+ *   `weapon.xlsx` -> `quality`, `damage_min/max`, `weapon_subtype`
+ * An item without a weapon row (future consumables) keeps its identity but has
+ * no combat attributes. `weapon_subtype = 子弹` marks ammunition: it has a
+ * weapon row for damage numbers but is NOT a launchable weapon.
+ */
+export interface AuthoredItemView {
+  readonly id: string;
+  readonly name: string;
+  readonly item_type: string;
+  readonly stack_size: number;
+  readonly quality: string;
+  readonly damage_min: number;
+  readonly damage_max: number;
+  /** null when the item has no weapon row; never inferred from the id prefix. */
+  readonly weapon_subtype: string | null;
+}
+
+/** THE join point. Every consumer of item attributes should go through this. */
+export function authoredItem(id: string): AuthoredItemView | undefined {
+  const base = ITEM_BY_ID.get(id);
+  if (base === undefined) return undefined;
+  const w = WEAPON_BY_ID.get(id);
+  return {
+    id: base.id,
+    name: base.name,
+    item_type: base.item_type,
+    stack_size: base.stack_size,
+    quality: w?.quality ?? '',
+    damage_min: w?.damage_min ?? 0,
+    damage_max: w?.damage_max ?? 0,
+    weapon_subtype: w?.weapon_subtype ?? null,
+  };
 }
 
 /** Entries of a pool, in table order. Empty array = that monster drops nothing. */
@@ -93,7 +136,7 @@ export function rollLoot(monsterId: string, rng: () => number): LootRoll | null 
       break;
     }
   }
-  const row = itemRow(chosen.itemId);
+  const row = authoredItem(chosen.itemId);
   if (row === undefined) return null;
   return {
     itemId: chosen.itemId,

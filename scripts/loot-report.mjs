@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  itemRow, makeRng, poolEntries, rollLoot, theoreticalDistribution,
+  authoredItem, makeRng, poolEntries, rollLoot, theoreticalDistribution,
 } from '../assets/combat/loot.ts';
 import { monster_loot } from '../assets/resource/generated/monster_loot.ts';
 
@@ -47,7 +47,9 @@ for (const monster of monster_loot) {
     const observed = (counts.get(e.itemId) ?? 0) / SAMPLES;
     const drift = Math.abs(observed - theoretical);
     if (drift > 0.01) failures += 1;
-    const row = itemRow(e.itemId);
+    // item.xlsx + weapon.xlsx joined by id: name comes from the former,
+    // quality and damage from the latter.
+    const row = authoredItem(e.itemId);
     return {
       itemId: e.itemId,
       name: row?.name ?? '?',

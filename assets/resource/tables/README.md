@@ -28,11 +28,24 @@ python scripts/export_tables.py --check    # CI/验收：生成物过期或成�
 
 | 表 | 字段 | 消费方 |
 |:--|:--|:--|
-| `item.xlsx` | `id, name, quality, damage_min, damage_max` | `combat`（伤害）、`meta`（物品目录） |
+| `item.xlsx` | `id, name, item_type, stack_size` | `combat` / `meta`（身份、类型、堆叠） |
+| `weapon.xlsx` | `id, quality, weapon_subtype, damage_min, damage_max` | `combat`（伤害、攻击方式）、`meta`（品质颜色） |
 | `monster_loot.xlsx` | `id, name, loot_pool_id` | `combat`（怪物 → 掉落池） |
 | `loot_pool.xlsx` | `id, loot_pool_id, item_id, weight` | `combat`（权重掉落） |
 
-三张表由用户提供的 `xls/item.xlsx` / `xls/loot.xlsx` 规范化而来：中文表头改为英文
+**`item` / `weapon` 必须按 `id` join**：`item.xlsx` 只放物品通用信息，`weapon.xlsx` 只放武器
+专属数值。两表当前各 13 行、id 集合严格 1:1，由 `tables.test.ts` 守住。join 点只有两个：
+`combat/loot.ts::authoredItem()`（战斗运行时）与 `scripts/inject-shell.mjs`（局外物品目录注入），
+**不要在别处各写一份 join**。
+
+`weapon_subtype` 是攻击方式的**唯一权威**：`近战` → 近战规格、`远程` → 投射物规格。
+`30001` 是 `item_type=弹药` / `weapon_subtype=子弹` 的弹药，**不是可发射武器本体**；
+禁止用 id 前缀（`1xxxx` / `2xxxx`）推断攻击方式。未来加「法术」只需在
+`attack-spec.ts::SUBTYPE_SPEC` 加一行映射。
+
+原始表由用户提供的 `xls/item.xlsx` / `xls/loot.xlsx` 规范化而来：中文表头改为英文
 snake_case、首列补唯一 `id`、伤害范围 `10,15` 拆成 `damage_min` / `damage_max` 两列数值、
 `loot.xlsx` 的「怪物掉落池」与「掉落池」两个 Sheet 拆成两张单 Sheet 表。
+2026-11-12 用户手改 `item.xlsx` 拆出「道具 / 武器」两个 Sheet 后，按用户选定的 **A 方案**
+拆成两个单 Sheet 工作簿（导出器只读第一个 Sheet）。
 **数值完全照搬，未做任何平衡性改动。**

@@ -17,7 +17,7 @@ describe('the active weapon slot decides the attack kind and its cost', () => {
     expect(BARE_HANDS.range).toBe(140);
   });
 
-  it('every 1xxxx sword is melee and would consume durability', () => {
+  it('every 近战 subtype sword is melee and would consume durability', () => {
     for (const id of SWORD_IDS) {
       const spec = weaponSpec(id);
       expect(spec).toBe(MELEE_WEAPON);
@@ -28,7 +28,7 @@ describe('the active weapon slot decides the attack kind and its cost', () => {
     }
   });
 
-  it('every 2xxxx bow is projectile and would consume ammunition', () => {
+  it('every 远程 subtype bow is projectile and would consume ammunition', () => {
     for (const id of BOW_IDS) {
       const spec = weaponSpec(id);
       expect(spec).toBe(RANGED_WEAPON);
@@ -37,6 +37,17 @@ describe('the active weapon slot decides the attack kind and its cost', () => {
       expect(spec.range).toBe(Infinity);
       expect(spec.projectileSpeed).toBe(PROJECTILE_SPEED);
     }
+  });
+
+  it('the subtype, not the id prefix, decides: 30001 is ammunition', () => {
+    // 30001 sits in weapon.xlsx with subtype 子弹. It must not become a melee
+    // weapon (old prefix rule) and must not fire like a bow either.
+    expect(weaponSpec('30001')).toBe(BARE_HANDS);
+    expect(weaponSpec('30001')).not.toBe(MELEE_WEAPON);
+    expect(weaponSpec('30001')).not.toBe(RANGED_WEAPON);
+    // Unknown / empty slots stay bare-handed rather than guessing from an id.
+    expect(weaponSpec('99999')).toBe(BARE_HANDS);
+    expect(weaponSpec('')).toBe(BARE_HANDS);
   });
 
   it('spell costs are reserved at the type level without an implementation', () => {

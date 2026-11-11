@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  makeRng, poolEntries, rollLoot, theoreticalDistribution, itemRow, monsterRow,
+  makeRng, poolEntries, rollLoot, theoreticalDistribution,
+  itemRow, weaponRow, authoredItem, monsterRow,
 } from '../loot.ts';
 import { createState, DEFAULT_MONSTER_COUNT, spawnSkeletons } from '../state.ts';
 import { deployRun, projection, step } from '../simulation.ts';
@@ -18,10 +19,22 @@ const tick = (s: ReturnType<typeof createState>, frames = 1) => {
 };
 
 describe('authored tables are wired into combat', () => {
-  it('resolves all 12 items and both monsters', () => {
+  it('joins item + weapon by id and resolves both monsters', () => {
     expect(itemRow('10001')?.name).toBe('巨剑');
     expect(itemRow('20006')?.name).toBe('射日');
     expect(itemRow('99999')).toBeUndefined();
+    expect(weaponRow('10001')?.quality).toBe('白');
+    expect(weaponRow('20006')?.damage_max).toBe(400);
+    expect(weaponRow('99999')).toBeUndefined();
+    // The split tables must be re-joined somewhere: combat attributes no
+    // longer live on the item row.
+    expect(authoredItem('10001')?.quality).toBe('白');
+    expect(authoredItem('10001')?.damage_min).toBe(10);
+    expect(authoredItem('20006')?.damage_max).toBe(400);
+    expect(authoredItem('20006')?.weapon_subtype).toBe('远程');
+    expect(authoredItem('30001')?.item_type).toBe('弹药');
+    expect(authoredItem('30001')?.weapon_subtype).toBe('子弹');
+    expect(authoredItem('99999')).toBeUndefined();
     expect(monsterRow('100001')?.loot_pool_id).toBe(1);
     expect(monsterRow('200001')?.loot_pool_id).toBe(2);
   });
@@ -111,6 +124,8 @@ describe('arena population and loot settlement', () => {
     expect(drop.itemId).toBe(s.lootLog[0]!.itemId);
     expect(drop.name).toBe(s.lootLog[0]!.name);
     expect(drop.quality).toBeTruthy();
+    // Guards the item/weapon join: a broken join produces an empty quality.
+    expect(drop.quality).toBe(authoredItem(s.lootLog[0]!.itemId)!.quality);
     expect(drop.monsterId).toBe('100001');
   });
 

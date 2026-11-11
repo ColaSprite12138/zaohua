@@ -11,8 +11,11 @@
  *  - Only melee and projectile are implemented this round. `spell` exists as
  *    a type-level reservation so no interface has to be broken later.
  *
- * No engine / DOM / runtime imports: combat stays a pure logic module.
+ * No engine / DOM imports: combat stays a pure logic module. The one import
+ * below is an authored data constant, not runtime state.
  */
+
+import { weapon } from '../resource/generated/weapon.ts';
 
 export type AttackKind = 'melee' | 'projectile' | 'spell';
 export type CostKind = 'none' | 'durability' | 'ammo' | 'mana';
@@ -63,17 +66,26 @@ export const RANGED_WEAPON: AttackSpec = Object.freeze({
 export const SPELL_RESERVED_COST: CostKind = 'mana';
 
 /**
- * Interpret the authored item id. `tables/item.xlsx` has no explicit
- * attack_kind column yet: ids 1xxxx are swords and 2xxxx are bows, which
- * `assets/combat/__tests__/loot.test.ts` already asserts for the loot pools.
+ * `tables/weapon.xlsx::weapon_subtype` is the ONLY authority for an item's
+ * attack kind. Id prefixes are a legacy naming convention, NOT a rule:
+ * `30001` is ammunition (`子弹`) and must never be mistaken for a bow.
  *
- * This is the ONLY place that knows that convention. When the table gains an
- * explicit column, replace this function and nothing else.
+ * Extending the game means adding ONE row here (e.g. a future `法术` subtype
+ * maps to a spell spec), never changing the id-prefix logic in every consumer.
+ * Non-weapon subtypes, unknown ids and empty slots all fall back to bare hands.
  */
+const SUBTYPE_SPEC: Readonly<Record<string, AttackSpec>> = Object.freeze({
+  '近战': MELEE_WEAPON,
+  '远程': RANGED_WEAPON,
+});
+
+const WEAPON_BY_ID = new Map(weapon.map((row) => [row.id as string, row]));
+
 export function weaponSpec(itemId: string | null | undefined): AttackSpec {
   if (!itemId) return BARE_HANDS;
-  if (itemId.startsWith('2')) return RANGED_WEAPON;
-  return MELEE_WEAPON;
+  const row = WEAPON_BY_ID.get(itemId);
+  if (row === undefined) return BARE_HANDS;
+  return SUBTYPE_SPEC[row.weapon_subtype] ?? BARE_HANDS;
 }
 
 /**

@@ -30,14 +30,15 @@
 - `canPlace` 做整数边界 + 矩形相交检查；**所有变更先校验再提交**，失败时状态完全不变。
 - 装备槽按 `EquipKind` 匹配（`weapon/ring/necklace/gloves/helmet/chest/pants/boots`）；类型不符或同槽重复穿戴直接拒绝。
 - 槽位被占用时，被换下的物品优先回到来源格位，放不下则回 `loose`，**永不丢失**。
-- `ITEM_DEFS` 内置 `longsword` 作为默认占位；`registerItemDefs(rows)` 把表里的 `10001`-`20006` 注册进目录，**不覆盖已有 id**，物品属性不得在别处散落。
+- `ITEM_DEFS` 内置 `longsword` 作为默认占位；`registerItemDefs(rows)` 把表里的 13 行
+  （`10001`-`20006` + `30001` 弹药）注册进目录，**不覆盖已有 id**，物品属性不得在别处散落。
 
 ## 单页流程与搜打撤契约（2026-11-11）
 
 | 项 | 权威 |
 |:--|:--|
 | 唯一状态 | 主窗口 `window.MetaShell.state`，meta UI 与 `shell-bridge.js` 都通过 `getState()` / `setState()` 读写**同一对象** |
-| 表目录注入 | `inject-shell.mjs` 从 `resource/generated/item.ts` 解析 `authoredItems` 写入 `MetaShell`；`meta-ui/index.html` 在 `registerItemDefs` 可用时注册 |
+| 表目录注入 | `inject-shell.mjs` 把 `generated/item.ts` + `generated/weapon.ts` **按 id join** 成 `authoredItems` 写入 `MetaShell`（品质 / 伤害来自 weapon 表）；`meta-ui/index.html` 在 `registerItemDefs` 可用时注册 |
 | 出征 | `buildLoadout(state)` **只借出两个武器槽**（非武器装备留在局外），返回 `armedWeapons` / `activeWeaponSlot`；经 `BroadcastChannel('forgeax-arena-run')` 发 `deploy` |
 | 结算 | `settleRun(state, borrowed, { outcome, lootItemIds })`：`cleared` 归还借出武器 + 战利品按 `bag → stash → loose` 入库；`gameOver` **借出装备与本局战利品永久丢失** |
 | 报告 | `SettlementReport` 的 `unregistered`（未知 id）/ `overflow`（满格）必须显式报告，**永不静默丢物品** |

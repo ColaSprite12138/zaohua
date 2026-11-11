@@ -86,14 +86,15 @@ combat/simulation.ts       ← 编排 step/projection/deployRun，唯一对外�
 `createState(config?: RunConfig)` / `reset(s)` / `step(s, dt, input, modifiers?)` / `projection(s)` /
 `NO_MODIFIERS` / `activeWeapon(s)` / `switchWeaponSlot(s, slot)`（`weapons.ts`） /
 `deployRun(s, config?: Deployment)` / `spawnSkeletons(count)` / `makeRng(seed)` / `rollLoot(monsterId, rng)` /
-`itemRow(id)` / `monsterRow(id)` / `poolEntries(poolId)` / `theoreticalDistribution(poolId)`。
+`itemRow(id)` / `weaponRow(id)` / `authoredItem(id)`（**item + weapon 的唯一 join 点**）/
+`AuthoredItemView` / `monsterRow(id)` / `poolEntries(poolId)` / `theoreticalDistribution(poolId)`。
 引擎层从 `assets/game/simulation.ts` 门面 import；新代码应直接 import 本模块。
 
 ## 攻击规格与资源预留（架构层，2026-11-12 新增，**尚未接入运行时**）
 
 | 文件 | 职责 |
 |:--|:--|
-| `attack-spec.ts` | `AttackSpec`（`kind` / `damage` / `range` / `cooldown` / `costKind` / `projectileSpeed`）、`weaponSpec(itemId)`、`monsterSpec(monsterId)`、`PROJECTILE_SPEED=420` |
+| `attack-spec.ts` | `AttackSpec`（`kind` / `damage` / `range` / `cooldown` / `costKind` / `projectileSpeed`）、`weaponSpec(itemId)`（按 `weapon_subtype` 查 `SUBTYPE_SPEC`）、`monsterSpec(monsterId)`、`PROJECTILE_SPEED=420` |
 | `cost.ts` | `CostPolicy` 接口、`costPolicyFor(owner, playerPolicy?)`、`NO_COST`、`costKindOf()` |
 | `projectiles.ts` | `Projectile` / `createProjectile()` / `advanceProjectiles()` 纯函数、可注入 `CollisionQuery` |
 
@@ -103,18 +104,19 @@ combat/simulation.ts       ← 编排 step/projection/deployRun，唯一对外�
 - 资源规划（owner 拍板）：近战消耗武器耐久、远程消耗箭矢、法术消耗法力；**怪物一律不消耗**。
   `spell` 只在类型层预留，本轮**不实现**；耐久 / 箭矢 / 法力尚无权威数据源，故只留策略接口，
   `NO_COST` 是明确的「本次不扣减」策略，不是待填占位。
-- 武器分类依据：`tables/item.xlsx` 无 `attack_kind` 列，当前 `1xxxx`=剑 / `2xxxx`=弓
-  （`loot.test.ts` 已断言池 2 全为 `/^2000/`）。**唯一解释点是 `weaponSpec()`**；
-  未来表加显式列只改这一处。
+- 武器分类依据（2026-11-12 更新）：`tables/weapon.xlsx::weapon_subtype` 是**唯一权威**，
+  `SUBTYPE_SPEC` 把 `近战` / `远程` 映射到 spec；未来加「法术」只加一行。
+  `30001` 是 `子弹`（弹药），`weaponSpec()` 明确回落到 `BARE_HANDS`，**不得用 id 前缀推断**。
+  `item.xlsx` / `weapon.xlsx` 按 `id` join，运行时唯一入口是 `loot.ts::authoredItem()`。
 - 子弹射程无限：只因命中合法目标 / 地形阻挡 / 飞出世界而销毁。`advanceProjectiles()` 按
   8px 子步推进防穿透；`NO_COLLISION` 保持旧竞技场行为，地图运行时接好后再注入真实格子查询。
-- 当前消费方：`assets/combat/__tests__/{attack-spec,projectiles}.test.ts`（19 条）。
+- 当前消费方：`assets/combat/__tests__/{attack-spec,projectiles}.test.ts`（20 条：10 + 10）。
   **`step()` / `attack.ts` / `enemies.ts` / `paint.ts` 尚未引用**，35 步 playthrough 不受影响。
 
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 32 条（含 loot 13）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 54 条（含 loot 13 / attack-spec 10 / projectiles 10）
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json
