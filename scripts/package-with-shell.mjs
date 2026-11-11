@@ -38,15 +38,20 @@ function parseArgs(argv) {
   return opts;
 }
 
-function run(label, command, args, env) {
-  // inherit: keep the engine's build progress visible instead of buffering it.
+function run(label, command, args, env, captureStdout = false) {
+  // Normal runs inherit stdout so the engine's build progress stays visible.
+  // --json is consumed by scripts/verify-all.sh#run_json, which parses stdout
+  // as ONE JSON object; in that mode capture the engine's own JSON and forward
+  // it to stderr instead of letting it corrupt our reply.
   const result = spawnSync(command, args, {
     cwd: root,
     env,
-    stdio: ['ignore', 'inherit', 'inherit'],
+    encoding: captureStdout ? 'utf8' : undefined,
+    stdio: ['ignore', captureStdout ? 'pipe' : 'inherit', 'inherit'],
   });
   if (result.error) throw new Error(`${label}: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`${label} failed (exit ${result.status})`);
+  return captureStdout ? (result.stdout || '') : '';
 }
 
 function main() {
@@ -64,8 +69,10 @@ function main() {
 
   try {
     // 1. Official packager -> pristine ZIP (rebuilds dist/, no hook available).
-    run('official package', process.execPath,
-      [FORGEAX_CLI, 'project', 'package', '--format', 'web-zip', '--output', officialZip, '--json'], env);
+    const officialLog = run('official package', process.execPath,
+      [FORGEAX_CLI, 'project', 'package', '--format', 'web-zip', '--output', officialZip, '--json'],
+      env, opts.json);
+    if (opts.json && officialLog) process.stderr.write(officialLog);
     if (!existsSync(officialZip)) throw new Error('official package produced no ZIP');
 
     // 2. Unpack, inject the shell, refresh the manifest entry for index.html.
@@ -94,9 +101,20 @@ function main() {
     //    </body> and survives that rewrite untouched.
     run('zip pack', 'python', [ZIP_IO, 'pack', opts.output, unpacked], env);
 
-    console.log(`[ OK ] Web ZIP with meta shell: ${opts.output} (index.html ${htmlBytes.length} bytes)`);
+    // The official .sha256 describes the pristine ZIP; our repack changes the
+    // bytes, so emit a checksum that matches the delivered archive.
+    const outputPath = path.resolve(root, opts.output);
+    const zipSha = createHash('sha256').update(readFileSync(outputPath)).digest('hex');
+    writeFileSync(`${outputPath}.sha256`, `${zipSha}  ${path.basename(outputPath)}\n`, 'utf8');
+
     if (opts.json) {
-      console.log(JSON.stringify({ output: opts.output, shell: true, indexBytes: htmlBytes.length }));
+      // Exactly one JSON object on stdout: verify-all.sh#run_json reads `ok`.
+      console.log(JSON.stringify({
+        ok: true, output: opts.output, shell: true,
+        indexBytes: htmlBytes.length, sha256: zipSha,
+      }));
+    } else {
+      console.log(`[ OK ] Web ZIP with meta shell: ${opts.output} (index.html ${htmlBytes.length} bytes)`);
     }
     return 0;
   } finally {

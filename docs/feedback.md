@@ -228,4 +228,25 @@
   5. `preview_start(validate:true)` 在同根已有会话时会**复用旧 host**、不触发 `buildForgeaxPlayer`；改用 `preview_reload(validate:true)` 才真正生成 `.game-builder/artifacts/forgeax-player/`。
 - Evidence: 本地 `node scripts/package-with-shell.mjs --format web-zip --output artifacts/shell-web.zip` → `index.html` 108267 B、`FORGEAX_META_SHELL_BEGIN`=1 / `fx-shell`=84 / `forgeax-arena-run`=2，manifest `bytes` 与 `sha256` 与实际**全 match**，105 条目含 README + feedback、ZIP `testzip()` 无损坏、包内不含平台 bootstrap（Builder 解包后才注入）。端到端 `preview_reload(validate:true)` → 玩家产物 `index.html` 108501 B，**壳层=1 且平台 bootstrap=1 共存**，必需校验 5/5 通过（iframe loaded / offline provider / SDK initialized / no runtime error / single-page）。`bash scripts/verify-all.sh` **ALL GREEN**：84 单测 / 35 playthrough / 4 resize / typecheck 0 error / package sha256 / 单页壳层注入，dist marker 恢复为 1。
 - Status: implemented
-- Note: **遗留（等用户确认，本轮未做）**：① `verify-all.sh` 仍直接调 CLI，验收包 `artifacts/verify/forgeax-game-web.zip` 不含壳层，是否让全量验收也走 `scripts.package`；② 发布仍需登录（`logged_in:false`）；③ 校验的「可玩」层需用户实际游玩到 `game.loaded`；④ 4174 服务进程本轮未启动（`curl` = 000），要玩仍双击 `open-2.5d-game.bat`。Builder 普通预览仍会重建 `dist/` 并注入平台 bootstrap，与 4174 抢同一目录，两条链路不要同时用。
+- Note: ① 已于同日收尾解决（见第 19 条）。**仍待用户处理**：② 发布需登录（`logged_in:false`）；③ 校验「可玩」层需实际游玩到 `game.loaded`；④ 4174 服务进程未启动（`curl` = 000），要玩双击 `open-2.5d-game.bat`。Builder 普通预览仍会重建 `dist/` 并注入平台 bootstrap，与 4174 抢同一目录，两条链路不要同时用。
+
+### 2026-11-11 — 全量验收包也带上壳层（`verify-all.sh` 改走 `scripts.package`）
+
+- Scope: `scripts/verify-all.sh` / `scripts/package-with-shell.mjs` / HANDOFF / meta CONTEXT + EXPERIENCE。
+- Request: 第 18 条遗留 ① —— 验收包 `artifacts/verify/forgeax-game-web.zip` 当时仍由 CLI 直接产出、不含壳层；用户回「继续」后把全量验收也接到同一条产物链上。
+- Design: 不新增第二套打包逻辑，只把 `run_json package` 的命令换成
+  `node scripts/package-with-shell.mjs --format web-zip --output "$OUT/forgeax-game-web.zip" --json`，
+  并在 `sha256sum -c` 之后新增一段 Python 断言（marker + `forgeax-dist.json` 的 bytes/sha256 与实际一致）。
+- Actual pitfalls（均已处理）:
+  1. `verify-all.sh#run_json` 用 `t.indexOf("{")` + `JSON.parse(t.slice(i))` 解析 **stdout 的全部内容**并取 `ok`。
+     原脚本在 stdout 上既有引擎的 `--json`、又有 `[ OK ]` 日志和自定义 JSON，三段拼在一起必然解析失败。
+     → `--json` 模式下把引擎 stdout 改成 pipe 捕获并转 stderr，脚本 stdout **只输出一行** `{"ok":true,...}`。
+     关键前提：Builder 调用 `scripts.package` 时**不传 `--json`**，所以两种调用方可以干净分离。
+  2. 官方 package 会写 `<archive>.sha256`，但那是**纯净 ZIP** 的哈希；重打包后字节变了，
+     `sha256sum -c` 必失败 → 脚本重打包后自己写一份与交付 ZIP 匹配的 `.sha256`（格式 `<hex>  <basename>`）。
+  3. 引擎 JSON 转 stderr 后，`run_json` 把它写进 `$OUT/package.stderr.log`，不影响解析也不丢证据。
+- Evidence: 轻量探针 `node scripts/package-with-shell.mjs --json` → stdout 单行、`ok=true`/`shell=true`/
+  `indexBytes=108267`，`.sha256` 内容 `ccd3…  probe-web.zip`，`sha256sum -c` = OK，ZIP 内 marker=1。
+- Status: implemented
+- Note: `release/` 目录不被验收改动；`verify-all.sh` 最后一步仍是「注入 dist + 单页浏览器验收」，
+  因为 4174 服务的是 `dist/` 而不是 ZIP。

@@ -82,3 +82,10 @@
 - **`preview_start(validate:true)` 不一定触发构建**：同根已有预览会话时 MCP 会复用旧 host，
   不重新 build；`preview_reload(validate:true)` 才走完整 `buildForgeaxPlayer`。
   排查「玩家产物没生成」先看 `.game-builder/artifacts/forgeax-player/` 是否存在。
+- **接进 `verify-all.sh` 要满足 `run_json` 契约**：它把 stdout **整段**当成一个 JSON 解析
+  （`t.indexOf("{")` → `JSON.parse(t.slice(i))`）并取 `ok`。所以脚本 `--json` 模式必须让 stdout
+  **只有一行** `{"ok":true,...}`；引擎自身的 `--json` 改为 pipe 捕获后转 stderr，`[ OK ]` 日志也别进 stdout。
+  可行前提是 Builder 调 `scripts.package` 时**不传 `--json`**，两种调用方天然分离。
+- **重打包必须重算 `.sha256`**：官方 package 写的 `<archive>.sha256` 描述的是纯净 ZIP；
+  注入壳层后字节变了，`sha256sum -c` 必然失败。脚本重打包后自己写一份
+  `<hex>  <basename>`，与交付 ZIP 一致；验收里再加一条 marker + manifest 断言，防止「包能过校验但没壳层」。

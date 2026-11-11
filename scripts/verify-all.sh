@@ -133,17 +133,28 @@ run_json resize "$FX" project play \
   --script scripts/playthrough-resize.mjs --json
 check_report resize artifacts/play/scripts/playthrough-resize/play.json 4
 
-run_json package "$FX" project package --output "$OUT/forgeax-game-web.zip" --json
+run_json package node scripts/package-with-shell.mjs --format web-zip --output "$OUT/forgeax-game-web.zip" --json
 ( cd "$OUT" && sha256sum -c forgeax-game-web.zip.sha256 ) >> "$SUMMARY" 2>&1 \
   || die "package：sha256 校验失败"
-log "[ OK ] package :: sha256 校验通过（验收包在 $OUT/，不动 release/）"
+python -c "
+import hashlib, json, sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+h = z.read('index.html')
+m = json.loads(z.read('forgeax-dist.json'))
+e = next(x for x in m['artifacts'] if x['path'] == 'index.html')
+assert b'FORGEAX_META_SHELL_BEGIN' in h, 'shell block missing'
+assert len(h) == e['bytes'], 'manifest bytes mismatch'
+assert hashlib.sha256(h).hexdigest() == e['sha256'], 'manifest sha256 mismatch'
+print('shell + manifest OK, index.html %d bytes' % len(h))
+" "$OUT/forgeax-game-web.zip" >> "$SUMMARY" 2>&1 \
+  || die "package：验收 ZIP 缺少单页壳层或 manifest 不一致"
+log "[ OK ] package :: sha256 + 单页壳层校验通过（验收包在 $OUT/，不动 release/）"
 
 # `project build`, `project play` AND `project package` ALL regenerate dist/.
-# Injecting right after build is not enough: package wipes it again, and the
-# 4174 preview (which serves dist/) would silently lose the single-page flow.
-# Therefore the injection + its acceptance MUST be the LAST step of the gate.
-# NOTE: the packaged web ZIP is produced before this injection, so it does NOT
-# contain the shell. Repackaging a distributable bundle is a separate step.
+# The package step now runs scripts/package-with-shell.mjs, which patches the
+# ZIP itself (see that script for why dist/ cannot be patched beforehand).
+# The 4174 preview serves dist/, so the injection + its acceptance MUST still
+# be the LAST step of the gate.
 log "[RUN ] single-page shell :: inject into final dist + browser acceptance"
 node scripts/inject-shell.mjs >> "$SUMMARY" 2>&1 || die "注入单页壳层失败"
 node scripts/inject-shell.mjs --check >> "$SUMMARY" 2>&1 || die "单页壳层注入块过期"

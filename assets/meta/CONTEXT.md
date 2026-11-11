@@ -143,8 +143,9 @@ node scripts/verify-shell.cjs                              # 4174 单页 28 条�
 - 引擎启动失败（fatal path）时启动遮罩仍会拦截 top bar 的点击，需要时再决定是否把壳层加入白名单。
 - ~~正式 Web ZIP 在壳层注入之前打包，不含单页流程（含登录与局内背包）~~ — **2026-11-11 晚已解决**：
   `scripts.package` 由 `package-with-shell.mjs` 接管，Builder 预览 / 上传的玩家产物已带壳层（见上节）。
-  **遗留**：`verify-all.sh` 仍直接调 CLI `project package` 产出 `artifacts/verify/forgeax-game-web.zip`，
-  那份验收 ZIP 不含壳层；是否让全量验收也走新脚本，待用户确认（本轮未改 `verify-all.sh`）。
+  **`verify-all.sh` 的 `package` 步骤也已改走同一脚本**：`--json` 模式下 stdout 只输出一行
+  `{"ok":true,...}`（`run_json` 契约）、引擎自身 JSON 转 stderr，并重算与重打包字节匹配的 `.zip.sha256`；
+  验收包 `artifacts/verify/forgeax-game-web.zip` 含壳层，另有断言检查 marker + manifest。`release/` 不被验收改动。
 
 已完成（2026-11-11）：Excel 表 → `generated/*.ts` → `registerItemDefs`；局外↔战斗 4174 单页连续流程与搜打撤结算；
 本地多账号注册/登录/切换 + 按账号隔离的本地存档 + 战局内不冻结且立即生效的背包换装。

@@ -126,7 +126,7 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
 8. 独立页面验收只认 `scripts/verify-meta-ui.cjs` 的结果（模拟真实 DragEvent），不要退化成"只检查 DOM 存在"。
 9. 人工 Excel 表只放 `assets/resource/tables/`：小写 snake_case 文件名、英文 snake_case 表头、首列唯一 `id`、单 Sheet、禁公式；`generated/*.ts` 是 `scripts/export_tables.py` 的生成物，**禁止手改**，改表后先跑生成器再 `--check`。`xls/` 是用户原始拷贝，已 gitignore，不作权威源。
 10. `dist/index.html` 的单页壳层是**构建后注入**的生成物：`build` / `play` / `package` **都会重建 `dist/`**，注入必须是全流程最后一步，否则 4174 会静默丢掉单页流程。`verify-all.sh` 已把它放在 `package` 之后。不要手改 `dist/`。
-    **发布产物另走一条路**：`package.json#scripts.package` = `scripts/package-with-shell.mjs`，对官方 Web ZIP 解包 → 注入壳层 → 同步 `forgeax-dist.json` 的 `bytes`/`sha256` → 重打包；Game Builder 预览 / 上传自动调用它（`buildForgeaxPlayer` 优先用工程 script）。两条入口共用 `inject-shell.mjs` 导出的 `injectInto()`，改壳层只需维护一处。**`verify-all.sh` 直接调 CLI 产出的 `artifacts/verify/forgeax-game-web.zip` 仍不含壳层**（用户本轮未选改验收脚本；`release/` 不被验收改动）。
+    **发布产物另走一条路**：`package.json#scripts.package` = `scripts/package-with-shell.mjs`，对官方 Web ZIP 解包 → 注入壳层 → 同步 `forgeax-dist.json` 的 `bytes`/`sha256` → 重打包；Game Builder 预览 / 上传自动调用它（`buildForgeaxPlayer` 优先用工程 script）。**`verify-all.sh` 的 `package` 步骤也走同一脚本**：`--json` 时 stdout 只输出一行 `{"ok":true,...}` 供 `run_json` 解析（引擎自身的 JSON 转 stderr），并重算与重打包后字节匹配的 `.zip.sha256`；验收包 `artifacts/verify/forgeax-game-web.zip` 已含壳层，且新增断言检查 marker + manifest（`release/` 不被验收改动）。两条入口共用 `inject-shell.mjs` 导出的 `injectInto()`，改壳层只需维护一处。
 11. `assets/game/game.pack.ts` 里 **`game.state` 必须保持唯一 read projection**：`project play` 以「唯一注册」解析默认读取，多注册一个（哪怕 `run.result`）会让 35 步 playthrough 首步报 `state-unavailable`。部署 / 结算只走 BroadcastChannel，别加 projection seam。2026-11-11 追加的只读 `probe` → `state` 消息只是把 `projection(state)`（外加全部掉落点坐标）序列化到主窗口，**不注册新 projection**，供真实 4174 页面端到端取证；不要把它改成 `registerRead`。
 
 12. `assets/meta/account.ts` **零 import、全同步**（自实现 SHA-256；不要换回 `crypto.subtle`，`verify-shell.cjs` 跑在 `file://` + 虚拟时间下）。`meta-ui/account.js` / `auth-ui.js` 只由 `inject-shell.mjs` 注入 4174，**独立双击页不得引用**。`#fx-auth` 必须挂 `document.body`；`unlock` 每次登录**只发一次**（Worker 收到会 `reset(state)`，重发会重开正在打的局）。`lock` / `unlock` / `equip` 只走 BroadcastChannel，别加 projection seam；`equip` 的 `slots[i] === null` 表示「保留该槽借出的武器」，不要改成布尔全覆盖。
@@ -166,7 +166,7 @@ node scripts/verify-meta-ui.cjs                         # 独立页面 13/13（�
 CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project build --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json
-CODEBUDDY_SAFE_DELETE_ENABLED=0 ./node_modules/.bin/forgeax project package --output release/forgeax-game-web.zip --json
+node scripts/package-with-shell.mjs --format web-zip --output release/forgeax-game-web.zip
 node scripts/inject-shell.mjs                           # 最后一步：build/play/package 都会重建 dist
 node scripts/inject-shell.mjs --check
 node scripts/verify-shell.cjs                            # 4174 单页 28/28
@@ -187,7 +187,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 28/28
 | `playthrough` 1600x900 | `passed:true`、35 steps、0 errors |
 | `playthrough-resize` 1700x1000 | `passed:true`、4 steps、0 errors |
 | `package` | sha256 校验通过，包内 README + feedback 齐全 |
-| `web-zip shell`（发布产物） | `node scripts/package-with-shell.mjs` 产出的 ZIP：`index.html` 含 `FORGEAX_META_SHELL_BEGIN`，`forgeax-dist.json` 的 `bytes`/`sha256` 与实际一致；Builder 玩家产物同时含壳层与平台 bootstrap |
+| `web-zip shell`（发布产物） | `verify-all.sh` 的 `package` 步骤产出 `artifacts/verify/forgeax-game-web.zip`：`sha256sum -c` 通过、`index.html` 含 `FORGEAX_META_SHELL_BEGIN`、`forgeax-dist.json` 的 `bytes`/`sha256` 与实际一致；Builder 玩家产物同时含壳层与平台 bootstrap |
 
 主验收必含**非 1280x720 视口**：坐标映射的回归只在 drawing buffer 尺寸变化时暴露。
 
