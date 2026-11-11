@@ -12,7 +12,7 @@
  *
  * `account.js` is NOT referenced by the standalone page (that page stays a
  * serverless demo). scripts/inject-shell.mjs injects it into the 4174 shell,
- * where the mandatory login + per-account save data live.
+ * where the platform KV save envelope + local-development adapter live.
  */
 import { createRequire } from 'node:module';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';

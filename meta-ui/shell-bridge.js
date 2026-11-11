@@ -3,8 +3,9 @@
  *
  * Holds the ONE authoritative InventoryState (shared with the injected meta
  * UI via window.MetaShell) and talks to the Engine Worker over a same-origin
- * BroadcastChannel. Save data is owned by MetaAccount (localStorage, one
- * InventoryState per local account); every render persists it while logged in.
+ * BroadcastChannel. Save data is owned by window.MetaStore: one opaque KV blob
+ * on the Zaohua platform, mirrored to browser storage for local development.
+ * Every render persists it; there is no local login/registration any more.
  *
  * Standard extraction-shooter rules:
  *   deploy  -> borrow the two weapon slots out of the inventory
@@ -22,7 +23,7 @@
   var host = window.MetaShell;
   var M = window.MetaInventory;
   var A = window.MetaAccount;
-  var Auth = window.MetaAuth;
+  var Store = window.MetaStore;
   if (!host || !M) {
     console.error('[shell] MetaShell / MetaInventory missing; bridge not started');
     return;
@@ -49,8 +50,8 @@
   bar.innerHTML =
     '<div class="fx-brand"><b>局外 · 备战</b><span id="fx-phase">阶段：局外配装</span>' +
     '<span id="fx-armed" class="fx-armed"></span>' +
-    '<span class="fx-account">账号 <b id="fx-account-name">未登录</b>' +
-    '  <button id="fx-logout" type="button">切换账号</button></span></div>' +
+    '<span class="fx-account">玩家 <b id="fx-account-name">本地开发席位</b>' +
+    '  <span id="fx-save-mode" class="fx-save-mode">本地存档</span></span></div>' +
     '<div class="fx-controls">' +
     '  <label>怪物 <input id="fx-monsters" type="number" min="1" max="24" value="' + DEFAULT_MONSTERS + '"></label>' +
     '  <button id="fx-deploy" type="button">出征 →</button>' +
@@ -98,17 +99,21 @@
   }
 
   /**
-   * Every render is a save point: drag/drop, equip, settlement and login all
-   * call render(), so the logged-in account's assets survive a page refresh.
-   * Equipment deltas while in a run are ALSO pushed to the Engine Worker.
+   * Every render is a save point: drag/drop, equip and settlement all call
+   * render(), so the InventoryState is written to the platform KV store (or
+   * its local-development mirror). Equipment deltas while in a run are ALSO
+   * pushed to the Engine Worker.
    */
   function syncBadge() {
     var s = host.getState();
     var armed = [s.equipped[0], s.equipped[1]].filter(Boolean).length;
     $('fx-armed').textContent = '已装备武器 ' + armed + '/2';
-    var user = A ? A.currentUser() : null;
-    $('fx-account-name').textContent = user || '未登录';
-    if (user && Auth) Auth.persist();
+    $('fx-account-name').textContent = Store
+      ? Store.displayName()
+      : (A ? A.DEV_DISPLAY_NAME : '本地开发席位');
+    var modeEl = $('fx-save-mode');
+    if (modeEl) modeEl.textContent = Store && Store.mode() === 'platform' ? '平台云存档' : '本地存档';
+    if (Store) Store.persist();
 
     var slots = [null, null];
     for (var i = 0; i < 2; i += 1) {
@@ -176,10 +181,6 @@
   /* ------------------------------ deploy ------------------------------- */
   $('fx-deploy').addEventListener('click', function () {
     if (inRun) return;
-    if (!Auth || !Auth.current()) {
-      log('请先登录本地账号，再出征', true);
-      return;
-    }
     var count = Math.max(1, Math.min(24, Number($('fx-monsters').value) || DEFAULT_MONSTERS));
     borrowed = M.buildLoadout(host.getState());
     // Borrowing empties the two slots. Reset the delta baseline BEFORE the
@@ -209,14 +210,6 @@
 
   $('fx-bag').addEventListener('click', function () {
     if (inRun) setRunBag(!bagOpen);
-  });
-
-  $('fx-logout').addEventListener('click', function () {
-    inRun = false;
-    borrowed = null;
-    setRunBag(false);
-    showBattle(false);
-    if (Auth) Auth.logout();
   });
 
   document.addEventListener('keydown', function (e) {

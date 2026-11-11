@@ -7,10 +7,12 @@
 // Publishing adaptation (PC): declare ONLY capabilities actually implemented
 // here. The Builder validation plan selects its checks from this list, so an
 // unimplemented capability would create a check that can never pass.
-import { initialize, game, lifecycle } from 'zaohua-platform-sdk'
+// `user.current` + `storage` back the platform identity / one-key KV save;
+// initialize() runs their connectivity checks before the engine is imported.
+import { initialize, game, lifecycle, user, storage } from 'zaohua-platform-sdk'
 
 await initialize({
-  capabilities: ['game.loading', 'game.lifecycle'],
+  capabilities: ['game.loading', 'game.lifecycle', 'user.current', 'storage'],
 })
 
 // The engine bundle is imported only after this module resolves, so this is
@@ -45,4 +47,23 @@ if (typeof BroadcastChannel !== 'undefined') {
     game.loaded()
     channel.close()
   }
+}
+
+// Platform identity + KV save. The injected classic shell scripts run BEFORE
+// this deferred module, so MetaAccount / MetaShell.mountPlatformStore already
+// exist. initialize() above has already run the user.current and storage
+// connectivity checks; here we resolve the real user and the saved blob once,
+// then hand both down so the shell never has to await a Promise.
+const SAVE_KEY = globalThis.MetaAccount?.SAVE_KEY ?? 'forgeax.save.v1'
+const profile = await user.getCurrent()
+const initial = await storage.get(SAVE_KEY)
+const mountPlatformStore = globalThis.MetaShell?.mountPlatformStore
+if (typeof mountPlatformStore === 'function') {
+  mountPlatformStore({
+    userId: profile.id,
+    displayName: profile.name,
+    initial,
+    read: () => storage.get(SAVE_KEY),
+    write: (envelope) => storage.set(SAVE_KEY, envelope),
+  })
 }

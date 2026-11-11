@@ -1,155 +1,162 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createHash } from 'node:crypto';
 import * as A from '../account.ts';
 import { createInventoryState } from '../inventory.ts';
 
-/** Minimal localStorage stand-in; survives across login/logout in one test. */
+/** Minimal browser-storage stand-in, shared by the local-adapter tests. */
 function fakeStorage() {
   const map = new Map<string, string>();
   return {
     getItem: (k: string) => map.get(k) ?? null,
     setItem: (k: string, v: string) => { map.set(k, v); },
-    raw: () => map.get(A.STORAGE_KEY) ?? '',
+    raw: () => map.get(A.LOCAL_KEY) ?? '',
+    seedBroken: () => map.set(A.LOCAL_KEY, '{not json'),
   };
 }
+
+const slots = 10;
+const fallback = () => createInventoryState(3);
+const tick = () => new Promise<void>((resolve) => { setTimeout(resolve, 0); });
 
 let store: ReturnType<typeof fakeStorage>;
 
 beforeEach(() => {
   store = fakeStorage();
   vi.stubGlobal('localStorage', store);
-  A.logout(); // session is module-level and must not leak between tests
 });
 
-describe('synchronous SHA-256', () => {
-  it('matches Node crypto for ASCII, empty, CJK and long input', () => {
-    for (const text of ['', 'abc', '中文密码123', 'x'.repeat(1000)]) {
-      expect(A.sha256Hex(text)).toBe(createHash('sha256').update(text, 'utf8').digest('hex'));
-    }
+describe('platform KV envelope', () => {
+  it('uses one key and one versioned, deep-copied JSON blob', () => {
+    const state = createInventoryState(3);
+    const env = A.encodeSave(state);
+    expect(A.SAVE_KEY).toBe('forgeax.save.v1');
+    expect(env.schemaVersion).toBe(A.SCHEMA_VERSION);
+    expect(env.state).toEqual(state);
+    expect(env.state).not.toBe(state);
+    expect(Object.keys(env).sort()).toEqual(['schemaVersion', 'state']);
+  });
+
+  it('forces pure JSON: Date and Map cannot smuggle non-portable values', () => {
+    const env = A.encodeSave({
+      when: new Date('2026-01-01T00:00:00Z'),
+      map: new Map([['a', 1]]),
+      nested: { ok: 1 },
+    });
+    const state = env.state as { when: string; map: Record<string, never>; nested: { ok: number } };
+    expect(typeof state.when).toBe('string');
+    expect(state.map).toEqual({});
+    expect(state.nested.ok).toBe(1);
+    expect(() => JSON.stringify(env)).not.toThrow();
+  });
+
+  it('rejects undefined and circular data instead of writing a broken save', () => {
+    expect(() => A.encodeSave(undefined)).toThrow(/pure JSON/);
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(() => A.encodeSave(circular)).toThrow(/pure JSON/);
   });
 });
 
-describe('local account database', () => {
-  it('starts empty with no logged-in user', () => {
-    expect(A.listUsers()).toEqual([]);
-    expect(A.lastUser()).toBeNull();
-    expect(A.currentUser()).toBeNull();
-    expect(A.loadDb()).toEqual(A.emptyDb());
+describe('inventory state validation', () => {
+  it('accepts the authored inventory shape', () => {
+    expect(A.isValidInventoryState(createInventoryState(3), slots)).toBe(true);
   });
 
-  it('registers and stores the initial inventory for that account', () => {
-    const initial = createInventoryState(3);
-    const result = A.register('alice', 'pass1234', initial);
-    expect(result.ok).toBe(true);
-    expect(A.currentUser()).toBe('alice');
-    expect(A.listUsers()).toEqual(['alice']);
-    expect(A.loadState('alice')).toEqual(initial);
-    const rec = A.loadDb().users['alice']!;
-    expect(rec.salt).toMatch(/^[0-9a-f]{32}$/);
-    expect(rec.hash).toMatch(/^[0-9a-f]{64}$/);
-    expect(rec.createdAt).not.toBe('');
+  it('rejects missing containers and a wrong equipment-slot count', () => {
+    expect(A.isValidInventoryState(null, slots)).toBe(false);
+    expect(A.isValidInventoryState({}, slots)).toBe(false);
+    const state = createInventoryState(3) as unknown as Record<string, unknown>;
+    expect(A.isValidInventoryState({ ...state, bag: null }, slots)).toBe(false);
+    expect(A.isValidInventoryState({ ...state, equipped: [] }, slots)).toBe(false);
+    expect(A.isValidInventoryState([], slots)).toBe(false);
+  });
+});
+
+describe('decodeSave: foreign data never breaks the UI', () => {
+  it('returns the stored state for a valid envelope', () => {
+    const state = createInventoryState(3);
+    expect(A.decodeSave(A.encodeSave(state), fallback, slots)).toEqual(state);
   });
 
-  it('never stores the plaintext password', () => {
-    A.register('alice', 'pass1234', createInventoryState(3));
-    expect(store.raw()).not.toContain('pass1234');
-    expect(A.loadDb().users['alice']!.hash).not.toBe('pass1234');
+  it('falls back for null / non-object / missing version', () => {
+    expect(A.decodeSave(null, fallback, slots)).toEqual(fallback());
+    expect(A.decodeSave('a string', fallback, slots)).toEqual(fallback());
+    expect(A.decodeSave({ state: createInventoryState(3) }, fallback, slots)).toEqual(fallback());
   });
 
-  it('uses a distinct salt per account even for the same password', () => {
-    A.register('alice', 'same', createInventoryState(3));
-    A.logout();
-    A.register('bob', 'same', createInventoryState(3));
-    const users = A.loadDb().users;
-    expect(users['alice']!.salt).not.toBe(users['bob']!.salt);
-    expect(users['alice']!.hash).not.toBe(users['bob']!.hash);
+  it('falls back for a future schema version', () => {
+    const env = { ...A.encodeSave(createInventoryState(3)), schemaVersion: 99 };
+    expect(A.decodeSave(env, fallback, slots)).toEqual(fallback());
   });
 
-  it('rejects duplicate usernames and invalid credentials', () => {
-    expect(A.register('a', 'pass1234', {}).ok).toBe(false);
-    expect(A.register('bad name', 'pass1234', {}).ok).toBe(false);
-    expect(A.register('alice', '123', {}).ok).toBe(false);
-    expect(A.validateName('测试_01')).toBeNull();
-    A.register('alice', 'pass1234', createInventoryState(3));
-    const dup = A.register('alice', 'another', createInventoryState(3));
-    expect(dup.ok).toBe(false);
-    expect(dup.error).toMatch(/已存在/);
-    expect(A.listUsers()).toEqual(['alice']);
+  it('falls back for a valid version with a corrupted state', () => {
+    const env = { schemaVersion: A.SCHEMA_VERSION, state: { loose: [] } };
+    expect(A.decodeSave(env, fallback, slots)).toEqual(fallback());
+  });
+});
+
+describe('local-development adapter (save/load is verifiable offline)', () => {
+  it('reads back what was written, like a simulated page refresh', () => {
+    const adapter = A.createLocalAdapter(store);
+    const state = createInventoryState(3);
+    (state.loose as unknown[]).push({ uid: 'probe', defId: 'longsword' });
+    adapter.write(A.encodeSave(state));
+    expect(store.raw()).toContain('probe'); // written to the local mirror
+    expect(A.LOCAL_KEY).not.toBe(A.SAVE_KEY); // mirror is not the platform key
+    expect(A.readSave(adapter, fallback, slots)).toEqual(state);
   });
 
-  it('logs in with the right password and rejects wrong ones', () => {
-    A.register('alice', 'pass1234', createInventoryState(3));
-    A.logout();
-    expect(A.login('nobody', 'pass1234').ok).toBe(false);
-    expect(A.login('alice', 'wrong').ok).toBe(false);
-    expect(A.currentUser()).toBeNull();
-    const ok = A.login('alice', 'pass1234');
-    expect(ok.ok).toBe(true);
-    expect(ok.state).toEqual(createInventoryState(3));
-    expect(A.lastUser()).toBe('alice');
+  it('treats corrupt JSON as an empty save', () => {
+    store.seedBroken();
+    expect(A.createLocalAdapter(store).read()).toBeNull();
+    expect(A.readSave(A.createLocalAdapter(store), fallback, slots)).toEqual(fallback());
   });
 
-  it('keeps each account inventory isolated', () => {
-    A.register('alice', 'aaaa', createInventoryState(3));
-    A.logout();
-    A.register('bob', 'bbbb', createInventoryState(3));
-    const bob = A.loadState('bob') as { loose: unknown[] };
-    bob.loose.push({ uid: 'extra', defId: 'longsword' });
-    expect(A.saveState('bob', bob)).toBe(true);
-    expect((A.loadState('bob') as { loose: unknown[] }).loose).toHaveLength(4);
-    expect((A.loadState('alice') as { loose: unknown[] }).loose).toHaveLength(3);
-    expect(A.listUsers()).toEqual(['alice', 'bob']);
-  });
-
-  it('refuses writes from guests or to another account', () => {
-    A.register('alice', 'aaaa', createInventoryState(3));
-    A.logout();
-    expect(A.saveState('alice', { loose: [] })).toBe(false);
-    A.login('alice', 'aaaa');
-    expect(A.saveState('bob', { loose: [] })).toBe(false);
-    expect(A.saveState('nobody', { loose: [] })).toBe(false);
-  });
-
-  it('persists loot and equipment across a simulated refresh', () => {
-    A.register('alice', 'aaaa', createInventoryState(3));
-    const saved = A.loadState('alice') as {
-      bag: unknown[];
-      equipped: (unknown | null)[];
+  it('survives a storage quota error without throwing', () => {
+    const quota = {
+      getItem: () => null,
+      setItem: () => { throw new Error('quota exceeded'); },
     };
-    saved.bag.push({ uid: 'loot-1', defId: '10006', container: 'bag', col: 0, row: 0 });
-    saved.equipped[0] = { uid: 'w1', defId: 'longsword' };
-    expect(A.saveState('alice', saved)).toBe(true);
-
-    // A real page refresh clears the session but NOT localStorage.
-    A.logout();
-    expect(A.currentUser()).toBeNull();
-    expect(A.lastUser()).toBe('alice');
-    const back = A.login('alice', 'aaaa');
-    expect(back.ok).toBe(true);
-    const reloaded = back.state as { bag: unknown[]; equipped: (unknown | null)[] };
-    expect(reloaded.bag).toHaveLength(1);
-    expect(reloaded.equipped[0]).toEqual({ uid: 'w1', defId: 'longsword' });
+    expect(() => A.createLocalAdapter(quota).write(A.encodeSave(fallback()))).not.toThrow();
   });
 
-  it('discards corrupt database JSON without throwing', () => {
-    store.setItem(A.STORAGE_KEY, '{not json');
-    expect(A.loadDb()).toEqual(A.emptyDb());
-    store.setItem(A.STORAGE_KEY, JSON.stringify({ version: 9, users: {} }));
-    expect(A.loadDb()).toEqual(A.emptyDb());
-    store.setItem(A.STORAGE_KEY, JSON.stringify({ version: 1 }));
-    expect(A.loadDb()).toEqual(A.emptyDb());
+  it('readSave/writeSave round-trip through the same envelope shape', async () => {
+    const adapter = A.createLocalAdapter(store);
+    const writes: A.SaveEnvelope[] = [];
+    const queue = A.createSaveQueue((env) => { writes.push(env); adapter.write(env); });
+    const state = createInventoryState(3);
+    A.writeSave(queue, state);
+    await tick(); // the queue writes in a microtask
+    expect(A.readSave(adapter, fallback, slots)).toEqual(state);
+    expect(writes).toHaveLength(1);
+  });
+});
+
+describe('save queue: an older async write must never win', () => {
+  it('coalesces a burst of pushes, keeping the newest value last', async () => {
+    const writes: A.SaveEnvelope[] = [];
+    const queue = A.createSaveQueue((env) => { writes.push(env); });
+    queue.push(A.encodeSave({ loose: [1] }));
+    queue.push(A.encodeSave({ loose: [1, 2] }));
+    queue.push(A.encodeSave({ loose: [1, 2, 3] }));
+    await tick();
+    expect(queue.calls()).toBe(2);
+    expect(writes[writes.length - 1]!.state).toEqual({ loose: [1, 2, 3] });
+    expect(queue.last()).toEqual(A.encodeSave({ loose: [1, 2, 3] }));
   });
 
-  it('drops malformed account records but keeps valid ones', () => {
-    store.setItem(A.STORAGE_KEY, JSON.stringify({
-      version: 1,
-      lastUser: 'alice',
-      users: {
-        alice: { salt: 'ab', hash: 'cd', createdAt: 'x', state: { loose: [] } },
-        broken: { salt: 'ab' },
-        noState: { salt: 'ab', hash: 'cd' },
-      },
-    }));
-    expect(Object.keys(A.loadDb().users)).toEqual(['alice']);
+  it('keeps accepting saves after a failed write', async () => {
+    let fail = true;
+    const writes: A.SaveEnvelope[] = [];
+    const queue = A.createSaveQueue((env) => {
+      if (fail) throw new Error('network');
+      writes.push(env);
+    });
+    queue.push(A.encodeSave({ loose: [1] }));
+    await tick();
+    fail = false;
+    queue.push(A.encodeSave({ loose: [2] }));
+    await tick();
+    expect(writes).toEqual([A.encodeSave({ loose: [2] })]);
+    expect(queue.calls()).toBe(2);
   });
 });

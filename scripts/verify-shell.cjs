@@ -21,11 +21,14 @@
  *   cleared  -> weapons returned + authored loot banked
  *   gameOver -> borrowed weapons and loot permanently lost
  *
- * It also drives the mandatory login through the REAL overlay UI (register,
- * auto-save, simulated refresh, account isolation) and the in-run bag (B opens
- * it without freezing the arena, drag-equipping emits an immediate `equip`
- * message, ESC closes it), plus the platform lifecycle adapter (pause/resume
- * forwarded to the Engine Worker): 30 assertions in total.
+ * It also drives the platform identity + KV save contract (no login overlay,
+ * one versioned blob per render, simulated refresh from the local mirror,
+ * corrupt-save fallback, mountPlatform switching to a mocked platform write)
+ * and the in-run bag (B opens it without freezing the arena, drag-equipping
+ * emits an immediate `equip` message, ESC closes it), plus the platform
+ * lifecycle adapter (pause/resume forwarded to the Engine Worker):
+ * 30 assertions in total. Real account isolation is only verifiable on the
+ * published platform, NOT here.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -79,7 +82,7 @@ const SELFTEST = `
 (function () {
   var out = {
     steps: {}, ok: false, error: null,
-    auth: {}, bag: {}, equipMessages: [], lockMessages: [], platformMessages: [],
+    store: {}, bag: {}, equipMessages: [], lockMessages: [], platformMessages: [],
   };
   var resultEl = document.getElementById('selftest-result');
   var publish = function () { resultEl.textContent = JSON.stringify(out); };
@@ -106,7 +109,7 @@ const SELFTEST = `
   };
 
   var M = window.MetaInventory, H = window.MetaShell;
-  var A = window.MetaAccount, Auth = window.MetaAuth;
+  var A = window.MetaAccount, Store = window.MetaStore;
   var snap = function (tag) {
     var s = H.getState();
     out.steps[tag] = {
@@ -148,45 +151,64 @@ const SELFTEST = `
 
   (async function () {
     try {
-      // ---- mandatory local login, driven through the REAL overlay UI ----
-      var authEl = document.getElementById('fx-auth');
-      out.auth.overlayVisibleAtStart = !!authEl && getComputedStyle(authEl).display !== 'none';
-      out.auth.guestAtStart = A.currentUser() === null;
-      document.getElementById('fx-deploy').click();
-      out.auth.deployBlockedWithoutLogin = !inBattle() && /请先登录/.test(logText());
+      // ---- platform identity + KV save: NO local login/registration ----
+      // The classic shell starts in local-dev mode; the Builder ESM entry
+      // pushes the real identity later via MetaShell.mountPlatformStore().
+      var slots = M.EQUIP_SLOTS.length;
+      var localAdapter = A.createLocalAdapter();
+      var fallback = function () { return M.createInventoryState(3); };
 
-      document.getElementById('fx-auth-name').value = 'tester';
-      document.getElementById('fx-auth-pass').value = 'pass1234';
-      document.getElementById('fx-auth-register').click();
-      out.auth.registered = A.currentUser() === 'tester';
-      out.auth.overlayHidden = authEl.style.display === 'none';
-      out.auth.initialLoose = H.getState().loose.length;
-      out.auth.rawNoPlaintext = (function () {
-        try {
-          return String(localStorage.getItem('forgeax.accounts.v1')).indexOf('pass1234') < 0;
-        } catch (e) {
-          return A.loadDb().users.tester.hash !== 'pass1234';
-        }
-      })();
+      out.store.noLoginOverlay = !document.getElementById('fx-auth');
+      out.store.deployNeedsNoLogin = !document.getElementById('fx-deploy').disabled
+        && !/请先登录/.test(logText());
+      out.store.localDevIdentity = Store.mode() === 'local'
+        && Store.currentUser() === A.DEV_USER
+        && H.getState().loose.length === 3;
 
-      // Every render is a save point; simulate a refresh (session lost, disk kept).
+      // Every render writes ONE versioned KV blob. The queue writes in a
+      // microtask, so wait for the local mirror before reading it back.
       H.getState().loose.push({ uid: 'save-probe', defId: 'longsword' });
       H.render();
-      out.auth.savedLoose = A.loadState('tester').loose.length;
-      A.logout();
-      var relog = A.login('tester', 'pass1234');
-      out.auth.reloginOk = relog.ok && relog.state.loose.length === out.auth.savedLoose;
-      H.setState(relog.state);
+      await waitFor(function () { return localAdapter.read() !== null; });
+      var saved = Store.lastSaved();
+      out.store.kvEnvelope = !!saved && saved.schemaVersion === A.SCHEMA_VERSION
+        && A.isValidInventoryState(saved.state, slots)
+        && saved.state.loose.length === 4;
 
-      // A second account must not see the first one's loot/equipment.
-      A.logout();
-      A.register('other', 'pass5678', M.createInventoryState(3));
-      out.auth.isolated = A.loadState('tester').loose.length === out.auth.savedLoose
-        && A.loadState('other').loose.length === 3;
-      A.logout();
-      var back = A.login('tester', 'pass1234');
-      H.setState(back.state);
-      out.auth.backOnTester = A.currentUser() === 'tester';
+      // Simulated refresh: in-memory state is dropped, the mirror is reloaded.
+      var refreshed = Store.simulateRefresh();
+      out.store.refreshRestored = refreshed.loose.length === 4
+        && A.readSave(localAdapter, fallback, slots).loose.length === 4;
+
+      // A corrupt / future-version blob must fall back, never throw.
+      localAdapter.write({ schemaVersion: 99, state: { loose: [] } });
+      out.store.corruptFallback = Store.simulateRefresh().loose.length === 3;
+
+      // Restore the 4-item save so deploy/settlement below sees the old state.
+      var good = H.getState();
+      good.loose.push({ uid: 'save-probe-2', defId: 'longsword' });
+      localAdapter.write(A.encodeSave(good));
+      Store.simulateRefresh();
+
+      // Mock the platform bridge: real identity shape + a single KV writer.
+      var platformWrites = [];
+      var mounted = Store.mountPlatform({
+        userId: 'alice', displayName: 'Alice',
+        initial: A.encodeSave(H.getState()),
+        write: function (env) { platformWrites.push(env); },
+        read: function () { return null; },
+      });
+      out.store.mountPlatform = mounted === true && Store.mode() === 'platform'
+        && Store.currentUser() === 'alice' && H.getState().loose.length === 4;
+      H.getState().loose.push({ uid: 'platform-probe', defId: 'longsword' });
+      H.render();
+      await waitFor(function () { return platformWrites.length >= 1; });
+      out.store.platformKvWrite = platformWrites.length === 1
+        && platformWrites[0].schemaVersion === A.SCHEMA_VERSION
+        && platformWrites[0].state.loose.length === 5
+        && JSON.stringify(platformWrites[0]) === JSON.stringify(A.encodeSave(H.getState()));
+      // Back to local-dev so the rest of the flow sees the known 4-item state.
+      Store.simulateRefresh();
 
       out.authoredRegistered = (function () {
         try { return M.itemDef('10006').name === '霜之哀伤'; } catch (e) { return false; }
@@ -328,16 +350,22 @@ const d = result.deployment || {};
 // Derive the expected loss instead of weakening the assertion.
 const expectedLoss = (S.cleared.weapon0 ? 1 : 0) + (S.cleared.weapon1 ? 1 : 0);
 const checks = [
-  ['login overlay blocks the game on a fresh page',
-    result.auth.overlayVisibleAtStart === true && result.auth.guestAtStart === true, result.auth],
-  ['deploy is refused before login', result.auth.deployBlockedWithoutLogin === true, result.auth],
-  ['registering via the real UI logs the account in and hides the overlay',
-    result.auth.registered === true && result.auth.overlayHidden === true, result.auth],
-  ['password is never stored in plaintext', result.auth.rawNoPlaintext === true, result.auth],
-  ['every render auto-saves the inventory to the account', result.auth.savedLoose === 4, result.auth],
-  ['a simulated refresh restores the saved inventory', result.auth.reloginOk === true, result.auth],
-  ['a second account has a fully isolated inventory', result.auth.isolated === true, result.auth],
-  ['switching back restores the original account', result.auth.backOnTester === true, result.auth],
+  ['the local login/registration overlay is gone',
+    result.store.noLoginOverlay === true, result.store],
+  ['deploy no longer requires a local login',
+    result.store.deployNeedsNoLogin === true, result.store],
+  ['without a host the shell uses a local-dev identity and default inventory',
+    result.store.localDevIdentity === true, result.store],
+  ['every render writes one versioned KV envelope',
+    result.store.kvEnvelope === true, result.store],
+  ['a simulated refresh restores the saved inventory from the mirror',
+    result.store.refreshRestored === true, result.store],
+  ['a corrupt or future-version save falls back without throwing',
+    result.store.corruptFallback === true, result.store],
+  ['mountPlatform switches to the platform identity and loads its blob',
+    result.store.mountPlatform === true, result.store],
+  ['platform saves go through one key as a pure-JSON blob',
+    result.store.platformKvWrite === true, result.store],
   ['B opens the in-run bag overlay during battle',
     result.bag.openedByKey === true && result.bag.panelVisible === true, result.bag],
   ['the bag does not leave or freeze the battle',

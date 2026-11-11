@@ -110,3 +110,31 @@
 - **可测性决定落点**：把 adapter 放在经典脚本 `shell-bridge.js` 而不是 ESM 入口，
   `verify-shell.cjs` 的最小骨架页才能真实驱动 pause/resume 并断言频道消息；
   ESM 入口只保留 `globalThis.MetaShell?.platformAdapter` 的 fallback，防止壳层缺失时握手失败。
+
+## 平台身份 + KV 存档替换本地登录（2026-11-11 晚）
+
+用户拍板：删掉自研注册/登录，改用造化平台玩家身份；存盘按平台 KV；本地只验功能与存盘，
+**账号数据隔离发布到平台后再验证**。
+
+- **平台不解析业务 schema**：`storage.get(key)/set(key,value)` 是不透明 KV；`initialize` 的
+  「namespaced round trip」只是往 `__zaohua_validation__:<session>` 写 `{contractVersion,nonce}`
+  再读回比对，验的是通道与命名空间，不校验存档字段。所以版本 / 迁移 / 结构校验全归游戏侧。
+- **经典壳层脚本先于 deferred ESM 平台入口执行**：`<head>` 的 `type="module"` 是 defer，
+  `</body>` 前的内联经典脚本解析即执行。壳层**不能**同步读平台桥，只能由 ESM 入口
+  `MetaShell.mountPlatformStore()` 推下来；`initial` 必须是 `await storage.get()` 后的值，
+  否则经典脚本要处理 Promise。
+- **预览 `structuredClone` vs 平台 `JSON.stringify`**：宿主预览分支能存 Date/Map，
+  平台与 devStub 分支会变形。`encodeSave()` 强制一次 `JSON.parse(JSON.stringify(...))`，
+  存档 DTO 只用纯 JSON 类型。
+- **写队列必须串行 + 合并**：`storage.set` 返回 Promise，连续 render 会让旧写晚落盘覆盖新写；
+  `createSaveQueue()` 用一个 pending 槽合并突发写，失败也不阻塞后续写。
+- **`git rm` 在本机会把整个 `meta-ui/` 目录从文件系统删掉**（含未改动文件，实测一次）：
+  删单文件改用 `rm -f` + `git add -A` 记录；误删后 `git checkout HEAD -- meta-ui/` 能恢复
+  tracked 文件，但 untracked 新文件必须重建，恢复后还要重新应用未提交的编辑。
+- **删遮罩后 Worker 的 `lock`/`unlock` 没有生产者**：保留为协议兼容，不顺手删 Worker 分支
+  （那会动到战斗循环保护清单）。平台暂停走独立 `paused` 冻结位。
+- **断言不能放宽**：8 条登录断言重写成 8 条平台身份/KV 断言（总数仍 30），
+  12 条 account 单测重写为 15 条（总数 84 → 87，`verify-all.sh` 下限仍 84）。
+  本地可验：无登录、KV envelope、刷新恢复、损坏兜底、mountPlatform、平台纯 JSON 写入；
+  账号隔离不写成本地断言。
+- 独立 `file://` 演示页仍不引用 `account.js` / `platform-store.js`，保持双击可开。

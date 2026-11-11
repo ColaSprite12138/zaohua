@@ -45,8 +45,8 @@ engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas �
 主窗口 `window.MetaShell.state` 持唯一权威 `InventoryState`，局外 UI 与 `shell-bridge.js` 共享它；
 Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、在清场/阵亡时发 `result`。
 局内局外在**同一个页面内**内存共享（不同标签页 / Worker 是独立 JS 堆，`file://` 与
-`http://localhost:4174` 也不同源）；持久化由下节的**按账号本地存档**负责，
-刷新页面需重新登录，登录后资产恢复。
+`http://localhost:4174` 也不同源）；持久化由下节的**平台 KV 存档**负责（本地开发写镜像），
+无需登录，刷新后从存档恢复。
 
 | 阶段 | 规则 |
 |:--|:--|
@@ -60,26 +60,29 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 限定到 `#fx-shell`，`--check` 防漂移。注意 `project package` 产出的 Web ZIP 在注入前生成，**不含壳层**；
 正式分发包需另行处理。独立 `file://` 页仍可双击，行为不变。
 
-### 本地账号、存档与战局内背包
+### 平台身份、KV 存档与战局内背包
 
-打开 4174 会**先看到登录 / 注册遮罩**，没有账号不能出征。无服务器，账号与存档全在本机
-`localStorage['forgeax.accounts.v1']`：
+**没有登录 / 注册**：玩家身份由造化平台容器注入（`user.getCurrent()`），平台按用户命名空间隔离存档。
+存盘是**单 key `forgeax.save.v1` + 一个 `{schemaVersion:1, state}` 纯 JSON blob**（整个 `InventoryState`）：
+平台不解析结构，schema 与迁移由游戏自己负责。
 
 | 项 | 说明 |
 |:--|:--|
-| 注册 / 登录 | 账号 2–16 位（中英文 / 数字 / 下划线），密码至少 4 位；密码只存随机 salt + SHA-256 摘要，**不存明文** |
-| 强制登录 | **每次刷新都要重新输密码**；`lastUser` 只预填账号名。顶栏「切换账号」可退出 |
-| 账号产出 | 背包 / 仓库 / 装备栏 / 战利品按账号隔离；每次拖放、换装、出征结算都自动存盘 |
-| 数据容错 | 损坏 JSON / 版本不符降级空库；缺字段存档回退 demo 数据，不崩页面 |
-| 遮罩期间 | Engine Worker 收 `lock` 冻结竞技场，登录成功 `unlock` 重置一局 |
+| 身份 | 平台 `user.current`；`assets/runtime/zaohua-platform-init.js` 在 `initialize()` 后读身份并推给壳层。`meta-ui/auth-ui.js` 登录遮罩已删除 |
+| 存盘 | 每次 `render()`（拖放 / 换装 / 出征结算）由 `shell-bridge.js#syncBadge()` 调 `MetaStore.persist()`，写队列串行合并，防止旧写覆盖新写 |
+| 本地开发 | 无平台宿主时用 `DEV_USER='local-dev'` + 浏览器存储镜像 `__forgeax_local_save__`（同一 envelope 形状），**本地可验存盘 / 刷新恢复 / 损坏兜底 / 平台桥切换** |
+| 上线才验 | **多账号数据隔离、跨设备恢复**只在发布到造化平台后可验（用户 2026-11-11 明确） |
+| 数据容错 | 损坏 JSON / 版本不符 / 缺字段一律回退 `createInventoryState(3)`，不崩页面 |
+| 纯 JSON | `encodeSave()` 强制一次 `JSON.parse(JSON.stringify(...))`：宿主预览用 `structuredClone`、平台用 `JSON.stringify`，Date/Map 会变形 |
 
-`assets/meta/account.ts`（零 import、全同步）→ `scripts/build-meta-ui.mjs` 生成 `meta-ui/account.js`；
-`meta-ui/auth-ui.js` 是登录遮罩。这两个脚本**只由 `inject-shell.mjs` 注入 4174**，
-独立 `file://` 双击页不引用、不登录、不入存档（`file://` 与 4174 不同源，演示页定位不变）。
+`assets/meta/account.ts`（零 import）→ `scripts/build-meta-ui.mjs` 生成 `meta-ui/account.js`；
+`meta-ui/platform-store.js` 是身份与存档桥。这两个脚本**只由 `inject-shell.mjs` 注入 4174**，
+独立 `file://` 双击页不引用、不入存档（`file://` 与 4174 不同源，演示页定位不变）。
+经典壳层脚本先于 deferred ESM 平台入口执行，所以身份切换由 ESM 通过 `MetaShell.mountPlatformStore()` 推下来。
 
 战斗内按 **B / I**（或顶栏「背包」按钮）打开同一份格子背包浮层，**战斗不会暂停**：怪物继续行动，
 浮层外的鼠标点击照常落到 canvas。拖放换装后，发生变化的武器槽经 `BroadcastChannel` 发 `equip`
-给 Worker，本局伤害 / 攻击距离**立即生效**，同时写回账号存档；ESC 关闭。
+给 Worker，本局伤害 / 攻击距离**立即生效**，同时写回存档；ESC 关闭。
 `equip.slots[i] === null` 表示保留该槽出征时借出的武器，避免覆盖。
 
 ### 人工数据表 → 生成物

@@ -288,3 +288,33 @@
   两条产物链都带上了新的 `shell-bridge.js`。
 - Status: implemented
 - Note: 上传是**不可逆外部动作**，本轮不做；`logged_in:false` 需用户在浏览器完成 OAuth 授权。
+
+### 2026-11-11 — 平台身份 + 云存档替换本地登录（用户明确「本地只验功能与存盘」）
+
+- Decision: 删掉自研注册 / 登录与 `meta-ui/auth-ui.js`；玩家身份改用平台 `user.current`；
+  存盘用**单 key `forgeax.save.v1` + 一个 `{schemaVersion:1,state}` 纯 JSON blob**；
+  本地只验功能与存盘，**账号数据隔离发布到平台后再验证**。
+- 改动范围：重写 `assets/meta/account.ts`（删 SHA-256 / 多账号 DB，改为 envelope / 结构校验 /
+  版本兜底 / 写队列 / 本地 adapter）、新增 `meta-ui/platform-store.js`、
+  `shell-bridge.js` 去掉登录前置与「切换账号」、`inject-shell.mjs` 换注入清单、
+  `zaohua-platform-init.js` 增 `user.current` + `storage` 并把已 await 的身份与存档推给壳层。
+  两套断言重写：account 单测 12 → 15 条，单页 8 条登录/存档断言 → 8 条平台身份/KV 断言（总数仍 30）。
+- Actual pitfalls（均已处理）:
+  1. **经典壳层脚本先于 deferred ESM 平台入口执行**，壳层不能同步读平台桥，只能由 ESM
+     `MetaShell.mountPlatformStore()` 推下来，且 `initial` 必须是 await 后的值。
+  2. 宿主预览用 `structuredClone`、平台/devStub 用 `JSON.stringify`，Date/Map 会变形 →
+     `encodeSave()` 强制一次 `JSON.parse(JSON.stringify(...))`。
+  3. `storage.set` 是异步，连续 render 会让旧写晚落盘覆盖新写 → 写队列串行 + 合并突发写。
+  4. 本机 `git rm` 一个文件把**整个 `meta-ui/` 目录**从文件系统删掉（含未改文件）；
+     改用 `rm -f` 单文件 + `git add -A` 记录删除，误删后 `git checkout HEAD -- meta-ui/`
+     恢复 tracked 文件、untracked 新文件需重建并重新应用未提交编辑。
+  5. `bash scripts/verify-all.sh 2>&1 | tail -80` 那一路在 `package` 步骤卡了 10 分钟无进展；
+     单独前台跑 `package-with-shell.mjs` **11 秒**完成，改成把验收输出写日志文件后 4m29s ALL GREEN。
+  6. 删遮罩后 Worker 的 `lock` / `unlock` **没有生产者**，保留为协议兼容，不动战斗循环保护清单。
+- Evidence: `bash scripts/verify-all.sh` **ALL GREEN**（2026-11-11 23:00:31）：**87** 单测（下限 84）/
+  35 playthrough / 4 resize / typecheck 0 error / build / package sha256 + 壳层 /
+  `verify-shell.cjs` **30/30**（8 条平台身份/KV 断言全过）；`dist/index.html` marker=1，
+  验收 ZIP 内 `index.html` 102392 B / marker=1，包内**不含** `#fx-auth`、**含** `mountPlatformStore`。
+- Status: implemented
+- Note: 平台 ESM 入口新增的 `user.current` / `storage` 声明**未在本轮跑 Builder validate 预览**；
+  发布前需重跑 `preview_reload(validate:true)` 确认 `initialize()` 的两项连通性。上传未做。

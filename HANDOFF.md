@@ -80,28 +80,30 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
 | 出征 | `buildLoadout()` **只借出两个武器槽**（非武器装备留局外）→ 发 `deploy{ monsterCount, seed, armedWeapons, activeWeaponSlot }` → 顶栏切到战斗态，meta 面板隐藏且 `#fx-shell` 指针透明，点击直达 canvas |
 | 通关 | `settleRun()` 归还借出武器 + 战利品按 `bag → stash → loose` 入库，永不静默丢弃 |
 | 阵亡 | 借出装备**和本局战利品永久丢失** |
-| 返回局外 | 重新配装出征；登录后资产自动写入该账号的本地存档，刷新页面需重新登录（见下节） |
+| 返回局外 | 重新配装出征；每次 render 把 `InventoryState` 写成一个平台 KV blob（本地开发写镜像），无需登录（见下节） |
 
 `scripts/inject-shell.mjs` 把局外 UI 注入 `dist/index.html`（`dist/` 是 gitignored 生成物，
 `build` / `play` / `package` 都会重建它），CSS 由 `scopeCss()` 限定到 `#fx-shell`，`--check` 防漂移。
 **注入必须是全流程最后一步**，`verify-all.sh` 已放在 `package` 之后；否则 4174 会静默丢掉单页流程。
 独立 `file://` 页仍走 `createInventoryState()` 缺省路径，行为不变。
 
-### 本地账号、存档与战局内背包（2026-11-11）
+### 平台身份、KV 存档与战局内背包（2026-11-11 晚改造）
 
-用户新增需求：**注册 / 登录本地账号、账号下的产出存盘（无服务器，本地存档）**，
-以及**战局内可打开背包调整穿戴**。选项拍板：localStorage 多账号、**强制先登录**、局内背包**不冻结 + 立即生效**。
+用户拍板：**去掉自研注册/登录，直接用造化平台玩家身份；存盘按平台 KV 结构；本地只验功能与存盘，账号数据隔离发布到平台后再验证**。
+`meta-ui/auth-ui.js` 已删除，`#fx-auth` 遮罩与「未登录禁止出征」一并取消。
 
 | 项 | 契约 |
 |:--|:--|
-| 账号 | `assets/meta/account.ts`（零 import、全同步自实现 SHA-256）；`localStorage['forgeax.accounts.v1']` 按用户名隔离 `state` + `salt` / 摘要，**不存明文** |
-| 登录 | `meta-ui/auth-ui.js` 的 `#fx-auth` 遮罩挂 `document.body`，未登录 `deploy` 被拒；每次刷新必须重新输密码，`lastUser` 只预填 |
-| 存盘 | `shell-bridge.js` 的 `syncBadge()`（唯一 `onRender` 钩子）在每次 `render()` 后 `MetaAuth.persist()`；拖放 / 换装 / 结算 / 登录全覆盖 |
-| 遮罩冻结 | Worker 收 `lock` 停 `step()` 与结算；**Worker 就绪后主动广播 `ready`** 让遮罩重发 `lock`（主窗口脚本先于 Worker 启动，初始 lock 会丢） |
+| 身份 | `user.current` → `user.getCurrent()`；`assets/runtime/zaohua-platform-init.js` 在 `initialize()` 后读身份并推给壳层。**游戏内无注册 / 密码 / 登录**，平台按用户命名空间隔离 |
+| 存盘 | **单 key `forgeax.save.v1` + 一个 `{schemaVersion:1, state}` 纯 JSON blob**（整个 `InventoryState`）。`assets/meta/account.ts`（零 import）负责 envelope、结构校验、版本/损坏兜底与写队列；`shell-bridge.js#syncBadge()`（唯一 `onRender` 钩子）每次 `render()` 调 `MetaStore.persist()` |
+| 平台入口 | ESM 入口声明 `user.current` + `storage`，`await storage.get(SAVE_KEY)` 后调 `MetaShell.mountPlatformStore({ userId, initial, read, write })`。**经典壳层脚本先于 deferred ESM 入口执行**，故 `meta-ui/platform-store.js` 先本地降级、再由 `mountPlatform()` 切换；`initial` 是已 await 的值，壳层不处理 Promise |
+| 本地验证 | 无宿主时 `MetaStore` 用 `DEV_USER='local-dev'` + `createLocalAdapter()`（浏览器存储 `__forgeax_local_save__`，同一 envelope 形状），可验存盘 / 刷新恢复 / 损坏兜底 / 平台桥切换。**多账号隔离与跨设备恢复只在发布到平台后可验** |
+| 纯 JSON 红线 | 宿主预览用 `structuredClone`、平台/devStub 用 `JSON.stringify`，所以 `encodeSave()` 强制一次 `JSON.parse(JSON.stringify(...))`；存档里不得出现 Date / Map / class 实例 |
+| 冻结 | Worker 的 `lock` / `unlock` 分支保留为协议兼容，但遮罩删除后**没有生产者**；平台 pause/resume 走独立 `paused` 冻结位（保护清单 13） |
 | 局内背包 | `B` / `I` / 顶栏按钮打开 `#fx-bag-content` 浮层，ESC 关闭；战斗继续推进，浮层外点击仍到 canvas |
 | 立即生效 | 发生变化的装备槽经 `equip { slots: [bool\|null, bool\|null], activeWeaponSlot }` 发到 Worker，直接改本局 `weaponSlots`；`null` 保留借出武器 |
 
-`meta-ui/account.js` / `auth-ui.js` **只由 `inject-shell.mjs` 注入 4174**；独立 `file://` 双击页不引用、不登录、不入存档（演示页定位，`file://` 与 4174 不同源）。
+`meta-ui/account.js` / `platform-store.js` **只由 `inject-shell.mjs` 注入 4174**；独立 `file://` 双击页不引用、不入存档（演示页定位，`file://` 与 4174 不同源）。
 
 关键取舍（都是用户明确拍板或实测修正过的，别"顺手优化"）：
 
@@ -110,7 +112,7 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
 - 攻击**没有**锥形范围、软锁定、溅射；`attackOrder + targetEnemy` 单体结算，一次点击只挥一次。
 - 闪避期间鼠标不改写落点、攻击指令不结算。
 - 初始两只骷髅、**两个武器槽都空**；击杀掉长剑，走近装进第一个空槽；激活槽为长剑时范围 140→170、伤害 22→46。**默认场景恒为 2 只**，多怪只在单页出征 `deployRun()` 时注入，别改 `spawnSkeletons()` 默认值。
-- **局内局外靠同一页面内内存共享**（跨标签页 / Worker 是独立 JS 堆，`file://` 与 `http://localhost:4174` 也不同源，靠跨页面 `localStorage` 互通走不通）。持久化层是 2026-11-11 新增的**按账号本地存档**，不是跨页面互通：用户先拍板「内存里缓存下来直接用」+ 标准搜打撤（失败丢失），后追加「注册登录 + 账号下的产出存盘」。刷新后需重新登录，登录后资产恢复；`1/2` 在两边各自切换激活槽。
+- **局内局外靠同一页面内内存共享**（跨标签页 / Worker 是独立 JS 堆，`file://` 与 `http://localhost:4174` 也不同源，靠跨页面 `localStorage` 互通走不通）。持久化层现在是**平台 KV 单 blob**：用户先拍板「内存里缓存下来直接用」+ 标准搜打撤（失败丢失），中间做过一版「本地注册登录 + 按账号存盘」，2026-11-11 晚用户拍板**删掉自研登录、改用平台玩家身份与云存档**；`1/2` 在两边各自切换激活槽。
 - `GameState.moveMode` 三态：`idle` / `point` / `follow`；`game.state` 投影暴露 `moveMode`、`target`、`followingPointer`、`attackOrder`、`attackTarget`、`skeletons`（坐标/血量/存活）。
 
 ## 保护清单（改之前先说清改什么、为什么）
@@ -129,9 +131,9 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现。`Drop.kind` 仍是 `'long
     **发布产物另走一条路**：`package.json#scripts.package` = `scripts/package-with-shell.mjs`，对官方 Web ZIP 解包 → 注入壳层 → 同步 `forgeax-dist.json` 的 `bytes`/`sha256` → 重打包；Game Builder 预览 / 上传自动调用它（`buildForgeaxPlayer` 优先用工程 script）。**`verify-all.sh` 的 `package` 步骤也走同一脚本**：`--json` 时 stdout 只输出一行 `{"ok":true,...}` 供 `run_json` 解析（引擎自身的 JSON 转 stderr），并重算与重打包后字节匹配的 `.zip.sha256`；验收包 `artifacts/verify/forgeax-game-web.zip` 已含壳层，且新增断言检查 marker + manifest（`release/` 不被验收改动）。两条入口共用 `inject-shell.mjs` 导出的 `injectInto()`，改壳层只需维护一处。
 11. `assets/game/game.pack.ts` 里 **`game.state` 必须保持唯一 read projection**：`project play` 以「唯一注册」解析默认读取，多注册一个（哪怕 `run.result`）会让 35 步 playthrough 首步报 `state-unavailable`。部署 / 结算只走 BroadcastChannel，别加 projection seam。2026-11-11 追加的只读 `probe` → `state` 消息只是把 `projection(state)`（外加全部掉落点坐标）序列化到主窗口，**不注册新 projection**，供真实 4174 页面端到端取证；不要把它改成 `registerRead`。
 
-12. `assets/meta/account.ts` **零 import、全同步**（自实现 SHA-256；不要换回 `crypto.subtle`，`verify-shell.cjs` 跑在 `file://` + 虚拟时间下）。`meta-ui/account.js` / `auth-ui.js` 只由 `inject-shell.mjs` 注入 4174，**独立双击页不得引用**。`#fx-auth` 必须挂 `document.body`；`unlock` 每次登录**只发一次**（Worker 收到会 `reset(state)`，重发会重开正在打的局）。`lock` / `unlock` / `equip` 只走 BroadcastChannel，别加 projection seam；`equip` 的 `slots[i] === null` 表示「保留该槽借出的武器」，不要改成布尔全覆盖。
+12. **平台身份 + KV 存档契约（2026-11-11 晚改造，替换原「本地账号」条款）**：`assets/meta/account.ts` 零 import，产出 `meta-ui/account.js`（`build-meta-ui.mjs` 生成、`--check` 防漂移）；只负责 envelope / 结构校验 / 版本兜底 / 写队列 / 本地 adapter，**不含登录、密码、SHA-256**。`SAVE_KEY='forgeax.save.v1'` 是平台唯一 key，`LOCAL_KEY='__forgeax_local_save__'` 是本地镜像，**两者不可混用**；`encodeSave()` 强制纯 JSON（宿主预览用 `structuredClone`、平台/devStub 用 `JSON.stringify`，Date/Map 会变形）。`meta-ui/platform-store.js` 与 `account.js` 只由 `inject-shell.mjs` 注入 4174，独立双击页不得引用。经典壳层脚本先于 deferred ESM 入口执行，所以身份切换只能是 `MetaShell.mountPlatformStore()` **由 ESM 推下来**；`initial` 必须是已 await 的值。`lock` / `unlock` / `equip` 只走 BroadcastChannel，别加 projection seam；`equip` 的 `slots[i] === null` 表示「保留该槽借出的武器」，不要改成布尔全覆盖。
 
-13. **平台 lifecycle 契约（2026-11-11 发布准备）**：`assets/runtime/zaohua-platform-init.js` 是 Builder 编译的**唯一非 Pack 运行时入口**，只声明 `game.loading` / `game.lifecycle` 两个真实实现的 capability（多声明会造出永远过不了的校验项）。lifecycle adapter 由 `meta-ui/shell-bridge.js` 挂在 `window.MetaShell.platformAdapter`，经 `BroadcastChannel` 发 `pause` / `resume`；`game.pack.ts` 用**独立的 `paused` 冻结位**跳过 `step()`，**不得复用 `locked`**（`unlock` 会 `reset(state)` 重开一局）。`game.loaded()` 在 Worker 广播 `ready` 后发一次，即单页壳层可交互的边界。`verify-shell.cjs` 的 2 条平台断言保护它，改这块必须保持这两条为绿。
+13. **平台 lifecycle 契约（2026-11-11 发布准备）**：`assets/runtime/zaohua-platform-init.js` 是 Builder 编译的**唯一非 Pack 运行时入口**，声明 `game.loading` / `game.lifecycle` / `user.current` / `storage` 四个真实实现的 capability（多声明会造出永远过不了的校验项；少声明则调 SDK API 会报 `Capability was not declared`）。lifecycle adapter 由 `meta-ui/shell-bridge.js` 挂在 `window.MetaShell.platformAdapter`，经 `BroadcastChannel` 发 `pause` / `resume`；`game.pack.ts` 用**独立的 `paused` 冻结位**跳过 `step()`，**不得复用 `locked`**（`unlock` 会 `reset(state)` 重开一局）。`game.loaded()` 在 Worker 广播 `ready` 后发一次，即单页壳层可交互的边界。`verify-shell.cjs` 的 2 条平台断言保护它，改这块必须保持这两条为绿。
 
 `scripts/check-drift.sh` 会把上面 1–13 涉及的文件单独列出来，接手时先看它。
 
@@ -179,13 +181,13 @@ node scripts/verify-shell.cjs                            # 4174 单页 30/30
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **84** 项全过（下限 84：combat 34 + meta 36 + battle 4 + talent 3 + resource 5 + 模板 2） |
+| `test` | **87** 项全过（`verify-all.sh` 下限仍为 **84**：combat 34 + meta 39 + battle 4 + talent 3 + resource 5 + 模板 2。原 account 12 条重写为 15 条 KV 存档单测） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` 三张表与 `generated/*.ts` 一致 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
 | `meta-ui` | 生成物同步 + 独立页面浏览器验收 13/13 |
 | `build` | `ok` |
-| `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **30/30**（含登录/存档/局内背包） |
+| `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **30/30**（含 8 条平台身份 / KV 存档、2 条平台 lifecycle、局内背包） |
 | `playthrough` 1600x900 | `passed:true`、35 steps、0 errors |
 | `playthrough-resize` 1700x1000 | `passed:true`、4 steps、0 errors |
 | `package` | sha256 校验通过，包内 README + feedback 齐全 |
@@ -199,8 +201,10 @@ node scripts/verify-shell.cjs                            # 4174 单页 30/30
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
 删断言不会让这张表悄悄失效。单测 84 条＝combat 34（movement 11 + modifiers 3 + weapons 7 + loot 13）、
 meta 36（meta 3 + inventory 14 + run-settlement 7 + account 12）、battle 4、talent 3、resource 5、模板 2；全量下限 84 条。
-浏览器验收：playthrough 13 个命名场景（展开 35 steps）、独立页 13 条、4174 单页 30 条（含 2 条平台 lifecycle）。
-真实硬件 WebGPU 冒烟（一次性）：`node artifacts/smoke-login-bag.mjs`，覆盖强制登录、刷新后存档、局内背包不冻结与换装立即生效。
+浏览器验收：playthrough 13 个命名场景（展开 35 steps）、独立页 13 条、4174 单页 30 条
+（含 8 条平台身份 / KV 存档 + 2 条平台 lifecycle）。
+真实硬件 WebGPU 冒烟（历史一次性脚本）：`node artifacts/smoke-login-bag.mjs` 覆盖「强制登录 / 刷新后存档」，
+**该脚本按已删除的本地登录流程编写，现已不适用**；本轮改造的本地验收以 `verify-shell.cjs` 的 30 条为准。
 
 | 功能契约 | 单测 `assets/combat/__tests__/movement.test.ts` | 浏览器 `scripts/playthrough.mjs` |
 |:--|:--|:--|
@@ -223,6 +227,7 @@ meta 36（meta 3 + inventory 14 + run-settlement 7 + account 12）、battle 4、
 | 单页借出 / 通关归还 / 阵亡丢失 / 返回局外 | `assets/meta/__tests__/run-settlement.test.ts`（7 条） | `scripts/verify-shell.cjs`（30 条，含出征广播、战斗态切换与平台 lifecycle） |
 | 初始状态 / reload 可玩 | `empty-project.test.ts`（2 条工程契约） | `spawn: ...` + `reload preserves a playable frame` |
 | 平台 lifecycle：pause/resume 真实停战斗、状态可翻转、消息送达 Worker | — | `scripts/verify-shell.cjs`：`platform lifecycle adapter flips paused and stays registered` + `pause/resume are forwarded to the Engine Worker over the run channel` |
+| 平台身份 / KV 存档：无登录、单 key 版本化 blob、刷新恢复、损坏兜底、平台桥切换、纯 JSON 写入 | `assets/meta/__tests__/account.test.ts`（15 条：envelope / 校验 / 迁移兜底 / 本地 adapter / 写队列） | `scripts/verify-shell.cjs`（8 条，`store.*`；账号数据隔离不在本地验，发布到平台后再验） |
 
 ## 已知陷阱速查
 

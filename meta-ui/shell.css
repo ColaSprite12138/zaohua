@@ -87,66 +87,18 @@
 #fx-shell.fx-in-battle > #fx-bag-content { display: none !important; }
 #fx-shell.fx-in-battle .fx-bar { pointer-events: auto; background: rgba(17, 30, 42, .92); }
 
-/* ------------------------- mandatory local login ------------------------ */
-/* Appended to <body> by auth-ui.js, outside #fx-shell, so battle-mode hiding
-   rules can never swallow the overlay (logout must work mid-run too). */
-#fx-auth {
-  position: fixed;
-  inset: 0;
-  z-index: 2147483600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(5, 10, 16, .94);
-  color: #dbe9f5;
-  font: 14px/1.6 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
-}
-#fx-auth .fx-auth-card {
-  width: min(420px, calc(100vw - 32px));
-  background: #111e2a;
-  border: 1px solid #294055;
-  border-radius: 14px;
-  padding: 22px 24px;
-  box-shadow: 0 18px 60px rgba(0, 0, 0, .55);
-}
-#fx-auth h2 { margin: 0 0 6px; font-size: 20px; color: #67e8f9; }
-#fx-auth .fx-auth-note { color: #8fa9bb; font-size: 12px; margin: 0 0 16px; }
-#fx-auth label { display: block; margin: 10px 0; color: #8fa9bb; font-size: 12px; }
-#fx-auth input {
-  display: block;
-  width: 100%;
-  margin-top: 5px;
-  background: #0e1a25;
-  color: #dbe9f5;
-  border: 1px solid #294055;
-  border-radius: 8px;
-  padding: 9px 10px;
-  font: inherit;
-  font-size: 14px;
-}
-#fx-auth input:focus { outline: none; border-color: #67e8f9; }
-#fx-auth .fx-auth-actions { display: flex; gap: 10px; margin-top: 16px; }
-#fx-auth button {
-  flex: 1;
-  background: #162635;
-  color: #dbe9f5;
-  border: 1px solid #294055;
-  border-radius: 8px;
-  padding: 9px 12px;
-  cursor: pointer;
-  font: inherit;
-  font-size: 13px;
-}
-#fx-auth #fx-auth-login { border-color: #ffd166; color: #ffd166; }
-#fx-auth button:hover { border-color: #67e8f9; color: #67e8f9; }
-#fx-auth .fx-auth-msg { min-height: 20px; margin-top: 12px; color: #4ade80; font-size: 12px; }
-#fx-auth .fx-auth-msg.bad { color: #ff7b7b; }
-#fx-auth .fx-auth-users { margin-top: 8px; color: #8fa9bb; font-size: 11px; word-break: break-all; }
-
-/* --------------------------- account chip ------------------------------- */
+/* --------------------------- identity chip ------------------------------ */
+/* No login overlay: identity comes from the platform host, with a local-dev
+   fallback for stand-alone development. */
 #fx-shell .fx-account { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8fa9bb; }
 #fx-shell .fx-account b { color: #ffd166; }
-#fx-shell .fx-account button { padding: 4px 9px; font-size: 11px; }
+#fx-shell .fx-save-mode {
+  padding: 2px 8px;
+  border: 1px solid #294055;
+  border-radius: 999px;
+  font-size: 11px;
+  color: #8fa9bb;
+}
 
 /* ------------------------- in-run bag overlay --------------------------- */
 /* Battle keeps running (no freeze): only this panel captures pointer events;
