@@ -562,3 +562,31 @@
 - Note: 下方 216 行与 `meta/EXPERIENCE.md` 57 行记录的「已知边界：局内背包看到空槽 /
   阵亡只丢借出装备」已由本条关闭；攻击 spec 分派 / 互射仍属下一批。
 
+
+### 2026-11-13（续三）— 局外 / 局内拆成两个堆、两份状态，显式整份搬入搬出
+
+- Symptom: 用户澄清「局内的背包和穿戴道具，与局外背包和穿戴道具本质上是一件事情」，
+  随后进一步明确「一部分是局内的，一部分是局外的，进入对局时把身上和背包道具复制进
+  局内背包了，清空局外身上和背包所有道具；对局胜利后再同理把道具从局内搬到局外」，
+  并确认「局内内存就是跑战斗的那个 Engine Worker」「下副本死了，或者副本失败，是要掉装备的」。
+  局外养成（攻击力 / 护甲 / 生命上限 / 移速 / 天赋被动）尚未开工，本批不实现。
+- Root cause: 旧架构主窗口只有一份 `InventoryState`，局内浮层直接改它，Worker 只持
+  `GameState.weaponSlots` 布尔档。物品在局内产生、状态在局外，被迫用 `buildLoadout`
+  借出 / `settleRun` 找格子入库 / `pickup`·`pickupAck` 跨堆请求 / `weaponLoot` 回写 /
+  `runEquipDefIds` 去重维持一致性，越补越复杂，且阵亡只删本局战利品、不清整份背包。
+- Fix: ① `inventory.ts` 删整套结算 API，新增 `takeIntoRun` / `bringBack` /
+  `runInventoryFrom` / `loadoutFromRun` 与 `RunLoadout`；`equipItem` / `findFirstFit`
+  增加 `containers` 参数供局内限定 `['bag']`。② 新增 `combat/run-inventory.ts`：
+  Worker 侧目录注册、命令应用、`collectDrop`、`weaponDamage`。③ `GameState` 增加
+  `runInventory`，`weaponSlots` 改存真实 `defId`，删除 `pendingPickup` /
+  `weaponLootEvents` / `runBagUids` / `slotLootItemIds`。④ `game.pack.ts` 只收
+  `deploy { seed, loadout }` / `runCommand` / `abort`，发 `deployed` / `runState` /
+  `result { outcome, loadout }`。⑤ `shell-bridge.js` 出征清空局外、通关整份搬回、
+  阵亡与中途退出整份丢弃、局内不写 KV。⑥ `index.html` 局内面板改只读快照 + 命令，
+  `shell.css` 隐藏仓库。⑦ `attack.ts` 按 `weapon.xlsx` 中值算伤害。
+- Evidence: `bash scripts/verify-all.sh` **ALL GREEN**（139 单测、typecheck 0 error、
+  playthrough 37 steps、resize 4 steps、`verify-meta-ui.cjs` 13/13、`verify-shell.cjs` 37/37）。
+  新增 `assets/combat/__tests__/run-inventory.test.ts`（8 条），重写
+  `run-settlement.test.ts`（10 条）与 `weapons.test.ts`（10 条）。
+- 明确未做（用户本轮边界）：攻击 spec 分派 / 弓手互射、8 个非武器槽属性与被动技能表、
+  天赋接入、局外养成角色属性、本地存盘、平台 KV 结构变更。

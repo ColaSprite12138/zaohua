@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 9c932dae6ee94b917c635421f89d73bb6fd7840ffc150470dd36cf43d3552f16
+ * Source SHA-256: e1f4a8e378d5b29af76d9e51ec9710e09e43bff81a1958acf8c19b388c5bfaf4
  */
 (function (root) {
 "use strict";
@@ -23,6 +23,10 @@ var exports = module.exports;
  * Item definitions live here only until the Excel table arrives. When
  * `assets/resource/tables/items.xlsx` is supplied, a converter will generate
  * ITEM_DEFS; nothing else in this file should need to change.
+ *
+ * The rules in this file are SHARED by both heaps: the lobby runs them in the
+ * main window, the Engine Worker runs them on its own in-run state. What is
+ * NOT shared is the state object itself — see the transfer section at the end.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.moveItem = exports.WEAPON_SLOT_INDICES = exports.EQUIP_SLOTS = exports.ITEM_DEFS = exports.CONTAINERS = exports.STASH = exports.BAG = void 0;
@@ -40,8 +44,10 @@ exports.coveredCells = coveredCells;
 exports.findFirstFit = findFirstFit;
 exports.addToBag = addToBag;
 exports.removeItem = removeItem;
-exports.buildLoadout = buildLoadout;
-exports.settleRun = settleRun;
+exports.takeIntoRun = takeIntoRun;
+exports.bringBack = bringBack;
+exports.runInventoryFrom = runInventoryFrom;
+exports.loadoutFromRun = loadoutFromRun;
 exports.BAG = { cols: 5, rows: 8, label: '背包' };
 exports.STASH = { cols: 16, rows: 10, label: '仓库' };
 exports.CONTAINERS = {
@@ -200,10 +206,10 @@ exports.moveItem = placeItem;
 /**
  * Equip an item into a slot. Type must match. If the slot is occupied, the
  * displaced item must fit back into a grid: first its counterpart's old cell,
- * then the first free cell in bag -> stash. With no space the whole swap is
- * rejected and state stays untouched (nothing may vanish silently).
+ * then the first free cell in the allowed containers. With no space the whole
+ * swap is rejected and state stays untouched (nothing may vanish silently).
  */
-function equipItem(state, uid, slotIndex) {
+function equipItem(state, uid, slotIndex, containers = ['bag', 'stash']) {
     const slot = exports.EQUIP_SLOTS[slotIndex];
     const loc = findItem(state, uid);
     if (slot === undefined || loc === null)
@@ -216,11 +222,12 @@ function equipItem(state, uid, slotIndex) {
     let displacedSpot = null;
     if (displaced !== null) {
         if (loc.where === 'grid'
+            && containers.includes(loc.container)
             && canPlace(state, loc.container, displaced.defId, loc.item.col, loc.item.row, uid)) {
             displacedSpot = { container: loc.container, col: loc.item.col, row: loc.item.row };
         }
         else {
-            displacedSpot = findFirstFit(state, displaced.defId, uid);
+            displacedSpot = findFirstFit(state, displaced.defId, uid, containers);
         }
         if (displacedSpot === null)
             return false;
@@ -266,10 +273,14 @@ function coveredCells(item) {
     }
     return cells;
 }
-/** First free cell that fits an item, searching bag -> stash. */
-function findFirstFit(state, defId, ignoreUid) {
+/**
+ * First free cell that fits an item. `containers` defaults to bag -> stash;
+ * the in-run Worker passes `['bag']` because a run owns NO stash and an item
+ * displaced into an invisible stash would silently vanish.
+ */
+function findFirstFit(state, defId, ignoreUid, containers = ['bag', 'stash']) {
     const def = itemDef(defId);
-    for (const container of ['bag', 'stash']) {
+    for (const container of containers) {
         const grid = exports.CONTAINERS[container];
         for (let row = 0; row <= grid.rows - def.rows; row += 1) {
             for (let col = 0; col <= grid.cols - def.cols; col += 1) {
@@ -301,7 +312,7 @@ function addToBag(state, uid, defId) {
     }
     return null;
 }
-/** Remove an item by uid from bag or stash. Used when a run is lost. */
+/** Remove an item by uid from bag or stash. */
 function removeItem(state, uid) {
     for (const container of ['bag', 'stash']) {
         const list = listOf(state, container);
@@ -313,111 +324,55 @@ function removeItem(state, uid) {
     }
     return false;
 }
-let uidCounter = 0;
-function newUid(prefix) {
-    uidCounter += 1;
-    return `${prefix}-${Date.now().toString(36)}-${uidCounter}`;
+function clonePlaced(items) {
+    return items.map((i) => ({ ...i }));
+}
+/** Normalise to exactly ten slots so a malformed message cannot break the UI. */
+function cloneEquipped(slots) {
+    return exports.EQUIP_SLOTS.map((_, i) => {
+        const item = slots[i];
+        return item ? { uid: String(item.uid), defId: String(item.defId) } : null;
+    });
 }
 /**
- * Register the two weapon slots as the loadout lent to a run.
- *
- * The instances STAY in `state.equipped`: the in-run character panel renders
- * that same array, so clearing them here would make a deployed player's
- * weapon slots look empty. The run owns their fate: `settleRun()` either
- * keeps them (cleared) or removes them together with every other worn item
- * (gameOver). Non-weapon equipment stays visible in the panel too.
+ * Deploy: hand the lobby's bag + equipment to the run and EMPTY the lobby.
+ * Losing the run therefore loses every carried item; only a clear brings them
+ * back. `lobby.stash` stays exactly as it was.
  */
-function buildLoadout(state) {
-    const items = [];
-    for (const index of exports.WEAPON_SLOT_INDICES) {
-        const item = state.equipped[index];
-        if (item)
-            items.push({ uid: item.uid, defId: item.defId });
-    }
+function takeIntoRun(lobby) {
+    const loadout = {
+        bag: clonePlaced(lobby.bag),
+        equipped: cloneEquipped(lobby.equipped),
+        activeWeaponSlot: lobby.activeWeaponSlot === 1 ? 1 : 0,
+    };
+    lobby.bag = [];
+    lobby.equipped = exports.EQUIP_SLOTS.map(() => null);
+    lobby.activeWeaponSlot = 0;
+    return loadout;
+}
+/** Clear: move the WHOLE run state back into the emptied lobby. */
+function bringBack(lobby, loadout) {
+    lobby.bag = clonePlaced(loadout.bag);
+    lobby.equipped = cloneEquipped(loadout.equipped);
+    lobby.activeWeaponSlot = loadout.activeWeaponSlot === 1 ? 1 : 0;
+    // lobby.stash is deliberately untouched.
+}
+/** Worker side: the run owns a full InventoryState whose stash is ALWAYS empty. */
+function runInventoryFrom(loadout) {
     return {
-        items,
-        armedWeapons: items.length,
-        activeWeaponSlot: state.activeWeaponSlot,
+        bag: clonePlaced(loadout.bag),
+        stash: [],
+        equipped: cloneEquipped(loadout.equipped),
+        activeWeaponSlot: loadout.activeWeaponSlot === 1 ? 1 : 0,
     };
 }
-/**
- * Settle a finished run.
- *  - cleared: borrowed weapons stay where the player left them; loot that
- *    still needs a grid home is banked. Bag loot stays in the bag.
- *  - gameOver: this run's bag loot, the borrowed weapons and EVERY worn item
- *    (all ten equipment slots) are permanently lost. The stash is untouched.
- * There is no fourth storage area: anything that fits nowhere is reported.
- */
-function settleRun(state, borrowed, settlement) {
-    const unregistered = [];
-    const overflow = [];
-    let returned = 0;
-    let gained = 0;
-    if (settlement.outcome === 'gameOver') {
-        // 1. Remove this run's bag loot (uids are exact, older items survive).
-        let lost = 0;
-        for (const uid of settlement.carriedUids) {
-            if (removeItem(state, uid))
-                lost += 1;
-        }
-        // 2. A borrowed weapon may have been dragged into the bag during the run;
-        //    `removeItem()` only searches the grids, so this catches that case.
-        for (const item of borrowed.items) {
-            if (removeItem(state, item.uid))
-                lost += 1;
-        }
-        // 3. Death drops EVERYTHING worn: both weapon slots AND the eight
-        //    armour / jewellery slots that never left home. This is the user's
-        //    2026-11-13 decision; the stash and older bag items are untouched.
-        for (let i = 0; i < state.equipped.length; i += 1) {
-            if (state.equipped[i] !== null) {
-                state.equipped[i] = null;
-                lost += 1;
-            }
-        }
-        return { returned: 0, lost, gained: 0, unregistered, overflow };
-    }
-    // 1. Borrowed weapons were never moved out of `state` (buildLoadout is a
-    //    read-only registration), so an item still present anywhere counts as
-    //    returned without creating a duplicate instance.
-    for (const item of borrowed.items) {
-        if (findItem(state, item.uid) !== null) {
-            returned += 1;
-            continue;
-        }
-        const index = exports.WEAPON_SLOT_INDICES.find((i) => state.equipped[i] === null);
-        if (index !== undefined) {
-            state.equipped[index] = item;
-        }
-        else {
-            const spot = findFirstFit(state, item.defId);
-            if (spot) {
-                listOf(state, spot.container).push({ ...item, ...spot });
-            }
-            else {
-                overflow.push(item.defId);
-            }
-        }
-        returned += 1;
-    }
-    // 2. Loot equipped into a weapon slot gets a grid home; unknown ids are
-    //    reported instead of being dropped into ITEM_DEFS.
-    for (const defId of settlement.lootItemIds) {
-        if (exports.ITEM_DEFS[defId] === undefined) {
-            unregistered.push(defId);
-            continue;
-        }
-        const instance = { uid: newUid('loot'), defId };
-        const spot = findFirstFit(state, defId);
-        if (spot) {
-            listOf(state, spot.container).push({ ...instance, ...spot });
-        }
-        else {
-            overflow.push(defId);
-        }
-        gained += 1;
-    }
-    return { returned, lost: 0, gained, unregistered, overflow };
+/** Worker side: serialise the run state for the clear settlement. */
+function loadoutFromRun(state) {
+    return {
+        bag: clonePlaced(state.bag),
+        equipped: cloneEquipped(state.equipped),
+        activeWeaponSlot: state.activeWeaponSlot === 1 ? 1 : 0,
+    };
 }
 
 root.MetaInventory = module.exports;

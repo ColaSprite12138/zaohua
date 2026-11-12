@@ -121,7 +121,7 @@
       </div>
     </section>
 
-    <section class="panel">
+    <section class="panel" id="stash-panel">
       <div class="panel-title"><h2>仓库</h2><small>16 × 10 = 160 格</small></div>
       <div class="grid-wrap" id="wrap-stash">
         <div class="grid" id="grid-stash"></div>
@@ -145,8 +145,13 @@
   if (typeof M.registerItemDefs === 'function' && host.authoredItems) {
     M.registerItemDefs(host.authoredItems);
   }
-  let state = host.state ?? M.createInventoryState(3);
-  host.state = state;
+  // LOBBY state is the only object the platform KV save ever sees. During a
+  // run the UI renders a COPY of the Engine Worker's own state instead; all
+  // edits become commands and the Worker answers with a fresh snapshot.
+  let lobbyState = host.state ?? M.createInventoryState(3);
+  host.state = lobbyState;
+  let state = lobbyState;
+  let runMode = false;
   let drag = null; // { uid, grabCol, grabRow }
 
   const $ = (id) => document.getElementById(id);
@@ -157,6 +162,20 @@
   }
 
   function gridOf(container) { return container === 'bag' ? state.bag : state.stash; }
+
+  /**
+   * A run has NO stash and lives in the Worker. Never mutate a snapshot here:
+   * send one command and wait for `host.updateRun()` to re-render it.
+   */
+  function commit(command, applyLocally, okMsg, badMsg) {
+    if (runMode && typeof host.runCommand === 'function') {
+      host.runCommand(command);
+      return;
+    }
+    const ok = applyLocally();
+    say(ok ? okMsg : badMsg, !ok);
+    render();
+  }
 
   /** Start a drag, recording which cell of the item the cursor grabbed. */
   function startDrag(e, node, item, size) {
@@ -249,9 +268,10 @@
       }
       node.addEventListener('click', () => {
         if (isWeapon) {
-          M.setActiveWeapon(state, index === 0 ? 0 : 1);
-          say('已切换当前武器：' + slot.label);
-          render();
+          const slotId = index === 0 ? 0 : 1;
+          commit({ action: 'active', slot: slotId },
+            () => { M.setActiveWeapon(state, slotId); return true; },
+            '已切换当前武器：' + slot.label, '');
         }
       });
       node.addEventListener('dragover', (e) => { e.preventDefault(); node.classList.add('dragover'); });
@@ -261,9 +281,10 @@
         node.classList.remove('dragover');
         const uid = e.dataTransfer.getData('text/plain') || (drag && drag.uid);
         if (!uid) return;
-        const ok = M.equipItem(state, uid, index);
-        say(ok ? '已穿戴到 ' + slot.label : '不能穿戴到 ' + slot.label + '（物品类型不匹配或槽位相同）', !ok);
-        render();
+        commit({ action: 'equip', uid: uid, slot: index },
+          () => M.equipItem(state, uid, index, runMode ? ['bag'] : ['bag', 'stash']),
+          '已穿戴到 ' + slot.label,
+          '不能穿戴到 ' + slot.label + '（物品类型不匹配或槽位相同）');
       });
       el.appendChild(node);
     });
@@ -282,7 +303,7 @@
     const preview = $('preview-' + container);
     const size = CELL[container];
     wrap.addEventListener('dragover', (e) => {
-      if (!drag) return;
+      if (!drag || (runMode && container === 'stash')) return;
       e.preventDefault();
       const rect = el.getBoundingClientRect();
       const col = Math.floor((e.clientX - rect.left) / size) - drag.grabCol;
@@ -315,10 +336,11 @@
       const row = Number(wrap.dataset.row);
       drag = null;
       if (!uid || !Number.isInteger(col) || !Number.isInteger(row)) return;
-      const ok = M.placeItem(state, uid, container, col, row);
-      say(ok ? '已放入' + M.CONTAINERS[container].label + ' (' + col + ', ' + row + ')'
-        : '放不下：超出边界或与其他物品重叠', !ok);
-      render();
+      if (runMode && container === 'stash') return; // a run owns no stash
+      commit({ action: 'place', uid: uid, col: col, row: row },
+        () => M.placeItem(state, uid, container, col, row),
+        '已放入' + M.CONTAINERS[container].label + ' (' + col + ', ' + row + ')',
+        '放不下：超出边界或与其他物品重叠');
     });
   }
 
@@ -331,23 +353,57 @@
     if (host.onRender) host.onRender();
   }
 
-  // The shell settles a run by REPLACING the state object; expose a setter so
-  // every subsequent render / drag uses the same authoritative instance.
-  host.setState = (next) => { state = next; host.state = next; drag = null; render(); };
+  // ---- Lobby <-> run view switch ---------------------------------------
+  // The lobby object stays in `host.state` at all times. During a run the UI
+  // renders `runInventoryFrom(loadout)` — a COPY of the Worker's state — and
+  // every edit goes through `host.runCommand` instead of mutating it.
+  host.setState = (next) => {
+    lobbyState = next;
+    host.state = next;
+    if (!runMode) state = next;
+    drag = null;
+    render();
+  };
+  host.enterRun = (loadout) => {
+    runMode = true;
+    state = M.runInventoryFrom(loadout);
+    drag = null;
+    const shell = $('fx-shell');
+    if (shell) shell.classList.add('fx-run-mode');
+    render();
+  };
+  host.updateRun = (loadout) => {
+    if (!runMode) return;
+    state = M.runInventoryFrom(loadout);
+    drag = null;
+    render();
+  };
+  host.leaveRun = () => {
+    runMode = false;
+    state = lobbyState;
+    drag = null;
+    const shell = $('fx-shell');
+    if (shell) shell.classList.remove('fx-run-mode');
+    render();
+  };
+  host.isRun = () => runMode;
   host.render = () => render();
   host.say = (msg, bad) => say(msg, bad);
   host.getState = () => state;
+  host.getLobbyState = () => lobbyState;
   host.M = M;
 
   $('reset').addEventListener('click', () => {
+    if (runMode) return;
     host.setState(M.createInventoryState(3));
     say('已重置演示数据');
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === '1' || e.key === '2') {
-      M.setActiveWeapon(state, e.key === '1' ? 0 : 1);
-      say('已切换当前武器槽：' + e.key);
-      render();
+      const slotId = e.key === '1' ? 0 : 1;
+      commit({ action: 'active', slot: slotId },
+        () => { M.setActiveWeapon(state, slotId); return true; },
+        '已切换当前武器槽：' + e.key, '');
     }
   });
 

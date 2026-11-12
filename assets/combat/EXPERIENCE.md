@@ -1,5 +1,11 @@
 # EXPERIENCE — combat 独立经验库
 
+> **2026-11-13 续三提醒（经验库是历史记录，不是当前契约）**：凡本文出现
+> `buildLoadout` / `settleRun` / `borrowed` / `pickup` · `pickupAck` / `weaponLoot` /
+> `pendingPickup` / `runEquipDefIds` / `lastEquipped` / `carriedUids` / `slotLootItemIds`
+> 的条目，都是**两份状态重构之前**的踩坑记录，代码里这些符号已全部删除。
+> 现行模型见 `HANDOFF.md`「当前功能契约」与本节末尾的续三条目；权威顺序 HANDOFF > CONTEXT > 经验库。
+
 > 只记录**本模块**的踩坑与决策。按条追加，不编号复用、不删历史。
 > 全局性/跨模块踩坑写 `docs/feedback.md`；本模块改动前的必读契约见 `CONTEXT.md`。
 
@@ -116,3 +122,15 @@
 - **两槽都满的分支不变**：仍走 `pickup` / `pickupAck` 进背包；`weaponLoot` 只对应
   「装进空武器槽」这一种路径，不要混成一个协议。
 
+## 2026-11-13（续三）— 局内状态归 Worker
+
+- `GameState.runInventory` 是 Worker 独占的 `InventoryState`（`stash` 恒空）；
+  `combat/run-inventory.ts` 集中处理目录注册、命令应用、拾取与武器数值，
+  它把 `meta/inventory.ts` 当**无状态规则库**用（combat -> meta 单向，meta 不 import combat）。
+- 拾取不再跨堆：`collectDrop()` 优先 `equipped` 空槽、其次 `addToBag()`、满仓返回 `full`
+  并让掉落物留在地上；`updateDrops()` 成功后 `syncWeaponSlots()`。
+- 武器槽存真实 `defId`；`weaponDamage()` 取 `weapon.xlsx` 的 `(damage_min+damage_max)/2`，
+  未知 / 演示 id 回落 46，裸手 22。用固定中值而不是 `s.rng()`，避免打乱掉落随机序列。
+- `projection().equippedWeapon` / `weaponSlots` 保留 `'longsword'` 视觉类别以守住 37 步
+  playthrough，真实 id 另开 `weaponDefIds`，局内状态快照开 `runInventory`。
+- `reset()` 保留 `runInventory`（本局重开不丢带入装备），`deployRun()` 才替换整份。

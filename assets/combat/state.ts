@@ -12,6 +12,7 @@
 
 import { VIEW_H, VIEW_W } from '../shared/constants.ts';
 import { testArena } from '../resource/maps/arena-test.ts';
+import { createInventoryState, type InventoryState } from '../meta/inventory.ts';
 import { makeRng } from './loot.ts';
 import {
   cameraFor, makeWorld, type ArenaMap, type Vec, type World,
@@ -30,18 +31,26 @@ export interface StepInput {
 }
 
 /**
- * Runtime "armed vs bare" category. Authored item identity (the 12 item ids in
- * `item.xlsx`) travels in `Drop.itemId` / `GameState.carriedItems` instead, so
- * the existing melee range / damage contract and all playthrough assertions
- * keep working while loot can resolve to any authored item.
+ * A weapon slot now holds the AUTHORED item id (`item.xlsx`), not a visual
+ * category. `projection()` still reports the legacy `'longsword'` category for
+ * the playthrough contract, while `weaponDefIds` exposes the real ids.
  */
-export type WeaponId = 'longsword';
+export type WeaponId = string;
 
 export const DEFAULT_RUN_SEED = 0x5eed1234;
 
 /** The single weapon currently in use; null = bare hands. */
 export function activeWeapon(s: GameState): WeaponId | null {
   return s.weaponSlots[s.activeWeaponSlot];
+}
+
+/** Every weapon slot follows the run inventory; callers never hand-edit both. */
+export function syncWeaponSlots(s: GameState): void {
+  s.weaponSlots = [
+    s.runInventory.equipped[0]?.defId ?? null,
+    s.runInventory.equipped[1]?.defId ?? null,
+  ];
+  s.activeWeaponSlot = s.runInventory.activeWeaponSlot;
 }
 
 export const CLICK_HOLD_SECONDS = 0.35;
@@ -105,23 +114,6 @@ export interface LootRecord {
   poolId: number;
 }
 
-export interface PendingPickup {
-  readonly uid: string;
-  readonly itemId: string;
-  readonly name: string;
-}
-
-/**
- * A loot item that was just equipped into an empty in-run weapon slot.
- * `combat` is pure logic, so the Engine Worker drains this queue each frame
- * and forwards it to the main window's InventoryState (character panel).
- */
-export interface WeaponLootEvent {
-  readonly uid: string;
-  readonly itemId: string;
-  readonly slot: 0 | 1;
-}
-
 let dropUidCounter = 0;
 /** Monotonic across runs so a bag uid never collides with a previous run. */
 export function nextDropUid(): string {
@@ -159,7 +151,13 @@ export interface GameState {
   press: { x: number; y: number; elapsed: number; hold: boolean } | null;
   skeletons: Skeleton[];
   drops: Drop[];
-  /** Two equippable weapon slots; only `activeWeaponSlot` is used in melee. */
+  /**
+   * The COMPLETE in-run inventory lives in this Worker's heap: bag + all ten
+   * equipment slots, `stash` always empty. The main window holds a separate
+   * lobby InventoryState; neither heap can read the other's object.
+   */
+  runInventory: InventoryState;
+  /** Derived from `runInventory.equipped[0/1]`; only the active one hits. */
   weaponSlots: [WeaponId | null, WeaponId | null];
   activeWeaponSlot: 0 | 1;
   gameOver: boolean;
@@ -184,14 +182,6 @@ export interface GameState {
   carriedItems: string[];
   /** Drop uid the player clicked; null = no pickup order. */
   pickupTarget: string | null;
-  /** Request waiting for the main window to find a bag cell. */
-  pendingPickup: PendingPickup | null;
-  /** Uids placed into the bag during this run (lost on death). */
-  runBagUids: string[];
-  /** Authored ids equipped into weapon slots (brought home on clear). */
-  slotLootItemIds: string[];
-  /** Drained by the Engine Worker to sync the in-run character panel. */
-  weaponLootEvents: WeaponLootEvent[];
 }
 
 export interface RunConfig {
@@ -221,6 +211,9 @@ export function createState(config: RunConfig = {}): GameState {
     press: null,
     skeletons: [],
     drops: [],
+    // No run has been deployed yet: the acceptance fixture starts empty and
+    // `deployRun()` replaces this with the lobby's loadout.
+    runInventory: createInventoryState(0),
     weaponSlots: [null, null],
     activeWeaponSlot: 0,
     gameOver: false,
@@ -236,10 +229,6 @@ export function createState(config: RunConfig = {}): GameState {
     lootLog: [],
     carriedItems: [],
     pickupTarget: null,
-    pendingPickup: null,
-    runBagUids: [],
-    slotLootItemIds: [],
-    weaponLootEvents: [],
   };
   reset(state);
   return state;
@@ -277,8 +266,9 @@ export function reset(s: GameState): void {
   s.attacks = 0;
   s.hp = s.maxHp;
   s.kills = 0;
-  s.weaponSlots = [null, null];
-  s.activeWeaponSlot = 0;
+  // A restart replays THIS run: the brought-in equipment and everything picked
+  // up so far stay in `runInventory`. Nothing is silently borrowed or returned.
+  syncWeaponSlots(s);
   s.gameOver = false;
   s.cleared = false;
   s.drops.length = 0;
@@ -288,10 +278,6 @@ export function reset(s: GameState): void {
   s.lootLog.length = 0;
   s.carriedItems.length = 0;
   s.pickupTarget = null;
-  s.pendingPickup = null;
-  s.runBagUids.length = 0;
-  s.slotLootItemIds.length = 0;
-  s.weaponLootEvents.length = 0;
   s.toast = { text: '单击地面移动 · 单击掉落物拾取 · 单击敌人攻击 · 长按跟随光标 · 空格闪避', life: 4.2 };
   s.moveMode = 'idle';
   s.targetEnemy = null;

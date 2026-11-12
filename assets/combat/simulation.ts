@@ -13,8 +13,11 @@ import { applyDodge, classifyPointer, walk } from './movement.ts';
 import { NO_MODIFIERS, type CombatModifiers } from './modifiers.ts';
 import { makeRng } from './loot.ts';
 import { say } from './effects.ts';
+import { makeRunInventory } from './run-inventory.ts';
+import type { RunLoadout } from '../meta/inventory.ts';
 import {
-  activeWeapon, createState, reset, setArena, type GameState, type StepInput,
+  activeWeapon, createState, reset, setArena, syncWeaponSlots,
+  type GameState, type StepInput,
 } from './state.ts';
 import { checkCleared, switchWeaponSlot, updateDrops } from './weapons.ts';
 import { cameraFor, worldToScreen, type ArenaMap } from './world.ts';
@@ -65,8 +68,9 @@ export function step(
 }
 
 /**
- * Deploy a run from the meta layer. Called once per deployment by the engine
- * root when the single-page shell sends a `deploy` message.
+ * Deploy a run. The main window hands over its ENTIRE bag + equipment as a
+ * structured-cloned `RunLoadout`; the Worker builds its own InventoryState
+ * from it. Nothing is "borrowed" and nothing is shared by reference.
  *
  * Monster population is owned solely by the active map's LDtk entity layer.
  * The engine calls `setArena(state, arena)` before this to select the playable
@@ -74,22 +78,26 @@ export function step(
  */
 export interface Deployment {
   readonly seed?: number;
-  readonly armedWeapons?: 0 | 1 | 2;
-  readonly activeWeaponSlot?: 0 | 1;
+  readonly loadout?: RunLoadout;
 }
+
+const EMPTY_LOADOUT: RunLoadout = {
+  bag: [],
+  equipped: [null, null, null, null, null, null, null, null, null, null],
+  activeWeaponSlot: 0,
+};
 
 export function deployRun(s: GameState, config: Deployment = {}): void {
   s.runSeed = config.seed ?? s.runSeed;
   s.rng = makeRng(s.runSeed);
+  s.runInventory = makeRunInventory(config.loadout ?? EMPTY_LOADOUT);
   reset(s);
-  const armed = Math.max(0, Math.min(2, config.armedWeapons ?? 0));
-  s.weaponSlots = [armed >= 1 ? 'longsword' : null, armed >= 2 ? 'longsword' : null];
-  s.activeWeaponSlot = config.activeWeaponSlot ?? 0;
-  if (armed > 0) {
-    say(s, `出征 · 携带 ${armed} 件武器`);
-  } else {
-    say(s, '出征 · 徒手');
-  }
+  const armed = s.weaponSlots.filter((w) => w !== null).length;
+  const carried = s.runInventory.bag.length
+    + s.runInventory.equipped.filter((it) => it !== null).length;
+  say(s, armed > 0
+    ? `出征 · 带入 ${carried} 件物品（${armed} 件武器）`
+    : `出征 · 徒手，带入 ${carried} 件物品`);
 }
 
 /**
@@ -122,11 +130,25 @@ export function projection(s: GameState) {
     attackOrder: s.attackOrder,
     drops: s.drops.map((drop) => drop.kind),
     dropAt: dropScreen ? { x: dropScreen.x / VIEW_W, y: dropScreen.y / VIEW_H } : null,
-    // Legacy field name kept for the existing 35-step playthrough: it now
-    // reports the ACTIVE slot, i.e. the one weapon actually used in melee.
-    equippedWeapon: activeWeapon(s),
-    weaponSlots: [...s.weaponSlots],
+    // Legacy field names kept for the 35-step playthrough: they report the
+    // visual 'longsword' CATEGORY. The authored ids live in `weaponDefIds`.
+    equippedWeapon: activeWeapon(s) !== null ? 'longsword' : null,
+    weaponSlots: s.weaponSlots.map((w) => (w !== null ? 'longsword' : null)),
+    weaponDefIds: [...s.weaponSlots],
     activeWeaponSlot: s.activeWeaponSlot,
+    // The Worker-owned in-run inventory, exposed as a plain JSON object so
+    // the main-window character panel can render it (read only). A named
+    // interface has no index signature and would not satisfy the projection
+    // value type, so build the literal here.
+    runInventory: {
+      bag: s.runInventory.bag.map((i) => ({
+        uid: i.uid, defId: i.defId, container: i.container, col: i.col, row: i.row,
+      })),
+      equipped: s.runInventory.equipped.map((i) => (
+        i === null ? null : { uid: i.uid, defId: i.defId }
+      )),
+      activeWeaponSlot: s.runInventory.activeWeaponSlot,
+    },
     // Run / loot contract: consumed by the loot report and by the single-page
     // settlement bridge. All values are JSON-shaped (GameProjectionValue).
     runSeed: s.runSeed,
@@ -141,9 +163,6 @@ export function projection(s: GameState) {
     })),
     carriedItems: [...s.carriedItems],
     pickupTarget: s.pickupTarget,
-    pendingPickup: s.pendingPickup ? s.pendingPickup.uid : null,
-    runBagUids: [...s.runBagUids],
-    slotLootItemIds: [...s.slotLootItemIds],
     dropItems: s.drops.map((d) => d.itemId ?? null),
     player: { x: playerScreen.x / VIEW_W, y: playerScreen.y / VIEW_H },
     moveMode: s.moveMode,
@@ -162,7 +181,7 @@ export function projection(s: GameState) {
   };
 }
 
-export { activeWeapon, createState, reset, setArena };
+export { activeWeapon, createState, reset, setArena, syncWeaponSlots };
 export type {
   Drop, GameState, MoveMode, Particle, Player, Skeleton, StepInput,
 } from './state.ts';

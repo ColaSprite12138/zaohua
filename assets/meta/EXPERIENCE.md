@@ -1,5 +1,11 @@
 # EXPERIENCE — meta 独立经验库
 
+> **2026-11-13 续三提醒（经验库是历史记录，不是当前契约）**：凡本文出现
+> `buildLoadout` / `settleRun` / `borrowed` / `pickup` · `pickupAck` / `weaponLoot` /
+> `pendingPickup` / `runEquipDefIds` / `lastEquipped` / `carriedUids` / `slotLootItemIds`
+> 的条目，都是**两份状态重构之前**的踩坑记录，代码里这些符号已全部删除。
+> 现行模型见 `HANDOFF.md`「当前功能契约」与本节末尾的续三条目；权威顺序 HANDOFF > CONTEXT > 经验库。
+
 > 只记本模块踩坑，按条追加、不删历史。契约见 `CONTEXT.md`。
 
 ## 2026-11-10 · 模块划分
@@ -217,3 +223,28 @@
 - **验收联动**：`buildLoadout` 不清槽后，`verify-shell.cjs` 原来「从 stash 装到空槽 0」不再产生
   布尔 delta，`equip` 断言会红。改成先 `placeItem()` 卸到背包（`true→false`）再 `equipItem()`
   装回（`false→true`），断言反而更严。单页 29 → 31 条、单测 128 → 131。
+
+## 2026-11-13（续三）— 两份状态，显式整份搬入 / 搬出
+
+- **根因**：上一轮把「局内局外本质上是一件事情」误读成「共用同一个 `InventoryState` 对象」。
+  用户最终明确：**逻辑上是同一批物品，存储上分两份**，局内那份属于战局、应放在跑战斗的
+  Engine Worker 堆里；出征把局外 `bag + equipped` 整份复制进局内并清空局外，通关整份搬回，
+  死亡 / 失败 / 中途返回整份丢弃，`stash` 永不进战局。
+- **架构判断**：「局外 / 局内」是生命周期维度，「主窗口 / Worker」是物理内存维度，两者正交。
+  之前为改动成本推荐「两份都放主窗口 + Worker 收投影」，实际会造出第三份数据；把状态归到
+  Worker 后，拾取、换装、背包格子校验全在单堆内完成，`buildLoadout` / `settleRun` 的
+  `findFirstFit` 还原式入库 / `overflow` / `unregistered` / `pickup`·`pickupAck` /
+  `weaponLoot` / `runEquipDefIds` 去重整串补丁自然消失。
+- **易错点**：① 局内 `InventoryState` 的 `stash` 必须恒空，`equipItem` / `findFirstFit`
+  要传 `['bag']`，否则被替换下来的装备会掉进隐藏仓库里凭空消失；
+  ② `ITEM_DEFS` 是每个 JS 堆各自的全局，Worker 必须自己 `registerItemDefs()`（由
+  `ensureItemCatalog()` 用 `generated/item.ts` + `weapon.ts` join 一次），否则表里的
+  loot id 在 Worker 里 `itemDef()` 抛错；
+  ③ `MetaStore.persist()` 走 `host.getState()`，局内它返回的是快照副本 —— 必须在
+  `syncBadge()` 里用 `inRun` 挡住，否则局内物品会被写进平台 KV、死亡后复活；
+  ④ `reset()` 不能清 `runInventory`，否则按 R 重开会把带入装备吞掉，应从
+  `runInventory.equipped[0/1]` 重算 `weaponSlots` / `activeWeaponSlot`；
+  ⑤ `projection()` 里具名 `interface`（`RunLoadout`）缺索引签名，不能直接放进
+  `GameProjectionValue`，要展成对象字面量。
+- **证据**：`bash scripts/verify-all.sh` ALL GREEN（139 单测 / typecheck 0 error /
+  playthrough 37 steps / resize 4 steps / 独立页 13/13 / 单页 37/37）。

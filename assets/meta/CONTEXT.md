@@ -1,12 +1,18 @@
 # CONTEXT — meta（系统设计 / 局外）
 
+> **2026-11-13 续三修订（权威）**：局外 `InventoryState` 只在主窗口，局内 `InventoryState` 只在 Engine Worker，
+> 两份状态**不共享对象**。本文下方含 `buildLoadout` / `settleRun` / `pickupAck` / `weaponLoot` /
+> `borrowed` / `carriedUids` 的表格行均为**续三之前的历史契约**，已作废，以 `HANDOFF.md`「当前功能契约」为准。
+> 现行接口：`takeIntoRun(lobby)` / `bringBack(lobby, loadout)` / `runInventoryFrom(loadout)` /
+> `loadoutFromRun(state)`；`RunLoadout = { bag, equipped, activeWeaponSlot }`，仓库 `stash` 永不进战局。
+
 > 权威顺序：`HANDOFF.md` > 本文件 > README / feedback。经验库：本目录 `EXPERIENCE.md`。
 
 ## 职责
 
 跨局持久化的系统：局外养成、多种货币、外围关卡（即**战斗入口**的节点图）；
 **背包 / 仓库 / 装备栏**（格子拖放与穿戴）及其独立可视化页面 `meta-ui/index.html`；
-**搜打撤带入/带回结算**（`buildLoadout` / `settleRun`）与 4174 单页的**唯一权威 `InventoryState`**；
+**局外 / 局内两份状态显式搬入搬出**（`takeIntoRun` / `bringBack`）与 4174 单页的**局外唯一权威 `InventoryState`**；
 **平台身份与 KV 存档**（`account.ts`：单 key 版本化 blob / 纯 JSON / 写队列；身份来自平台 `user.current`）；
 **战局内背包**（B / I 打开同一份背包浮层，不冻结战斗，换装立即生效并写回存档）。
 
@@ -48,10 +54,10 @@
 |:--|:--|
 | 唯一状态 | 主窗口 `window.MetaShell.state`，meta UI 与 `shell-bridge.js` 都通过 `getState()` / `setState()` 读写**同一对象** |
 | 表目录注入 | `inject-shell.mjs` 把 `generated/item.ts` + `generated/weapon.ts` **按 id join** 成 `authoredItems` 写入 `MetaShell`（品质 / 伤害来自 weapon 表）；`meta-ui/index.html` 在 `registerItemDefs` 可用时注册 |
-| 出征 | `buildLoadout(state)` **只读登记**两个武器槽（实例留在 `equipped`，局内角色面板据此显示本局穿戴），返回 `armedWeapons` / `activeWeaponSlot`；经 `BroadcastChannel('forgeax-arena-run')` 发 `deploy` |
-| 局内拾取 | 两武器槽都满时 Worker 发 `pickup { uid, itemId, name }`；`shell-bridge.js` 调 `M.addToBag(host.getState(), uid, itemId)` 占真实背包格，成功才 `host.render()`；**无论成败都要回 `pickupAck { uid, ok }`**，否则 Worker 的 `pendingPickup` 永远不解 |
-| 结算 | `settleRun(state, borrowed, settlement)`，`Settlement = { outcome, lootItemIds, carriedUids }`：`cleared` 保留仍穿戴的借出武器（不重复创建实例）+ 给仍需找格子的 `lootItemIds` 用 `findFirstFit()` 入库，本局已进背包的战利品**原地保留**；`gameOver` 按 `carriedUids` 用 `removeItem()` **从背包精确删除本局战利品**、按 uid 删除借出武器，并**清空 `equipped` 全部 10 槽**；`stash` 与局外旧背包物品保留 |
-| 报告 | `SettlementReport` 的 `unregistered`（未知 id）/ `overflow`（bag + stash 都满）必须显式报告；**没有第四处存放区兜底，物品不会静默转移** |
+| 出征 | `takeIntoRun(lobby)` 复制 `bag + equipped` 成 `RunLoadout` 并**清空局外**，经 `BroadcastChannel('forgeax-arena-run')` 发 `deploy { seed, loadout }` |
+| 局内拾取 | **完全在 Engine Worker 堆内**：`combat/run-inventory.ts::collectDrop()` 优先写 `equipped` 空武器槽，其次 `addToBag()` 占局内背包格子；满则掉落物留地上。Worker 回 `runState` 快照给只读面板 |
+| 结算 | `result.loadout`（通关整份）→ `bringBack(lobby, loadout)` 覆盖回局外；阵亡 / 中途退出 `loadout: null`，主窗口不写回，**全部丢失**，`stash` 保留 |
+| 报告 | 没有 `SettlementReport` / `unregistered` / `overflow`：物品不是「找回来的」，搬入时整份复制、通关整份搬回、失败整份丢弃 |
 
 `file://` 双击页仍走 `createInventoryState()` 缺省路径，`MetaShell` 钩子只在 4174 注入页生效；
 两条入口共用 `meta-ui/inventory.js` 生成物与 `inventory.ts` 唯一逻辑源。
@@ -113,7 +119,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
   经 `BroadcastChannel` 发 `equip { slots: [bool|null, bool|null], activeWeaponSlot }`；
   `null` ＝「保留该槽出征时借出的武器」，避免把借出装备覆盖掉。
 - `game.pack.ts` 收到 `equip` 后直接改 `state.weaponSlots` / `activeWeaponSlot`，本局伤害与攻击距离立刻变化。
-- **登记 / 结算边界（2026-11-13 修订）**：`buildLoadout()` 只登记两个武器槽，**不清空 `equipped`**——
+- **两份状态边界（2026-11-13 续三）**：`inventory.ts` 是零 import 的**无状态规则库**，主窗口与 Worker 各自持有一份 `InventoryState`；跨堆只传 `RunLoadout` 快照，绝不共享引用。局内快照不写平台 KV |
   局内角色面板渲染的就是这个数组，置空会让带进去的武器与局内拾取的武器都看不见。局内
   `weaponLoot { uid, itemId, slot }` 把拾取物作为真实实例写进 `equipped[slot]`；壳层结算时
   把这些 authored id 从 `slotLootItemIds` 剔除，避免 `settleRun()` 再入一次库。
@@ -137,7 +143,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
   `lock` / `unlock` 分支保留但**没有生产者**，`paused` 是唯一的冻结来源。
 - **局内背包不冻结**：B / I 打开的浮层不发 pause，怪物继续追击；这里新增的 pause
   只来自造化平台宿主的生命周期指令，两者语义不同。
-- **护栏**：`verify-shell.cjs` 的 2 条平台断言（31 条总数）验证 adapter 状态翻转与
+- **护栏**：`verify-shell.cjs` 的 2 条平台断言（37 条总数）验证 adapter 状态翻转与
   `pause`/`resume` 频道消息确实送达模拟 Worker；改这块必须保持这两条为绿。
 
 ## 旧骨架
@@ -151,7 +157,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 `createInventoryState` / `itemDef` / `canPlace` / `findItem` / `placeItem` / `moveItem` /
 `equipItem` / `unequipItem` / `setActiveWeapon` / `activeWeapon` / `coveredCells` /
 `findFirstFit` / `addToBag` / `removeItem` /
-`registerItemDefs` / `buildLoadout` / `settleRun`
+`registerItemDefs` / `takeIntoRun` / `bringBack` / `runInventoryFrom` / `loadoutFromRun`
 （+ `GridSpot` / `AuthoredItem` / `BorrowedLoadout` / `Settlement` / `SettlementReport` 类型）。
 **没有 `loose` / `unplaceItem` / `ContainerId='loose'`**；`Settlement` 字段是
 `{ outcome, lootItemIds, carriedUids }`。
@@ -174,7 +180,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 node scripts/build-meta-ui.mjs --check                     # 两个生成物与源码同步
 node scripts/verify-meta-ui.cjs                            # 独立页面 13 条真实拖放断言
 node scripts/inject-shell.mjs --check                      # dist 注入块与源同步
-node scripts/verify-shell.cjs                              # 4174 单页 31 条（无宿主不写盘/平台身份/KV 存档/局内背包/局内拾取镜像/出征/通关/阵亡清 10 槽/返回/lifecycle）
+node scripts/verify-shell.cjs                              # 4174 单页 37 条（无宿主不写盘/平台身份/KV 存档/局内背包/局内拾取镜像/出征/通关/阵亡清 10 槽/返回/lifecycle）
 ```
 
 `scripts/build-meta-ui.mjs` 把 `inventory.ts` / `account.ts` 用 `ts.transpileModule` 转成普通脚本写入

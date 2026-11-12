@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import { describe, expect, it } from 'vitest';
 import { swingAtTarget } from '../attack.ts';
 import { NO_MODIFIERS } from '../modifiers.ts';
-import { activeWeapon, createState, reset, type GameState, type StepInput } from '../simulation.ts';
+import { addToBag } from '../../meta/inventory.ts';
+import { weaponDamage } from '../run-inventory.ts';
+import {
+  activeWeapon, createState, reset, type GameState, type StepInput,
+} from '../simulation.ts';
 import { projection, step } from '../simulation.ts';
-import { resolvePickupAck, updateDrops } from '../weapons.ts';
+import { updateDrops } from '../weapons.ts';
 
 const input = (over: Partial<StepInput> = {}): StepInput => ({
   mouse: undefined,
@@ -24,8 +28,8 @@ function collectSword(s: GameState): void {
   updateDrops(s, 1 / 60);
 }
 
-/** Both slots full -> the drop must wait for the main window's bag decision. */
-function queueThirdSword(s: GameState): string {
+/** Both slots full -> the item must find a footprint in the RUN bag. */
+function collectThirdSword(s: GameState): string {
   const uid = 'test-drop-3';
   s.drops.push({ uid, x: s.player.x, y: s.player.y, kind: 'longsword', t: 0 });
   s.pickupTarget = uid;
@@ -33,12 +37,13 @@ function queueThirdSword(s: GameState): string {
   return uid;
 }
 
-describe('two weapon slots', () => {
+describe('two weapon slots (Worker-owned run inventory)', () => {
   it('starts with two empty slots on slot 1, bare-handed', () => {
     const s = createState();
     expect(s.weaponSlots).toEqual([null, null]);
     expect(s.activeWeaponSlot).toBe(0);
     expect(activeWeapon(s)).toBeNull();
+    expect(s.runInventory.stash).toEqual([]);
     expect(projection(s).weaponSlots).toEqual([null, null]);
     expect(projection(s).equippedWeapon).toBeNull();
   });
@@ -50,9 +55,11 @@ describe('two weapon slots', () => {
     expect(activeWeapon(s)).toBe('longsword');
     collectSword(s);
     expect(s.weaponSlots).toEqual(['longsword', 'longsword']);
+    expect(s.runInventory.equipped[0]?.defId).toBe('longsword');
+    expect(s.runInventory.equipped[1]?.defId).toBe('longsword');
   });
 
-  it('equipping loot emits one character-panel event per slot, cleared on reset', () => {
+  it('authored loot keeps its REAL defId in the Worker state', () => {
     const s = createState();
     s.drops.push({
       uid: 'loot-a', x: s.player.x, y: s.player.y,
@@ -66,48 +73,58 @@ describe('two weapon slots', () => {
     });
     s.pickupTarget = 'loot-b';
     updateDrops(s, 1 / 60);
-    expect(s.weaponLootEvents).toEqual([
-      { uid: 'loot-a', itemId: '10006', slot: 0 },
-      { uid: 'loot-b', itemId: '20006', slot: 1 },
-    ]);
-    expect(s.slotLootItemIds).toEqual(['10006', '20006']);
-    reset(s);
-    expect(s.weaponLootEvents).toEqual([]);
+    expect(s.runInventory.equipped[0]).toEqual({ uid: 'loot-a', defId: '10006' });
+    expect(s.runInventory.equipped[1]).toEqual({ uid: 'loot-b', defId: '20006' });
+    expect('weaponLootEvents' in s).toBe(false);
+    expect('pendingPickup' in s).toBe(false);
+    expect(s.weaponSlots).toEqual(['10006', '20006']);
+    // The legacy projection still reports the visual CATEGORY for playthrough.
+    expect(projection(s).weaponSlots).toEqual(['longsword', 'longsword']);
+    expect(projection(s).weaponDefIds).toEqual(['10006', '20006']);
+    expect(projection(s).runInventory.equipped[0]).toEqual({ uid: 'loot-a', defId: '10006' });
+    expect(s.carriedItems).toEqual(['10006', '20006']);
   });
 
-  it('a third sword waits for a bag decision; there is no score at all', () => {
+  it('a third sword goes into the run bag INSIDE the Worker', () => {
     const s = createState();
     collectSword(s);
     collectSword(s);
-    const uid = queueThirdSword(s);
+    const uid = collectThirdSword(s);
     expect(s.weaponSlots).toEqual(['longsword', 'longsword']);
-    expect(s.pendingPickup?.uid).toBe(uid);
-    expect(s.drops).toHaveLength(1);
-    expect('score' in s).toBe(false);
-  });
-
-  it('a rejected bag pickup leaves the drop on the ground', () => {
-    const s = createState();
-    collectSword(s);
-    collectSword(s);
-    const uid = queueThirdSword(s);
-    resolvePickupAck(s, false, uid);
-    expect(s.drops).toHaveLength(1);
-    expect(s.runBagUids).toEqual([]);
-    expect(s.pendingPickup).toBeNull();
-    expect(s.carriedItems).toHaveLength(2);
-  });
-
-  it('an accepted bag pickup removes the drop and records its uid', () => {
-    const s = createState();
-    collectSword(s);
-    collectSword(s);
-    const uid = queueThirdSword(s);
-    resolvePickupAck(s, true, uid);
     expect(s.drops).toHaveLength(0);
-    expect(s.runBagUids).toEqual([uid]);
-    expect(s.carriedItems).toHaveLength(3);
-    expect(s.pendingPickup).toBeNull();
+    expect(s.runInventory.bag.map((i) => i.uid)).toEqual([uid]);
+    expect(s.runInventory.bag[0]?.container).toBe('bag');
+    expect('score' in s).toBe(false);
+    expect('pendingPickup' in s).toBe(false);
+  });
+
+  it('a full run bag leaves the drop on the ground', () => {
+    const s = createState();
+    collectSword(s);
+    collectSword(s);
+    // 5x8 bag, 2x3 footprint -> exactly four longswords fill it.
+    for (let i = 0; i < 4; i += 1) {
+      expect(addToBag(s.runInventory, `filler-${i}`, 'longsword')).not.toBeNull();
+    }
+    const uid = collectThirdSword(s);
+    expect(s.drops.map((d) => d.uid)).toEqual([uid]);
+    expect(s.runInventory.bag).toHaveLength(4);
+    expect(s.carriedItems).toHaveLength(2);
+    expect(s.pickupTarget).toBeNull();
+  });
+
+  it('reset replays THIS run: brought-in and picked-up items stay', () => {
+    const s = createState();
+    collectSword(s);
+    collectSword(s);
+    step(s, 1 / 60, input({ switchWeapon: 1 }));
+    reset(s);
+    // The chosen active slot is part of the run state too: replaying the run
+    // must not silently switch the player back to weapon slot 1.
+    expect(s.activeWeaponSlot).toBe(1);
+    expect(s.weaponSlots).toEqual(['longsword', 'longsword']);
+    expect(s.runInventory.equipped.filter(Boolean)).toHaveLength(2);
+    expect(projection(s).equippedWeapon).toBe('longsword');
   });
 
   it('Digit1 / Digit2 switch the active slot without moving items', () => {
@@ -116,6 +133,7 @@ describe('two weapon slots', () => {
     collectSword(s);
     step(s, 1 / 60, input({ switchWeapon: 1 }));
     expect(s.activeWeaponSlot).toBe(1);
+    expect(s.runInventory.activeWeaponSlot).toBe(1);
     expect(s.weaponSlots).toEqual(['longsword', 'longsword']);
     step(s, 1 / 60, input({ switchWeapon: 0 }));
     expect(s.activeWeaponSlot).toBe(0);
@@ -124,7 +142,7 @@ describe('two weapon slots', () => {
 
   it('switching to an empty slot means bare hands in melee', () => {
     const s = createState();
-    collectSword(s); // only slot 1 has a sword
+    collectSword(s);
     expect(activeWeapon(s)).toBe('longsword');
     step(s, 1 / 60, input({ switchWeapon: 1 }));
     expect(activeWeapon(s)).toBeNull();
@@ -134,22 +152,26 @@ describe('two weapon slots', () => {
     assert.equal(hp - s.skeletons[0]!.hp, 22, 'bare hands deal 22');
   });
 
-  it('only the active slot decides melee damage and range', () => {
+  it('the demo longsword (no table row) keeps the legacy 46 baseline', () => {
     const s = createState();
     collectSword(s);
+    expect(weaponDamage('longsword')).toBeNull();
     const hp = s.skeletons[0]!.hp;
     swingAtTarget(s, 0, NO_MODIFIERS);
     assert.equal(hp - s.skeletons[0]!.hp, 46, 'armed deals 46');
   });
 
-  it('reset clears both slots and returns to slot 1', () => {
+  it('an authored weapon deals the weapon.xlsx midpoint damage', () => {
     const s = createState();
-    collectSword(s);
-    collectSword(s);
-    step(s, 1 / 60, input({ switchWeapon: 1 }));
-    reset(s);
-    expect(s.weaponSlots).toEqual([null, null]);
-    expect(s.activeWeaponSlot).toBe(0);
-    expect(projection(s).equippedWeapon).toBeNull();
+    s.drops.push({
+      uid: 'authored', x: s.player.x, y: s.player.y,
+      kind: 'longsword', t: 0, itemId: '10006',
+    });
+    s.pickupTarget = 'authored';
+    updateDrops(s, 1 / 60);
+    expect(weaponDamage('10006')).toBe(325);
+    const hp = s.skeletons[0]!.hp;
+    swingAtTarget(s, 0, NO_MODIFIERS);
+    assert.equal(hp - s.skeletons[0]!.hp, 325, 'damage comes from the table');
   });
 });

@@ -30,8 +30,8 @@ engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas �
 
 两武器槽都满时，Engine Worker 看不到主窗口的背包格子，走跨堆协议：
 Worker 发 `pickup { uid, itemId, name }` → 主窗口 `shell-bridge.js` 调 `M.addToBag()`
-占真实 2×3 格 → 回 `pickupAck { uid, ok }` → `resolvePickupAck()` 决定移除掉落物或让它留在地上。
-`game.pack.ts` 用 `pickupSent` 防每帧重复发；**无论成败都必须回 ack**。
+拾取全部在 Engine Worker 的局内 `InventoryState` 里完成：有空武器槽写 `equipped`，两槽满则 `addToBag()` 占真实 2×3 格；背包也满则掉落物留在地上。Worker 每帧比较快照签名，状态变化才发 `runState`。
+局内角色面板是只读视图：拖放 / 换装经 `runCommand` 发到 Worker 校验，回 `runState` 快照重绘；仓库面板隐藏，局内快照不写平台 KV。
 
 ### 地图运行时（2026-11-13）
 
@@ -81,11 +81,11 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 
 | 阶段 | 规则 |
 |:--|:--|
-| 出征 | `buildLoadout()` **只读登记**两个武器槽，实例留在 `equipped`，局内角色面板能看到本局穿戴；顶栏没有怪物数量输入，`deploy` 消息也不含数量。`deploy` 会把地图切到正式 `arena.ldtk` |
-| 战斗 | `#fx-shell` 透明且指针穿透，点击直达 canvas；掉落按 `item.xlsx` / `loot_pool.xlsx` 权重结算；**拾取必须显式点击**，走过不捡。装进空武器槽时 Worker 发 `weaponLoot { uid, itemId, slot }`，主窗口把真实实例写进 `equipped[slot]`，角色面板立即可见、可拖可换 |
-| 结算数据 | `Settlement = { outcome, lootItemIds, carriedUids }`：`lootItemIds` 是局内装到武器槽、仍需找格子的 authored id（已装在身上的会被壳层剔除），`carriedUids` 是本局已进背包的掉落 uid |
-| 通关 | 仍穿戴的借出武器保留；已装在装备栏的战利品**原地保留**（不重复入库）；其余 `lootItemIds` 用 `findFirstFit()` 按 `背包 → 仓库` 入库；本局已进背包的战利品原地保留；两处都满只进 `overflow` 报告，**没有待分配区兜底** |
-| 阵亡 | 按 `carriedUids` 用 `removeItem()` **从背包精确删除本局战利品**，借出武器按 uid 删除，并**清空 `equipped` 全部 10 个装备槽**（含护甲 / 首饰）；`stash` 与局外旧背包物品保留 |
+| 出征 | `M.takeIntoRun(lobby)` 把局外 `bag + equipped` 整份复制成 `RunLoadout` 并**清空局外这两处**（`stash` 不动），发 `deploy { seed, loadout }`；Worker `makeRunInventory()` 建自己的局内状态。顶栏没有怪物数量输入，`deploy` 消息也不含数量。`deploy` 会把地图切到正式 `arena.ldtk` |
+| 战斗 | `#fx-shell` 透明且指针穿透，点击直达 canvas；掉落按 `item.xlsx` / `loot_pool.xlsx` 权重结算；**拾取必须显式点击**，走过不捡，全部在 Worker 堆内写入局内背包 / 装备栏；局内仓库面板隐藏 |
+| 结算数据 | `RunLoadout = { bag, equipped, activeWeaponSlot }` 是唯一跨堆载荷；`result` 在通关时带整份 `loadout`，阵亡时为 `loadout: null`。没有 `borrowed` / `carriedUids` / `findFirstFit` 还原式入库 |
+| 通关 | `M.bringBack(lobby, loadout)` 把**整份局内状态**覆盖回局外；不找格子、不新建实例、不产生 overflow |
+| 阵亡 / 中途退出 | 主窗口不写回任何东西；局外在出征时已清空，等于**带入物品与本局战利品全部丢失**，`stash` 保留。中途返回发 `abort` 让 Worker 丢弃局内状态；刷新 / 关预览同理（无宿主不写盘） |
 
 `scripts/inject-shell.mjs` 把局外 UI 注入 `dist/index.html`；**`build` / `play` / `package` 都会重建 `dist/`**，
 所以注入必须是全流程最后一步（`verify-all.sh` 已放在 `package` 之后）。`scopeCss()` 把独立页 CSS
@@ -119,7 +119,7 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 战斗内按 **B / I**（或顶栏「背包」按钮）打开同一份格子背包浮层，**战斗不会暂停**：怪物继续行动，
 浮层外的鼠标点击照常落到 canvas。拖放换装后，发生变化的武器槽经 `BroadcastChannel` 发 `equip`
 给 Worker，本局伤害 / 攻击距离**立即生效**；平台环境下同时写回 KV 存档（本地不写盘）；ESC 关闭。
-`equip.slots[i] === null` 表示保留该槽出征时借出的武器，避免覆盖。
+局内面板是 Worker 快照的只读视图：拖放与 1/2 切槽经 `runCommand` 发到 Worker，校验后回 `runState` 快照重绘；局内快照不写平台 KV。
 
 ### 人工数据表 → 生成物
 
@@ -198,7 +198,7 @@ IPv6 `[::1]` 回环与内置预览面板的已知问题见 `docs/feedback.md` �
 | `assets/combat/` | **最重**：技能交互、怪物、武器、玩家技能、数值运行时；天赋效果的**执行** | `CONTEXT.md` / `EXPERIENCE.md` | `vitest run assets/combat/__tests__` + `scripts/playthrough*.mjs` |
 | `assets/battle/` | 局内关卡：地图、触发器、关卡事件、单局目标、机关 | 同上 | `vitest run assets/battle/__tests__` |
 | `assets/meta/` | 局外：养成、格子背包/仓库/装备栏、外围关卡（战斗入口）、货币 | 同上 | `vitest run assets/meta/__tests__` + `scripts/verify-meta-ui.cjs` |
-| `meta-ui/` | 独立可视化页面（双击 `index.html` 可开）+ 4174 单页壳层 `shell.css` / `shell-bridge.js` | 逻辑归 `assets/meta/` | `verify-meta-ui.cjs`（独立页 13 条）、`verify-shell.cjs`（单页 31 条） |
+| `meta-ui/` | 独立可视化页面（双击 `index.html` 可开）+ 4174 单页壳层 `shell.css` / `shell-bridge.js` | 逻辑归 `assets/meta/` | `verify-meta-ui.cjs`（独立页 13 条）、`verify-shell.cjs`（单页 37 条） |
 | `assets/talent/` | 局外天赋养成与选择；只输出 `effectIds`，**不算效果数值** | 同上 | `vitest run assets/talent/__tests__` |
 | `assets/resource/` | 人工 Excel 数据表（唯一数值入口）→ `generated/*.ts`；`export_tables.py` 转换 | 同上 | `vitest run assets/resource/__tests__` + `export_tables.py --check` + `loot-report.mjs` |
 | `assets/shared/` | 常量与纯类型，所有模块可单向 import | — | 改动触发全量验收 |
@@ -229,7 +229,7 @@ python scripts/export_tables.py --check     # xlsx 与 generated/*.ts 同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000   # 真实 rollLoot 跑批
 node scripts/verify-meta-ui.cjs            # 局外页面 13 条真实拖放断言
 node scripts/inject-shell.mjs --check      # dist 单页注入块与源同步
-node scripts/verify-shell.cjs              # 4174 单页 31 条（出征/局内拾取镜像/通关/阵亡清 10 槽/返回/平台 lifecycle/KV 存档）
+node scripts/verify-shell.cjs              # 4174 单页 37 条（出征/局内拾取镜像/通关/阵亡清 10 槽/返回/平台 lifecycle/KV 存档）
 ./node_modules/.bin/forgeax project check --json
 ./node_modules/.bin/forgeax project test --json
 ./node_modules/.bin/tsc --noEmit
@@ -267,9 +267,9 @@ node scripts/inject-shell.mjs              # 最后一步：build/play/package �
 
 `scripts/verify-shell.cjs` 是 4174 单页壳层的浏览器验收：从 `dist/index.html` 抽出注入块，构造
 **只含壳层的最小骨架页**（不能保留整份引擎页——启动遮罩会在 window 捕获阶段拦截所有 `click`），
-用 `BroadcastChannel` 模拟 Engine Worker，断言出征登记（武器仍显示在装备栏）、局内 `weaponLoot`
+用 `BroadcastChannel` 模拟 Engine Worker（它持有自己的局内 `InventoryState`），断言出征 `takeIntoRun()` 清空局外、
 镜像到装备栏、通关保留穿戴战利品 + 背包战利品不重复入库、二次出征、**阵亡清空全部 10 个装备槽**、
-返回局外、平台身份 / KV 存档、平台 lifecycle 共 **31 条**。结算用例改用
+返回局外、平台身份 / KV 存档、平台 lifecycle 共 **37 条**。结算用例改用
 `slotLootItemIds` / `bagLootUids` 字段，损坏存档探针用 `{ bag: null }`；`snap()` 记 `noLoose`
 供取证但**未挂断言**，记 `worn` 供「阵亡 10 槽清空」断言使用。浏览器层已模拟 `pickup` 消息
 并断言 uid 落进背包，`pickupAck` 回包本身仍未挂断言。

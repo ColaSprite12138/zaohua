@@ -1,5 +1,14 @@
 # CONTEXT — combat（战斗体验，最重模块）
 
+> **2026-11-13 续三修订（权威）**：`GameState.runInventory` 是 **Engine Worker 独占的局内 `InventoryState`**
+> （`bag` + 10 个 `equipped` 槽，`stash` 恒空）。`assets/combat/run-inventory.ts` 是局内规则入口，
+> 它把 `assets/meta/inventory.ts` 当作**零 import 的无状态规则库** import（依赖方向 combat -> meta 的**规则库**，
+> 仍然单向；meta 不 import combat，也不共享状态对象）。
+> 本文下方含 `pendingPickup` / `pickupAck` / `weaponLootEvents` / `runBagUids` / `slotLootItemIds` /
+> `armedWeapons` 的段落均为**续三之前的历史契约**，已作废，以 `HANDOFF.md`「当前功能契约」为准。
+> 现行：拾取在 Worker 堆内由 `collectDrop()` 完成；`weaponSlots` 存真实 `defId`，伤害取 `weapon.xlsx` 中值；
+> `projection().equippedWeapon` / `weaponSlots` 仍报视觉类别，`weaponDefIds` 报真实 id。
+
 > 权威顺序：`HANDOFF.md` > 本文件 > `README.md` / `docs/feedback.md`。冲突时以 HANDOFF 为准。
 > 改了本模块契约 → 同步 `HANDOFF.md`「当前功能契约」，并把踩坑追加到本目录 `EXPERIENCE.md`。
 
@@ -34,20 +43,20 @@
 `activeWeapon(s)` 是唯一取值入口。拾取**不是走过即拿**：只有短按且点中掉落物时
 `movement.ts::classifyPointer()` 才写 `s.pickupTarget = drop.uid`（点地面 / 点敌人 /
 长按跟随都会清空它），`weapons.ts::updateDrops()` 要求 `pickupTarget !== null`、
-`pendingPickup === null` 且玩家距掉落物 `<50px`，到达才结算：
-有空武器槽 → 装入第一个空槽、移除掉落物、记 `carriedItems` + `slotLootItemIds`，并 push
+`updateDrops()` 在 `pickupTarget !== null` 且玩家距掉落物 `<50px` 时结算 —— **走过掉落物绝不自动拾取**，全部写入 Worker 自己的 `runInventory`。
+有空武器槽 → `collectDrop()` 写 `runInventory.equipped`；两槽满 → `addToBag()` 占局内背包真实格子；满仓 → 掉落物留地上。`syncWeaponSlots()` 从 `equipped[0/1]` 重算武器槽。
 `weaponLootEvents { uid, itemId, slot }`（供 `game.pack.ts` 同步主窗口角色面板）；
-两槽都满 → 设 `pendingPickup`，交给主窗口判断背包格子（见下）。
+没有跨堆 `pickup` 请求，也没有 ack 去重；Worker 每帧比较 `snapshotRun()` 签名，变化才发 `runState`。
 `1/2` 在 `game.pack.ts` 读 `justPressedCode('Digit1'|'Digit2')`，
 经 `StepInput.switchWeapon` 传入 `step()`。
 `projection.equippedWeapon` **保留旧字段名**，改为返回 `activeWeapon(s)`（兼容既有断言）；
-新增 `weaponSlots` / `activeWeaponSlot` / `pickupTarget` / `pendingPickup`（只投影 uid）/
-`runBagUids` / `slotLootItemIds`。`GameState.weaponLootEvents` 是**纯逻辑事件队列**（不投影、不注册 read），
+新增 `runInventory` / `weaponSlots`（真实 `defId`）/ `activeWeaponSlot` / `pickupTarget`；
+删除 `pendingPickup` / `runBagUids` / `slotLootItemIds` / `weaponLootEvents`。`reset()` 保留 `runInventory`（本局重开不丢带入装备），只重建怪物 / 掉落 / 计时器。
 `game.pack.ts` 每帧 drain 一次转成 `weaponLoot` 消息。`reset()` / `setArena()` 清空两槽、事件队列、
 拾取状态与本局 loot 记录并回到槽 1。
 
 **跨堆拾取协议（Worker ↔ 主窗口）**：Worker 与主窗口是独立 JS 堆，Worker 看不到
-`InventoryState.bag` 的格子。两槽满时 `game.pack.ts` 用 `pickupSent` 去重，每帧只在
+`runInventory.bag` 的格子由 Worker 自己校验。
 `pendingPickup !== null && pickupSent === null` 时发一次
 `pickup { uid, itemId, name }`；主窗口 `shell-bridge.js` 调 `M.addToBag()` 判断背包并回
 `pickupAck { uid, ok }`；Worker 用 `resolvePickupAck(s, ok, uid)` 收口：
@@ -63,8 +72,8 @@
 | 掉落算法 | `loot.ts::rollLoot(monsterId, rng)` 按 `loot_pool.xlsx` 权重累计抽取；两池各 6 件、权重 `10/8/6/4/2/1` |
 | 随机源 | `makeRng(seed)` Mulberry32，`runSeed` 默认 `0x5eed1234`；`reset()` 重建，保证 R 重开 loot 序列一致 |
 | 战利品记录 | `GameState.lootLog`（掉落明细）、`carriedItems`（已拾取的 authored id，仅供 HUD / 报告计数）、`runSeed`；**没有怪数字段** |
-| 拾取记录 | `runBagUids`（本局已放进背包的掉落 uid，阵亡按 uid 删除）、`slotLootItemIds`（拾取进武器槽的 authored id，通关时找格子入库）；**两者不可合并**。`weaponLootEvents` 是同步角色面板用的队列，不属于结算记录 |
-| 怪物部署 | `spawnFromMap(map)` 是**唯一**生成入口，严格按 `map.monsters`。`deployRun(s, { seed, armedWeapons, activeWeaponSlot })` 只处理种子 / 借出武器 / 激活槽，协议里没有数量字段；`setArena(s, map)` 切图并重建本局 |
+| 拾取记录 | 只保留 `carriedItems`（本局拾取的 authored id，用于战报）；没有按 uid 的结算清单，因为通关整份搬回、失败整份丢弃 |
+| 怪物部署 | `spawnFromMap(map)` 是**唯一**生成入口，严格按 `map.monsters`。`deployRun(s, { seed, loadout })` 处理种子与整份搬入，协议里没有数量字段；`setArena(s, map)` 切图并重建本局 |
 
 `Drop.kind` 仍为 `'longsword'`，只是**视觉/兼容类别**；真实物品身份走 `drop.itemId` / `name` / `quality`，
 每件掉落额外带稳定 `uid`（跨堆消息对齐用）。

@@ -6,6 +6,7 @@
 
 import { burst, say, setTarget } from './effects.ts';
 import { rollLoot } from './loot.ts';
+import { weaponDamage } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
 import {
   activeWeapon, MELEE_RANGE_ARMED, MELEE_RANGE_BARE, nextDropUid,
@@ -50,7 +51,11 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   const ddx = sk.x - p.x;
   const ddy = sk.y - p.y;
   const d = Math.hypot(ddx, ddy) || 1;
-  const armed = activeWeapon(s) === 'longsword';
+  const weaponId = activeWeapon(s);
+  const armed = weaponId !== null;
+  // `weapon.xlsx` owns the number. Unknown / demo ids fall back to the legacy
+  // baseline rather than inventing a value; bare hands stay at 22.
+  const baseline = weaponId === null ? 22 : (weaponDamage(weaponId) ?? 46);
   const aim = Math.atan2(ddy, ddx);
 
   p.attackCd = 0.4;
@@ -59,7 +64,7 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   p.attackAim = aim;
   s.attacks += 1;
 
-  sk.hp -= mods.damageMultiplier(armed ? 46 : 22);
+  sk.hp -= mods.damageMultiplier(baseline);
   sk.hit = 0.24;
   sk.x += (ddx / d) * 16;
   sk.y += (ddy / d) * 12;
@@ -108,7 +113,7 @@ export function resolveAttackOrder(s: GameState, mods: CombatModifiers): void {
     clearAttackOrder(s);
     return;
   }
-  const baseRange = activeWeapon(s) === 'longsword' ? MELEE_RANGE_ARMED : MELEE_RANGE_BARE;
+  const baseRange = activeWeapon(s) !== null ? MELEE_RANGE_ARMED : MELEE_RANGE_BARE;
   const range = baseRange + mods.meleeRangeBonus();
   const d = Math.hypot(sk.x - s.player.x, sk.y - s.player.y);
   if (d > range - 8) {

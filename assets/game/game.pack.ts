@@ -27,10 +27,10 @@ import { createPrimitiveMesh } from '@forgeax/engine/geometry';
 import {
   createState, deployRun, projection, reset, setArena, step,
   MINIMAP, VIEW_H, VIEW_W, screenToWorld, worldToScreen,
-  type Deployment,
+  syncWeaponSlots, applyRunCommand, snapshotRun, makeRunInventory,
+  type Deployment, type RunLoadout, type RunCommand,
 } from './simulation.ts';
 import { paint } from './paint.ts';
-import { resolvePickupAck } from '../combat/weapons.ts';
 import { arena } from '../resource/maps/arena.generated.ts';
 import { testArena } from '../resource/maps/arena-test.ts';
 
@@ -47,11 +47,17 @@ export const RUN_CHANNEL = 'forgeax-arena-run';
 // index signature required by registerRead.
 export type RunResult = {
   outcome: 'cleared' | 'gameOver';
-  carriedItems: string[];
   lootLog: { monsterId: string; itemId: string; name: string; quality: string }[];
   kills: number;
-  bagLootUids: string[];
-  slotLootItemIds: string[];
+  /** The WHOLE run inventory; present only on a clear, null on a loss. */
+  loadout: RunLoadout | null;
+};
+
+/** A discarded / not-yet-deployed run owns nothing. */
+const EMPTY_RUN: RunLoadout = {
+  bag: [],
+  equipped: Array.from({ length: 10 }, () => null),
+  activeWeaponSlot: 0,
 };
 
 export const game: Plugin = {
@@ -85,7 +91,7 @@ export const game: Plugin = {
     // Platform lifecycle pause (publishing validation). Kept INDEPENDENT of
     // `locked`: `unlock` resets to a fresh run, which a resume must never do.
     let paused = false;
-    let pickupSent: string | null = null;
+    let lastRunSignature = '';
     let channel: BroadcastChannel | null = null;
     if (typeof BroadcastChannel !== 'undefined') {
       channel = new BroadcastChannel(RUN_CHANNEL);
@@ -93,22 +99,37 @@ export const game: Plugin = {
         const msg = event.data as {
           type?: string;
           deployment?: Deployment;
+          command?: RunCommand;
           requestId?: number;
-          slots?: (boolean | null)[];
-          activeWeaponSlot?: 0 | 1;
-          uid?: string;
-          ok?: boolean;
         } | null;
         if (!msg || typeof msg !== 'object') return;
         if (msg.type === 'deploy') {
           // Real play always comes through the meta shell's deploy step, so
           // this is the single switch from the acceptance fixture to arena.ldtk.
+          // The shell has ALREADY emptied its own bag + equipment; `loadout`
+          // is the structured-cloned copy this Worker now owns exclusively.
           setArena(state, arena);
           deployRun(state, msg.deployment ?? {});
           lastResult = null;
           resultSent = false;
-          pickupSent = null;
-          channel?.postMessage({ type: 'deployed' });
+          publishRunState(true);
+          channel?.postMessage({ type: 'deployed', loadout: snapshotRun(state.runInventory) });
+        } else if (msg.type === 'runCommand') {
+          // The in-run character panel is a read-only view. Every drag / equip
+          // is validated and applied HERE, then the new snapshot goes back.
+          if (msg.command !== undefined) {
+            applyRunCommand(state.runInventory, msg.command);
+            syncWeaponSlots(state);
+            publishRunState(true);
+          }
+        } else if (msg.type === 'abort') {
+          // Returning to the lobby, refreshing or closing the preview is a
+          // LOSS: the whole run state is discarded. The lobby is already empty.
+          state.runInventory = makeRunInventory(EMPTY_RUN);
+          reset(state);
+          lastResult = null;
+          resultSent = false;
+          publishRunState(true);
         } else if (msg.type === 'hello') {
           channel?.postMessage({ type: 'ready' });
         } else if (msg.type === 'lock') {
@@ -126,25 +147,6 @@ export const game: Plugin = {
           paused = true;
         } else if (msg.type === 'resume') {
           paused = false;
-        } else if (msg.type === 'equip') {
-          // In-run bag changes. `null` = leave that slot's BORROWED weapon
-          // alone; true/false = the player armed/unarmed that slot in the bag.
-          const slots = msg.slots;
-          if (Array.isArray(slots)) {
-            if (slots[0] === true) state.weaponSlots[0] = 'longsword';
-            else if (slots[0] === false) state.weaponSlots[0] = null;
-            if (slots[1] === true) state.weaponSlots[1] = 'longsword';
-            else if (slots[1] === false) state.weaponSlots[1] = null;
-          }
-          if (msg.activeWeaponSlot === 0 || msg.activeWeaponSlot === 1) {
-            state.activeWeaponSlot = msg.activeWeaponSlot;
-          }
-        } else if (msg.type === 'pickupAck') {
-          // The main window owns the bag grid; only it can confirm a pickup.
-          pickupSent = null;
-          if (typeof msg.uid === 'string') {
-            resolvePickupAck(state, msg.ok === true, msg.uid);
-          }
         } else if (msg.type === 'probe') {
           // Read-only observability seam for REAL 4174 acceptance runs. The
           // projection registry lives in this Worker's module scope, so an
@@ -181,18 +183,31 @@ export const game: Plugin = {
       channel?.postMessage({ type: 'ready' });
     }
 
+    /**
+     * The main-window panel renders a COPY of the Worker's run state. Publish
+     * a fresh snapshot whenever it actually changes (pickup, equip, restart).
+     */
+    const publishRunState = (force = false): void => {
+      const loadout = snapshotRun(state.runInventory);
+      const signature = JSON.stringify(loadout);
+      if (!force && signature === lastRunSignature) return;
+      lastRunSignature = signature;
+      channel?.postMessage({ type: 'runState', loadout });
+    };
+
     const settleIfFinished = (): void => {
       if (resultSent || (!state.cleared && !state.gameOver)) return;
       resultSent = true;
+      const lost = state.gameOver;
       lastResult = {
-        outcome: state.gameOver ? 'gameOver' : 'cleared',
-        carriedItems: [...state.carriedItems],
+        outcome: lost ? 'gameOver' : 'cleared',
         lootLog: state.lootLog.map((r) => ({
           monsterId: r.monsterId, itemId: r.itemId, name: r.name, quality: r.quality,
         })),
         kills: state.kills,
-        bagLootUids: [...state.runBagUids],
-        slotLootItemIds: [...state.slotLootItemIds],
+        // A clear brings the WHOLE run home; a loss discards it. There is no
+        // per-uid reconciliation, no findFirstFit banking, no overflow.
+        loadout: lost ? null : snapshotRun(state.runInventory),
       };
       channel?.postMessage({ type: 'result', result: lastResult });
     };
@@ -291,34 +306,10 @@ export const game: Plugin = {
               if (restart) {
                 lastResult = null;
                 resultSent = false;
-                pickupSent = null;
               }
-              // A loot item equipped into an empty weapon slot must also
-              // appear in the in-run character panel. That panel renders the
-              // main window's InventoryState, so forward the pure-logic event
-              // over the run channel and drain it exactly once.
-              if (state.weaponLootEvents.length > 0) {
-                for (const ev of state.weaponLootEvents.splice(0)) {
-                  channel?.postMessage({
-                    type: 'weaponLoot',
-                    uid: ev.uid,
-                    itemId: ev.itemId,
-                    slot: ev.slot,
-                  });
-                }
-              }
-              // Both weapon slots were full: ask the main window to find a
-              // free bag cell. It answers with `pickupAck`; the drop stays on
-              // the ground until then (and forever if the bag is full).
-              if (state.pendingPickup !== null && pickupSent === null) {
-                pickupSent = state.pendingPickup.uid;
-                channel?.postMessage({
-                  type: 'pickup',
-                  uid: state.pendingPickup.uid,
-                  itemId: state.pendingPickup.itemId,
-                  name: state.pendingPickup.name,
-                });
-              }
+              // Pickups / weapon switches happen INSIDE this Worker now. Only
+              // a changed snapshot is sent to the read-only character panel.
+              publishRunState();
               settleIfFinished();
             }
             paint(painter, state);

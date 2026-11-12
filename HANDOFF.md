@@ -1,7 +1,7 @@
 # HANDOFF — 2.5D 骷髅竞技场
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-13 全套验收通过**（131 条单测 / 单页 31 条 / playthrough 36–37 steps；**同一个游戏单页**已合并为局外配装→出征→战斗→结算流程；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；局内武器槽真实同步到角色面板、阵亡清空全部装备槽）。**steps 会浮动**：13 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 36–37 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-13 全套验收通过**（139 条单测 / 独立页 13 条 / 单页 37 条 / playthrough 37 steps / resize 4 steps；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、通关整份搬回、阵亡或中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效）。**steps 会浮动**：13 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 36–37 间变化，`verify-all.sh` 下限固定 35。
 > 这份文件记录**当前已实现的功能与不可回退的约束**。新会话先读它，再动手。
 > 改了功能 → 必须同步改本文件，追加 `docs/feedback.md`，**做完即提交并推送到 `origin/main`**。
 > 工作区级总索引：`D:\tools\zaohua\AGENTS.md`（工作区地图、跨工程硬约束、备份边界）；本文件是工程级交接。
@@ -13,7 +13,7 @@
 | 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad |
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **128**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **139**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
 | 怎么还原 | `git checkout HEAD -- <path>`；整包兜底见「可回滚基线」 |
@@ -24,7 +24,7 @@
 2. **`assets/<模块>/CONTEXT.md`** — 该模块的契约、不变量、对外接口、依赖方向、独立验收；
    配套 `EXPERIENCE.md` 是该模块独立经验库（踩坑按模块追加，不混进全局 feedback 编号）
 3. `README.md` — 工程结构、交互契约、点击分类、验收脚本逐条说明、坐标映射原理
-4. `docs/feedback.md` — 27 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**（按条追加，不改写历史条目；第 18 / 19 条是 Builder 产物链，最后两条是本次拾取改造与预览链路澄清）
+4. `docs/feedback.md` — 28 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**（按条追加，不改写历史条目；第 18 / 19 条是 Builder 产物链，最后两条是本次拾取改造与预览链路澄清）
 5. `.workbuddy/memory/YYYY-MM-DD.md` — 工作流水账，只作线索，不是规范
 6. `AGENTS.md` — ForgeAX 引擎模板自带的**通用** SDK 规范（顶部另有本工程的 Git 提交纪律）；查引擎 API 时才读
 
@@ -42,23 +42,25 @@
 | 单击地面 | 设落点走过去停下，**不挥砍** |
 | 单击敌人 | 锁定；距离不够先自动接近，**进攻击距离才挥砍一次**；**只扣这一只**的血 |
 | 长按左键 | 落点实时跟随光标；松开停止跟随、按最后落点走完停下；**全程不攻击** |
-| **单击掉落物** | 下一条**显式拾取指令**：走过去、到达才拾取（走过不拾取），优先装进空武器槽；两槽满则问主窗口能否放进背包，背包也满则**掉落物留在地上** |
-| **1 / 2** | **切换当前使用的武器槽**；只有激活槽那把参与攻击，空槽＝徒手（22 伤害 / 140 范围） |
+| **单击掉落物** | 下一条**显式拾取指令**：走过去、到达才拾取（走过不拾取），优先装进空武器槽；两槽满则放进**局内背包**并占真实 2×3 格；背包也满则**掉落物留在地上** |
+| **1 / 2** | **切换当前使用的武器槽**；只有激活槽那把参与攻击，空槽＝徒手（22 伤害 / 140 范围）；有武器时伤害取 `weapon.xlsx` 的 `(damage_min+damage_max)/2`，无表行的演示长剑回落 46 / 170 范围 |
 | 空格 / R | 闪避（无敌 + 冷却 + 残影） / 重开 |
 
 **本游戏没有得分**（2026-11-12 用户拍板）：`GameState` 里没有 `score`，击杀 / 拾取都不加分，
 HUD 右上角已改成**只读小地图**（击杀 / 剩余骷髅 / 状态面板按用户要求删除），结算板仍显示 `击杀 / 拾取`。
 击杀骷髅掉长剑，**只有短按且点中掉落物**才写 `pickupTarget`；`updateDrops()` 要求到达
-`<50px` 才结算，有空槽则装备、记 `slotLootItemIds` 并 push 一条 `weaponLootEvents`（由 Worker 转成 `weaponLoot` 消息同步角色面板），两槽都满则走下面的跨堆协议。
-`game.state` 暴露 `weaponSlots` / `activeWeaponSlot`；`equippedWeapon` **保留旧字段名**，语义为
-"当前激活槽的武器"，所以既有断言不破。
+`<50px` 才结算，全部在 **Engine Worker 自己的局内 `InventoryState`** 里完成（有空槽则写 `equipped`，两槽满则 `addToBag()` 占真实格子），背包满则掉落物留在地上。
+`game.state` 暴露 `weaponSlots`（视觉类别 `'longsword'`）/ `weaponDefIds`（真实 authored id）/
+`activeWeaponSlot` / `runInventory` 快照；`equippedWeapon` **保留旧字段名**，语义为
+"当前激活槽是否有武器"，所以既有 37 步 playthrough 不破。
 
-**跨堆拾取协议**：Engine Worker 与主窗口是独立 JS 堆，Worker 看不到 `InventoryState.bag`。
-两槽满时 `game.pack.ts`（`pickupSent` 去重）发一次 `pickup { uid, itemId, name }`；
-`shell-bridge.js` 用 `M.addToBag()` 占真实背包 2×3 格并回 `pickupAck { uid, ok }`；
-`resolvePickupAck()` 在 `ok=true` 时移除掉落物并记 `runBagUids`，`ok=false` 时提示「背包已满 ·
-留在地上」且不移除。`Drop.uid` 由 `nextDropUid()` 单调递增生成，跨局不重置。
-**无论成败都必须回 ack**，否则 `pendingPickup` 永不解除、之后再也捡不了东西。
+**两个堆、两份状态**：主窗口持**局外** `InventoryState`（`bag / equipped / stash`，唯一会被平台 KV 写入的对象），
+Engine Worker 持**局内** `InventoryState`（`GameState.runInventory`，`bag / equipped`，`stash` 恒空）。
+它们是不同 JS 堆里的不同对象，只能经 `BroadcastChannel('forgeax-arena-run')` 传结构化克隆的快照，
+**不能共享引用、不能各自决定对方的格子空间**。`assets/meta/inventory.ts` 是两边共用的
+**无状态规则库**（零 import 纯函数），不是共享状态；`assets/combat/run-inventory.ts` 是 Worker 侧的局内规则入口。
+局内角色面板是只读视图：拖放 / 换装发 `runCommand`，Worker 校验后回 `runState` 快照重绘。
+`Drop.uid` 由 `nextDropUid()` 单调递增生成，跨局不重置。
 
 **掉落已改为数据表驱动**（2026-11-11）：怪物 `monsterId` → `monster.xlsx` 的池 → `loot_pool.xlsx`
 权重 `10/8/6/4/2/1` → `item.xlsx` + `weapon.xlsx` 按 `id` join 的 13 行物品属性，
@@ -118,23 +120,26 @@ HUD 右上角已改成**只读小地图**（击杀 / 剩余骷髅 / 状态面板
 `addToBag()` 只写 bag（局内拾取用），`findFirstFit()`（bag → stash）与 `removeItem()` 只在结算时用，
 三者不要混用；`account.ts::isValidInventoryState()` 同步只校验 `bag` / `stash` / `equipped`。
 
-### 4174 单页连续流程（2026-11-11，标准搜打撤：失败丢失）
+### 4174 单页连续流程（2026-11-13 重构：局外 / 局内两份状态，失败丢失）
 
-**同一个游戏单页**现在是完整流程，不是两个互不相干的入口：
-主窗口 `window.MetaShell.state` 持**唯一权威 `InventoryState`**，局外 UI 与 `shell-bridge.js`
-共享该对象；Engine Worker 通过同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy` / 发 `result`。
+**同一个游戏单页**是完整流程，不是两个互不相干的入口。
+主窗口 `window.MetaShell.state` 是**局外 `InventoryState`**；Engine Worker 的
+`GameState.runInventory` 是**局内 `InventoryState`**（`stash` 恒空）。两个 JS 堆只经同源
+`BroadcastChannel('forgeax-arena-run')` 传结构化克隆的快照。
 
 | 阶段 | 行为 |
 |:--|:--|
 | 局外 | 配装 / 拖放；三把长剑起步在仓库。顶栏只有「出征 / 返回局外 / 背包」，**「怪物数量」输入框已删除**（2026-11-13 用户要求） |
-| 出征 | `buildLoadout()` **只读登记**两个武器槽（实例留在 `InventoryState.equipped`，角色面板要显示本局穿戴）→ 发 `deploy{ seed, armedWeapons, activeWeaponSlot }`（**没有任何数量字段**）→ Worker `setArena(state, arena)` 切到正式 LDtk 地图 → 顶栏切到战斗态，meta 面板隐藏且 `#fx-shell` 指针透明，点击直达 canvas |
-| 战斗拾取 | 显式点击掉落物 → 走近才拾取；优先空武器槽，Worker 发 `weaponLoot { uid, itemId, slot }`，主窗口把**真实实例**写进 `equipped[slot]`（角色面板立即可见、可拖可换）；两槽满则经 `pickup` / `pickupAck` 放进**背包并占真实格子**；背包也满则掉落物留在地上 |
-| 通关 | `settleRun()` 保留仍穿戴的借出武器；已通过 `weaponLoot` 装在身上的战利品**留在装备栏**（`shell-bridge.js` 从 `slotLootItemIds` 里剔除，避免重复入库）；其余 `lootItemIds` 用 `findFirstFit()` 按 bag → stash 入库；本局已进背包的战利品原地保留；满仓只进 `overflow` 报告，**没有 `loose` 兜底** |
-| 阵亡 | 按 `carriedUids`（＝`RunResult.bagLootUids`）用 `removeItem()` **从背包精确删除本局战利品**；借出武器按 uid 删除（可能被拖进过背包）；**清空 `equipped` 全部 10 个槽**（含戒指 / 项链 / 护手 / 头盔 / 胸甲 / 裤子 / 靴子）。`stash` 与局外旧背包物品保留 |
-| 返回局外 | 重新配装出征；每次 render 把 `InventoryState` 写成一个平台 KV blob（**无宿主时零写入**，无需登录，见下节） |
+| 出征 | `M.takeIntoRun(lobby)` 复制 `bag + equipped` 成 `RunLoadout` 并**清空局外这两处**（`stash` 不动）→ 发 `deploy { seed, loadout }`（**没有任何数量字段**）→ Worker `setArena(state, arena)` 切正式 LDtk 图、`makeRunInventory(loadout)` 建自己的状态 → 主窗口 `host.enterRun(loadout)` 把角色面板切成只读快照视图；战斗态隐藏 meta 面板且 `#fx-shell` 指针透明 |
+| 战斗拾取 | 显式点击掉落物 → 走近才拾取；`combat/run-inventory.ts::collectDrop()` 在 **Worker 堆内**优先写 `equipped` 空武器槽，其次 `addToBag()` 占真实 2×3 格；背包满则掉落物留地上。Worker 每帧用签名比较，状态变化才发 `runState` 快照 |
+| 局内换装 | 仓库面板隐藏（`#fx-shell.fx-run-mode #stash-panel`，拖放也被拦截）；拖放与 1/2 切槽一律走 `runCommand { action: place / equip / unequip / active }`，Worker 校验后回 `runState`；**局内快照永不写平台 KV** |
+| 通关 | `result { outcome:'cleared', loadout }` 带**整份局内状态**，主窗口 `M.bringBack(lobby, loadout)` 整份覆盖回去；不找格子、不新建实例、不统计 overflow |
+| 阵亡 | `result { outcome:'gameOver', loadout: null }`；主窗口不写回任何东西。局外在出征时已清空，等于**带入物品与本局战利品全部丢失**，`stash` 保留 |
+| 中途退出 / 刷新 / 关预览 | 发 `abort`，Worker 丢弃局内状态；**按阵亡处理**。无宿主不写盘，平台上 KV 存的是出征时已清空的局外，刷新恢复不了局内物品 |
 
-`Settlement = { outcome, lootItemIds, carriedUids }`：`lootItemIds` 是 authored id，
-`carriedUids` 是掉落 uid，**不能合并成一个数组**（否则阵亡会误删仓库里的同名长剑）。
+`RunLoadout = { bag, equipped, activeWeaponSlot }` 是唯一跨堆载荷；没有 `borrowed`、
+没有 `carriedUids` / `lootItemIds` / `findFirstFit` 还原式入库，也没有 `overflow` / `unregistered`。
+
 
 `scripts/inject-shell.mjs` 把局外 UI 注入 `dist/index.html`（`dist/` 是 gitignored 生成物，
 `build` / `play` / `package` 都会重建它），CSS 由 `scopeCss()` 限定到 `#fx-shell`，`--check` 防漂移。
@@ -151,14 +156,14 @@ HUD 右上角已改成**只读小地图**（击杀 / 剩余骷髅 / 状态面板
 | 项 | 契约 |
 |:--|:--|
 | 身份 | `user.current` → `user.getCurrent()`；`assets/runtime/zaohua-platform-init.js` 在 `initialize()` 后读身份并推给壳层。**游戏内无注册 / 密码 / 登录**，平台按用户命名空间隔离 |
-| 存盘 | **单 key `forgeax.save.v1` + 一个 `{schemaVersion:1, state}` 纯 JSON blob**（整个 `InventoryState`）。`assets/meta/account.ts`（零 import）负责 envelope、结构校验、版本/损坏兜底与写队列；`shell-bridge.js#syncBadge()`（唯一 `onRender` 钩子）每次 `render()` 调 `MetaStore.persist()` |
+| 存盘 | **单 key `forgeax.save.v1` + 一个 `{schemaVersion:1, state}` 纯 JSON blob**（整个**局外** `InventoryState`）。`assets/meta/account.ts`（零 import）负责 envelope、结构校验、版本/损坏兜底与写队列；`shell-bridge.js#syncBadge()`（唯一 `onRender` 钩子）**只在局外阶段**调 `MetaStore.persist()`，局内快照绝不入档 |
 | 平台入口 | ESM 入口声明 `user.current` + `storage`，`await storage.get(SAVE_KEY)` 后调 `MetaShell.mountPlatformStore({ userId, initial, read, write })`。**经典壳层脚本先于 deferred ESM 入口执行**，故 `meta-ui/platform-store.js` 暴露 `mountPlatform()` 但**默认休眠**；`initial` 是已 await 的值，壳层不处理 Promise |
 | 本地（无宿主） | **完全不存盘**：`MetaStore` 写队列为 `null`，`persist()` 直接返回，首屏用独立页已初始化的默认 `InventoryState(3)`。没有本地 adapter、没有镜像 key、没有 `local-dev` 身份、没有 `simulateRefresh()`；顶栏玩家名显示 `—`、存档徽标隐藏。**持久化 / 账号隔离 / 跨设备恢复只在发布到平台后验** |
 | 纯 JSON 红线 | 宿主预览用 `structuredClone`、平台/devStub 用 `JSON.stringify`，所以 `encodeSave()` 强制一次 `JSON.parse(JSON.stringify(...))`；存档里不得出现 Date / Map / class 实例 |
 | 纯 JSON 红线 | 宿主预览用 `structuredClone`、平台/devStub 用 `JSON.stringify`，所以 `encodeSave()` 强制一次 `JSON.parse(JSON.stringify(...))`；存档里不得出现 Date / Map / class 实例 |
 | 冻结 | Worker 的 `lock` / `unlock` 分支保留为协议兼容，但遮罩删除后**没有生产者**；平台 pause/resume 走独立 `paused` 冻结位（保护清单 13） |
-| 局内背包 | `B` / `I` / 顶栏按钮打开 `#fx-bag-content` 浮层，ESC 关闭；战斗继续推进，浮层外点击仍到 canvas |
-| 立即生效 | 发生变化的装备槽经 `equip { slots: [bool\|null, bool\|null], activeWeaponSlot }` 发到 Worker，直接改本局 `weaponSlots`；`null` 保留借出武器 |
+| 局内背包 | `B` / `I` / 顶栏按钮打开 `#fx-bag-content` 浮层，ESC 关闭；战斗继续推进，浮层外点击仍到 canvas；**仓库面板隐藏且不可拖放** |
+| 立即生效 | 装备改动经 `runCommand` 在 Worker 内校验并执行，`syncWeaponSlots()` 从 `runInventory.equipped[0/1]` 重算武器槽；激活槽也来自 `runInventory.activeWeaponSlot` |
 
 `meta-ui/account.js` / `platform-store.js` **只由 `inject-shell.mjs` 注入 4174**；独立 `file://` 双击页不引用、不入存档（演示页定位，`file://` 与 4174 不同源）。
 
@@ -170,7 +175,7 @@ HUD 右上角已改成**只读小地图**（击杀 / 剩余骷髅 / 状态面板
 - 攻击**没有**锥形范围、软锁定、溅射；`attackOrder + targetEnemy` 单体结算，一次点击只挥一次。
 - 闪避期间鼠标不改写落点、攻击指令不结算。
 - 自动验收夹具里两只骷髅、**两个武器槽都空**；击杀掉长剑，**显式点击并走到 <50px** 才装进第一个空槽；
-  激活槽为长剑时范围 140→170、伤害 22→46。**没有默认出怪逻辑**：`spawnFromMap(map)` 严格按
+  激活槽有武器时范围 140→170；伤害按 `weapon.xlsx` 中值，演示长剑（无表行）回落 46。
   `map.monsters` 生成，正式地图 7 只；想改数量只能改 LDtk 实体层。
 - **没有得分、没有自动拾取、没有 `loose`**（三者都是用户 2026-11-12 明确要求删除的）；
   战利品只能进背包或装备栏才带得出，背包与装备栏都满就留在地上捡不起来。
@@ -179,9 +184,9 @@ HUD 右上角已改成**只读小地图**（击杀 / 剩余骷髅 / 状态面板
 
 ## 保护清单（改之前先说清改什么、为什么）
 
-1. 交互语义唯一来源：`assets/combat/state.ts` 的 `StepInput`（`pointerDown` / `pointerHeld` / `pointerUp` / `switchWeapon`）与 `GameState`（`pickupTarget` / `pendingPickup` / `runBagUids` / `slotLootItemIds`）、`assets/combat/movement.ts` 的三态移动与点击分类、`assets/combat/weapons.ts` 的显式拾取与 `resolvePickupAck()`、`assets/combat/attack.ts` 的单体攻击指令与 `dropAtPoint()`、`assets/meta/inventory.ts` 的三处存放/格子/装备规则。`assets/game/simulation.ts` **只是纯 re-export 兼容门面**，禁止在这里写玩法逻辑。
+   **跨堆边界（2026-11-13 续三重写）**：主窗口独占**局外** `InventoryState`（含 `stash`）；Engine Worker 独占**局内** `InventoryState`（`GameState.runInventory`，`stash` 恒空）。两边只经 `deploy { seed, loadout }` / `result { outcome, loadout }` / `runCommand` / `runState` / `abort` 传快照，**别在任一边造第三份状态，也别把局内快照写进平台 KV**。`assets/meta/inventory.ts` 只作为无状态规则库被两边 import。
    战斗与局外**共用 weapon slot 语义**（2 槽 + 1 激活），但各自持有状态；`meta-ui/inventory.js` / `account.js` 是生成物，改逻辑改 `.ts` 后必须重跑 `build-meta-ui.mjs`。
-   **跨堆边界**：Worker 只管两个武器槽 + 掉落物，主窗口独占 `InventoryState` 的格子与装备栏；两者经 `weaponLoot`（槽装备同步）/ `pickup` · `pickupAck`（背包）/ `deploy` · `result`（出征结算）通信，别在 Worker 里造第二份背包。`GameState.weaponLootEvents` 是 combat 纯逻辑产生的事件队列，只能由 `game.pack.ts` 每帧 drain 一次；`shell-bridge.js` 写入 `equipped` 前必须预对齐 `lastEquipped` 基线，否则回环 `equip` 会重置 Worker 的 `activeWeaponSlot`。
+   **跨堆边界（2026-11-13 续三重写）**：主窗口独占**局外** `InventoryState`（含 `stash`）；Engine Worker 独占**局内** `InventoryState`（`GameState.runInventory`，`stash` 恒空）。两边只经 `deploy { seed, loadout }` / `result { outcome, loadout }` / `runCommand` / `runState` / `abort` 传快照，**别在任一边造第三份状态，也别把局内快照写进平台 KV**。`assets/meta/inventory.ts` 只作为无状态规则库被两边 import。
 2. `assets/game/game.pack.ts` 每帧用 `host.drawingBufferSize()` 把物理像素换算回逻辑坐标。Worker 里没有 `document`，`gameHost.canvas` 是 `undefined`；**不要**改回 `VIEW_W/VIEW_H` 常量分母。
 3. `scripts/playthrough.mjs` / `scripts/playthrough-resize.mjs` 的断言，以及 `assets/combat/__tests__/`、`assets/{battle,meta,talent,resource}/__tests__/` 的独立单测 —— **不允许为了让脚本变绿而放宽断言或改游戏逻辑迎合测试**。断言减少必须解释。
 4. 启动统一走造化插件（Game Builder），但**预览有两条链路**：普通 `preview_start` 走 `project build` 的 `dist/`（**无壳层、只有战斗画面**）；要看完整单页必须用 **`preview_reload(validate: true)` / 上传**，它才走 `package.json#scripts.package` → `scripts/package-with-shell.mjs` 的玩家产物（含单页壳层 + 平台 bootstrap）。**不再提供本地 `.bat` 启动器**。旧 `forgeax project preview` 链路只监听 IPv6 `[::1]:4174`，URL 必须是 `localhost`（见 feedback 第 14 条），仅作排障与单页验收。
@@ -217,7 +222,7 @@ HUD 右上角已改成**只读小地图**（击杀 / 剩余骷髅 / 状态面板
 它除了跑下面各项 + meta-ui 页面验收，还强制 `test` ≥ **83** 条、`playthrough` ≥ 35 步、
 `resize` ≥ 4 步 —— **新会话删断言让测试变绿，会在这里失败**。
 `verify.sh` 按模块附加：命中 `meta` 跑 `build-meta-ui.mjs --check`、`verify-meta-ui.cjs`（13 条真实拖放）
-与 `inject-shell.mjs --check` + `verify-shell.cjs`（31 条单页断言）；命中 `resource` 跑
+与 `inject-shell.mjs --check` + `verify-shell.cjs`（37 条单页断言）；命中 `resource` 跑
 `export_tables.py --check`；命中 `combat` 跑 31000 次/池掉落跑批。
 `verify-all.sh` 把壳层注入 + 单页验收放在**全流程最后一步**：`build` / `play` / `package`
 **都会重建 `dist/`**，只在 build 后注入会被后面的 `package` 冲掉，4174 又变回无壳层页面。
@@ -247,7 +252,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 29/29
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **131** 项全过（`verify-all.sh` 下限仍为 **83**：combat 69 + meta 40 + battle 4 + talent 3 + resource 13 + 模板 2。历史来源：LDtk 地图 6、攻击架构 20、拆表 join 2、OOXML 包护栏 1；account 单测 15 → 11 是 2026-11-11 删本地存盘后的基线；2026-11-13 续 +3：weapons 9→10（weaponLoot 事件）、run-settlement 8→10（不重复归还 / 阵亡清 10 槽）） |
+| `test` | **139** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-13 续三：+8 `run-inventory.test.ts`、weapons 9→10、run-settlement 8→10，删去旧结算 / 跨堆拾取断言） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` 四张表与 `generated/*.ts` 一致，且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
@@ -265,15 +270,15 @@ node scripts/verify-shell.cjs                            # 4174 单页 29/29
 
 下表把「当前功能契约」逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 131 条＝combat 69（loot 14 + movement 11 + attack-spec 10 +
+删断言不会让这张表悄悄失效。单测 139 条＝combat 69（loot 14 + movement 11 + attack-spec 10 +
 projectiles 10 + weapons **10** + **world 11** + modifiers 3）、
 meta 40（inventory 16 + platform-KV account 11 + run-settlement **10** + meta 3）、battle 4、talent 3、
 resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不随新增断言抬高）。
-浏览器验收：playthrough 13 个命名场景（展开 36–37 steps，下限 35）、独立页 13 条、4174 单页 31 条
+浏览器验收：playthrough 13 个命名场景（展开 36–37 steps，下限 35）、独立页 13 条、4174 单页 37 条
 （含 7 条平台身份 / KV 存档 + 1 条「无宿主不写盘」+ 2 条平台 lifecycle + 2 条本轮新增）。
 真实硬件 WebGPU 冒烟（历史一次性脚本）：`node artifacts/smoke-login-bag.mjs` 曾覆盖「强制登录 / 刷新后存档」，
 **该脚本按已删除的本地登录 + 本地存盘流程编写，现已不适用**；现行契约里无宿主不写盘、刷新不恢复，
-本地验收以 `verify-shell.cjs` 的 31 条为准。
+本地验收以 `verify-shell.cjs` 的 37 条为准。
 
 | 功能契约 | 单测 `assets/combat/__tests__/movement.test.ts` | 浏览器 `scripts/playthrough.mjs` |
 |:--|:--|:--|
@@ -292,22 +297,22 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 两武器槽 / 1·2 切换 / 空槽徒手 / 只按激活槽结算 | `assets/combat/__tests__/weapons.test.ts`（9 条） | `Digit1 / Digit2 switch which weapon slot is in use` |
 | **没有得分** | `weapons.test.ts`：`'score' in s === false` | `playthrough.mjs`：`'score' in equipped === false`、`kills never decrease` |
 | **拾取必须显式点击、走过不自动拿** | `loot.test.ts`：`walking past a drop without clicking never collects it` + 显式设 `pickupTarget` 才拾取 | `playthrough.mjs`：击杀后断言 `drops.includes('longsword')`、`equippedWeapon === null`，再 `mouse.click(dropAt)` 才装备 |
-| **背包满时掉落物留在地上** | `weapons.test.ts`：`resolvePickupAck(false)` 后 drop 仍在、`runBagUids` 为空 | — |
-| **跨堆 `pickup` / `pickupAck` 协议** | `weapons.test.ts`：第三把剑等待 bag decision、`ack(true)` 移除掉落物并记 uid | `verify-shell.cjs` 已模拟 `pickup` 消息并断言该 uid 落进 `bag`（`cleared keeps worn loot equipped and banks the bag loot once`）；`pickupAck` 回包本身仍未挂断言 |
+| **背包满时掉落物留在地上** | `weapons.test.ts`：`collectDrop()` 在填满 4 个 2×3 格子后返回 `full`，drop 仍在、`carriedItems` 不增加 | — |
+| **局内拾取全部在 Worker 堆内完成** | `weapons.test.ts`（第三把剑进 `runInventory.bag`、满仓留地上）、`run-inventory.test.ts`（`collectDrop` 三态） | `verify-shell.cjs`：`Worker-side bag loot shows up in the in-run bag` |
 | **只有三处存放区域（无 `loose`）** | `inventory.test.ts`：`'loose' in s === false`、`addToBag()` 满仓返回 `null`；`account.test.ts` 结构校验不含 `loose` | `verify-meta-ui.cjs`：`starts with 3 swords in the stash and no loose tray`（`trayCount() === 0`）；`verify-shell.cjs` 的 `snap()` 记 `noLoose` 供取证，**但该字段未挂断言** |
 | 背包 5×8、仓库 16×10、长剑 2×3、10 装备槽、占格碰撞/越界、跨容器拖放、穿脱、类型校验 | `assets/meta/__tests__/inventory.test.ts`（16 条） | `scripts/verify-meta-ui.cjs`（13 条真实拖放断言） |
 | 表结构 / 生成物 SHA-256 / 权重梯 / 引用完整性 | `assets/resource/__tests__/tables.test.ts`（5 条）+ `export_tables.py --check` | `scripts/loot-report.mjs`（31000 次/池，偏差 >1% 即失败） |
 | 权重掉落、固定种子可复现、多怪部署、战利品记录 | `assets/combat/__tests__/loot.test.ts`（14 条） | — |
-| 单页登记 / 通关保留 / 阵亡清空装备（含本局 bag loot）/ 返回局外 | `assets/meta/__tests__/run-settlement.test.ts`（10 条） | `scripts/verify-shell.cjs`（31 条，含出征广播、战斗态切换、阵亡 10 槽清空与平台 lifecycle） |
+| 两份状态搬入 / 整份搬回 / 阵亡与中途退出整份丢弃 | `assets/meta/__tests__/run-settlement.test.ts`（10 条） | `scripts/verify-shell.cjs`（37 条，含出征广播、战斗态切换、阵亡 10 槽清空与平台 lifecycle） |
 | 初始状态 / reload 可玩 | `empty-project.test.ts`（2 条工程契约） | `spawn: ...` + `reload preserves a playable frame` |
 | 平台 lifecycle：pause/resume 真实停战斗、状态可翻转、消息送达 Worker | — | `scripts/verify-shell.cjs`：`platform lifecycle adapter flips paused and stays registered` + `pause/resume are forwarded to the Engine Worker over the run channel` |
 | 平台身份 / KV 存档：无登录、单 key 版本化 blob、损坏兜底、平台桥切换、纯 JSON 写入（**均为纯逻辑验证，无宿主不落盘；刷新恢复 / 账号隔离只在发布到平台后验**） | `assets/meta/__tests__/account.test.ts`（11 条：envelope / 校验 / 迁移兜底 / 写队列） | `scripts/verify-shell.cjs`（8 条，`store.*`；含「无宿主不写盘」断言） |
 
-| **大地图 / 相机 / A* / 碰撞 / 只读小地图** | `assets/combat/__tests__/world.test.ts`（11 条：IntGrid 取值、边界与阻挡、落点吸附、相机 clamp、坐标互逆、A* 绕墙且不穿墙、LOS、夹具尺寸、默认夹具 vs 正式 7 只、投影字段、玩家不穿墙） | `scripts/playthrough.mjs`（37 steps，夹具上坐标不变）+ `scripts/verify-shell.cjs`（deploy 只发 seed / 借出武器 / 激活槽） |
-| **怪物按地图实体生成，运行时无数量字段** | `loot.test.ts`：`spawns exactly the default map entity layer` / `playable LDtk entity layer is the only population authority` / `deployRun keeps seed and borrowed weapons without any count field` | `verify-shell.cjs`：`deploy sends only seed + borrowed weapons; the monster-count UI is gone` |
+| **大地图 / 相机 / A* / 碰撞 / 只读小地图** | `assets/combat/__tests__/world.test.ts`（11 条） | `scripts/playthrough.mjs`（37 steps）+ `scripts/verify-shell.cjs`（`deploy` 只发 seed + loadout） |
+| **怪物按地图实体生成，运行时无数量字段** | `loot.test.ts`：`deployRun copies the WHOLE loadout ... without any count field` | `verify-shell.cjs`：`deploy sends only seed + the whole loadout; the monster-count UI is gone` |
 | **局内拾取武器真实同步到角色面板装备栏** | `weapons.test.ts`：`equipping loot emits one character-panel event per slot, cleared on reset` | `verify-shell.cjs`：`in-run loot is mirrored into the character panel weapon slot` + `cleared keeps worn loot equipped and banks the bag loot once` |
 | **阵亡清空全部 10 个装备槽（含留局外的护甲首饰）** | `run-settlement.test.ts`：`gameOver clears every worn item, not just the two weapon slots` | `verify-shell.cjs`：`gameOver wipes ALL ten equipment slots`（`snap().worn === 0`） |
-| **通关不重复归还 / 不重复入库战利品** | `run-settlement.test.ts`：`cleared does not duplicate a borrowed weapon that stayed equipped` | `verify-shell.cjs`：`cleared keeps worn loot equipped and banks the bag loot once`（`bagDefs.length === 1`） |
+| **通关整份搬回、阵亡整份丢弃** | `run-settlement.test.ts`：`a clear brings the WHOLE run state home` / `a loss discards the run` | `verify-shell.cjs`：`cleared brings the WHOLE run state home` / `gameOver permanently loses every carried item` / `a mid-run return sends abort` |
 
 ## 已知陷阱速查
 
@@ -320,7 +325,7 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 点敌人后读不到 `attackOrder` | `justReleased` 释放沿要等引擎下一帧，验收脚本点完需 `advance` 一帧 |
 | 长剑捡不到、角色停在 132 px 外挥砍 | 掉落点旁有活骷髅，点击被判成「点敌人」；已加掉落物优先级 |
 | 走过掉落物却没自动装备 | **这是新规则不是 bug**：拾取必须短按点中掉落物，走过去不会自动捡（`pickupTarget` 为 null）。`updateDrops()` 还要求走到 `<50px` 才结算 |
-| 拾取一次之后再也捡不了东西 | `pendingPickup` 没被解除：主窗口收到 `pickup` 后**无论成败都要回 `pickupAck { uid, ok }`**；`pickupSent` 在 `deploy` / R 重开时也要清空 |
+| 局内角色面板的拖放改到了主窗口对象上 | 局内 `state` 是 Worker 快照的副本，`commit()` 在 `runMode` 下**只发 `runCommand`**，绝不本地修改；Worker 回 `runState` 后 `host.updateRun()` 才重绘。直接改快照会与 Worker 分叉 |
 | 背包已满但战利品凭空消失 / 出现在仓库 | 满仓时 `addToBag()` 返回 `null`、掉落物留在地上；`findFirstFit()`（bag→stash）只在**结算**时用，别在拾取时调用 |
 | 大视口四象限点地面被判成点敌人 | 骷髅会追过来；移动类验收步骤前按 R 隔离 |
 | `pnpm: command not found` / build 被拦 | 用 `./node_modules/.bin/*`；build / package 带 `CODEBUDDY_SAFE_DELETE_ENABLED=0` |
@@ -377,4 +382,4 @@ git show <hash>:<path>               # 取回某个旧版本的文件内容
    禁止 `push --force`。这是用户 2026-11-10 的硬性要求：**后面的所有改动，做完后都先向 git 提交一份**。
 | 小测试地图做成 24 行后投影整体偏移 | 24×32 = 768 > 720，相机被 clamp 到 y=48；夹具必须 ≤ 视口（现为 22 行 = 704）才能让 camera 恒 `(0,0)`、屏幕归一化不漂移 |
 | 正式地图里玩家点地面走进墙 / 怪卡在墙后 | `setTarget()` 要 `nearestWalkable()` 吸附 + `findPath()` 出路径；`walk()` / `updateSkeletons()` 必须做分轴滑动碰撞，直线追击会穿墙 |
-| 出征后怪数还是 2 / 找怪物数量输入 | 数量只由 `map.monsters` 决定；运行时与 UI 已彻底删除怪数字段，`deploy` 只发 `seed / armedWeapons / activeWeaponSlot`，`deployed` ack 也不带数量。自动验收默认夹具 2 只、出征后正式地图 7 只 |
+| 出征后怪数还是 2 / 找怪物数量输入 | 数量只由 `map.monsters` 决定；运行时与 UI 已彻底删除怪数字段，`deploy` 只发 `seed / loadout`，`deployed` ack 也不带数量。自动验收默认夹具 2 只、出征后正式地图 7 只 |

@@ -173,8 +173,12 @@ describe('arena population and loot settlement', () => {
     updateDrops(s, 1 / 60);
     expect(s.drops).toHaveLength(0);
     expect(s.carriedItems).toEqual([expected]);
-    expect(s.slotLootItemIds).toEqual([expected]);
-    expect(s.weaponSlots[0]).toBe('longsword');
+    // The authored id now lives in the Worker's OWN inventory, not in a
+    // settlement queue that had to be replayed in the main window.
+    expect(s.runInventory.equipped[0]?.defId).toBe(expected);
+    expect(s.weaponSlots[0]).toBe(expected);
+    expect(projection(s).weaponDefIds[0]).toBe(expected);
+    expect(projection(s).equippedWeapon).toBe('longsword');
   });
 
   it('walking past a drop without clicking never collects it', () => {
@@ -190,22 +194,34 @@ describe('arena population and loot settlement', () => {
     expect(s.weaponSlots[0]).toBeNull();
   });
 
-  it('deployRun keeps seed and borrowed weapons without any count field', () => {
+  it('deployRun copies the WHOLE loadout into the Worker without any count field', () => {
     const s = createState();
-    deployRun(s, { seed: 909, armedWeapons: 2, activeWeaponSlot: 1 });
+    const loadout = {
+      bag: [{ uid: 'bag-1', defId: 'longsword', container: 'bag' as const, col: 0, row: 0 }],
+      equipped: [
+        { uid: 'w1', defId: '10001' },
+        { uid: 'w2', defId: '10006' },
+      ],
+      activeWeaponSlot: 1 as const,
+    };
+    deployRun(s, { seed: 909, loadout });
     expect(s.skeletons).toHaveLength(testArena.monsters.length);
     expect(s.runSeed).toBe(909);
-    expect(s.weaponSlots).toEqual(['longsword', 'longsword']);
+    expect(s.weaponSlots).toEqual(['10001', '10006']);
     expect(s.activeWeaponSlot).toBe(1);
+    expect(s.runInventory.bag.map((i) => i.uid)).toEqual(['bag-1']);
+    expect(s.runInventory.equipped).toHaveLength(10);
+    expect(s.runInventory.stash).toEqual([]);
     expect(s.lootLog).toHaveLength(0);
     expect(s.carriedItems).toHaveLength(0);
     expect(s.kills).toBe(0);
   });
 
-  it('deployRun with no weapons resets to bare hands', () => {
+  it('deployRun with an empty loadout resets to bare hands', () => {
     const s = createState();
-    deployRun(s, { armedWeapons: 0 });
+    deployRun(s, { loadout: { bag: [], equipped: [], activeWeaponSlot: 0 } });
     expect(s.weaponSlots).toEqual([null, null]);
+    expect(s.runInventory.bag).toEqual([]);
     expect(s.skeletons).toHaveLength(testArena.monsters.length);
   });
 

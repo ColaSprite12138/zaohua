@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  addToBag, buildLoadout, createInventoryState, equipItem, findItem,
-  itemDef, registerItemDefs, settleRun, EQUIP_SLOTS,
-  type InventoryState,
+  addToBag, bringBack, createInventoryState, equipItem, itemDef,
+  loadoutFromRun, registerItemDefs, runInventoryFrom, takeIntoRun,
+  EQUIP_SLOTS, type InventoryState,
 } from '../inventory.ts';
 
 const AUTHORED = [
@@ -25,122 +25,107 @@ describe('authored item catalog', () => {
   });
 });
 
-describe('standard extraction-shooter settlement', () => {
-  let state: InventoryState;
+describe('run transfer — two heaps, explicit copy-in / copy-out', () => {
+  let lobby: InventoryState;
+
   beforeEach(() => {
     registerItemDefs(AUTHORED);
-    state = createInventoryState(2);
-    expect(equipItem(state, 'sword-1', 0)).toBe(true);
+    lobby = createInventoryState(2);
+    expect(equipItem(lobby, 'sword-1', 0)).toBe(true);
+    expect(addToBag(lobby, 'bag-loot', '10006')).not.toBeNull();
   });
 
-  it('buildLoadout registers worn weapons without hiding them from the in-run panel', () => {
-    const loan = buildLoadout(state);
-    expect(loan.items).toHaveLength(1);
-    expect(loan.armedWeapons).toBe(1);
-    expect(loan.items[0]!.defId).toBe('longsword');
-    // The instances stay equipped: clearing them here made the character
-    // panel's weapon slots look empty during a run (user-reported bug).
-    expect(state.equipped[0]?.uid).toBe('sword-1');
-    expect(findItem(state, 'sword-1')?.where).toBe('equipped');
-    expect(state.stash).toHaveLength(1);
+  it('takeIntoRun copies bag + equipped and EMPTIES the lobby; stash stays', () => {
+    const loadout = takeIntoRun(lobby);
+    expect(loadout.bag.map((i) => i.uid)).toEqual(['bag-loot']);
+    expect(loadout.equipped[0]).toEqual({ uid: 'sword-1', defId: 'longsword' });
+    expect(loadout.equipped).toHaveLength(EQUIP_SLOTS.length);
+    expect(lobby.bag).toEqual([]);
+    expect(lobby.equipped.every((slot) => slot === null)).toBe(true);
+    expect(lobby.stash).toHaveLength(1);
     expect(EQUIP_SLOTS).toHaveLength(10);
   });
 
-  it('cleared returns borrowed weapons and banks authored loot', () => {
-    const loan = buildLoadout(state);
-    const report = settleRun(state, loan, {
-      outcome: 'cleared', lootItemIds: ['10006', '20006'], carriedUids: [],
-    });
-    expect(report).toEqual({
-      returned: 1, lost: 0, gained: 2, unregistered: [], overflow: [],
-    });
-    expect(state.equipped[0]?.uid).toBe('sword-1');
-    expect(state.bag).toHaveLength(2);
-    expect(state.bag.map((i) => i.defId).sort()).toEqual(['10006', '20006']);
+  it('the loadout is a deep copy, not an alias of the lobby', () => {
+    const loadout = takeIntoRun(lobby);
+    expect(loadout.bag).not.toBe(lobby.bag);
+    expect(loadout.equipped).not.toBe(lobby.equipped);
+    loadout.bag[0]!.col = 3;
+    loadout.equipped[0] = { uid: 'x', defId: 'changed' };
+    expect(lobby.bag).toEqual([]);
+    expect(lobby.equipped[0]).toBeNull();
   });
 
-  it('gameOver permanently loses borrowed weapons and loot', () => {
-    const loan = buildLoadout(state);
-    const report = settleRun(state, loan, {
-      outcome: 'gameOver', lootItemIds: ['10006'], carriedUids: [],
-    });
-    expect(report).toEqual({
-      returned: 0, lost: 1, gained: 0, unregistered: [], overflow: [],
-    });
-    expect(state.equipped[0]).toBeNull();
-    expect(state.bag).toHaveLength(0);
-    expect(state.stash).toHaveLength(1); // only the spare demo sword
+  it('runInventoryFrom builds a Worker state whose stash is ALWAYS empty', () => {
+    const loadout = takeIntoRun(lobby);
+    const run = runInventoryFrom(loadout);
+    expect(run.stash).toEqual([]);
+    expect(run.bag).toHaveLength(1);
+    expect(run.equipped[0]?.uid).toBe('sword-1');
+    expect(run.equipped).toHaveLength(10);
+    expect('loose' in run).toBe(false);
   });
 
-  it('unknown loot ids are reported, never silently dropped', () => {
-    const loan = buildLoadout(state);
-    const report = settleRun(state, loan, {
-      outcome: 'cleared', lootItemIds: ['99999', '10001'], carriedUids: [],
+  it('runInventoryFrom normalises a malformed short equipped array', () => {
+    const run = runInventoryFrom({
+      bag: [], equipped: [{ uid: 'only-one', defId: 'longsword' }], activeWeaponSlot: 0,
     });
-    expect(report.unregistered).toEqual(['99999']);
-    expect(report.gained).toBe(1);
-    expect(state.bag.map((i) => i.defId)).toEqual(['10001']);
+    expect(run.equipped).toHaveLength(10);
+    expect(run.equipped[0]?.uid).toBe('only-one');
+    expect(run.equipped[9]).toBeNull();
   });
 
-  it('a full bag spills settlement loot into the stash; the rest is reported', () => {
-    const loan = buildLoadout(state);
-    const ids = Array.from({ length: 30 }, () => '10001');
-    const report = settleRun(state, loan, {
-      outcome: 'cleared', lootItemIds: ids, carriedUids: [],
-    });
-    expect(report.gained).toBe(30);
-    const total = state.bag.length + state.stash.length;
-    // 1 spare demo sword + every placed item; overflow is reported, never hidden.
-    expect(total + report.overflow.length).toBe(31);
-    expect(report.overflow.length).toBeGreaterThan(0);
-    expect('loose' in state).toBe(false);
+  it('a clear brings the WHOLE run state home, including new loot and swaps', () => {
+    const loadout = takeIntoRun(lobby);
+    const run = runInventoryFrom(loadout);
+    expect(addToBag(run, 'fresh-loot', '20006')).not.toBeNull();
+    run.equipped[2] = { uid: 'ring-1', defId: 'longsword' };
+    run.activeWeaponSlot = 1;
+    bringBack(lobby, loadoutFromRun(run));
+    expect(lobby.bag.map((i) => i.uid).sort()).toEqual(['bag-loot', 'fresh-loot']);
+    expect(lobby.equipped[0]?.uid).toBe('sword-1');
+    expect(lobby.equipped[2]?.uid).toBe('ring-1');
+    expect(lobby.activeWeaponSlot).toBe(1);
+    expect(lobby.stash).toHaveLength(1);
   });
 
-  it('cleared does not duplicate a borrowed weapon that stayed equipped', () => {
-    const loan = buildLoadout(state);
-    const report = settleRun(state, loan, {
-      outcome: 'cleared', lootItemIds: [], carriedUids: [],
-    });
-    expect(report.returned).toBe(1);
-    expect(state.equipped[0]?.uid).toBe('sword-1');
-    expect(state.bag.filter((i) => i.uid === 'sword-1')).toHaveLength(0);
-    expect(state.stash.filter((i) => i.uid === 'sword-1')).toHaveLength(0);
+  it('a loss discards the run: nothing is written back, stash survives', () => {
+    takeIntoRun(lobby);
+    // No bringBack() call on a gameOver / abort: the whole run state dies
+    // with the Worker and the lobby remains exactly as deploy left it.
+    expect(lobby.bag).toEqual([]);
+    expect(lobby.equipped.every((slot) => slot === null)).toBe(true);
+    expect(lobby.stash).toHaveLength(1);
   });
 
-  it('gameOver clears every worn item, not just the two weapon slots', () => {
-    // Grid logic does not police slot kinds; hand-place two worn non-weapon
-    // items so the ten-slot wipe is exercised end to end.
-    state.equipped[2] = { uid: 'ring-1', defId: 'longsword' };
-    state.equipped[9] = { uid: 'boots-1', defId: 'longsword' };
-    const stashBefore = state.stash.length;
-    const loan = buildLoadout(state);
-    const report = settleRun(state, loan, {
-      outcome: 'gameOver', lootItemIds: [], carriedUids: [],
-    });
-    expect(state.equipped.every((slot) => slot === null)).toBe(true);
-    expect(report.lost).toBe(3); // borrowed weapon + ring + boots
-    expect(state.stash).toHaveLength(stashBefore);
+  it('a mid-run return / refresh also discards everything carried', () => {
+    takeIntoRun(lobby);
+    // Refreshing without a platform host starts from the default state, and
+    // on the platform the KV blob holds the EMPTIED lobby from deploy time.
+    const reloaded = createInventoryState(3);
+    expect(reloaded.bag).toEqual([]);
+    expect(reloaded.equipped.every((slot) => slot === null)).toBe(true);
+    expect(reloaded.stash).toHaveLength(3);
   });
 
-  it('a lost run removes this run\'s bag loot but keeps older stash items', () => {
-    const loan = buildLoadout(state);
-    expect(addToBag(state, 'run-loot-1', '10001')).not.toBeNull();
-    const before = state.stash.length;
-    const report = settleRun(state, loan, {
-      outcome: 'gameOver', lootItemIds: [], carriedUids: ['run-loot-1'],
-    });
-    expect(report.lost).toBe(2); // 1 borrowed weapon + 1 bag loot
-    expect(findItem(state, 'run-loot-1')).toBeNull();
-    expect(state.stash).toHaveLength(before);
+  it('an empty lobby deploys an empty loadout', () => {
+    const empty = createInventoryState(0);
+    const loadout = takeIntoRun(empty);
+    expect(loadout.bag).toEqual([]);
+    expect(loadout.equipped.every((slot) => slot === null)).toBe(true);
+    expect(loadout.activeWeaponSlot).toBe(0);
   });
 
-  it('two borrowed weapons both come home on a clear', () => {
-    expect(equipItem(state, 'sword-2', 1)).toBe(true);
-    const loan = buildLoadout(state);
-    expect(loan.armedWeapons).toBe(2);
-    const report = settleRun(state, loan, { outcome: 'cleared', lootItemIds: [], carriedUids: [] });
-    expect(report.returned).toBe(2);
-    expect(state.equipped[0]?.uid).toBe('sword-1');
-    expect(state.equipped[1]?.uid).toBe('sword-2');
+  it('bringBack replaces bag + equipped rather than merging duplicates', () => {
+    takeIntoRun(lobby);
+    bringBack(lobby, {
+      bag: [{ uid: 'only', defId: '10001', container: 'bag', col: 0, row: 0 }],
+      equipped: [{ uid: 'worn', defId: '10006' }],
+      activeWeaponSlot: 0,
+    });
+    expect(lobby.bag.map((i) => i.uid)).toEqual(['only']);
+    expect(lobby.equipped[0]).toEqual({ uid: 'worn', defId: '10006' });
+    expect(lobby.equipped).toHaveLength(10);
+    expect(lobby.stash).toHaveLength(1);
   });
 });

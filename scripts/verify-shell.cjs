@@ -16,21 +16,18 @@
  * lifts it on the first ready frame, so this harness deliberately tests the
  * shell in isolation.
  *
- * Covers the standard extraction-shooter rules:
- *   deploy   -> weapon slots are borrowed out of the inventory
- *   cleared  -> weapons returned + authored loot banked
- *   gameOver -> borrowed weapons and loot permanently lost
+ * Two heaps, two states:
+ *   deploy        -> takeIntoRun(): copy lobby bag+equipped into the Worker,
+ *                    EMPTY the lobby; stash never moves
+ *   runCommand    -> the in-run panel is a read-only view; the Worker owns
+ *                    the state and answers with a fresh `runState` snapshot
+ *   cleared       -> bringBack(): the WHOLE run state returns
+ *   gameOver/abort-> discard the run; the lobby stays empty
  *
- * It also checks that NO local save happens without a platform host, then
- * drives the platform KV contract over a mocked bridge (no login overlay,
- * corrupt/future-version fallback, mountPlatform identity switch, one
- * versioned pure-JSON blob per render). There is no local mirror and no
- * simulated refresh any more: persistence is verified after publishing.
- * Also covers the in-run bag (B opens it without freezing the arena,
- * drag-equipping emits an immediate `equip` message, ESC closes it) and the
- * platform lifecycle adapter (pause/resume forwarded to the Engine Worker):
- * 29 assertions in total. Real account isolation is only verifiable on the
- * published platform, NOT here.
+ * It also checks that NO local save happens without a platform host, that
+ * in-run snapshots are never written to the platform KV blob, and drives the
+ * platform lifecycle adapter (pause/resume forwarded to the Engine Worker).
+ * Real account isolation is only verifiable on the published platform.
  */
 const fs = require('node:fs');
 const path = require('node:path');
@@ -76,15 +73,16 @@ window.addEventListener('error', function (e) {
 </script>
 `;
 
-// Simulated Engine Worker + assertions. Runs in the SAME page but communicates
-// only through BroadcastChannel, exactly like the real Worker does.
+// Simulated Engine Worker: it keeps its OWN InventoryState, applies commands
+// with the same pure rules the real Worker uses, and only ever sends copies.
 const SELFTEST = `
 <div id="selftest-result">PENDING</div>
 <script>
 (function () {
   var out = {
     steps: {}, ok: false, error: null,
-    store: {}, bag: {}, weaponLoot: {}, equipMessages: [], lockMessages: [], platformMessages: [],
+    store: {}, bag: {}, run: {}, deployment: null,
+    commands: [], abortMessages: [], lockMessages: [], platformMessages: [],
   };
   var resultEl = document.getElementById('selftest-result');
   var publish = function () { resultEl.textContent = JSON.stringify(out); };
@@ -94,33 +92,49 @@ const SELFTEST = `
   });
 
   out.earlyErrors = window.__earlyErrors || [];
-  var chan = new BroadcastChannel('forgeax-arena-run');
-  var seenDeploy = null;
-  chan.onmessage = function (ev) {
-    var msg = ev.data;
-    if (msg && msg.type === 'hello') chan.postMessage({ type: 'ready' });
-    if (msg && msg.type === 'deploy') {
-      seenDeploy = msg.deployment;
-      // The Worker answers with no population data: the map owns it entirely.
-      chan.postMessage({ type: 'deployed' });
-    }
-    if (msg && msg.type === 'equip') {
-      out.equipMessages.push({ slots: msg.slots, activeWeaponSlot: msg.activeWeaponSlot });
-    }
-    if (msg && (msg.type === 'lock' || msg.type === 'unlock')) out.lockMessages.push(msg.type);
-    if (msg && (msg.type === 'pause' || msg.type === 'resume')) out.platformMessages.push(msg.type);
-  };
-
   var M = window.MetaInventory, H = window.MetaShell;
   var A = window.MetaAccount, Store = window.MetaStore;
+  var chan = new BroadcastChannel('forgeax-arena-run');
+  var seenDeploy = null;
+  var workerState = null;
+
+  chan.onmessage = function (ev) {
+    var msg = ev.data;
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'hello') chan.postMessage({ type: 'ready' });
+    if (msg.type === 'deploy') {
+      seenDeploy = msg.deployment;
+      workerState = M.runInventoryFrom(msg.deployment.loadout);
+      chan.postMessage({ type: 'deployed', loadout: M.loadoutFromRun(workerState) });
+    }
+    if (msg.type === 'runCommand') {
+      out.commands.push(msg.command);
+      var c = msg.command;
+      if (workerState) {
+        if (c.action === 'place') M.placeItem(workerState, c.uid, 'bag', c.col, c.row);
+        else if (c.action === 'equip') M.equipItem(workerState, c.uid, c.slot, ['bag']);
+        else if (c.action === 'unequip') M.unequipItem(workerState, c.slot, 'bag', c.col, c.row);
+        else if (c.action === 'active') M.setActiveWeapon(workerState, c.slot);
+        chan.postMessage({ type: 'runState', loadout: M.loadoutFromRun(workerState) });
+      }
+    }
+    if (msg.type === 'abort') { out.abortMessages.push(msg.type); workerState = null; }
+    if (msg.type === 'lock' || msg.type === 'unlock') out.lockMessages.push(msg.type);
+    if (msg.type === 'pause' || msg.type === 'resume') out.platformMessages.push(msg.type);
+  };
+
   var snap = function (tag) {
     var s = H.getState();
+    var lobby = H.getLobbyState();
     out.steps[tag] = {
       noLoose: !('loose' in s), bag: s.bag.length, stash: s.stash.length,
       worn: s.equipped.filter(Boolean).length,
       weapon0: s.equipped[0] ? s.equipped[0].defId : null,
       weapon1: s.equipped[1] ? s.equipped[1].defId : null,
       bagDefs: s.bag.map(function (i) { return i.defId; }),
+      lobbyBag: lobby.bag.length, lobbyStash: lobby.stash.length,
+      lobbyWorn: lobby.equipped.filter(Boolean).length,
+      isRun: H.isRun(),
       inBattle: document.getElementById('fx-shell').classList.contains('fx-in-battle'),
       phase: document.getElementById('fx-phase').textContent,
       log: document.getElementById('fx-log').textContent,
@@ -159,9 +173,6 @@ const SELFTEST = `
   (async function () {
     try {
       // ---- NO local save; platform KV contract over a mocked bridge ----
-      // Outside the platform host the shell starts from the default inventory
-      // and writes NOTHING. The Builder ESM entry mounts the platform adapter
-      // only when user.current / storage are actually available.
       var slots = M.EQUIP_SLOTS.length;
       var fallback = function () { return M.createInventoryState(3); };
 
@@ -172,20 +183,16 @@ const SELFTEST = `
         && Store.writeCount() === 0
         && H.getState().stash.length === 3;
 
-      // Build the known 4-item state used by deploy/settlement below. Rendering
-      // here must NOT produce any write (no platform adapter yet).
       addProbe(H.getState(), 'save-probe', 6);
       H.render();
       out.store.noLocalSave = noLocalSave
         && Store.writeCount() === 0
         && Store.lastSaved() === null;
 
-      // Corrupt / future-version blobs fall back without touching any store.
       out.store.corruptFallback =
         A.decodeSave({ schemaVersion: 99, state: { bag: null } }, fallback, slots).stash.length === 3
         && A.decodeSave(null, fallback, slots).stash.length === 3;
 
-      // Mock the platform bridge: real identity shape + a single KV writer.
       var platformWrites = [];
       var mounted = Store.mountPlatform({
         userId: 'alice', displayName: 'Alice',
@@ -206,9 +213,7 @@ const SELFTEST = `
         && !!written
         && JSON.stringify(written) === JSON.stringify(A.encodeSave(H.getState()));
 
-      // Restore the known 4-item state for the deploy/settlement flow below.
-      // This render still reaches the mocked platform writer, but the KV
-      // assertions above have already been captured.
+      // Restore the known 4-item lobby state for the deploy flow below.
       platformWrites.length = 0;
       var restored = M.createInventoryState(3);
       addProbe(restored, 'save-probe', 6);
@@ -222,88 +227,100 @@ const SELFTEST = `
         stash: document.querySelectorAll('#grid-stash .cell').length,
       };
       out.equipSlots = document.querySelectorAll('.equip-slot').length;
-      out.sharedState = H.state === H.getState();
+      out.sharedState = H.state === H.getState() && H.getLobbyState() === H.state;
       snap('initial');
 
-      // Equip one weapon, then deploy. There is no monster-count input.
       out.equipped = equipFromStash(0);
       out.noMonsterInput = !document.getElementById('fx-monsters');
       snap('beforeDeploy');
+      var writesBeforeDeploy = platformWrites.length;
       document.getElementById('fx-deploy').click();
-      // Wait for the simulated Worker's deployed ack to be handled too: if a
-      // result arrives first, that ack would overwrite the settlement log.
+      // Wait for the simulated Worker's deployed ack too: if a result arrived
+      // first, that ack would overwrite the settlement log.
       await waitFor(function () { return seenDeploy !== null && inBattle() && /出征中/.test(logText()); });
       out.deployment = seenDeploy;
       snap('deployed');
+      var writesAfterDeploy = platformWrites.length;
+      out.deployWrites = writesAfterDeploy - writesBeforeDeploy;
+      out.differentStates = H.getState() !== H.state && H.getLobbyState() === H.state;
+      var lobby = H.getLobbyState();
+      out.lobbyCleared = lobby.bag.length === 0
+        && lobby.equipped.every(function (i) { return i === null; })
+        && lobby.stash.length === 3;
+      out.deployLoadout = !!seenDeploy && !!seenDeploy.loadout
+        && seenDeploy.loadout.equipped.length === 10
+        && !!seenDeploy.loadout.equipped[0]
+        && seenDeploy.loadout.equipped[0].defId === 'longsword';
 
-      // ---- in-run bag: B opens it, the arena keeps running, equipping is
-      //      pushed to the Worker immediately, ESC closes it ----
+      // ---- in-run bag: B opens it, the arena keeps running, the stash is
+      //      hidden, and the UI sends COMMANDS instead of editing state ----
       out.bag.locksBefore = out.lockMessages.filter(function (x) { return x === 'lock'; }).length;
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', bubbles: true }));
       out.bag.openedByKey = document.getElementById('fx-shell').classList.contains('fx-run-bag-open');
       out.bag.panelVisible = getComputedStyle(document.getElementById('fx-bag-content')).display !== 'none';
       out.bag.stillInBattle = inBattle();
-      var bagState = H.getState();
-      // buildLoadout() no longer empties the weapon slot, so an "equip" delta
-      // needs a real unequip first. Both directions must reach the Worker.
-      var wornUid = bagState.equipped[0] ? bagState.equipped[0].uid : null;
-      out.bag.unequippedInRun = wornUid ? M.placeItem(bagState, wornUid, 'bag', 0, 0) : false;
-      H.render();
-      await waitFor(function () { return out.equipMessages.length >= 1; });
-      out.bag.equippedInRun = wornUid ? M.equipItem(bagState, wornUid, 0) : false;
-      H.render();
-      await waitFor(function () { return out.equipMessages.length >= 2; });
-      out.bag.equipMsg = out.equipMessages[out.equipMessages.length - 1] || null;
-      out.bag.armedSlot0 = H.getState().equipped[0] !== null;
+      out.bag.stashHidden = getComputedStyle(document.getElementById('stash-panel')).display === 'none';
       out.bag.noNewLock = out.lockMessages.filter(function (x) { return x === 'lock'; }).length
         === out.bag.locksBefore;
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      out.bag.closedByEsc = !document.getElementById('fx-shell').classList.contains('fx-run-bag-open');
 
-      // ---- Worker announces a loot item equipped into the EMPTY weapon slot.
-      //      The character panel must mirror it as a real equipped instance.
-      chan.postMessage({ type: 'weaponLoot', uid: 'run-loot-slot', itemId: '10006', slot: 1 });
+      // Clicking a weapon slot goes through commit() -> host.runCommand().
+      document.querySelectorAll('.equip-slot')[1].click();
+      await waitFor(function () { return out.commands.length >= 1; });
+      out.run.uiCommand = out.commands[0] || null;
+      await waitFor(function () { return H.getState().activeWeaponSlot === 1; });
+      out.run.snapshotAfterCommand = H.getState().activeWeaponSlot === 1;
+      out.run.panelIsReadOnlyCopy = H.getState() !== H.state;
+
+      // A Worker-side pickup (weapon slot + bag) must appear in the panel.
+      workerState.equipped[1] = { uid: 'run-loot-slot', defId: '10006' };
+      chan.postMessage({ type: 'runState', loadout: M.loadoutFromRun(workerState) });
       await waitFor(function () {
         return H.getState().equipped[1] !== null && H.getState().equipped[1].defId === '10006';
       });
-      out.weaponLoot.shownInState = H.getState().equipped[1] !== null
+      out.run.lootShown = H.getState().equipped[1] !== null
         && H.getState().equipped[1].defId === '10006';
-      out.weaponLoot.filledSlots = document.querySelectorAll('.equip-slot.filled').length;
+      out.run.filledSlots = document.querySelectorAll('.equip-slot.filled').length;
+      M.addToBag(workerState, 'run-bag-loot', '20006');
+      chan.postMessage({ type: 'runState', loadout: M.loadoutFromRun(workerState) });
+      await waitFor(function () { return H.getState().bag.length >= 1; });
+      out.run.bagLootShown = H.getState().bag.some(function (i) { return i.uid === 'run-bag-loot'; });
+      // Snapshots must NEVER be persisted: the KV holds the lobby only.
+      out.run.noKvWrites = platformWrites.length === writesAfterDeploy;
 
-      // A second loot item goes through the existing cross-heap bag protocol.
-      chan.postMessage({ type: 'pickup', uid: 'run-bag-loot', itemId: '20006' });
-      await waitFor(function () {
-        return H.getState().bag.some(function (i) { return i.uid === 'run-bag-loot'; });
-      });
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      out.bag.closedByEsc = !document.getElementById('fx-shell').classList.contains('fx-run-bag-open');
 
-      // Cleared: the worn loot stays on the character, the bag loot stays in
-      // the bag, and neither is banked a second time by settleRun().
+      // Cleared: the WHOLE Worker state (brought-in + loot) comes home whole.
       sendResult({
         outcome: 'cleared',
-        slotLootItemIds: ['10006'], bagLootUids: ['run-bag-loot'],
+        loadout: M.loadoutFromRun(workerState),
         lootLog: [{ name: '霜之哀伤', quality: '暗金' }, { name: '射日', quality: '暗金' }],
         kills: 8,
       });
       await waitFor(function () { return !inBattle() && /通关/.test(logText()); });
       snap('cleared');
 
-      // Second run: gameOver must wipe EVERY worn item (all ten slots).
+      // Second run: gameOver discards EVERYTHING; the stash survives.
       document.getElementById('fx-deploy').click();
       await waitFor(function () { return inBattle() && /出征中/.test(logText()); });
       snap('secondDeploy');
       sendResult({
-        outcome: 'gameOver', slotLootItemIds: ['10001'], bagLootUids: [],
+        outcome: 'gameOver', loadout: null,
         lootLog: [{ name: '巨剑', quality: '白' }], kills: 2,
       });
       await waitFor(function () { return !inBattle() && /阵亡/.test(logText()); });
       snap('gameOver');
 
-      // Back to meta still renders a usable inventory.
+      // Third run: a mid-run return is a LOSS and sends an abort to the Worker.
+      document.getElementById('fx-deploy').click();
+      await waitFor(function () { return inBattle() && /出征中/.test(logText()); });
       document.getElementById('fx-back').click();
-      snap('backToMeta');
+      await waitFor(function () {
+        return !inBattle() && /中途退出/.test(logText()) && out.abortMessages.length >= 1;
+      });
+      snap('aborted');
 
       // ---- platform lifecycle: real pause/resume over the run channel ----
-      // Driven LAST so it cannot disturb deploy / settlement assertions.
       var adapter = H.platformAdapter;
       out.platform = { hasAdapter: !!adapter, before: adapter ? adapter.getState().paused : null };
       if (adapter) {
@@ -371,10 +388,6 @@ if (!result.ok) {
 
 const S = result.steps;
 const d = result.deployment || {};
-// The in-run bag can arm an extra weapon slot, so the SECOND deploy borrows
-// whatever the cleared settlement left equipped (1 or 2), not a hard-coded 1.
-// Derive the expected loss instead of weakening the assertion.
-const expectedLoss = (S.cleared.weapon0 ? 1 : 0) + (S.cleared.weapon1 ? 1 : 0);
 const checks = [
   ['the local login/registration overlay is gone',
     result.store.noLoginOverlay === true, result.store],
@@ -394,43 +407,69 @@ const checks = [
     result.bag.openedByKey === true && result.bag.panelVisible === true, result.bag],
   ['the bag does not leave or freeze the battle',
     result.bag.stillInBattle === true && result.bag.noNewLock === true, result.bag],
-  ['unequip + re-equip in the bag pushes an immediate equip message',
-    result.bag.unequippedInRun === true && result.bag.equippedInRun === true
-      && result.bag.armedSlot0 === true
-      && !!result.bag.equipMsg && result.bag.equipMsg.slots[0] === true, result.bag],
+  ['the stash is hidden during a run',
+    result.bag.stashHidden === true, result.bag],
   ['ESC closes the in-run bag', result.bag.closedByEsc === true, result.bag],
+  ['the in-run UI sends an active-slot command instead of editing state',
+    !!result.run.uiCommand && result.run.uiCommand.action === 'active'
+      && result.run.uiCommand.slot === 1, result.run],
+  ['a Worker snapshot refreshes the read-only character panel',
+    result.run.snapshotAfterCommand === true && result.run.panelIsReadOnlyCopy === true,
+    result.run],
   ['in-run loot is mirrored into the character panel weapon slot',
-    result.weaponLoot.shownInState === true && result.weaponLoot.filledSlots === 2,
-    result.weaponLoot],
-  ['authored item catalog registered in the shell', result.authoredRegistered === true, result.authoredRegistered],
-  ['bag 5x8 = 40 cells, stash 16x10 = 160 cells', result.gridCells.bag === 40 && result.gridCells.stash === 160, result.gridCells],
+    result.run.lootShown === true && result.run.filledSlots === 2, result.run],
+  ['Worker-side bag loot shows up in the in-run bag',
+    result.run.bagLootShown === true, result.run],
+  ['in-run snapshots are NEVER written to the platform KV',
+    result.run.noKvWrites === true && result.deployWrites >= 1,
+    { noKvWrites: result.run.noKvWrites, deployWrites: result.deployWrites }],
+  ['authored item catalog registered in the shell',
+    result.authoredRegistered === true, result.authoredRegistered],
+  ['bag 5x8 = 40 cells, stash 16x10 = 160 cells',
+    result.gridCells.bag === 40 && result.gridCells.stash === 160, result.gridCells],
   ['ten equipment slots', result.equipSlots === 10, result.equipSlots],
-  ['shell and meta UI share ONE state object', result.sharedState === true, result.sharedState],
-  ['a weapon can be equipped before deploy', result.equipped === true && S.beforeDeploy.weapon0 === 'longsword', S.beforeDeploy],
-  ['deploy sends only seed + borrowed weapons; the monster-count UI is gone',
+  ['shell and meta UI share ONE LOBBY state object',
+    result.sharedState === true, result.sharedState],
+  ['a weapon can be equipped before deploy',
+    result.equipped === true && S.beforeDeploy.weapon0 === 'longsword', S.beforeDeploy],
+  ['deploy sends only seed + the whole loadout; the monster-count UI is gone',
     result.noMonsterInput === true
-      && Object.keys(d).sort().join(',') === 'activeWeaponSlot,armedWeapons,seed'
-      && d.armedWeapons === 1 && typeof d.seed === 'number', d],
-  ['deploy keeps the borrowed weapon visible in the character panel',
-    S.deployed.weapon0 === 'longsword', S.deployed],
-  ['deploy switches the page into battle mode', S.deployed.inBattle === true && /战斗/.test(S.deployed.phase), S.deployed],
-  ['cleared returns the borrowed weapon', S.cleared.weapon0 === 'longsword', S.cleared],
-  ['cleared keeps worn loot equipped and banks the bag loot once',
-    S.cleared.weapon1 === '10006' && S.cleared.bagDefs.indexOf('20006') >= 0
-      && S.cleared.bagDefs.length === 1, S.cleared],
+      && Object.keys(d).sort().join(',') === 'loadout,seed'
+      && typeof d.seed === 'number', d],
+  ['the loadout carries the brought-in weapon and all ten slots',
+    result.deployLoadout === true, result.deployLoadout],
+  ['deploy EMPTIES the lobby bag + equipment, stash untouched',
+    result.lobbyCleared === true && S.deployed.lobbyBag === 0
+      && S.deployed.lobbyWorn === 0 && S.deployed.lobbyStash === 3, S.deployed],
+  ['the run holds a DIFFERENT state object from the lobby',
+    result.differentStates === true && S.deployed.isRun === true, result.differentStates],
+  ['deploy keeps the brought-in weapon visible in the run panel',
+    S.deployed.weapon0 === 'longsword' && S.deployed.stash === 0, S.deployed],
+  ['deploy switches the page into battle mode',
+    S.deployed.inBattle === true && /战斗/.test(S.deployed.phase), S.deployed],
+  ['cleared brings the WHOLE run state home (worn + bag loot)',
+    S.cleared.weapon0 === 'longsword' && S.cleared.weapon1 === '10006'
+      && S.cleared.bagDefs.indexOf('20006') >= 0 && S.cleared.bagDefs.length === 1
+      && S.cleared.lobbyBag === 1 && S.cleared.lobbyWorn === 2, S.cleared],
+  ['cleared leaves the stash intact and exits the run view',
+    S.cleared.stash === 3 && S.cleared.lobbyStash === 3
+      && S.cleared.isRun === false, S.cleared],
   ['cleared leaves battle mode and reports the outcome',
     S.cleared.inBattle === false && /通关/.test(S.cleared.log), S.cleared.log],
-  ['a second deploy keeps the loadout visible in the character panel',
-    S.secondDeploy.weapon0 === 'longsword', S.secondDeploy],
-  ['gameOver permanently loses the borrowed weapon', S.gameOver.weapon0 === null, S.gameOver],
-  ['gameOver wipes ALL ten equipment slots', S.gameOver.worn === 0, S.gameOver],
-  ['gameOver does not bank any loot',
-    S.gameOver.bagDefs.length === S.cleared.bagDefs.length, S.gameOver],
-  ['gameOver reports the loss of every borrowed weapon',
-    /阵亡/.test(S.gameOver.log)
-      && S.gameOver.log.indexOf('丢失带出装备 ' + expectedLoss + ' 件') >= 0,
-    { log: S.gameOver.log, expectedLoss }],
-  ['returning to meta keeps the inventory usable', S.backToMeta.inBattle === false, S.backToMeta],
+  ['a second deploy empties the lobby again',
+    S.secondDeploy.lobbyBag === 0 && S.secondDeploy.lobbyWorn === 0
+      && S.secondDeploy.lobbyStash === 3, S.secondDeploy],
+  ['gameOver permanently loses every carried item',
+    S.gameOver.bag === 0 && S.gameOver.worn === 0
+      && S.gameOver.weapon0 === null && S.gameOver.isRun === false, S.gameOver],
+  ['gameOver keeps the stash and reports the loss',
+    S.gameOver.lobbyStash === 3 && /阵亡/.test(S.gameOver.log), S.gameOver],
+  ['a mid-run return sends abort and discards the whole run',
+    result.abortMessages.length === 1 && S.aborted.lobbyBag === 0
+      && S.aborted.lobbyWorn === 0 && S.aborted.lobbyStash === 3
+      && /中途退出/.test(S.aborted.log), S.aborted],
+  ['returning to meta keeps the inventory usable',
+    S.aborted.inBattle === false && S.aborted.isRun === false, S.aborted],
   ['platform lifecycle adapter flips paused and stays registered',
     result.platform.hasAdapter === true && result.platform.before === false
       && result.platform.afterPause === true && result.platform.afterResume === false,

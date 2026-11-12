@@ -134,3 +134,7 @@
   border-radius: 8px;
   padding: 5px 10px;
 }
+
+/* A run owns NO stash: the Worker's snapshot has an empty stash and the
+   character panel must not offer a drop target for out-of-run storage. */
+#fx-shell.fx-run-mode #stash-panel { display: none !important; }

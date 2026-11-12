@@ -23,12 +23,19 @@ export {
   deployRun,
   setArena,
   activeWeapon,
+  syncWeaponSlots,
   NO_MODIFIERS,
   CLICK_HOLD_SECONDS,
   CLICK_DRAG_PIXELS,
   MELEE_RANGE_BARE,
   MELEE_RANGE_ARMED,
 } from '../combat/simulation.ts';
+export type { RunLoadout } from '../meta/inventory.ts';
+export {
+  applyRunCommand, ensureItemCatalog, makeRunInventory, snapshotRun,
+  weaponDamage,
+} from '../combat/run-inventory.ts';
+export type { RunCommand } from '../combat/run-inventory.ts';
 export type {
   CombatModifiers,
   Drop,
