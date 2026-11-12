@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 32e133d839c1cf3ff4d3e0a3e19e985cf779d16d823ecd07740dd4205db93ca0
+ * Source SHA-256: 87ed2364bd3906f66d76db4518303fda866c0be3c0225154b808d9988adf1e64
  */
 (function (root) {
 "use strict";

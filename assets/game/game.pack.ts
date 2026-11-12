@@ -50,7 +50,6 @@ export type RunResult = {
   carriedItems: string[];
   lootLog: { monsterId: string; itemId: string; name: string; quality: string }[];
   kills: number;
-  monsterCount: number;
   bagLootUids: string[];
   slotLootItemIds: string[];
 };
@@ -109,7 +108,7 @@ export const game: Plugin = {
           lastResult = null;
           resultSent = false;
           pickupSent = null;
-          channel?.postMessage({ type: 'deployed', monsterCount: state.monsterCount });
+          channel?.postMessage({ type: 'deployed' });
         } else if (msg.type === 'hello') {
           channel?.postMessage({ type: 'ready' });
         } else if (msg.type === 'lock') {
@@ -192,7 +191,6 @@ export const game: Plugin = {
           monsterId: r.monsterId, itemId: r.itemId, name: r.name, quality: r.quality,
         })),
         kills: state.kills,
-        monsterCount: state.monsterCount,
         bagLootUids: [...state.runBagUids],
         slotLootItemIds: [...state.slotLootItemIds],
       };

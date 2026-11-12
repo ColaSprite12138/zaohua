@@ -28,7 +28,6 @@
     return;
   }
 
-  var DEFAULT_MONSTERS = 8;
   var SEED = 0x5eed1234;
   var borrowed = null;
   var inRun = false;
@@ -52,7 +51,6 @@
     '<span class="fx-account">玩家 <b id="fx-account-name">—</b>' +
     '  <span id="fx-save-mode" class="fx-save-mode" style="display:none">平台云存档</span></span></div>' +
     '<div class="fx-controls">' +
-    '  <label>怪物 <input id="fx-monsters" type="number" min="1" max="24" value="' + DEFAULT_MONSTERS + '"></label>' +
     '  <button id="fx-deploy" type="button">出征 →</button>' +
     '  <button id="fx-back" type="button" disabled>← 返回局外</button>' +
     '  <button id="fx-bag" type="button" disabled>背包 B/I</button>' +
@@ -90,7 +88,6 @@
     setRunBag(false);
     root.classList.toggle('fx-in-battle', on);
     $('fx-deploy').disabled = on;
-    $('fx-monsters').disabled = on;
     $('fx-back').disabled = !on;
     $('fx-bag').disabled = !on;
     $('fx-phase').textContent = on ? '阶段：战斗' : '阶段：局外配装';
@@ -169,7 +166,7 @@
         // no backlog, so re-assert a pause that arrived before it existed.
         if (platformPaused) channel.postMessage({ type: 'pause' });
       } else if (msg.type === 'deployed') {
-        log('出征中 · ' + msg.monsterCount + ' 只怪物 · 清场或阵亡后自动结算');
+        log('出征中 · 清场或阵亡后自动结算');
       } else if (msg.type === 'result') {
         settle(msg.result);
       } else if (msg.type === 'pickup') {
@@ -187,8 +184,7 @@
   /* ------------------------------ deploy ------------------------------- */
   $('fx-deploy').addEventListener('click', function () {
     if (inRun) return;
-    // Monster population comes from the active map's LDtk entity layer. The
-    // Worker ignores any count, so deploy no longer sends one.
+    // Monster population comes solely from the active map's LDtk entity layer.
     borrowed = M.buildLoadout(host.getState());
     // Borrowing empties the two slots. Reset the delta baseline BEFORE the
     // render so this state change is not mistaken for an in-run unequip.

@@ -3,7 +3,7 @@ import {
   makeRng, poolEntries, rollLoot, theoreticalDistribution,
   itemRow, weaponRow, authoredItem, monsterRow,
 } from '../loot.ts';
-import { createState, DEFAULT_MONSTER_COUNT, spawnFromMap } from '../state.ts';
+import { createState, spawnFromMap } from '../state.ts';
 import { testArena } from '../../resource/maps/arena-test.ts';
 import { arena } from '../../resource/maps/arena.generated.ts';
 import { deployRun, projection, step } from '../simulation.ts';
@@ -96,7 +96,6 @@ describe('authored tables are wired into combat', () => {
 describe('arena population and loot settlement', () => {
   it('spawns exactly the default map entity layer, with no hard-coded count', () => {
     const s = createState();
-    expect(s.monsterCount).toBe(DEFAULT_MONSTER_COUNT);
     expect(s.skeletons).toHaveLength(testArena.monsters.length);
     expect(s.skeletons.map((sk) => sk.monsterId))
       .toEqual(testArena.monsters.map((m) => m.monsterId));
@@ -105,10 +104,9 @@ describe('arena population and loot settlement', () => {
   });
 
   it('the playable LDtk entity layer is the only population authority', () => {
-    // A requested count is IGNORED: there is no default spawn generator.
-    const s = createState({ monsterCount: 8 });
+    // There is no count field in the runtime: the map is the only generator.
+    const s = createState();
     expect(s.skeletons).toHaveLength(testArena.monsters.length);
-    expect(s.monsterCount).toBe(testArena.monsters.length);
     // The real arena keeps all seven authored monsters untouched.
     const real = spawnFromMap(arena);
     expect(real).toHaveLength(arena.monsters.length);
@@ -155,7 +153,7 @@ describe('arena population and loot settlement', () => {
       dodge: false, restart: true,
     });
     expect(s.lootLog).toHaveLength(0);
-    expect(s.monsterCount).toBe(2);
+    expect(s.skeletons).toHaveLength(testArena.monsters.length);
     for (const sk of s.skeletons) sk.hp = 1;
     swingAtTarget(s, 0, NO_MODIFIERS);
     swingAtTarget(s, 1, NO_MODIFIERS);
@@ -192,10 +190,9 @@ describe('arena population and loot settlement', () => {
     expect(s.weaponSlots[0]).toBeNull();
   });
 
-  it('deployRun ignores monsterCount but keeps seed and borrowed weapons', () => {
+  it('deployRun keeps seed and borrowed weapons without any count field', () => {
     const s = createState();
-    deployRun(s, { monsterCount: 8, seed: 909, armedWeapons: 2, activeWeaponSlot: 1 });
-    expect(s.monsterCount).toBe(testArena.monsters.length);
+    deployRun(s, { seed: 909, armedWeapons: 2, activeWeaponSlot: 1 });
     expect(s.skeletons).toHaveLength(testArena.monsters.length);
     expect(s.runSeed).toBe(909);
     expect(s.weaponSlots).toEqual(['longsword', 'longsword']);
@@ -206,19 +203,18 @@ describe('arena population and loot settlement', () => {
   });
 
   it('deployRun with no weapons resets to bare hands', () => {
-    const s = createState({ monsterCount: 6 });
+    const s = createState();
     deployRun(s, { armedWeapons: 0 });
     expect(s.weaponSlots).toEqual([null, null]);
     expect(s.skeletons).toHaveLength(testArena.monsters.length);
   });
 
   it('projection exposes loot data without breaking legacy fields', () => {
-    const s = createState({ monsterCount: 6, seed: 31337 });
+    const s = createState({ seed: 31337 });
     tick(s);
     const p = projection(s);
     expect(p.equippedWeapon).toBeNull();
     expect(p.skeletonsAlive).toBe(testArena.monsters.length);
-    expect(p.monsterCount).toBe(testArena.monsters.length);
     expect(p.runSeed).toBe(31337);
     expect(p.lootLog).toEqual([]);
     expect(p.carriedItems).toEqual([]);

@@ -42,7 +42,7 @@ Worker 发 `pickup { uid, itemId, name }` → 主窗口 `shell-bridge.js` 调 `M
 | 相机 | 居中跟随玩家、clamp 到世界边界；`step()` 末尾更新，是输入与渲染唯一权威。`paint.ts` 用一次 `translate(-cam.x,-cam.y)` 画世界，HUD 与小地图在屏幕空间 |
 | 碰撞 / 寻路 | 玩家点击落点先 `nearestWalkable()` 吸附再走 A* 路径；玩家与怪物移动都做分轴滑动碰撞，墙 / 深渊挡走也挡视线 |
 | 小地图 | 右上角 `MINIMAP`（220×165），**只能看不能点**：引擎层丢弃落在矩形内的全部指针指令；画阻挡格、怪物 / 掉落 / 玩家点与相机视口框。原「击杀 / 剩余骷髅 / 状态」面板已删除 |
-| 怪物 | `spawnFromMap(map.monsters)` 是唯一生成入口，`monsterCount` 只读；`deploy` 不再下发数量，`deployRun()` 忽略它 |
+| 怪物 | `spawnFromMap(map.monsters)` 是唯一生成入口；运行时没有怪数字段，数量只能改 LDtk 实体层 |
 | 自动验收夹具 | `assets/resource/maps/arena-test.ts`：40×22 格 = **1280×704**，全可走、spawn `(400,470)`、2 只近战怪。尺寸 ≤ 视口 ⇒ 相机恒 `(0,0)` ⇒ 投影屏幕归一化不变，浏览器验收无需改坐标。**不是 LDtk 源，不入 `import_map.py` 链** |
 | 切换 | `createState()` 默认夹具；局外 `deploy` 时 `game.pack.ts` 调 `setArena(state, arena)` 切到正式地图。真正玩必经出征，自动验收（`project play`）不出征 |
 | 旧竞技场 | 已删除程序化 `backdrop()` / `ground()`、`GROUND_TOP`、一屏 clamp、硬编码怪物坐标与 `/VIEW_W` 归一化；**单轨**，无双轨兼容层 |
@@ -75,12 +75,13 @@ bag → stash 找空格，**都放不下就整次换装拒绝**（绝不静默�
 主窗口 `window.MetaShell.state` 持唯一权威 `InventoryState`，局外 UI 与 `shell-bridge.js` 共享它；
 Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、在清场/阵亡时发 `result`。
 局内局外在**同一个页面内**内存共享（不同标签页 / Worker 是独立 JS 堆，`file://` 与
-`http://localhost:4174` 也不同源）；持久化由下节的**平台 KV 存档**负责（本地开发写镜像），
-无需登录，刷新后从存档恢复。
+`http://localhost:4174` 也不同源）。**没有本地存盘**：不接入造化平台用户 / 不支持云存档时，
+刷新即回到默认 `InventoryState(3)`；只有发布到平台、宿主注入 `user.current` + `storage`
+之后才会读写平台 KV 存档。
 
 | 阶段 | 规则 |
 |:--|:--|
-| 出征 | `buildLoadout()` 只借出两个武器槽（非武器装备留局外）；顶栏「怪物数量」是历史 UI，已不下发、不影响出怪数。`deploy` 会把地图切到正式 `arena.ldtk` |
+| 出征 | `buildLoadout()` 只借出两个武器槽（非武器装备留局外）；顶栏没有怪物数量输入，`deploy` 消息也不含数量。`deploy` 会把地图切到正式 `arena.ldtk` |
 | 战斗 | `#fx-shell` 透明且指针穿透，点击直达 canvas；掉落按 `item.xlsx` / `loot_pool.xlsx` 权重结算；**拾取必须显式点击**，走过不捡 |
 | 结算数据 | `Settlement = { outcome, lootItemIds, carriedUids }`：`lootItemIds` 是局内装到武器槽的 authored id，`carriedUids` 是本局已进背包的掉落 uid |
 | 通关 | 归还借出武器；`lootItemIds` 用 `findFirstFit()` 按 `背包 → 仓库` 入库；本局已进背包的战利品原地保留；两处都满只进 `overflow` 报告，**没有待分配区兜底** |
@@ -219,7 +220,7 @@ IPv6 `[::1]` 回环与内置预览面板的已知问题见 `docs/feedback.md` �
 独立单测（combat 代码改动才额外跑浏览器 playthrough），并始终跑一次全局 `tsc`。
 命中 `shared/` / 引擎层 / 构建配置、或显式 `--all` 时自动转全量。
 **发版前 / 跨模块改动跑全量**：`bash scripts/verify-all.sh`，输出在 `artifacts/verify/summary.txt`；
-它强制单测 ≥ 83 条（当前 **128**）、`playthrough` ≥ 35 步（实际 37 步）、`resize` ≥ 4 步，并跑独立页面与 4174 单页浏览器验收
+它强制单测 ≥ 83 条（当前 **128**）、`playthrough` ≥ 35 步（实际 36–37 步，`advance` 子步随帧时序浮动）、`resize` ≥ 4 步，并跑独立页面与 4174 单页浏览器验收
 —— **删断言让测试变绿会直接失败**。注入 + 单页验收是全流程最后一步（build/play/package 都会重建 dist）。
 
 ```bash
@@ -229,16 +230,20 @@ node --experimental-strip-types scripts/loot-report.mjs --samples 31000   # 真�
 node scripts/verify-meta-ui.cjs            # 局外页面 13 条真实拖放断言
 node scripts/inject-shell.mjs --check      # dist 单页注入块与源同步
 node scripts/verify-shell.cjs              # 4174 单页 29 条（出征/通关/阵亡/返回/平台 lifecycle/KV 存档）
-pnpm exec forgeax project check --json
-pnpm test
-pnpm typecheck
-pnpm exec forgeax project build --json
-pnpm exec forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
-pnpm exec forgeax project play --script scripts/playthrough-resize.mjs --json
-pnpm exec forgeax project package --output release/forgeax-game-web.zip --json
+./node_modules/.bin/forgeax project check --json
+./node_modules/.bin/forgeax project test --json
+./node_modules/.bin/tsc --noEmit
+./node_modules/.bin/forgeax project build --json
+./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
+./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json
+./node_modules/.bin/forgeax project package --output release/forgeax-game-web.zip --json
 node scripts/inject-shell.mjs              # 最后一步：build/play/package 都会重建 dist
-pnpm exec forgeax project preview --port 4174 --json
+./node_modules/.bin/forgeax project preview --port 4174 --json
 ```
+
+> 本机 `pnpm` 不在 PATH，一律用 `./node_modules/.bin/*`；`build` / `package` 还需
+> `CODEBUDDY_SAFE_DELETE_ENABLED=0`。日常改完直接 `bash scripts/verify.sh`（增量），
+> 发版或跨模块改动才 `bash scripts/verify-all.sh`（全量，自带这些环境变量）。
 
 > `--viewports` 必须含一个非 `1280x720` 的视口。鼠标坐标映射的回归只在 drawing
 > buffer 尺寸变化时暴露；第一个视口跑脚本，其余视口做 HUD 布局检查。主验收在

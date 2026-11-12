@@ -37,12 +37,6 @@ export interface StepInput {
  */
 export type WeaponId = 'longsword';
 
-/**
- * Number of monsters on the DEFAULT map. This is NOT a spawn count: the map's
- * entity layer is the only authority. Kept as an exported constant so tests can
- * assert the default without hard-coding a number.
- */
-export const DEFAULT_MONSTER_COUNT = testArena.monsters.length;
 export const DEFAULT_RUN_SEED = 0x5eed1234;
 
 /** The single weapon currently in use; null = bare hands. */
@@ -169,8 +163,6 @@ export interface GameState {
   camera: { x: number; y: number };
   /** A* waypoints in world pixels for the current move order. */
   path: Vec[];
-  /** Monster count is READ ONLY, derived from `map.monsters`. */
-  monsterCount: number;
   /** Deterministic seed: identical seed + identical kills = identical loot. */
   runSeed: number;
   /** Seeded PRNG, rebuilt on reset. Not projected (functions are not JSON). */
@@ -190,8 +182,6 @@ export interface GameState {
 }
 
 export interface RunConfig {
-  /** Ignored: the map's entity layer is the only population authority. */
-  readonly monsterCount?: number;
   readonly seed?: number;
   readonly map?: ArenaMap;
 }
@@ -228,7 +218,6 @@ export function createState(config: RunConfig = {}): GameState {
     world,
     camera: cameraFor(world, x, y),
     path: [],
-    monsterCount: map.monsters.length,
     runSeed: config.seed ?? DEFAULT_RUN_SEED,
     rng: makeRng(config.seed ?? DEFAULT_RUN_SEED),
     lootLog: [],
@@ -310,7 +299,6 @@ export function reset(s: GameState): void {
   s.target = { x: p.x, y: p.y };
   s.path = [];
   s.camera = cameraFor(s.world, p.x, p.y);
-  s.monsterCount = s.map.monsters.length;
   s.skeletons = spawnFromMap(s.map);
 }
 

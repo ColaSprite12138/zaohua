@@ -42,7 +42,7 @@
 
 - **掉落数值只从 `resource/generated/*.ts` 读，禁止在 combat 里硬编码**：怪物 → `monster.loot_pool_id` → `loot_pool` 权重 → `item` 属性。`rollLoot(monsterId, rng)` 是唯一抽取入口，`loot-report.mjs` 必须直接 import 它，不要另写一份镜像算法（影子逻辑会让报告全绿但战斗实际错）。
 - **固定种子可复现**：`makeRng(seed)` 用 Mulberry32，`createState({ seed })` / `deployRun({ seed })` / `reset()` 都从 `runSeed` 重建 rng；R 重开后 loot 序列必须一致，这是单测之一。
-- **默认仍 2 只怪**：`spawnSkeletons(count)` 前两只保留原坐标，额外怪按网格生成并交替 `100001` / `200001`；多怪只通过 `deployRun()` 或 `createState({ monsterCount })` 注入。否则 35 步 playthrough 的 `skeletonsAlive === 2` 断言会红。
+- **默认仍 2 只怪**（历史记录，2026-11-13 已作废）：当时 `spawnSkeletons(count)` 前两只保留原坐标，额外怪按网格生成并交替 `100001` / `200001`；多怪只通过 `deployRun()` 或 `createState({ monsterCount })` 注入，否则 35 步 playthrough 的 `skeletonsAlive === 2` 断言会红。**现行**：`spawnFromMap(map)` 是唯一入口，运行时没有怪数字段。
 - `Drop.kind` 保留 `'longsword'` 作为**视觉/兼容类别**，真实物品身份走 `drop.itemId`；`WeaponId` 也保持 `'longsword'` 表示「armed vs bare」，不要改成表里的 12 个 id，否则 11 条 movement + 7 条 weapons 单测全要重写。
 - **槽满也要计入战利品**：两槽已满时拾取折算 80 分，但 `carriedItems.push(drop.itemId)` 必须先执行，否则搜打撤结算会漏掉这件战利品。
 - `GameProjectionValue` 不接受 `interface`（缺索引签名）也不接受 `readonly T[]`（要求可变数组）；`RunResult` 用 `type` + 可变字段。`projection()` 加字段只能**追加**，旧字段 `equippedWeapon` 不能改名。
@@ -98,6 +98,7 @@
   不出发，所以「默认测试夹具 / deploy 后正式 arena.ldtk」正好等价于「验收用测试图、玩用正式图」，
   不需要检测运行环境或加 URL 参数。
 - **删旧竞技场要连根删**：`backdrop()` / `ground()` / `GROUND_TOP` / 一屏 clamp /
-  `spawnSkeletons()` 硬编码坐标 / `/VIEW_W` 归一化一起清；`monsterCount` 由「可注入」
-  改成「只读派生自 `map.monsters.length`」，`deploy` 消息也不再下发该字段。
+  `spawnSkeletons()` 硬编码坐标 / `/VIEW_W` 归一化一起清；本批先把 `monsterCount` 由
+  「可注入」改成「只读派生自 `map.monsters.length`」，随后按用户 2026-11-13 的要求
+  把该字段从状态 / 部署协议 / 投影 / 结算 / ack / 局外 UI / 日志里**全部删干净**。
 

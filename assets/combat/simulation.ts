@@ -68,12 +68,11 @@ export function step(
  * Deploy a run from the meta layer. Called once per deployment by the engine
  * root when the single-page shell sends a `deploy` message.
  *
- * `monsterCount` is accepted for message compatibility but IGNORED: the active
- * map's entity layer is the only population authority. The engine calls
- * `setArena(state, arena)` before this to select the playable LDtk map.
+ * Monster population is owned solely by the active map's LDtk entity layer.
+ * The engine calls `setArena(state, arena)` before this to select the playable
+ * LDtk map; there is NO count field anywhere in the deployment protocol.
  */
 export interface Deployment {
-  readonly monsterCount?: number;
   readonly seed?: number;
   readonly armedWeapons?: 0 | 1 | 2;
   readonly activeWeaponSlot?: 0 | 1;
@@ -87,9 +86,9 @@ export function deployRun(s: GameState, config: Deployment = {}): void {
   s.weaponSlots = [armed >= 1 ? 'longsword' : null, armed >= 2 ? 'longsword' : null];
   s.activeWeaponSlot = config.activeWeaponSlot ?? 0;
   if (armed > 0) {
-    say(s, `出征 · 携带 ${armed} 件武器 · ${s.monsterCount} 只怪物`);
+    say(s, `出征 · 携带 ${armed} 件武器`);
   } else {
-    say(s, `出征 · 徒手 · ${s.monsterCount} 只怪物`);
+    say(s, '出征 · 徒手');
   }
 }
 
@@ -130,7 +129,6 @@ export function projection(s: GameState) {
     activeWeaponSlot: s.activeWeaponSlot,
     // Run / loot contract: consumed by the loot report and by the single-page
     // settlement bridge. All values are JSON-shaped (GameProjectionValue).
-    monsterCount: s.monsterCount,
     runSeed: s.runSeed,
     lootLog: s.lootLog.map((r) => ({
       monsterId: r.monsterId,

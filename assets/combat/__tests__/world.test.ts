@@ -126,7 +126,6 @@ describe('acceptance fixture vs playable arena', () => {
     setArena(s, arena);
     expect(s.map.id).toBe(arena.id);
     expect(s.skeletons).toHaveLength(7);
-    expect(s.monsterCount).toBe(7);
     expect(s.camera).toEqual({ x: 0, y: 424 });
     expect(spawnFromMap(arena).map((sk) => sk.monsterId))
       .toEqual(arena.monsters.map((m) => m.monsterId));

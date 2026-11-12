@@ -503,3 +503,33 @@
   `README.md` 单页流程节仍写「本地开发写镜像 / 刷新后从存档恢复」，与「无宿主不写盘」契约冲突；
   README 命令块仍用 `pnpm`（本机不在 PATH）；攻击 spec / 互射属下一批。
 
+### 2026-11-13（续）— 删怪物数量全链路、收紧「无云存档则无本地存盘」的现行描述
+
+- Request: 用户四点指令「1.怪物数量删掉 2.我已经明确了，不接入造化平台用户的话，即不支持
+  云存档的话，不做本地存盘。哪里违背这个就改哪里 3.这个是什么意思？ 4.上面的问题解决完之后，
+  启动预览」。第 3 点问的是 `pnpm`（Node 包管理器，本机不在 PATH，工程命令应走
+  `./node_modules/.bin/*`）。按用户长期规矩先出「保留清单 + 删除清单」再动手，两项选择为
+  「**连数据链一起删**」与「**只改当前契约与命令**（历史记录 / SDK dev-stub / 平台 KV 全保留）」。
+- Actual: 上一批留下挂在 UI 上的失效怪物数量输入框，以及 README / meta EXPERIENCE / HANDOFF
+  里把「本地开发写镜像 / 刷新后恢复」写成现行行为的句子；README 命令块全用 `pnpm`。
+- Resolution:
+  1. 删掉 `GameState.monsterCount` / `RunConfig` / `Deployment` / `projection()` /
+     `RunResult` / `deployed` ack / `deployRun()` 出征日志 / `DEFAULT_MONSTER_COUNT`；
+     删 `shell-bridge.js` 的 `DEFAULT_MONSTERS`、`#fx-monsters` 输入、disabled 切换与
+     出征日志里的数量。`verify-shell.cjs` 的模拟 result / ack 同步去字段，仍保留 29 条断言
+     （改写为「deploy 只发三个字段 + 数量输入框不存在」）。地图实体生成与正式 7 只怪不变。
+  2. 现行契约统一为「无宿主不写盘、刷新回默认 `InventoryState(3)`」；
+     `meta/EXPERIENCE.md` 的历史行标注「已被下一节结论推翻」，HANDOFF 覆盖表与历史冒烟
+     说明补上「现行」限定；README 命令块改 `./node_modules/.bin/*`。
+  3. **保留**：`forgeax.save.v1` / `storage.get,set` / `mountPlatform` / 写队列、
+     `docs/feedback.md` 的 2026-11-11 历史条目、
+     `vendor/zaohua-platform-sdk/src/dev-stub.ts` 的 `localStorage`（SDK 生成物，非业务存盘）、
+     `AGENTS.md` / `skills/` 里引擎模板自带的 pnpm 说明。
+- Evidence: `bash scripts/verify-all.sh` ALL GREEN（2026-11-13 00:55:05：128 单测 /
+  typecheck 0 error / playthrough `passed=true steps=36`（13 个命名场景不变，advance 子步
+  在 36–37 间浮动，下限 35）/ resize 4 steps / 单页 29/29）；`node scripts/build-meta-ui.mjs`
+  重生成 `meta-ui/inventory.js`（仅源 SHA 变化）。
+- Status: fixed
+- Note: 上一节 502–504 行的「留待用户确认」三项已由本条全部关闭；攻击 spec 分派 / 互射
+  仍属下一批，本轮未动。
+

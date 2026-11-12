@@ -1,7 +1,7 @@
 # HANDOFF — 2.5D 骷髅竞技场
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-13 全套验收通过**（128 条单测 / 37 步 playthrough；**同一个游戏单页**已合并为局外配装→出征→战斗→结算流程；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图）
+> 状态：**2026-11-13 全套验收通过**（128 条单测 / playthrough 36–37 steps；**同一个游戏单页**已合并为局外配装→出征→战斗→结算流程；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图）。**steps 会浮动**：13 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 36–37 间变化，`verify-all.sh` 下限固定 35。
 > 这份文件记录**当前已实现的功能与不可回退的约束**。新会话先读它，再动手。
 > 改了功能 → 必须同步改本文件，追加 `docs/feedback.md`，**做完即提交并推送到 `origin/main`**。
 > 工作区级总索引：`D:\tools\zaohua\AGENTS.md`（工作区地图、跨工程硬约束、备份边界）；本文件是工程级交接。
@@ -65,7 +65,7 @@ HUD 右上角已改成**只读小地图**（击杀 / 剩余骷髅 / 状态面板
 `combat/loot.ts::rollLoot()` 是唯一抽取入口，Mulberry32 固定种子 `0x5eed1234` 保证可复现。
 `Drop.kind` 仍是 `'longsword'`（视觉/兼容类别），真实身份走 `drop.itemId`。
 `lootLog` / `carriedItems` 记录本局战利品。
-**怪物完全由当前地图的 LDtk 实体层决定**：`spawnFromMap(map)` 是唯一生成入口，`monsterCount` 只读、`deployRun({ monsterCount })` 一律忽略；正式 `arena.ldtk` 有 7 只（4 剑士 + 3 弓手），自动验收夹具 2 只。详见后文「地图运行时」。
+**怪物完全由当前地图的 LDtk 实体层决定**：`spawnFromMap(map)` 是唯一生成入口。2026-11-13 起运行时**没有任何怪数字段**——`GameState` / `Deployment` / `RunConfig` / `projection()` / `RunResult` / `deployed` ack / 局外 UI / 出征日志全部不带数量；正式 `arena.ldtk` 有 7 只（4 剑士 + 3 弓手），自动验收夹具 2 只。详见后文「地图运行时」。
 
 **表拆分与攻击方式契约**（2026-11-12，用户选 A 方案）：`tables/item.xlsx`
 （`id/name/item_type/stack_size`）与 `tables/weapon.xlsx`
@@ -96,7 +96,7 @@ HUD 右上角已改成**只读小地图**（击杀 / 剩余骷髅 / 状态面板
 | 相机 | `cameraFor()` 以玩家为中心、clamp 到世界边界；`step()` 末尾更新，是输入与渲染的**唯一权威** |
 | 碰撞 / 寻路 | 玩家与怪物都做分轴滑动（`canStand()` 检查中心 + 极点）；玩家点击目标走 A* 路径（`GameState.path`），怪物每 0.7 s 重算一次到玩家的路径 |
 | 小地图 | 右上角 `MINIMAP = { x:1036, y:20, w:220, h:165 }`，**只能看不能点**：`game.pack.ts` 丢弃落在该矩形内的全部指针指令；画阻挡格 + 怪物/掉落/玩家点 + 相机视口框。原右上角「击杀 / 剩余骷髅 / 状态」面板已按用户要求删除 |
-| 怪物 | `spawnFromMap(map.monsters)` 是**唯一**生成入口，`monsterCount` 只读；`deploy` 已停止下发 `monsterCount`，`deployRun()` 忽略该字段。正式地图 7 只（`100001` ×4 / `200001` ×3） |
+| 怪物 | `spawnFromMap(map.monsters)` 是**唯一**生成入口；运行时没有任何 `monsterCount` 字段（状态 / 部署协议 / 投影 / 结算 / ack / UI / 日志全删）。正式地图 7 只（`100001` ×4 / `200001` ×3），要改数量只能改 LDtk 实体层 |
 | 自动验收夹具 | `assets/resource/maps/arena-test.ts`：40×22 格 @32px = **1280×704**，全可走、spawn `(400,470)`、2 只 `100001`。尺寸 ≤ 视口 ⇒ 相机恒 `(0,0)` ⇒ `projection()` 的屏幕归一化坐标与旧一屏完全一致，37 步 / 4 步验收不需改坐标。**它不是 LDtk 源，不入 `import_map.py` 链** |
 | 地图切换 | `createState()` 默认夹具；局外 `deploy` 时 `game.pack.ts` 调 `setArena(state, arena)` 切到正式 LDtk 地图并重建本局。真正玩必经出征，自动验收（`project play`）不出征 |
 | 旧竞技场 | 已删除 `paint.ts` 的 `backdrop()`（月亮/远山/塔楼/浮尘）与 `ground()`（渐变地面/透视网格/椭圆环/暗角）、`GROUND_TOP` 常量、`effects.ts::setTarget()` 的一屏 clamp、`spawnSkeletons()` 硬编码坐标、`simulation.ts` 的 `/VIEW_W` 世界归一化。**单轨**，没有双轨兼容层 |
@@ -126,8 +126,8 @@ HUD 右上角已改成**只读小地图**（击杀 / 剩余骷髅 / 状态面板
 
 | 阶段 | 行为 |
 |:--|:--|
-| 局外 | 配装 / 拖放；三把长剑起步在仓库。顶栏「怪物数量」输入框是历史遗留 UI，**已不再下发、不影响出怪数**（数量由地图实体层决定） |
-| 出征 | `buildLoadout()` **只借出两个武器槽**（非武器装备留局外）→ 发 `deploy{ seed, armedWeapons, activeWeaponSlot }`（**无 monsterCount**）→ Worker `setArena(state, arena)` 切到正式 LDtk 地图 → 顶栏切到战斗态，meta 面板隐藏且 `#fx-shell` 指针透明，点击直达 canvas |
+| 局外 | 配装 / 拖放；三把长剑起步在仓库。顶栏只有「出征 / 返回局外 / 背包」，**「怪物数量」输入框已删除**（2026-11-13 用户要求） |
+| 出征 | `buildLoadout()` **只借出两个武器槽**（非武器装备留局外）→ 发 `deploy{ seed, armedWeapons, activeWeaponSlot }`（**没有任何数量字段**）→ Worker `setArena(state, arena)` 切到正式 LDtk 地图 → 顶栏切到战斗态，meta 面板隐藏且 `#fx-shell` 指针透明，点击直达 canvas |
 | 战斗拾取 | 显式点击掉落物 → 走近才拾取；优先空武器槽，两槽满则经 `pickup` / `pickupAck` 放进**背包并占真实格子**；背包也满则掉落物留在地上 |
 | 通关 | `settleRun()` 归还借出武器；`lootItemIds`（局内装到武器槽的战利品）用 `findFirstFit()` 按 bag → stash 入库；本局已进背包的战利品原地保留；满仓只进 `overflow` 报告，**没有 `loose` 兜底** |
 | 阵亡 | 借出装备永久丢失，并按 `carriedUids`（＝`RunResult.bagLootUids`）用 `removeItem()` **从背包精确删除本局战利品** |
@@ -254,7 +254,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 29/29
 | `meta-ui` | 生成物同步 + 独立页面浏览器验收 13/13 |
 | `build` | `ok` |
 | `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **29/29**（含 7 条平台身份 / KV 存档、1 条「无宿主不写盘」、2 条平台 lifecycle、局内背包） |
-| `playthrough` 1600x900 | `passed:true`、37 steps、0 errors |
+| `playthrough` 1600x900 | `passed:true`、36–37 steps（下限 35，advance 子步浮动）、0 errors |
 | `playthrough-resize` 1700x1000 | `passed:true`、4 steps、0 errors |
 | `package` | sha256 校验通过，包内 README + feedback 齐全 |
 | `web-zip shell`（发布产物） | `verify-all.sh` 的 `package` 步骤产出 `artifacts/verify/forgeax-game-web.zip`：`sha256sum -c` 通过、`index.html` 含 `FORGEAX_META_SHELL_BEGIN`、`forgeax-dist.json` 的 `bytes`/`sha256` 与实际一致；Builder 玩家产物同时含壳层与平台 bootstrap |
@@ -269,10 +269,11 @@ node scripts/verify-shell.cjs                            # 4174 单页 29/29
 projectiles 10 + weapons 9 + **world 11** + modifiers 3）、
 meta 38（inventory 16 + platform-KV account 11 + run-settlement 8 + meta 3）、battle 4、talent 3、
 resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不随新增断言抬高）。
-浏览器验收：playthrough 13 个命名场景（展开 37 steps）、独立页 13 条、4174 单页 29 条
+浏览器验收：playthrough 13 个命名场景（展开 36–37 steps，下限 35）、独立页 13 条、4174 单页 29 条
 （含 7 条平台身份 / KV 存档 + 1 条「无宿主不写盘」+ 2 条平台 lifecycle）。
-真实硬件 WebGPU 冒烟（历史一次性脚本）：`node artifacts/smoke-login-bag.mjs` 覆盖「强制登录 / 刷新后存档」，
-**该脚本按已删除的本地登录流程编写，现已不适用**；本轮改造的本地验收以 `verify-shell.cjs` 的 29 条为准。
+真实硬件 WebGPU 冒烟（历史一次性脚本）：`node artifacts/smoke-login-bag.mjs` 曾覆盖「强制登录 / 刷新后存档」，
+**该脚本按已删除的本地登录 + 本地存盘流程编写，现已不适用**；现行契约里无宿主不写盘、刷新不恢复，
+本地验收以 `verify-shell.cjs` 的 29 条为准。
 
 | 功能契约 | 单测 `assets/combat/__tests__/movement.test.ts` | 浏览器 `scripts/playthrough.mjs` |
 |:--|:--|:--|
@@ -300,10 +301,10 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 单页借出 / 通关归还 / 阵亡丢失（含本局 bag loot）/ 返回局外 | `assets/meta/__tests__/run-settlement.test.ts`（8 条） | `scripts/verify-shell.cjs`（29 条，含出征广播、战斗态切换与平台 lifecycle） |
 | 初始状态 / reload 可玩 | `empty-project.test.ts`（2 条工程契约） | `spawn: ...` + `reload preserves a playable frame` |
 | 平台 lifecycle：pause/resume 真实停战斗、状态可翻转、消息送达 Worker | — | `scripts/verify-shell.cjs`：`platform lifecycle adapter flips paused and stays registered` + `pause/resume are forwarded to the Engine Worker over the run channel` |
-| 平台身份 / KV 存档：无登录、单 key 版本化 blob、刷新恢复、损坏兜底、平台桥切换、纯 JSON 写入 | `assets/meta/__tests__/account.test.ts`（11 条：envelope / 校验 / 迁移兜底 / 写队列） | `scripts/verify-shell.cjs`（8 条，`store.*`；账号数据隔离不在本地验，发布到平台后再验） |
+| 平台身份 / KV 存档：无登录、单 key 版本化 blob、损坏兜底、平台桥切换、纯 JSON 写入（**均为纯逻辑验证，无宿主不落盘；刷新恢复 / 账号隔离只在发布到平台后验**） | `assets/meta/__tests__/account.test.ts`（11 条：envelope / 校验 / 迁移兜底 / 写队列） | `scripts/verify-shell.cjs`（8 条，`store.*`；含「无宿主不写盘」断言） |
 
-| **大地图 / 相机 / A* / 碰撞 / 只读小地图** | `assets/combat/__tests__/world.test.ts`（11 条：IntGrid 取值、边界与阻挡、落点吸附、相机 clamp、坐标互逆、A* 绕墙且不穿墙、LOS、夹具尺寸、默认夹具 vs 正式 7 只、投影字段、玩家不穿墙） | `scripts/playthrough.mjs`（37 steps，夹具上坐标不变）+ `scripts/verify-shell.cjs`（deploy 不再下发 monsterCount） |
-| **怪物按地图实体生成，数量不可注入** | `loot.test.ts`：`spawns exactly the default map entity layer` / `playable LDtk entity layer is the only population authority` / `deployRun ignores monsterCount` | `verify-shell.cjs`：`deploy sends seed + 1 armed weapon; monster count belongs to the map` |
+| **大地图 / 相机 / A* / 碰撞 / 只读小地图** | `assets/combat/__tests__/world.test.ts`（11 条：IntGrid 取值、边界与阻挡、落点吸附、相机 clamp、坐标互逆、A* 绕墙且不穿墙、LOS、夹具尺寸、默认夹具 vs 正式 7 只、投影字段、玩家不穿墙） | `scripts/playthrough.mjs`（37 steps，夹具上坐标不变）+ `scripts/verify-shell.cjs`（deploy 只发 seed / 借出武器 / 激活槽） |
+| **怪物按地图实体生成，运行时无数量字段** | `loot.test.ts`：`spawns exactly the default map entity layer` / `playable LDtk entity layer is the only population authority` / `deployRun keeps seed and borrowed weapons without any count field` | `verify-shell.cjs`：`deploy sends only seed + borrowed weapons; the monster-count UI is gone` |
 
 ## 已知陷阱速查
 
@@ -373,4 +374,4 @@ git show <hash>:<path>               # 取回某个旧版本的文件内容
    禁止 `push --force`。这是用户 2026-11-10 的硬性要求：**后面的所有改动，做完后都先向 git 提交一份**。
 | 小测试地图做成 24 行后投影整体偏移 | 24×32 = 768 > 720，相机被 clamp 到 y=48；夹具必须 ≤ 视口（现为 22 行 = 704）才能让 camera 恒 `(0,0)`、屏幕归一化不漂移 |
 | 正式地图里玩家点地面走进墙 / 怪卡在墙后 | `setTarget()` 要 `nearestWalkable()` 吸附 + `findPath()` 出路径；`walk()` / `updateSkeletons()` 必须做分轴滑动碰撞，直线追击会穿墙 |
-| 出征后怪数还是 2 / 顶栏填 8 不生效 | 数量由 `map.monsters` 决定，`deploy` 不再下发 `monsterCount`，`deployRun()` 忽略它；`deployed` ack 回报的是当前地图实体数（正式地图 7） |
+| 出征后怪数还是 2 / 找怪物数量输入 | 数量只由 `map.monsters` 决定；运行时与 UI 已彻底删除怪数字段，`deploy` 只发 `seed / armedWeapons / activeWeaponSlot`，`deployed` ack 也不带数量。自动验收默认夹具 2 只、出征后正式地图 7 只 |

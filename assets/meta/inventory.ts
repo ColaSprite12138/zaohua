@@ -413,7 +413,6 @@ export interface BorrowedLoadout {
 }
 
 export interface Deployment {
-  readonly monsterCount: number;
   readonly seed: number;
   readonly armedWeapons: 0 | 1 | 2;
   readonly activeWeaponSlot: 0 | 1;

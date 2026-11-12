@@ -101,9 +101,8 @@ const SELFTEST = `
     if (msg && msg.type === 'hello') chan.postMessage({ type: 'ready' });
     if (msg && msg.type === 'deploy') {
       seenDeploy = msg.deployment;
-      // The Worker answers with the ACTIVE MAP entity count (arena.ldtk has 7),
-      // not with anything the shell asked for.
-      chan.postMessage({ type: 'deployed', monsterCount: 7 });
+      // The Worker answers with no population data: the map owns it entirely.
+      chan.postMessage({ type: 'deployed' });
     }
     if (msg && msg.type === 'equip') {
       out.equipMessages.push({ slots: msg.slots, activeWeaponSlot: msg.activeWeaponSlot });
@@ -225,10 +224,10 @@ const SELFTEST = `
       out.sharedState = H.state === H.getState();
       snap('initial');
 
-      // Equip one weapon, then deploy with 8 monsters.
+      // Equip one weapon, then deploy. There is no monster-count input.
       out.equipped = equipFromStash(0);
+      out.noMonsterInput = !document.getElementById('fx-monsters');
       snap('beforeDeploy');
-      document.getElementById('fx-monsters').value = '8';
       document.getElementById('fx-deploy').click();
       // Wait for the simulated Worker's deployed ack to be handled too: if a
       // result arrives first, that ack would overwrite the settlement log.
@@ -260,7 +259,7 @@ const SELFTEST = `
         outcome: 'cleared',
         slotLootItemIds: ['10006', '20006'], bagLootUids: [],
         lootLog: [{ name: '霜之哀伤', quality: '暗金' }, { name: '射日', quality: '暗金' }],
-        kills: 8, monsterCount: 8,
+        kills: 8,
       });
       await waitFor(function () { return !inBattle() && /通关/.test(logText()); });
       snap('cleared');
@@ -271,7 +270,7 @@ const SELFTEST = `
       snap('secondDeploy');
       sendResult({
         outcome: 'gameOver', slotLootItemIds: ['10001'], bagLootUids: [],
-        lootLog: [{ name: '巨剑', quality: '白' }], kills: 2, monsterCount: 8,
+        lootLog: [{ name: '巨剑', quality: '白' }], kills: 2,
       });
       await waitFor(function () { return !inBattle() && /阵亡/.test(logText()); });
       snap('gameOver');
@@ -381,8 +380,10 @@ const checks = [
   ['ten equipment slots', result.equipSlots === 10, result.equipSlots],
   ['shell and meta UI share ONE state object', result.sharedState === true, result.sharedState],
   ['a weapon can be equipped before deploy', result.equipped === true && S.beforeDeploy.weapon0 === 'longsword', S.beforeDeploy],
-  ['deploy sends seed + 1 armed weapon; monster count belongs to the map',
-    !('monsterCount' in d) && d.armedWeapons === 1 && typeof d.seed === 'number', d],
+  ['deploy sends only seed + borrowed weapons; the monster-count UI is gone',
+    result.noMonsterInput === true
+      && Object.keys(d).sort().join(',') === 'activeWeaponSlot,armedWeapons,seed'
+      && d.armedWeapons === 1 && typeof d.seed === 'number', d],
   ['deploy borrows the weapon out of the inventory', S.deployed.weapon0 === null, S.deployed],
   ['deploy switches the page into battle mode', S.deployed.inBattle === true && /战斗/.test(S.deployed.phase), S.deployed],
   ['cleared returns the borrowed weapon', S.cleared.weapon0 === 'longsword', S.cleared],

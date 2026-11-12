@@ -59,15 +59,15 @@
 | 怪物种类 | `Skeleton.monsterId`（`100001` 骷髅剑士 / `200001` 骷髅弓手），对应 `monster.xlsx` 的掉落池 |
 | 掉落算法 | `loot.ts::rollLoot(monsterId, rng)` 按 `loot_pool.xlsx` 权重累计抽取；两池各 6 件、权重 `10/8/6/4/2/1` |
 | 随机源 | `makeRng(seed)` Mulberry32，`runSeed` 默认 `0x5eed1234`；`reset()` 重建，保证 R 重开 loot 序列一致 |
-| 战利品记录 | `GameState.lootLog`（掉落明细）、`carriedItems`（已拾取的 authored id，仅供 HUD / 报告计数）、`monsterCount` / `runSeed` |
+| 战利品记录 | `GameState.lootLog`（掉落明细）、`carriedItems`（已拾取的 authored id，仅供 HUD / 报告计数）、`runSeed`；**没有怪数字段** |
 | 拾取记录 | `runBagUids`（本局已放进背包的掉落 uid，阵亡按 uid 删除）、`slotLootItemIds`（拾取进武器槽的 authored id，通关时找格子入库）；**两者不可合并** |
-| 怪物部署 | `spawnFromMap(map)` 是**唯一**生成入口，严格按 `map.monsters`；`monsterCount` 只读。`deployRun(s, { seed, armedWeapons, activeWeaponSlot })` 忽略任何数量；`setArena(s, map)` 切图并重建本局 |
+| 怪物部署 | `spawnFromMap(map)` 是**唯一**生成入口，严格按 `map.monsters`。`deployRun(s, { seed, armedWeapons, activeWeaponSlot })` 只处理种子 / 借出武器 / 激活槽，协议里没有数量字段；`setArena(s, map)` 切图并重建本局 |
 
 `Drop.kind` 仍为 `'longsword'`，只是**视觉/兼容类别**；真实物品身份走 `drop.itemId` / `name` / `quality`，
 每件掉落额外带稳定 `uid`（跨堆消息对齐用）。
 `WeaponId` 仍是 `'longsword'`（armed vs bare），不换成表里的 12 个 id。`projection()` 追加
-`monsterCount` / `runSeed` / `lootLog` / `carriedItems` / `dropItems` / `pickupTarget` /
-`pendingPickup` / `runBagUids` / `slotLootItemIds`，**不得改旧字段名，也不得再出现 score**。
+`runSeed` / `lootLog` / `carriedItems` / `dropItems` / `pickupTarget` /
+`pendingPickup` / `runBagUids` / `slotLootItemIds`，**不得改旧字段名，也不得再出现 score 或怪数字段**。
 引擎层通过 `game.pack.ts` 的 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、在清场/阵亡时发 `result`。
 **`game.state` 必须保持唯一 read projection**：`project play` 以「唯一注册的 projection」解析默认读取，
 多注册一个（哪怕是 `run.result`）会让全部 35 步 playthrough 报 `state-unavailable`。
@@ -82,7 +82,7 @@
 6. 攻击数值/范围只读 `activeWeapon(s)`，禁止直接读 `weaponSlots[0]` 或任何"是否装备过任何武器"的判断 —— 否则切到空槽仍会打出长剑伤害。
 7. `equippedWeapon` 投影字段名不得改（35 步 playthrough 依赖），语义＝当前激活槽武器。
 8. 掉落数值只读 `resource/generated/*.ts`；`loot.ts` 是唯一抽取入口，报告脚本不得镜像算法。
-9. **没有默认出怪逻辑**：`spawnFromMap(map)` 严格按 `map.monsters`，`monsterCount` 只读；`deployRun()` / `RunConfig` 传入的数量一律忽略。正式 LDtk 地图 7 只，自动验收夹具 2 只。
+9. **没有默认出怪逻辑，也没有怪数字段**：`spawnFromMap(map)` 严格按 `map.monsters`；`GameState` / `RunConfig` / `Deployment` / `projection()` / `RunResult` / `deployed` ack 里都不得出现 `monsterCount`。正式 LDtk 地图 7 只，自动验收夹具 2 只。
 10. **没有得分**：`GameState` / `projection()` / HUD / 结算板 / 断言里都不得出现 `score`；`kills` 是唯一击杀计数。
 11. **拾取必须显式**：只有短按点中掉落物会产生 `pickupTarget`；走过掉落物、点地面、点敌人、长按跟随都不得触发拾取。`playthrough.mjs` 与 `loot.test.ts` 各有反例断言守着。
 12. **背包满时掉落物留在地上**：`resolvePickupAck(s, false, uid)` 不得移除 drop、不得写 `runBagUids` / `carriedItems`；只有 `ok=true` 才算拾取成功。
@@ -137,8 +137,8 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
   `projection()` 的旧字段仍用 `worldToScreen() / VIEW_W, / VIEW_H` 保持屏幕归一化。
 - `setTarget()` 做世界边界 clamp + `nearestWalkable()` 吸附 + A*；`walk()` 沿 `GameState.path`
   逐点走并做分轴滑动碰撞；`updateSkeletons()` 每 0.7 s 重算一次到玩家的路径。
-- `spawnFromMap(map)` 严格按 `map.monsters` 生成，`monsterCount` 只读；`setArena(s, map)` 切图并重建本局；
-  `deployRun()` 忽略 `monsterCount`，只处理 seed / 借出武器 / 激活槽。
+- `spawnFromMap(map)` 严格按 `map.monsters` 生成；`setArena(s, map)` 切图并重建本局；
+  `deployRun()` 只处理 seed / 借出武器 / 激活槽，协议里没有任何怪数字段。
 - 只读小地图的指针屏蔽在 `game.pack.ts`（`MINIMAP` 矩形），本模块不感知 HUD。
 
 ## 攻击规格与资源预留（架构层，2026-11-12 新增，**尚未接入运行时**）

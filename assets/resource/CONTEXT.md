@@ -81,7 +81,7 @@ python scripts/export_tables.py --check
   落点与引用完整性）；`assets/game/game.pack.ts` 在 `deploy` 时 `setArena(state, arena)` 切到本图；
   `assets/combat/world.ts` 消费 `terrain` / `spawn` / `monsters` 做碰撞、A*、相机与出怪。
   世界坐标 / 相机 / 小地图 / 碰撞 / 寻路均已接线，详见 `HANDOFF.md`「地图运行时」。
-  **`monsterCount` 不再可注入**：要改怪数只能改 LDtk 实体层。
+  **怪数没有可注入入口**：运行时已删掉全部 `monsterCount` 字段，要改怪数只能改 LDtk 实体层。
 
 ## 待办（用户已明确「后面再做」，勿擅自开工；地图运行时这一项已于 2026-11-13 完成）
 
