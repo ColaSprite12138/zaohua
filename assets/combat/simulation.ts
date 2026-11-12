@@ -14,9 +14,10 @@ import { NO_MODIFIERS, type CombatModifiers } from './modifiers.ts';
 import { makeRng } from './loot.ts';
 import { say } from './effects.ts';
 import {
-  activeWeapon, createState, reset, type GameState, type StepInput,
+  activeWeapon, createState, reset, setArena, type GameState, type StepInput,
 } from './state.ts';
 import { checkCleared, switchWeaponSlot, updateDrops } from './weapons.ts';
+import { cameraFor, worldToScreen, type ArenaMap } from './world.ts';
 
 function tickTimers(s: GameState, dt: number): void {
   const p = s.player;
@@ -57,16 +58,19 @@ export function step(
   updateDrops(s, dt);
   checkCleared(s);
   tickParticles(s, dt);
+  // Camera is the single authority for input and painting. Updating it AFTER
+  // movement keeps this frame's screen->world conversion (done by the engine
+  // before step) consistent with what paint() will draw.
+  s.camera = cameraFor(s.world, s.player.x, s.player.y);
 }
 
 /**
  * Deploy a run from the meta layer. Called once per deployment by the engine
  * root when the single-page shell sends a `deploy` message.
  *
- * `loadout.weapons` is how many of the two weapon slots are armed (0..2); the
- * authored item identities stay in the meta inventory (borrowed), so combat
- * only needs the armed/bare category. Resets the run while preserving the
- * newly configured monster count and seed.
+ * `monsterCount` is accepted for message compatibility but IGNORED: the active
+ * map's entity layer is the only population authority. The engine calls
+ * `setArena(state, arena)` before this to select the playable LDtk map.
  */
 export interface Deployment {
   readonly monsterCount?: number;
@@ -76,7 +80,6 @@ export interface Deployment {
 }
 
 export function deployRun(s: GameState, config: Deployment = {}): void {
-  s.monsterCount = Math.max(1, Math.floor(config.monsterCount ?? s.monsterCount));
   s.runSeed = config.seed ?? s.runSeed;
   s.rng = makeRng(s.runSeed);
   reset(s);
@@ -90,26 +93,37 @@ export function deployRun(s: GameState, config: Deployment = {}): void {
   }
 }
 
-/** Stable read projection consumed by the playthrough assertions. */
+/**
+ * Stable read projection consumed by the playthrough assertions.
+ *
+ * `player` / `skeletons` / `dropAt` / `target` stay SCREEN-normalised
+ * (world - camera, then / VIEW_W, / VIEW_H). The acceptance fixture is exactly
+ * one viewport big, so its camera is (0,0) and those numbers are unchanged
+ * from the legacy one-screen arena. World-space facts are exposed separately
+ * in `worldPlayer` / `camera` / `map` for the new map-runtime assertions.
+ */
 export function projection(s: GameState) {
   const first = s.drops[0];
+  const cam = s.camera;
+  const scr = (x: number, y: number) => worldToScreen(cam, x, y);
+  const dropScreen = first ? scr(first.x, first.y) : null;
+  const playerScreen = scr(s.player.x, s.player.y);
+  const targetScreen = scr(s.target.x, s.target.y);
   return {
     hp: s.hp,
     maxHp: s.maxHp,
     kills: s.kills,
     attacks: s.attacks,
     skeletonsAlive: s.skeletons.filter((sk) => sk.alive).length,
-    skeletons: s.skeletons.map((sk) => ({
-      x: sk.x / VIEW_W,
-      y: sk.y / VIEW_H,
-      hp: sk.hp,
-      alive: sk.alive,
-    })),
+    skeletons: s.skeletons.map((sk) => {
+      const v = scr(sk.x, sk.y);
+      return { x: v.x / VIEW_W, y: v.y / VIEW_H, hp: sk.hp, alive: sk.alive };
+    }),
     attackTarget: s.targetEnemy,
     attackOrder: s.attackOrder,
     drops: s.drops.map((drop) => drop.kind),
-    dropAt: first ? { x: first.x / VIEW_W, y: first.y / VIEW_H } : null,
-    // Legacy field name kept for the existing 32-step playthrough: it now
+    dropAt: dropScreen ? { x: dropScreen.x / VIEW_W, y: dropScreen.y / VIEW_H } : null,
+    // Legacy field name kept for the existing 35-step playthrough: it now
     // reports the ACTIVE slot, i.e. the one weapon actually used in melee.
     equippedWeapon: activeWeapon(s),
     weaponSlots: [...s.weaponSlots],
@@ -133,19 +147,24 @@ export function projection(s: GameState) {
     runBagUids: [...s.runBagUids],
     slotLootItemIds: [...s.slotLootItemIds],
     dropItems: s.drops.map((d) => d.itemId ?? null),
-    player: { x: s.player.x / VIEW_W, y: s.player.y / VIEW_H },
+    player: { x: playerScreen.x / VIEW_W, y: playerScreen.y / VIEW_H },
     moveMode: s.moveMode,
     followingPointer: s.moveMode === 'follow',
-    target: { x: s.target.x / VIEW_W, y: s.target.y / VIEW_H },
+    target: { x: targetScreen.x / VIEW_W, y: targetScreen.y / VIEW_H },
     dodging: s.player.dodge > 0,
     attackCooldown: s.player.attackCd,
     dodgeCooldown: s.player.dodgeCd,
     gameOver: s.gameOver,
     cleared: s.cleared,
+    // World-space map runtime facts (new; existing fields above are untouched).
+    camera: { x: cam.x, y: cam.y },
+    worldPlayer: { x: s.player.x, y: s.player.y },
+    map: { id: s.map.id, w: s.map.pxWid, h: s.map.pxHei },
+    pathLength: s.path.length,
   };
 }
 
-export { activeWeapon, createState, reset };
+export { activeWeapon, createState, reset, setArena };
 export type {
   Drop, GameState, MoveMode, Particle, Player, Skeleton, StepInput,
 } from './state.ts';
@@ -153,5 +172,6 @@ export {
   CLICK_DRAG_PIXELS, CLICK_HOLD_SECONDS,
   MELEE_RANGE_ARMED, MELEE_RANGE_BARE,
 } from './state.ts';
+export type { ArenaMap } from './world.ts';
 export type { CombatModifiers } from './modifiers.ts';
 export { NO_MODIFIERS } from './modifiers.ts';

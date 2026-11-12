@@ -25,11 +25,14 @@ import {
 import { createPrimitiveMesh } from '@forgeax/engine/geometry';
 
 import {
-  createState, deployRun, projection, reset, step, VIEW_H, VIEW_W,
+  createState, deployRun, projection, reset, setArena, step,
+  MINIMAP, VIEW_H, VIEW_W, screenToWorld, worldToScreen,
   type Deployment,
 } from './simulation.ts';
 import { paint } from './paint.ts';
 import { resolvePickupAck } from '../combat/weapons.ts';
+import { arena } from '../resource/maps/arena.generated.ts';
+import { testArena } from '../resource/maps/arena-test.ts';
 
 const PACKAGE_ID = definePackageId('019fb7ce-3d00-7000-8000-000000000001');
 
@@ -68,7 +71,9 @@ export const game: Plugin = {
     const context = surface.getContext('2d');
     if (context === null) throw new Error('game/arena requires a Canvas 2D context');
     const painter = context as unknown as CanvasRenderingContext2D;
-    const state = createState();
+    // The small flat fixture keeps automated acceptance runs alive; the real
+    // playable LDtk arena is selected by `deploy` below.
+    const state = createState({ map: testArena });
 
     // Meta <-> run bridge. `lastResult` is posted to the shell exactly once
     // per run (on cleared / gameOver) and read back by playthrough assertions.
@@ -97,6 +102,9 @@ export const game: Plugin = {
         } | null;
         if (!msg || typeof msg !== 'object') return;
         if (msg.type === 'deploy') {
+          // Real play always comes through the meta shell's deploy step, so
+          // this is the single switch from the acceptance fixture to arena.ldtk.
+          setArena(state, arena);
           deployRun(state, msg.deployment ?? {});
           lastResult = null;
           resultSent = false;
@@ -153,13 +161,16 @@ export const game: Plugin = {
             // `projection()` exposes only the first drop (a legacy playthrough
             // field). A real multi-monster run needs every drop location to
             // walk over and pick the loot up.
-            drops: state.drops.map((d) => ({
-              x: d.x / VIEW_W,
-              y: d.y / VIEW_H,
-              itemId: d.itemId ?? null,
-              name: d.name ?? null,
-              quality: d.quality ?? null,
-            })),
+            drops: state.drops.map((d) => {
+              const v = worldToScreen(state.camera, d.x, d.y);
+              return {
+                x: v.x / VIEW_W,
+                y: v.y / VIEW_H,
+                itemId: d.itemId ?? null,
+                name: d.name ?? null,
+                quality: d.quality ?? null,
+              };
+            }),
             extent,
           });
         }
@@ -247,6 +258,17 @@ export const game: Plugin = {
             const extent = host?.drawingBufferSize?.();
             const canvasW = extent?.width || VIEW_W;
             const canvasH = extent?.height || VIEW_H;
+            const screenX = pointer ? (pointer.x / canvasW) * VIEW_W : 0;
+            const screenY = pointer ? (pointer.y / canvasH) * VIEW_H : 0;
+            // The minimap is READ ONLY: pointer orders inside it are dropped,
+            // so it can never be clicked to move or to follow the cursor.
+            const onMinimap = screenX >= MINIMAP.x
+              && screenX <= MINIMAP.x + MINIMAP.w
+              && screenY >= MINIMAP.y
+              && screenY <= MINIMAP.y + MINIMAP.h;
+            const worldMouse = pointer
+              ? screenToWorld(state.camera, screenX, screenY)
+              : undefined;
             // press / held / release let the simulation classify a short click
             // (order: move to ground, or attack one enemy) vs. a long hold
             // (the only state with continuous cursor following). Hovering with
@@ -257,12 +279,10 @@ export const game: Plugin = {
             // settlement, but keep painting so the canvas shows a live frame.
             if (!locked && !paused) {
               step(state, dt, {
-                mouse: pointer
-                  ? { x: (pointer.x / canvasW) * VIEW_W, y: (pointer.y / canvasH) * VIEW_H }
-                  : undefined,
-                pointerDown: mouse?.justPressed(0) ?? false,
-                pointerHeld: mouse?.button(0) ?? false,
-                pointerUp: mouse?.justReleased(0) ?? false,
+                mouse: worldMouse,
+                pointerDown: !onMinimap && (mouse?.justPressed(0) ?? false),
+                pointerHeld: !onMinimap && (mouse?.button(0) ?? false),
+                pointerUp: !onMinimap && (mouse?.justReleased(0) ?? false),
                 switchWeapon: snapshot?.keyboard?.justPressedCode('Digit1') ?? false
                   ? 0
                   : (snapshot?.keyboard?.justPressedCode('Digit2') ?? false) ? 1 : null,

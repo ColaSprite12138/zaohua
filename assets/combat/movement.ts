@@ -14,6 +14,7 @@ import {
 import {
   CLICK_DRAG_PIXELS, CLICK_HOLD_SECONDS, type GameState, type StepInput,
 } from './state.ts';
+import { walkable, type World } from './world.ts';
 
 export function classifyPointer(s: GameState, dt: number, input: StepInput): void {
   if (s.player.dodge > 0) return;
@@ -73,10 +74,41 @@ export function applyDodge(s: GameState, dodge: boolean): void {
   burst(s, p.x, p.y, '#67e8f9', 12, 130);
 }
 
+const BODY_RADIUS = 10;
+
+/** A body may stand only if its centre and four extremities are walkable. */
+function canStand(w: World, x: number, y: number): boolean {
+  return walkable(w, x, y)
+    && walkable(w, x - BODY_RADIUS, y)
+    && walkable(w, x + BODY_RADIUS, y)
+    && walkable(w, x, y - BODY_RADIUS)
+    && walkable(w, x, y + BODY_RADIUS);
+}
+
+/** Axis-separated movement so a wall slides the body instead of freezing it. */
+function moveWithCollision(s: GameState, dx: number, dy: number): void {
+  const p = s.player;
+  const nx = p.x + dx;
+  const ny = p.y + dy;
+  if (canStand(s.world, nx, ny)) {
+    p.x = nx;
+    p.y = ny;
+    return;
+  }
+  if (dx !== 0 && canStand(s.world, nx, p.y)) p.x = nx;
+  if (dy !== 0 && canStand(s.world, p.x, ny)) p.y = ny;
+}
+
+/**
+ * Follow the A* waypoints (or the final target once the route is consumed).
+ * World coordinates, world bounds and tile collision all live here now; the
+ * old one-screen clamp is gone.
+ */
 export function walk(s: GameState, dt: number): void {
   const p = s.player;
-  const dx = s.target.x - p.x;
-  const dy = s.target.y - p.y;
+  const goal = s.path.length > 0 ? s.path[0]! : s.target;
+  const dx = goal.x - p.x;
+  const dy = goal.y - p.y;
   const dist = Math.hypot(dx, dy);
   const speed = p.dodge > 0 ? 560 : 205;
   if (s.moveMode !== 'idle' && dist > 6) {
@@ -85,12 +117,15 @@ export function walk(s: GameState, dt: number): void {
     p.vx = nx * speed;
     p.vy = ny * speed;
     p.face = Math.atan2(ny, nx);
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
+    moveWithCollision(s, p.vx * dt, p.vy * dt);
+    if (s.path.length > 0 && Math.hypot(goal.x - p.x, goal.y - p.y) < 12) {
+      s.path.shift();
+    }
   } else {
     p.vx *= 0.72;
     p.vy *= 0.72;
-    if (s.moveMode === 'point') s.moveMode = 'idle';
+    if (s.path.length > 0) s.path.shift();
+    else if (s.moveMode === 'point') s.moveMode = 'idle';
   }
   for (const mark of p.trail) mark.life -= dt;
   p.trail = p.trail.filter((mark) => mark.life > 0);

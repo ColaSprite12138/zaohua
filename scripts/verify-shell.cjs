@@ -101,7 +101,9 @@ const SELFTEST = `
     if (msg && msg.type === 'hello') chan.postMessage({ type: 'ready' });
     if (msg && msg.type === 'deploy') {
       seenDeploy = msg.deployment;
-      chan.postMessage({ type: 'deployed', monsterCount: msg.deployment.monsterCount });
+      // The Worker answers with the ACTIVE MAP entity count (arena.ldtk has 7),
+      // not with anything the shell asked for.
+      chan.postMessage({ type: 'deployed', monsterCount: 7 });
     }
     if (msg && msg.type === 'equip') {
       out.equipMessages.push({ slots: msg.slots, activeWeaponSlot: msg.activeWeaponSlot });
@@ -379,8 +381,8 @@ const checks = [
   ['ten equipment slots', result.equipSlots === 10, result.equipSlots],
   ['shell and meta UI share ONE state object', result.sharedState === true, result.sharedState],
   ['a weapon can be equipped before deploy', result.equipped === true && S.beforeDeploy.weapon0 === 'longsword', S.beforeDeploy],
-  ['deploy broadcasts monsterCount=8, seed and 1 armed weapon',
-    d.monsterCount === 8 && d.armedWeapons === 1 && typeof d.seed === 'number', d],
+  ['deploy sends seed + 1 armed weapon; monster count belongs to the map',
+    !('monsterCount' in d) && d.armedWeapons === 1 && typeof d.seed === 'number', d],
   ['deploy borrows the weapon out of the inventory', S.deployed.weapon0 === null, S.deployed],
   ['deploy switches the page into battle mode', S.deployed.inBattle === true && /战斗/.test(S.deployed.phase), S.deployed],
   ['cleared returns the borrowed weapon', S.cleared.weapon0 === 'longsword', S.cleared],

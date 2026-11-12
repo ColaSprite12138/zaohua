@@ -19,15 +19,33 @@ engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas �
 | **单击掉落物** | 下一条**显式拾取指令**：走过去、到达才拾取；**走过不自动捡**。优先装进空武器槽，两槽满则放进背包并占真实格子，背包也满则掉落物留在地上 |
 | **B / I** | 战斗中打开 / 关闭**局内背包**（不暂停战斗，ESC 关闭） |
 
-初始场上两只骷髅、**两个武器槽都空**。击杀骷髅掉落长剑，**必须短按点中掉落物**才下拾取指令，
+自动验收夹具里两只骷髅、正式 `arena.ldtk` 地图 7 只（**怪物只由地图实体层生成，数量不可注入**），
+**两个武器槽都空**。击杀骷髅掉落长剑，**必须短按点中掉落物**才下拾取指令，
 玩家走到 `<50px` 才结算；激活槽为长剑时攻击范围（140 → 170）与伤害（22 → 46）提升。
-**本游戏没有得分**：击杀 / 拾取都不加分，HUD 显示 `击杀 / 剩余骷髅 / 已拾取`。
-`game.state` 投影的 `equippedWeapon` 保留旧字段名，语义为「当前激活槽的武器」。
+**本游戏没有得分**：击杀 / 拾取都不加分，HUD 右上角是**只读小地图**（原击杀面板已删），
+结算板仍显示 `击杀 / 拾取`。
+`game.state` 投影的 `equippedWeapon` 保留旧字段名，语义为「当前激活槽的武器」；
+`player` / `skeletons` / `dropAt` / `target` 保持**屏幕归一化**，世界事实另见
+`worldPlayer` / `camera` / `map` / `pathLength`。
 
 两武器槽都满时，Engine Worker 看不到主窗口的背包格子，走跨堆协议：
 Worker 发 `pickup { uid, itemId, name }` → 主窗口 `shell-bridge.js` 调 `M.addToBag()`
 占真实 2×3 格 → 回 `pickupAck { uid, ok }` → `resolvePickupAck()` 决定移除掉落物或让它留在地上。
 `game.pack.ts` 用 `pickupSent` 防每帧重复发；**无论成败都必须回 ack**。
+
+### 地图运行时（2026-11-13）
+
+| 项 | 说明 |
+|:--|:--|
+| 正式地图 | `assets/resource/maps/arena.ldtk` → `arena.generated.ts`，64×48 格 @32px = **2048×1536** 世界像素；`Terrain` IntGrid 决定可走格，`Entities` 决定出生点与 7 只怪 |
+| 逻辑 | `assets/combat/world.ts`：`makeWorld()` / `walkable()` / `blocks()` / `nearestWalkable()` / `cameraFor()` / `screenToWorld()` / `worldToScreen()` / `findPath()`（8 邻域 A*，禁止对角穿角）/ `lineOfSight()` |
+| 相机 | 居中跟随玩家、clamp 到世界边界；`step()` 末尾更新，是输入与渲染唯一权威。`paint.ts` 用一次 `translate(-cam.x,-cam.y)` 画世界，HUD 与小地图在屏幕空间 |
+| 碰撞 / 寻路 | 玩家点击落点先 `nearestWalkable()` 吸附再走 A* 路径；玩家与怪物移动都做分轴滑动碰撞，墙 / 深渊挡走也挡视线 |
+| 小地图 | 右上角 `MINIMAP`（220×165），**只能看不能点**：引擎层丢弃落在矩形内的全部指针指令；画阻挡格、怪物 / 掉落 / 玩家点与相机视口框。原「击杀 / 剩余骷髅 / 状态」面板已删除 |
+| 怪物 | `spawnFromMap(map.monsters)` 是唯一生成入口，`monsterCount` 只读；`deploy` 不再下发数量，`deployRun()` 忽略它 |
+| 自动验收夹具 | `assets/resource/maps/arena-test.ts`：40×22 格 = **1280×704**，全可走、spawn `(400,470)`、2 只近战怪。尺寸 ≤ 视口 ⇒ 相机恒 `(0,0)` ⇒ 投影屏幕归一化不变，浏览器验收无需改坐标。**不是 LDtk 源，不入 `import_map.py` 链** |
+| 切换 | `createState()` 默认夹具；局外 `deploy` 时 `game.pack.ts` 调 `setArena(state, arena)` 切到正式地图。真正玩必经出征，自动验收（`project play`）不出征 |
+| 旧竞技场 | 已删除程序化 `backdrop()` / `ground()`、`GROUND_TOP`、一屏 clamp、硬编码怪物坐标与 `/VIEW_W` 归一化；**单轨**，无双轨兼容层 |
 
 ### 局外系统（独立页面）
 
@@ -62,7 +80,7 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 
 | 阶段 | 规则 |
 |:--|:--|
-| 出征 | 顶栏填怪物数（默认 8，1–24），`buildLoadout()` 只借出两个武器槽（非武器装备留局外） |
+| 出征 | `buildLoadout()` 只借出两个武器槽（非武器装备留局外）；顶栏「怪物数量」是历史 UI，已不下发、不影响出怪数。`deploy` 会把地图切到正式 `arena.ldtk` |
 | 战斗 | `#fx-shell` 透明且指针穿透，点击直达 canvas；掉落按 `item.xlsx` / `loot_pool.xlsx` 权重结算；**拾取必须显式点击**，走过不捡 |
 | 结算数据 | `Settlement = { outcome, lootItemIds, carriedUids }`：`lootItemIds` 是局内装到武器槽的 authored id，`carriedUids` 是本局已进背包的掉落 uid |
 | 通关 | 归还借出武器；`lootItemIds` 用 `findFirstFit()` 按 `背包 → 仓库` 入库；本局已进背包的战利品原地保留；两处都满只进 `overflow` 报告，**没有待分配区兜底** |
@@ -201,7 +219,7 @@ IPv6 `[::1]` 回环与内置预览面板的已知问题见 `docs/feedback.md` �
 独立单测（combat 代码改动才额外跑浏览器 playthrough），并始终跑一次全局 `tsc`。
 命中 `shared/` / 引擎层 / 构建配置、或显式 `--all` 时自动转全量。
 **发版前 / 跨模块改动跑全量**：`bash scripts/verify-all.sh`，输出在 `artifacts/verify/summary.txt`；
-它强制单测 ≥ 83 条（当前 **117**）、`playthrough` ≥ 35 步、`resize` ≥ 4 步，并跑独立页面与 4174 单页浏览器验收
+它强制单测 ≥ 83 条（当前 **128**）、`playthrough` ≥ 35 步（实际 37 步）、`resize` ≥ 4 步，并跑独立页面与 4174 单页浏览器验收
 —— **删断言让测试变绿会直接失败**。注入 + 单页验收是全流程最后一步（build/play/package 都会重建 dist）。
 
 ```bash

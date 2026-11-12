@@ -1,7 +1,8 @@
 /** Visual feedback, waypoint clamping and particle ticking. Pure state helpers. */
 
-import { GROUND_TOP, VIEW_H, VIEW_W, clamp } from '../shared/constants.ts';
+import { clamp } from '../shared/constants.ts';
 import type { GameState } from './state.ts';
+import { findPath, nearestWalkable } from './world.ts';
 
 export function burst(
   s: GameState, x: number, y: number, color: string, count: number, power: number,
@@ -26,9 +27,23 @@ export function say(s: GameState, text: string): void {
   s.toast = { text, life: 2.4 };
 }
 
+/**
+ * Set a WORLD waypoint. The old one-screen clamp is gone: x/y are clamped to
+ * the map bounds, an unwalkable target snaps to the nearest walkable cell, and
+ * A* produces the route. Re-targeting the same cell reuses the existing path
+ * so the attack-chase loop does not run A* on every frame.
+ */
 export function setTarget(s: GameState, x: number, y: number): void {
-  s.target.x = clamp(x, 46, VIEW_W - 46);
-  s.target.y = clamp(y, GROUND_TOP + 26, VIEW_H - 46);
+  const margin = 16;
+  const px = clamp(x, margin, s.map.pxWid - margin);
+  const py = clamp(y, margin, s.map.pxHei - margin);
+  const spot = nearestWalkable(s.world, px, py);
+  const moved = Math.hypot(spot.x - s.target.x, spot.y - s.target.y) >= 12;
+  s.target.x = spot.x;
+  s.target.y = spot.y;
+  if (moved || s.path.length === 0) {
+    s.path = findPath(s.world, { x: s.player.x, y: s.player.y }, spot);
+  }
 }
 
 export function tickToast(s: GameState, dt: number): void {

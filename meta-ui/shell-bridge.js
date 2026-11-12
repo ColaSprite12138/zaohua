@@ -187,7 +187,8 @@
   /* ------------------------------ deploy ------------------------------- */
   $('fx-deploy').addEventListener('click', function () {
     if (inRun) return;
-    var count = Math.max(1, Math.min(24, Number($('fx-monsters').value) || DEFAULT_MONSTERS));
+    // Monster population comes from the active map's LDtk entity layer. The
+    // Worker ignores any count, so deploy no longer sends one.
     borrowed = M.buildLoadout(host.getState());
     // Borrowing empties the two slots. Reset the delta baseline BEFORE the
     // render so this state change is not mistaken for an in-run unequip.
@@ -197,13 +198,12 @@
     inRun = true;
     showBattle(true);
     var deployment = {
-      monsterCount: count,
       seed: SEED,
       armedWeapons: borrowed.armedWeapons,
       activeWeaponSlot: borrowed.activeWeaponSlot,
     };
     if (channel) channel.postMessage({ type: 'deploy', deployment: deployment });
-    log('已借出 ' + borrowed.armedWeapons + ' 件武器 · ' + count + ' 只怪物 · 等待结算…');
+    log('已借出 ' + borrowed.armedWeapons + ' 件武器 · 等待结算…');
   });
 
   $('fx-back').addEventListener('click', function () {

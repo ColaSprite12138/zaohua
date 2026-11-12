@@ -1,15 +1,24 @@
 /**
  * Combat state: the authoritative in-run state shape and its construction.
  *
- * No other combat file is imported here (only `shared/`), so every combat
- * subsystem can import these types without a cycle.
+ * No other combat file is imported here (only `shared/` + pure world helpers),
+ * so every combat subsystem can import these types without a cycle.
+ *
+ * Coordinates are WORLD pixels. The engine layer converts screen pixels with
+ * `screenToWorld(state.camera, ...)` before calling `step()`, and `projection()`
+ * converts back with `worldToScreen(...)` so the automated acceptance scripts
+ * keep their screen-normalised contract.
  */
 
-import { GROUND_TOP, VIEW_H, VIEW_W } from '../shared/constants.ts';
+import { VIEW_H, VIEW_W } from '../shared/constants.ts';
+import { testArena } from '../resource/maps/arena-test.ts';
 import { makeRng } from './loot.ts';
+import {
+  cameraFor, makeWorld, type ArenaMap, type Vec, type World,
+} from './world.ts';
 
 export interface StepInput {
-  /** Pointer in logical canvas pixels (top-left origin). */
+  /** Pointer in WORLD pixels (already converted from screen by the engine). */
   readonly mouse?: { x: number; y: number } | undefined;
   readonly pointerDown: boolean;
   readonly pointerHeld: boolean;
@@ -28,8 +37,12 @@ export interface StepInput {
  */
 export type WeaponId = 'longsword';
 
-/** Default arena population. Overridable per run via `createState`. */
-export const DEFAULT_MONSTER_COUNT = 2;
+/**
+ * Number of monsters on the DEFAULT map. This is NOT a spawn count: the map's
+ * entity layer is the only authority. Kept as an exported constant so tests can
+ * assert the default without hard-coding a number.
+ */
+export const DEFAULT_MONSTER_COUNT = testArena.monsters.length;
 export const DEFAULT_RUN_SEED = 0x5eed1234;
 
 /** The single weapon currently in use; null = bare hands. */
@@ -67,6 +80,9 @@ export interface Skeleton {
   bob: number;
   /** Authored monster id from `monster.xlsx`; drives the loot pool. */
   monsterId: string;
+  /** Cached A* route to the player, recomputed on a timer. */
+  path: Vec[];
+  repath: number;
 }
 
 export interface Drop {
@@ -145,7 +161,15 @@ export interface GameState {
   cleared: boolean;
   particles: Particle[];
   toast: { text: string; life: number } | null;
-  /** Arena population for this run (overridable at deployment). */
+  /** Active map. The acceptance fixture by default, arena.ldtk after deploy. */
+  map: ArenaMap;
+  /** Precomputed tile grid / collision queries for `map`. */
+  world: World;
+  /** Camera top-left in WORLD pixels; the single authority for input + paint. */
+  camera: { x: number; y: number };
+  /** A* waypoints in world pixels for the current move order. */
+  path: Vec[];
+  /** Monster count is READ ONLY, derived from `map.monsters`. */
   monsterCount: number;
   /** Deterministic seed: identical seed + identical kills = identical loot. */
   runSeed: number;
@@ -166,11 +190,16 @@ export interface GameState {
 }
 
 export interface RunConfig {
+  /** Ignored: the map's entity layer is the only population authority. */
   readonly monsterCount?: number;
   readonly seed?: number;
+  readonly map?: ArenaMap;
 }
 
 export function createState(config: RunConfig = {}): GameState {
+  const map: ArenaMap = config.map ?? testArena;
+  const world = makeWorld(map);
+  const { x, y } = map.spawn;
   const state: GameState = {
     t: 0,
     attacks: 0,
@@ -178,11 +207,11 @@ export function createState(config: RunConfig = {}): GameState {
     maxHp: 100,
     kills: 0,
     player: {
-      x: 400, y: 470, vx: 0, vy: 0, face: 0,
+      x, y, vx: 0, vy: 0, face: 0,
       invuln: 0, dodge: 0, dodgeCd: 0, attackCd: 0,
       attackFx: 0, hurt: 0, attackAim: 0, trail: [],
     },
-    target: { x: 400, y: 470 },
+    target: { x, y },
     moveMode: 'idle',
     targetEnemy: null,
     attackOrder: false,
@@ -195,7 +224,11 @@ export function createState(config: RunConfig = {}): GameState {
     cleared: false,
     particles: [],
     toast: null,
-    monsterCount: Math.max(1, Math.floor(config.monsterCount ?? DEFAULT_MONSTER_COUNT)),
+    map,
+    world,
+    camera: cameraFor(world, x, y),
+    path: [],
+    monsterCount: map.monsters.length,
     runSeed: config.seed ?? DEFAULT_RUN_SEED,
     rng: makeRng(config.seed ?? DEFAULT_RUN_SEED),
     lootLog: [],
@@ -210,32 +243,30 @@ export function createState(config: RunConfig = {}): GameState {
 }
 
 /**
- * Spawn `count` skeletons. The first two keep the original coordinates so all
- * existing playthrough steps (which click the first living skeleton) stay
- * valid. Extra monsters form a loose grid on the right half of the arena.
- * Monster ids alternate between the two authored types so a mixed pack
- * exercises both loot pools.
+ * Every skeleton comes from the LDtk entity layer. There is NO default spawn
+ * count and NO hard-coded coordinate: `map.monsters` is the only authority.
  */
-export function spawnSkeletons(count = DEFAULT_MONSTER_COUNT): Skeleton[] {
-  const fixed: readonly [number, number][] = [[880, 430], [1010, 560]];
-  const out: Skeleton[] = [];
-  const n = Math.max(1, Math.floor(count));
-  for (let i = 0; i < n; i += 1) {
-    const extra = i - fixed.length;
-    const col = extra % 3;
-    const row = Math.floor(extra / 3);
-    const x = i < fixed.length ? fixed[i]![0] : 700 + col * 175;
-    const y = i < fixed.length ? fixed[i]![1] : 320 + row * 130;
-    out.push({
-      x, y,
-      hp: 66, maxHp: 66, alive: true,
-      attackCd: 0.8 + (i % 4) * 0.25,
-      hit: 0,
-      bob: (i % 3) * 1.4,
-      monsterId: i % 2 === 0 ? '100001' : '200001',
-    });
-  }
-  return out;
+export function spawnFromMap(map: ArenaMap): Skeleton[] {
+  return map.monsters.map((m, i) => ({
+    x: m.x,
+    y: m.y,
+    hp: 66,
+    maxHp: 66,
+    alive: true,
+    attackCd: 0.8 + (i % 4) * 0.25,
+    hit: 0,
+    bob: (i % 3) * 1.4,
+    monsterId: m.monsterId,
+    path: [],
+    repath: 0,
+  }));
+}
+
+/** Switch the active arena (called on `deploy`) and rebuild the run. */
+export function setArena(s: GameState, map: ArenaMap): void {
+  s.map = map;
+  s.world = makeWorld(map);
+  reset(s);
 }
 
 export function reset(s: GameState): void {
@@ -249,8 +280,7 @@ export function reset(s: GameState): void {
   s.cleared = false;
   s.drops.length = 0;
   s.particles.length = 0;
-  // A run restart must reproduce the same loot sequence for the same seed,
-  // while keeping the configured monster count (R does not change deployment).
+  // A run restart must reproduce the same loot sequence for the same seed.
   s.rng = makeRng(s.runSeed);
   s.lootLog.length = 0;
   s.carriedItems.length = 0;
@@ -264,8 +294,8 @@ export function reset(s: GameState): void {
   s.attackOrder = false;
   s.press = null;
   const p = s.player;
-  p.x = 400;
-  p.y = 470;
+  p.x = s.map.spawn.x;
+  p.y = s.map.spawn.y;
   p.vx = 0;
   p.vy = 0;
   p.face = 0;
@@ -277,9 +307,12 @@ export function reset(s: GameState): void {
   p.hurt = 0;
   p.attackAim = 0;
   p.trail.length = 0;
-  s.target = { x: 400, y: 470 };
-  s.skeletons = spawnSkeletons(s.monsterCount);
+  s.target = { x: p.x, y: p.y };
+  s.path = [];
+  s.camera = cameraFor(s.world, p.x, p.y);
+  s.monsterCount = s.map.monsters.length;
+  s.skeletons = spawnFromMap(s.map);
 }
 
 // Re-exported so combat render/engine code keeps a single source for the view box.
-export { GROUND_TOP, VIEW_H, VIEW_W };
+export { VIEW_H, VIEW_W };

@@ -7,8 +7,13 @@
  * import from the owning module directly.
  */
 
-export { VIEW_W, VIEW_H, GROUND_TOP } from '../shared/constants.ts';
+export { VIEW_W, VIEW_H, MINIMAP } from '../shared/constants.ts';
 export type { Vec } from '../shared/constants.ts';
+export {
+  cameraFor, findPath, makeWorld, nearestWalkable, screenToWorld,
+  worldToScreen, walkable, blocks, inBounds, lineOfSight,
+} from '../combat/world.ts';
+export type { ArenaMap, World } from '../combat/world.ts';
 
 export {
   createState,
@@ -16,6 +21,7 @@ export {
   step,
   projection,
   deployRun,
+  setArena,
   activeWeapon,
   NO_MODIFIERS,
   CLICK_HOLD_SECONDS,

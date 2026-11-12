@@ -3,7 +3,9 @@ import {
   makeRng, poolEntries, rollLoot, theoreticalDistribution,
   itemRow, weaponRow, authoredItem, monsterRow,
 } from '../loot.ts';
-import { createState, DEFAULT_MONSTER_COUNT, spawnSkeletons } from '../state.ts';
+import { createState, DEFAULT_MONSTER_COUNT, spawnFromMap } from '../state.ts';
+import { testArena } from '../../resource/maps/arena-test.ts';
+import { arena } from '../../resource/maps/arena.generated.ts';
 import { deployRun, projection, step } from '../simulation.ts';
 import { swingAtTarget } from '../attack.ts';
 import { updateDrops } from '../weapons.ts';
@@ -92,24 +94,29 @@ describe('authored tables are wired into combat', () => {
 });
 
 describe('arena population and loot settlement', () => {
-  it('defaults to two skeletons with alternating monster ids', () => {
+  it('spawns exactly the default map entity layer, with no hard-coded count', () => {
     const s = createState();
     expect(s.monsterCount).toBe(DEFAULT_MONSTER_COUNT);
-    expect(s.skeletons).toHaveLength(2);
-    expect(s.skeletons[0]!.monsterId).toBe('100001');
-    expect(s.skeletons[1]!.monsterId).toBe('200001');
+    expect(s.skeletons).toHaveLength(testArena.monsters.length);
+    expect(s.skeletons.map((sk) => sk.monsterId))
+      .toEqual(testArena.monsters.map((m) => m.monsterId));
+    expect(s.skeletons.map((sk) => [sk.x, sk.y]))
+      .toEqual(testArena.monsters.map((m) => [m.x, m.y]));
   });
 
-  it('can deploy 8 monsters; first two keep the legacy coordinates', () => {
+  it('the playable LDtk entity layer is the only population authority', () => {
+    // A requested count is IGNORED: there is no default spawn generator.
     const s = createState({ monsterCount: 8 });
-    expect(s.skeletons).toHaveLength(8);
-    expect(s.skeletons[0]!.x).toBe(880);
-    expect(s.skeletons[0]!.y).toBe(430);
-    expect(s.skeletons[1]!.x).toBe(1010);
-    expect(s.skeletons[1]!.y).toBe(560);
-    expect(new Set(s.skeletons.map((sk) => `${sk.x},${sk.y}`)).size).toBe(8);
-    expect(new Set(s.skeletons.map((sk) => sk.monsterId)).size).toBe(2);
-    expect(spawnSkeletons(1)).toHaveLength(1);
+    expect(s.skeletons).toHaveLength(testArena.monsters.length);
+    expect(s.monsterCount).toBe(testArena.monsters.length);
+    // The real arena keeps all seven authored monsters untouched.
+    const real = spawnFromMap(arena);
+    expect(real).toHaveLength(arena.monsters.length);
+    expect(real).toHaveLength(7);
+    expect(real.map((sk) => sk.monsterId))
+      .toEqual(arena.monsters.map((m) => m.monsterId));
+    expect(new Set(real.map((sk) => `${sk.x},${sk.y}`)).size).toBe(7);
+    expect(new Set(real.map((sk) => sk.monsterId)).size).toBe(2);
   });
 
   it('a kill rolls loot, labels the drop, and records it in lootLog', () => {
@@ -185,11 +192,11 @@ describe('arena population and loot settlement', () => {
     expect(s.weaponSlots[0]).toBeNull();
   });
 
-  it('deployRun injects monster count, seed and borrowed weapons', () => {
+  it('deployRun ignores monsterCount but keeps seed and borrowed weapons', () => {
     const s = createState();
     deployRun(s, { monsterCount: 8, seed: 909, armedWeapons: 2, activeWeaponSlot: 1 });
-    expect(s.monsterCount).toBe(8);
-    expect(s.skeletons).toHaveLength(8);
+    expect(s.monsterCount).toBe(testArena.monsters.length);
+    expect(s.skeletons).toHaveLength(testArena.monsters.length);
     expect(s.runSeed).toBe(909);
     expect(s.weaponSlots).toEqual(['longsword', 'longsword']);
     expect(s.activeWeaponSlot).toBe(1);
@@ -202,7 +209,7 @@ describe('arena population and loot settlement', () => {
     const s = createState({ monsterCount: 6 });
     deployRun(s, { armedWeapons: 0 });
     expect(s.weaponSlots).toEqual([null, null]);
-    expect(s.skeletons).toHaveLength(6);
+    expect(s.skeletons).toHaveLength(testArena.monsters.length);
   });
 
   it('projection exposes loot data without breaking legacy fields', () => {
@@ -210,8 +217,8 @@ describe('arena population and loot settlement', () => {
     tick(s);
     const p = projection(s);
     expect(p.equippedWeapon).toBeNull();
-    expect(p.skeletonsAlive).toBe(6);
-    expect(p.monsterCount).toBe(6);
+    expect(p.skeletonsAlive).toBe(testArena.monsters.length);
+    expect(p.monsterCount).toBe(testArena.monsters.length);
     expect(p.runSeed).toBe(31337);
     expect(p.lootLog).toEqual([]);
     expect(p.carriedItems).toEqual([]);

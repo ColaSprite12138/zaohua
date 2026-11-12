@@ -76,3 +76,28 @@
 - **旧断言改成反例而不是删**：`loot.test.ts` 原「走过去自动拾取」改成显式设 `pickupTarget` 后拾取，
   并新增「不点击时走过掉落物不会拾取」；`playthrough.mjs` 的 35 步不变，拾取步骤前新增
   「掉落物还在地上、`equippedWeapon` 为 null」，拾取后断言 `drops.length === 0`。
+
+## 2026-11-13 · 地图运行时接线：世界坐标 / 相机 / A* / 碰撞 / 只读小地图
+
+- **投影屏幕归一化千万不能改成世界归一化**：37 步 playthrough 与 4 步 resize 全靠
+  `player / skeletons / dropAt / target` 是「屏幕坐标 / VIEW_W,/VIEW_H」。相机一跟随，
+  世界坐标固定的 `target` 投影会随相机漂移。做法是 `projection()` 里 `worldToScreen()`
+  再除，旧字段不动，世界事实另开 `worldPlayer / camera / map / pathLength`。
+- **测试夹具必须 ≤ 视口**：最初写 40×24 格 = 1280×768，`cameraFor()` 把 y clamp 到 48，
+  所有浏览器断言整体偏移。改 22 行 = 704 后 `cameraFor()` 的两个上限都是 0，相机恒 `(0,0)`，
+  旧坐标 `(400,470)` / `(880,430)` / `(1010,560)` 全部原样可用，验收脚本零改动。
+- **`setTarget()` 每帧被攻击追击调用**：A* 不能每帧重跑。目标格变化 <12px 时复用 `s.path`，
+  `walk()` 沿格中心逐点走、到点 shift；path 空后再直追 `s.target`。
+- **7 只怪每帧 A* 太贵**：每只 `repath` 0.7s 节流 + 分轴滑动 `canStand()`；否则正式地图
+  怪物会卡在墙后，清场条件永远不成立。
+- **`paint.ts` 只需一次 `g.translate(-cam.x,-cam.y)`** 包住地形 / 角色 / 掉落 / 粒子，
+  所有既有绘制函数继续用世界坐标不用改；HUD 与小地图必须在 `restore()` 之后画。
+- **「小地图只能看不能点」是输入侧的事**：只在画布上画出小地图没用，必须在
+  `game.pack.ts` 把落在 `MINIMAP` 矩形内的 `pointerDown/Held/Up` 全部丢弃。
+- **`deploy` 是两张地图的唯一切换点**：真正玩必经局外出征，自动验收 `project play`
+  不出发，所以「默认测试夹具 / deploy 后正式 arena.ldtk」正好等价于「验收用测试图、玩用正式图」，
+  不需要检测运行环境或加 URL 参数。
+- **删旧竞技场要连根删**：`backdrop()` / `ground()` / `GROUND_TOP` / 一屏 clamp /
+  `spawnSkeletons()` 硬编码坐标 / `/VIEW_W` 归一化一起清；`monsterCount` 由「可注入」
+  改成「只读派生自 `map.monsters.length`」，`deploy` 消息也不再下发该字段。
+

@@ -470,3 +470,36 @@
 - Status: fixed
 - Note: 与登录、平台身份、KV 存档**无关**，纯粹是壳层注入被 `build` 重建抹掉。
   4174 直连要恢复壳层，跑 `node scripts/inject-shell.mjs`（`verify-all.sh` 最后一步也会重注入）。
+
+### 2026-11-13 — 旧一屏竞技场删除，接入 LDtk 大地图运行时与只读小地图
+
+- Request: 用户授权「地图运行时可以做」「A* 和碰撞可以做」「小地图只能看不能点，放在右上角。
+  之前的竞技场地图删掉」。逐项确认后定稿：① 删的是 `paint.ts` 旧程序化绘制 + 一屏坐标体系，
+  **绝不删 `arena.ldtk`**；② 本批只做地图，攻击 spec 分派 / 互射留下一批；③ 右上角
+  **删掉击杀面板，只保留小地图**；④ 怪物按地图实体生成、不再默认生成、7 只原样保留；
+  ⑤ `deploy` 数量忽略，以地图实体为准；⑥ 云存档链路与插件 1.1.73 版本都不动；
+  ⑦ 新增一张小测试地图**专供自动验收**，防止被 7 只怪打死，正式地图用来真正玩。
+- Actual: 旧战斗是固定 1280×720 一屏：`game.pack.ts` 把物理像素映射成 `0..VIEW_W/VIEW_H`
+  直接当世界坐标、`effects.ts::setTarget()` clamp 到一屏、`spawnSkeletons()` 硬编码两只怪、
+  `paint.ts` 程序化画月亮 / 远山 / 透视网格 / 椭圆竞技场环、`projection()` 除以 `VIEW_W/VIEW_H`
+  归一化。工作日志 00:35 早已写明「大地图必然让 playthrough 全红」。
+- Resolution: 新增 `combat/world.ts`（`makeWorld` / 碰撞 / `nearestWalkable` / `cameraFor` /
+  `screenToWorld` / `findPath` 8 邻域 A* 禁止对角穿角 / `lineOfSight`）与
+  `resource/maps/arena-test.ts`（40×22 = 1280×704 全可走、2 只怪、spawn `(400,470)`）。
+  `GameState` 加 `map/world/camera/path`，`Skeleton` 加节流的 `path/repath`；
+  `setArena()` 在 `deploy` 时切到正式 2048×1536 地图。`paint.ts` 删 `backdrop/ground`、
+  改画 IntGrid 地形、加右上角 220×165 只读小地图，HUD 击杀面板删除。
+  `deploy` 不再下发 `monsterCount`，`deployRun()` 忽略它。
+- Evidence: `bash scripts/verify-all.sh` 连跑两次 ALL GREEN（2026-11-13 00:17:03 /
+  00:22:12）：128 单测（下限 83）、typecheck 0 error、playthrough `passed=true steps=37`、
+  resize `steps=4`、package + 单页壳层 29 条。`assets/combat/__tests__/world.test.ts`
+  11 条新增断言覆盖 IntGrid / 吸附 / 相机 clamp / 坐标互逆 / A* 绕墙 / LOS / 玩家不穿墙 /
+  默认夹具 vs 正式 7 只。
+- Status: fixed
+- Note: 三个真实坑已写进 `combat/EXPERIENCE.md`：夹具最初 24 行 = 768 > 720 导致相机
+  clamp 到 y=48、投影整体偏移；`setTarget()` 每帧 A* 需按目标格变化节流；
+  小地图「不能点」必须在引擎输入侧屏蔽指针而不是只画出来。
+  **留待用户确认（本轮未动）**：局外顶栏「怪物数量」输入框已失效但仍留在 UI；
+  `README.md` 单页流程节仍写「本地开发写镜像 / 刷新后从存档恢复」，与「无宿主不写盘」契约冲突；
+  README 命令块仍用 `pnpm`（本机不在 PATH）；攻击 spec / 互射属下一批。
+

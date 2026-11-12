@@ -2,7 +2,7 @@
 
 import {
   activeWeapon,
-  GROUND_TOP,
+  MINIMAP,
   VIEW_H,
   VIEW_W,
   type Drop,
@@ -56,114 +56,95 @@ function shadow(g: Painter, x: number, y: number, rx: number, ry: number, alpha 
   g.restore();
 }
 
-function backdrop(g: Painter, t: number): void {
-  const sky = g.createLinearGradient(0, 0, 0, GROUND_TOP + 40);
-  sky.addColorStop(0, '#080e1c');
-  sky.addColorStop(0.55, '#16243c');
-  sky.addColorStop(1, '#2b3f4e');
-  g.fillStyle = sky;
-  g.fillRect(0, 0, VIEW_W, GROUND_TOP + 40);
-
-  // Moon and haze.
-  const halo = g.createRadialGradient(1000, 92, 6, 1000, 92, 150);
-  halo.addColorStop(0, 'rgba(180,214,255,0.32)');
-  halo.addColorStop(1, 'rgba(180,214,255,0)');
-  g.fillStyle = halo;
-  g.fillRect(830, 0, 340, 260);
-  g.fillStyle = '#dbe9ff';
-  g.beginPath();
-  g.arc(1000, 92, 34, 0, Math.PI * 2);
-  g.fill();
-
-  // Distant ridges.
-  for (let layer = 0; layer < 2; layer += 1) {
-    g.beginPath();
-    g.moveTo(0, GROUND_TOP);
-    const base = 150 + layer * 26;
-    for (let x = 0; x <= VIEW_W; x += 40) {
-      const y = base + Math.sin(x * 0.006 + layer * 2.1) * 18 + Math.sin(x * 0.017) * 9;
-      g.lineTo(x, y);
+/**
+ * Terrain is drawn in WORLD space: paint() applies one camera translate, so
+ * every entity below can keep using its world coordinates unchanged.
+ * The old one-screen backdrop (sky / ridges / towers / motes) and the
+ * procedural arena ring are gone; arena.ldtk's IntGrid is the only ground.
+ */
+function drawTerrain(g: Painter, s: GameState): void {
+  const w = s.world;
+  const cam = s.camera;
+  const grid = w.grid;
+  g.fillStyle = '#080e1c';
+  g.fillRect(cam.x, cam.y, VIEW_W, VIEW_H);
+  const c0 = Math.max(0, Math.floor(cam.x / grid));
+  const c1 = Math.min(w.cols - 1, Math.floor((cam.x + VIEW_W) / grid));
+  const r0 = Math.max(0, Math.floor(cam.y / grid));
+  const r1 = Math.min(w.rows - 1, Math.floor((cam.y + VIEW_H) / grid));
+  for (let r = r0; r <= r1; r += 1) {
+    for (let c = c0; c <= c1; c += 1) {
+      const tile = w.tiles[r * w.cols + c] ?? 1;
+      const x = c * grid;
+      const y = r * grid;
+      if (tile === 1) {
+        g.fillStyle = '#3b4a55';
+        g.fillRect(x, y, grid, grid);
+        g.fillStyle = '#4d6170';
+        g.fillRect(x, y, grid, 4);
+      } else if (tile === 3) {
+        g.fillStyle = '#050b13';
+        g.fillRect(x, y, grid, grid);
+      } else {
+        g.fillStyle = tile === 2 ? '#2b4650' : '#20333d';
+        g.fillRect(x, y, grid, grid);
+      }
+      g.strokeStyle = 'rgba(126,196,204,0.055)';
+      g.lineWidth = 1;
+      g.strokeRect(x + 0.5, y + 0.5, grid - 1, grid - 1);
     }
-    g.lineTo(VIEW_W, GROUND_TOP);
-    g.closePath();
-    g.fillStyle = layer === 0 ? '#1b2a3d' : '#24384a';
-    g.fill();
-  }
-
-  // Ruined towers for depth.
-  g.fillStyle = '#16212f';
-  for (const [x, w, h] of [[118, 46, 96], [196, 26, 62], [1128, 54, 112], [1204, 30, 70]] as const) {
-    g.fillRect(x, GROUND_TOP - h, w, h);
-    g.beginPath();
-    g.moveTo(x - 6, GROUND_TOP - h);
-    g.lineTo(x + w / 2, GROUND_TOP - h - 26);
-    g.lineTo(x + w + 6, GROUND_TOP - h);
-    g.closePath();
-    g.fill();
-  }
-
-  // Drifting motes.
-  g.fillStyle = 'rgba(190,225,255,0.30)';
-  for (let i = 0; i < 26; i += 1) {
-    const x = (i * 173 + t * (8 + (i % 4) * 3)) % VIEW_W;
-    const y = 30 + ((i * 97) % 150) + Math.sin(t + i) * 6;
-    g.fillRect(x, y, 2, 2);
   }
 }
 
-function ground(g: Painter): void {
-  const floor = g.createLinearGradient(0, GROUND_TOP, 0, VIEW_H);
-  floor.addColorStop(0, '#20333d');
-  floor.addColorStop(0.5, '#2b4650');
-  floor.addColorStop(1, '#152630');
-  g.fillStyle = floor;
-  g.fillRect(0, GROUND_TOP, VIEW_W, VIEW_H - GROUND_TOP);
+/**
+ * Read-only minimap, top-right. It shows terrain, entities and the camera
+ * viewport but consumes NO pointer input: the engine drops clicks inside
+ * MINIMAP before they ever reach the simulation.
+ */
+function drawMinimap(g: Painter, s: GameState): void {
+  const { x, y, w, h } = MINIMAP;
+  g.save();
+  g.fillStyle = 'rgba(8,16,24,0.86)';
+  roundRect(g, x, y, w, h, 12);
+  g.fill();
+  g.strokeStyle = 'rgba(150,180,205,0.4)';
+  g.lineWidth = 1.5;
+  roundRect(g, x, y, w, h, 12);
+  g.stroke();
+  text(g, '地图 · 只读', x + 12, y + 15, 11, '#a9c4d6', 'left', '600');
 
-  // Horizon glow.
-  const glow = g.createLinearGradient(0, GROUND_TOP - 12, 0, GROUND_TOP + 46);
-  glow.addColorStop(0, 'rgba(120,190,210,0.35)');
-  glow.addColorStop(1, 'rgba(120,190,210,0)');
-  g.fillStyle = glow;
-  g.fillRect(0, GROUND_TOP - 12, VIEW_W, 58);
-
-  // Perspective grid: radial lines to a vanishing point, compressed horizontals.
-  const vpX = VIEW_W / 2;
-  const vpY = 128;
-  g.strokeStyle = 'rgba(126,196,204,0.13)';
-  g.lineWidth = 1;
-  g.beginPath();
-  for (let x = -900; x <= VIEW_W + 900; x += 110) {
-    g.moveTo(vpX + (x - vpX) * 0.06, GROUND_TOP);
-    g.lineTo(x, VIEW_H);
+  const wd = s.world;
+  const sx = (w - 16) / s.map.pxWid;
+  const sy = (h - 32) / s.map.pxHei;
+  const ox = x + 8;
+  const oy = y + 24;
+  g.fillStyle = '#16232e';
+  g.fillRect(ox, oy, w - 16, h - 32);
+  for (let r = 0; r < wd.rows; r += 1) {
+    for (let c = 0; c < wd.cols; c += 1) {
+      const tile = wd.tiles[r * wd.cols + c] ?? 1;
+      if (tile !== 1 && tile !== 3) continue;
+      g.fillStyle = tile === 1 ? '#5a7080' : '#04090f';
+      g.fillRect(
+        ox + c * wd.grid * sx, oy + r * wd.grid * sy,
+        Math.max(1, wd.grid * sx), Math.max(1, wd.grid * sy),
+      );
+    }
   }
-  g.stroke();
-  g.beginPath();
-  for (let i = 1; i <= 13; i += 1) {
-    const f = Math.pow(i / 13, 1.85);
-    const y = GROUND_TOP + (VIEW_H - GROUND_TOP) * f;
-    g.moveTo(0, y);
-    g.lineTo(VIEW_W, y);
-  }
-  g.stroke();
-
-  // Arena ring (a squashed circle reads as 2.5D ground).
-  g.strokeStyle = 'rgba(120,205,214,0.22)';
-  g.lineWidth = 3;
-  g.beginPath();
-  g.ellipse(VIEW_W / 2, 486, 470, 178, 0, 0, Math.PI * 2);
-  g.stroke();
-  g.strokeStyle = 'rgba(120,205,214,0.10)';
+  g.strokeStyle = 'rgba(103,232,249,0.85)';
   g.lineWidth = 1;
-  g.beginPath();
-  g.ellipse(VIEW_W / 2, 486, 330, 124, 0, 0, Math.PI * 2);
-  g.stroke();
+  g.strokeRect(ox + s.camera.x * sx, oy + s.camera.y * sy, VIEW_W * sx, VIEW_H * sy);
 
-  // Foreground vignette.
-  const vig = g.createRadialGradient(VIEW_W / 2, 420, 220, VIEW_W / 2, 420, 820);
-  vig.addColorStop(0, 'rgba(0,0,0,0)');
-  vig.addColorStop(1, 'rgba(2,6,10,0.55)');
-  g.fillStyle = vig;
-  g.fillRect(0, GROUND_TOP, VIEW_W, VIEW_H - GROUND_TOP);
+  const dot = (wx: number, wy: number, color: string, radius: number): void => {
+    g.fillStyle = color;
+    g.beginPath();
+    g.arc(ox + wx * sx, oy + wy * sy, radius, 0, Math.PI * 2);
+    g.fill();
+  };
+  for (const sk of s.skeletons) if (sk.alive) dot(sk.x, sk.y, '#ff6b6b', 2);
+  for (const drop of s.drops) dot(drop.x, drop.y, '#ffd166', 2);
+  dot(s.player.x, s.player.y, '#67e8f9', 3.2);
+  g.restore();
 }
 
 function drawSword(
@@ -506,13 +487,7 @@ function hud(g: Painter, s: GameState): void {
   text(g, `${Math.round(s.hp)} / ${s.maxHp}`, 174, 70, 11, '#08131c', 'center', '800');
   text(g, 'HP', 40, 90, 11, '#8fa9bb', 'left', '600');
 
-  // Top-right: kill count and run status. There is no score in this game.
-  g.fillStyle = 'rgba(8,16,24,0.66)';
-  roundRect(g, VIEW_W - 244, 20, 220, 82, 14);
-  g.fill();
-  text(g, `击杀 ${s.kills}`, VIEW_W - 40, 44, 18, '#ffd166', 'right', '700');
-  text(g, `剩余骷髅 ${s.skeletons.filter((sk) => sk.alive).length}  ·  已拾取 ${s.carriedItems.length}`, VIEW_W - 40, 72, 13, '#a9c4d6', 'right', '600');
-  text(g, s.cleared ? '试炼完成' : s.gameOver ? '挑战失败' : '进行中', VIEW_W - 40, 91, 11, s.cleared ? '#4ade80' : '#8fa9bb', 'right', '600');
+  // Top-right is reserved for the read-only minimap (drawn after the HUD).
 
   // Bottom-centre: two weapon slots. Only the active one drives melee.
   const slotX = VIEW_W / 2 - 148;
@@ -625,11 +600,12 @@ function hud(g: Painter, s: GameState): void {
   }
 }
 
-/** One complete frame. */
+/** One complete frame: world-space scene first, screen-space HUD on top. */
 export function paint(g: Painter, s: GameState): void {
   g.clearRect(0, 0, VIEW_W, VIEW_H);
-  backdrop(g, s.t);
-  ground(g);
+  g.save();
+  g.translate(-s.camera.x, -s.camera.y);
+  drawTerrain(g, s);
   drawMoveTarget(g, s);
   drawTargetLock(g, s);
 
@@ -642,5 +618,7 @@ export function paint(g: Painter, s: GameState): void {
   for (const item of items) item.draw();
 
   drawParticles(g, s);
+  g.restore();
   hud(g, s);
+  drawMinimap(g, s);
 }

@@ -66,6 +66,7 @@ python scripts/export_tables.py --check
 | `maps/arena.ldtk` | **人工**（LDtk 1.5.3） | 唯一地图权威源；`Terrain` IntGrid 层 + `Entities` 实体层，无 tileset |
 | `maps/arena.generated.ts` | `scripts/import_map.py` | 生成物，**禁止手改**；文件头记录源 SHA-256 |
 | `scripts/make_sample_map.py` | 仅重建示例基线 | 不是构建链一环；地图被人工编辑后不要重跑 |
+| `maps/arena-test.ts` | **人工**（仅测试夹具） | 40×22 格 = 1280×704 全可走、2 只怪；只供自动验收 / 单测，**不是 LDtk 源、不入 `import_map.py` 链** |
 
 - IntGrid 值：`0` 地面（可走）/ `1` 墙（挡走 + 挡视线）/ `2` 道路（可走）/ `3` 深渊（挡走 + 挡视线）。
   当前「阻挡格一律挡走也挡视线」，尚未区分矮墙等只挡走不挡视线的类型。
@@ -76,10 +77,13 @@ python scripts/export_tables.py --check
   从出生点连通可达、`monsterId` 引用完整性。
 - **生成物刻意放 `maps/` 而非 `generated/`**：`export_tables.py` 会删除 `generated/`
   里没有同名 `.xlsx` 的孤儿文件，放进去会被清掉并让 `--check` 失败。
-- 当前消费方：`assets/resource/__tests__/map.test.ts`（结构、SHA-256、落点与引用完整性）。
-  运行时接线（世界坐标 / 相机 / 小地图 / 碰撞 / 寻路）尚未接入。
+- 消费方（2026-11-13 起已接入运行时）：`assets/resource/__tests__/map.test.ts`（结构、SHA-256、
+  落点与引用完整性）；`assets/game/game.pack.ts` 在 `deploy` 时 `setArena(state, arena)` 切到本图；
+  `assets/combat/world.ts` 消费 `terrain` / `spawn` / `monsters` 做碰撞、A*、相机与出怪。
+  世界坐标 / 相机 / 小地图 / 碰撞 / 寻路均已接线，详见 `HANDOFF.md`「地图运行时」。
+  **`monsterCount` 不再可注入**：要改怪数只能改 LDtk 实体层。
 
-## 待办（用户已明确「后面再做」，勿擅自开工）
+## 待办（用户已明确「后面再做」，勿擅自开工；地图运行时这一项已于 2026-11-13 完成）
 
 - 若后续需要打包体积/加载速度优化，可增加 bytes 格式导出；当前 TS 常量已满足需求。
 - 物品表目前只有身份 / 堆叠 / 品质 / 伤害 / 子类型；后续策划补充格位尺寸、图标、装备类型时，

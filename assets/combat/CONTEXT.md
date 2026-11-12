@@ -61,7 +61,7 @@
 | 随机源 | `makeRng(seed)` Mulberry32，`runSeed` 默认 `0x5eed1234`；`reset()` 重建，保证 R 重开 loot 序列一致 |
 | 战利品记录 | `GameState.lootLog`（掉落明细）、`carriedItems`（已拾取的 authored id，仅供 HUD / 报告计数）、`monsterCount` / `runSeed` |
 | 拾取记录 | `runBagUids`（本局已放进背包的掉落 uid，阵亡按 uid 删除）、`slotLootItemIds`（拾取进武器槽的 authored id，通关时找格子入库）；**两者不可合并** |
-| 多怪部署 | `spawnSkeletons(count)` 默认 **2**（保护 35 步 playthrough），额外怪按网格生成；`deployRun(s, { monsterCount, seed, armedWeapons, activeWeaponSlot })` 从单页壳层注入 |
+| 怪物部署 | `spawnFromMap(map)` 是**唯一**生成入口，严格按 `map.monsters`；`monsterCount` 只读。`deployRun(s, { seed, armedWeapons, activeWeaponSlot })` 忽略任何数量；`setArena(s, map)` 切图并重建本局 |
 
 `Drop.kind` 仍为 `'longsword'`，只是**视觉/兼容类别**；真实物品身份走 `drop.itemId` / `name` / `quality`，
 每件掉落额外带稳定 `uid`（跨堆消息对齐用）。
@@ -82,26 +82,34 @@
 6. 攻击数值/范围只读 `activeWeapon(s)`，禁止直接读 `weaponSlots[0]` 或任何"是否装备过任何武器"的判断 —— 否则切到空槽仍会打出长剑伤害。
 7. `equippedWeapon` 投影字段名不得改（35 步 playthrough 依赖），语义＝当前激活槽武器。
 8. 掉落数值只读 `resource/generated/*.ts`；`loot.ts` 是唯一抽取入口，报告脚本不得镜像算法。
-9. `createState()` / `spawnSkeletons()` 默认怪数必须保持 **2**；多怪只能由 `deployRun()` 或显式 `RunConfig` 注入。
+9. **没有默认出怪逻辑**：`spawnFromMap(map)` 严格按 `map.monsters`，`monsterCount` 只读；`deployRun()` / `RunConfig` 传入的数量一律忽略。正式 LDtk 地图 7 只，自动验收夹具 2 只。
 10. **没有得分**：`GameState` / `projection()` / HUD / 结算板 / 断言里都不得出现 `score`；`kills` 是唯一击杀计数。
 11. **拾取必须显式**：只有短按点中掉落物会产生 `pickupTarget`；走过掉落物、点地面、点敌人、长按跟随都不得触发拾取。`playthrough.mjs` 与 `loot.test.ts` 各有反例断言守着。
 12. **背包满时掉落物留在地上**：`resolvePickupAck(s, false, uid)` 不得移除 drop、不得写 `runBagUids` / `carriedItems`；只有 `ok=true` 才算拾取成功。
 13. **`pendingPickup` 只能投影 uid 字符串或 null**：`GameProjectionValue` 不接受 `interface`（缺索引签名），直接塞对象会 `tsc` 报错。
 14. 两武器槽已满时必须走 `pickup` / `pickupAck` 跨堆协议，**不得在 Worker 里自己决定背包空间**；`pickupSent` 去重是必需的，否则同一件战利品会被重复塞进背包。
 
+15. **坐标一律世界像素**：`StepInput.mouse` 由引擎层 `screenToWorld()` 转换好；`projection()` 的
+    `player` / `skeletons` / `dropAt` / `target` 必须保持屏幕归一化，世界事实走
+    `worldPlayer` / `camera` / `map` / `pathLength`，不得把旧字段改成世界坐标。
+16. **相机是唯一权威**：`step()` 末尾 `cameraFor()` 更新 `s.camera`；输入、渲染、小地图都读它，
+    别在别处另算一份相机。
+17. **小地图只读**：`MINIMAP` 矩形内的指针由 `game.pack.ts` 丢弃，combat 层不得为小地图加输入分支。
+
 ## 目录与依赖方向（单向，禁止反向 import）
 
 ```
 shared/constants.ts        ← 所有模块可 import（常量与纯类型，无状态）
-combat/state.ts            ← 只 import shared；类型权威，不 import 任何其他 combat 文件
-combat/effects.ts          ← state(类型) + shared
+combat/world.ts            ← 只 import shared；纯地图运行时，不持有游戏状态
+combat/state.ts            ← shared + world + resource/maps 数据；类型权威
+combat/effects.ts          ← state(类型) + shared + world
 combat/modifiers.ts        ← 独立接口，不 import combat
 combat/attack.ts           ← state + effects + modifiers(类型)
-combat/movement.ts         ← state + effects + attack
-combat/enemies.ts          ← state + effects
+combat/movement.ts         ← state + effects + attack + world
+combat/enemies.ts          ← state + effects + world
 combat/weapons.ts          ← state + effects
 combat/loot.ts             ← resource/generated/*.ts（只消费生成物，不读 xlsx）
-combat/simulation.ts       ← 编排 step/projection/deployRun，唯一对外门面
+combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯一对外门面
 ```
 
 `battle/` `meta/` `talent/` **不得 import combat 内部文件**；跨模块只通过 `shared/` 与 `combat/modifiers.ts` 的接口。
@@ -113,10 +121,25 @@ combat/simulation.ts       ← 编排 step/projection/deployRun，唯一对外�
 `resolvePickupAck(s, ok, uid)` / `checkCleared(s)`（`weapons.ts`）/
 `dropAtPoint(s, x, y)` / `hitTestDrop()`（`attack.ts`，点击命中判定唯一入口）/
 `nextDropUid()` / `PendingPickup`（`state.ts`）/
-`deployRun(s, config?: Deployment)` / `spawnSkeletons(count)` / `makeRng(seed)` / `rollLoot(monsterId, rng)` /
+`deployRun(s, config?: Deployment)` / `setArena(s, map)` / `spawnFromMap(map)` / `makeRng(seed)` / `rollLoot(monsterId, rng)` /
 `itemRow(id)` / `weaponRow(id)` / `authoredItem(id)`（**item + weapon 的唯一 join 点**）/
 `AuthoredItemView` / `monsterRow(id)` / `poolEntries(poolId)` / `theoreticalDistribution(poolId)`。
 引擎层从 `assets/game/simulation.ts` 门面 import；新代码应直接 import 本模块。
+
+## 地图运行时（2026-11-13 接入）
+
+`combat/world.ts` 是纯地图运行时（只 import `shared/`，地图数据由引擎层注入）：
+`makeWorld()` / `walkable()` / `blocks()` / `nearestWalkable()` / `cameraFor()` /
+`screenToWorld()` / `worldToScreen()` / `findPath()`（8 邻域 A*、禁止对角穿角）/ `lineOfSight()`。
+`GameState` 新增 `map` / `world` / `camera` / `path`；`Skeleton` 新增带节流的 `path` / `repath`。
+
+- 坐标一律**世界像素**：`StepInput.mouse` 已是世界坐标（`game.pack.ts` 用 `screenToWorld()` 转换）；
+  `projection()` 的旧字段仍用 `worldToScreen() / VIEW_W, / VIEW_H` 保持屏幕归一化。
+- `setTarget()` 做世界边界 clamp + `nearestWalkable()` 吸附 + A*；`walk()` 沿 `GameState.path`
+  逐点走并做分轴滑动碰撞；`updateSkeletons()` 每 0.7 s 重算一次到玩家的路径。
+- `spawnFromMap(map)` 严格按 `map.monsters` 生成，`monsterCount` 只读；`setArena(s, map)` 切图并重建本局；
+  `deployRun()` 忽略 `monsterCount`，只处理 seed / 借出武器 / 激活槽。
+- 只读小地图的指针屏蔽在 `game.pack.ts`（`MINIMAP` 矩形），本模块不感知 HUD。
 
 ## 攻击规格与资源预留（架构层，2026-11-12 新增，**尚未接入运行时**）
 
@@ -137,14 +160,14 @@ combat/simulation.ts       ← 编排 step/projection/deployRun，唯一对外�
   `30001` 是 `子弹`（弹药），`weaponSpec()` 明确回落到 `BARE_HANDS`，**不得用 id 前缀推断**。
   `item.xlsx` / `weapon.xlsx` 按 `id` join，运行时唯一入口是 `loot.ts::authoredItem()`。
 - 子弹射程无限：只因命中合法目标 / 地形阻挡 / 飞出世界而销毁。`advanceProjectiles()` 按
-  8px 子步推进防穿透；`NO_COLLISION` 保持旧竞技场行为，地图运行时接好后再注入真实格子查询。
+  8px 子步推进防穿透；`NO_COLLISION` 保持旧竞技场行为；真实格子查询已在 `combat/world.ts::lineOfSight()` 备好，但要等下一批「攻击运行时接线」才注入（本批只做地图）。
 - 当前消费方：`assets/combat/__tests__/{attack-spec,projectiles}.test.ts`（20 条：10 + 10）。
-  **`step()` / `attack.ts` / `enemies.ts` / `paint.ts` 尚未引用**，35 步 playthrough 不受影响。
+  **`step()` / `attack.ts` / `enemies.ts` / `paint.ts` 尚未引用**，37 步 playthrough 不受影响。
 
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 57 条（weapons 9 / loot 14 / movement 11 / attack-spec 10 / projectiles 10 / modifiers 3）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 68 条（weapons 9 / loot 14 / movement 11 / world 11 / attack-spec 10 / projectiles 10 / modifiers 3）
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json
