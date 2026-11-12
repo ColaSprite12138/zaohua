@@ -97,7 +97,7 @@ else
       scripts/loot-report.mjs)
         add_module combat
         loot_report=1 ;;
-      assets/shared/*|assets/game/*|assets/__tests__/*|forge.json|package.json|pnpm-lock.yaml|tsconfig.json|vitest.config.ts|open-2.5d-game.bat)
+      assets/shared/*|assets/game/*|assets/__tests__/*|forge.json|package.json|pnpm-lock.yaml|tsconfig.json|vitest.config.ts)
         force_full=1 ;;
       scripts/playthrough*)
         add_module combat

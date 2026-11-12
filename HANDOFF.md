@@ -11,7 +11,7 @@
 | 项 | 值 |
 |:--|:--|
 | 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad |
-| 怎么开 | 双击 `open-2.5d-game.bat`（独立 Chrome profile + 硬件 WebGPU，端口 4174）；4174 单页含「局外配装 → 出征 → 结算」顶栏。局外独立演示页仍可双击 `meta-ui/index.html` |
+| 怎么开 | 统一用造化插件（Game Builder）预览 / 发布产物链：`package.json#scripts.package` → `scripts/package-with-shell.mjs`（产物含单页壳层 + 平台 bootstrap）；本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收。**游戏单页**含「局外配装 → 出征 → 结算」顶栏。局外独立演示页仍可双击 `meta-ui/index.html` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
 | 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 110）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；Game Builder 预览 / 上传经 `package.json#scripts.package` 自动调用，产物**含单页壳层** |
@@ -89,7 +89,7 @@
 
 ### 4174 单页连续流程（2026-11-11，标准搜打撤：失败丢失）
 
-`open-2.5d-game.bat` 打开的**同一个 4174 页面**现在是完整流程，不是两个互不相干的入口：
+**同一个游戏单页**现在是完整流程，不是两个互不相干的入口：
 主窗口 `window.MetaShell.state` 持**唯一权威 `InventoryState`**，局外 UI 与 `shell-bridge.js`
 共享该对象；Engine Worker 通过同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy` / 发 `result`。
 
@@ -143,8 +143,8 @@
    战斗与局外**共用 weapon slot 语义**（2 槽 + 1 激活），但各自持有状态；`meta-ui/inventory.js` 是生成物，改逻辑改 `.ts` 后必须重跑 `build-meta-ui.mjs`。
 2. `assets/game/game.pack.ts` 每帧用 `host.drawingBufferSize()` 把物理像素换算回逻辑坐标。Worker 里没有 `document`，`gameHost.canvas` 是 `undefined`；**不要**改回 `VIEW_W/VIEW_H` 常量分母。
 3. `scripts/playthrough.mjs` / `scripts/playthrough-resize.mjs` 的断言，以及 `assets/combat/__tests__/`、`assets/{battle,meta,talent,resource}/__tests__/` 的独立单测 —— **不允许为了让脚本变绿而放宽断言或改游戏逻辑迎合测试**。断言减少必须解释。
-4. `open-2.5d-game.bat` 的 `URL=http://localhost:4174/` —— 预览服务**只监听 IPv6 `[::1]:4174`**，`127.0.0.1` 恒为 000；改成 127.0.0.1 会让启动探测永远失败。见 feedback 第 14 条。
-5. `open-2.5d-game.bat` 默认硬件 GPU、独立 `--user-data-dir`；`--use-webgpu-adapter=swiftshader` 只能由 `FX_SOFTWARE_GPU=1` 显式开启。
+4. 启动统一走造化插件（Game Builder）预览 / 发布产物链（`package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物含单页壳层）；**不再提供本地 `.bat` 启动器**。旧 `forgeax project preview` 链路只监听 IPv6 `[::1]:4174`，URL 必须是 `localhost`（见 feedback 第 14 条），仅作排障与单页验收。
+5. WebGPU 需硬件 adapter + 独立 Chrome profile；`--use-webgpu-adapter=swiftshader` 只作显式兜底（约 4 fps / CPU 占满，硬件约 144 fps），内置预览面板通常没有 WebGPU。诊断细节见 feedback 第 12–13 条。
 6. 引擎通用红线见 `AGENTS.md`：不手改 `dist/`、`pack-index.json`、`.forgeax/`，不新增并行 manifest/入口。
 7. `meta-ui/index.html` 必须保持**双击可用**（`file://`、无服务器、普通 `<script src>`）：不要改成 ESM `type="module"`、不要加 fetch、不要引入打包器。浏览器验收脚本强制用独立 `--user-data-dir`，否则 Windows 会复用日常 Chrome 导致 dump 到执行前的 DOM。
 8. 独立页面验收只认 `scripts/verify-meta-ui.cjs` 的结果（模拟真实 DragEvent），不要退化成"只检查 DOM 存在"。
@@ -258,10 +258,8 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 现象 | 根因 / 处理 |
 |:--|:--|
 | `copyExternalImageToTexture: unsupported source` | 无可用 WebGPU adapter，落 `wgpu-webgl2`；必须独立 Chrome profile + 硬件 GPU，别用内置预览面板 |
-| 一开就 CPU 占满、1–2 帧 | 旧 bat 强制 swiftshader：实测 3.95 fps / 253 ms；硬件 AMD RDNA-3 为 144 fps / 6.9 ms |
 | 鼠标在左上、人往右下跑 | Worker 无 DOM，固定分母算错；每帧读 `drawingBufferSize()` |
 | 4174 改了 build 不生效 | 曾指向 `.forgeax/player/<digest>/` 打包快照；重启 preview 让它服务 `dist` |
-| 双击 bat 卡在 `[1/2] Starting...` | 老 preview 退出后 40 轮静默轮询、`curl` 无超时且双栈约 2.3 s/轮 ≈ 132 s 无输出；已改为每轮打印进度 + `--max-time 3` + 日志落盘 + 失败时打印端口占用 |
 | 「优化」成 `127.0.0.1` 后 4174 永远探测不到 | preview 只监听 IPv6 `[::1]:4174`：`curl 127.0.0.1` = 000，`curl -6 localhost` = 200；**URL 必须保持 `localhost`** |
 | 点敌人后读不到 `attackOrder` | `justReleased` 释放沿要等引擎下一帧，验收脚本点完需 `advance` 一帧 |
 | 长剑捡不到、角色停在 132 px 外挥砍 | 掉落点旁有活骷髅，点击被判成「点敌人」；已加掉落物优先级 |
@@ -277,7 +275,7 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 单页结算快照拍到「出征中」、日志被覆盖 | BroadcastChannel 投递是排队 task，固定 `setTimeout` 在虚拟时间下先触发；改成条件轮询等状态迁移，并等 `deployed` ack 处理完再发 `result` |
 | 4174 打开后没有局外顶栏 | `build` / `play` / `package` **任何一个都会重建 `dist/`** 并抹掉注入块；注入必须是最后一步。`verify-all.sh` 已固化为「… → package → inject → check → 单页验收」。曾实测 package 后 `dist/index.html` 从 85008 B 退回 44892 B、marker 归零 |
 | 掉落跑批偶发「偏差 >1%」 | `--samples` 太小（1000）时尾部稀有项因方差本身超标；验收固定 31000 次/池 |
-| 造化插件普通预览后 4174 报 `PlatformClient was not ready before Tian Gong Engine initialize` | Builder 普通预览服务的是 `dist/`（不是发布用的玩家产物），会重建 dist 抹掉壳层，并往 `<head>` 注入 `data-zaohua-platform-init`；该 bootstrap 在 import 引擎前等宿主注入的 `window.PlatformClient`，4174 没有。要玩用 `open-2.5d-game.bat`；恢复 4174 需 `forgeax project build` 后重跑 `inject-shell.mjs`。**发布请走 `scripts.package`**（含壳层玩家产物），别拿 4174 的 dist 当发布包 |
+| 造化插件普通预览后 4174 报 `PlatformClient was not ready before Tian Gong Engine initialize` | Builder 普通预览服务的是 `dist/`（不是发布用的玩家产物），会重建 dist 抹掉壳层，并往 `<head>` 注入 `data-zaohua-platform-init`；该 bootstrap 在 import 引擎前等宿主注入的 `window.PlatformClient`，4174 没有。启动统一走造化插件预览 / 发布产物链；恢复 4174 需 `forgeax project build` 后重跑 `inject-shell.mjs`。**发布请走 `scripts.package`**（含壳层玩家产物），别拿 4174 的 dist 当发布包 |
 | 想「先注入再打包」让 Web ZIP 带壳层，结果没带上 | `project package` 内部重新 build 覆盖 `dist/` 且无 post-build hook，`verifyDist` 逐字节校验产物；`--html-head` 只在 `project build` 生效、package 调 build 时不传。正解是 `scripts.package` 接管：官方 ZIP → 解包注入 → 同步 manifest → 重打包 |
 
 ## 可回滚基线（两层）
@@ -300,7 +298,7 @@ git show <hash>:<path>               # 取回某个旧版本的文件内容
 
 **第二层：源码 zip（git 之外的整包兜底）**。`release/forgeax-game-source-baseline-2026-11-11.zip`
 （309 文件，约 1.05 MB；确切哈希见同目录 `.sha256`，此处不写死以免自指）
-含 `assets/ scripts/ docs/ skills/ vendor/ meta-ui/`、三份交接文档、配置、bat 与 `.gitattributes`，
+含 `assets/ scripts/ docs/ skills/ vendor/ meta-ui/`、三份交接文档、配置与 `.gitattributes`，
 **不含** `node_modules/ dist/ .chrome-* / .probe-*`。校验：
 `cd release && sha256sum -c forgeax-game-source-baseline-2026-11-11.zip.sha256`。
 需要重生成：`python scripts/make-source-baseline.py`（按当天日期命名并写 `.sha256`），

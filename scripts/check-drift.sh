@@ -16,7 +16,6 @@ PROTECTED=(
   scripts/playthrough.mjs
   scripts/playthrough-resize.mjs
   scripts/verify-all.sh
-  open-2.5d-game.bat
   HANDOFF.md
 )
 

@@ -42,7 +42,6 @@ INCLUDE_FILES = (
     "tsconfig.json",
     ".gitignore",
     ".gitattributes",
-    "open-2.5d-game.bat",
 )
 SKIP_NAMES = {"__pycache__", ".DS_Store", "Thumbs.db"}
 SKIP_SUFFIXES = (".pyc", ".pyo", ".log", ".tmp")

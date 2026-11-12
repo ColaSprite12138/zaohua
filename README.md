@@ -41,7 +41,7 @@ engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas �
 
 ### 4174 单页连续流程（搜打撤）
 
-`open-2.5d-game.bat` 打开的 **4174 同一个页面**现已合并成连续流程：局外配装 → 出征 → 战斗 → 结算。
+**游戏单页**现已合并成连续流程：局外配装 → 出征 → 战斗 → 结算。
 主窗口 `window.MetaShell.state` 持唯一权威 `InventoryState`，局外 UI 与 `shell-bridge.js` 共享它；
 Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、在清场/阵亡时发 `result`。
 局内局外在**同一个页面内**内存共享（不同标签页 / Worker 是独立 JS 堆，`file://` 与
@@ -136,89 +136,22 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 `game.state` read projection 暴露 `moveMode`、`followingPointer`、`target`、`attackOrder`、
 `attackTarget`、`skeletons`（每只的坐标/血量/存活），供验收脚本直接断言。
 
-## 打开游戏（Windows）
+## 打开游戏
 
-**双击工程根目录的 `open-2.5d-game.bat`**：它检查 4174 端口、必要时自行拉起
-`forgeax project preview`，然后用一个**独立的 Chrome / Edge 实例**打开
-`http://localhost:4174/`。该 bat 只存在于本地工程，不会打进 Web ZIP（ZIP 是可静态托管的
-运行时产物，只含 `README.md` 与 `docs/feedback.md` 两份文档）。
+统一用**造化插件（Game Builder）预览**：插件的预览 / 上传走
+`package.json#scripts.package` → `scripts/package-with-shell.mjs`，
+产出含单页壳层（局外配装 → 出征 → 结算）与平台 bootstrap 的玩家产物，
+见 `docs/feedback.md` 第 18 / 19 条。
 
-> 预览服务只监听 IPv6 回环 `[::1]:4174`，因此 URL 必须是 `localhost`；换成
-> `127.0.0.1` 会永远探测不到服务。启动器每轮打印等待进度，失败时打印端口占用与
-> `artifacts\preview-4174.log`。详见 `docs/feedback.md` 第 14 条。
+本地 `open-2.5d-game.bat` 启动器已删除，不再以 `http://localhost:4174/` 直连作为启动方式。
+`forgeax project preview` / 4174 仅保留作排障与单页壳层验收（`scripts/verify-shell.cjs`）：
+普通预览会重建 `dist/`、抹掉构建后注入的壳层，并往 `<head>` 注入平台 bootstrap，
+与 4174 抢同一目录，两条链路不要同时用。
 
-### 为什么必须用独立实例
+WebGPU 需硬件 adapter；软件 adapter（swiftshader）约 4 fps、硬件约 144 fps。
+IPv6 `[::1]` 回环与内置预览面板的已知问题见 `docs/feedback.md` 第 12–14 条。
 
-直接用 `start chrome.exe http://localhost:4174/` 时，Windows 会把它交给**已在运行的日常
-Chrome 进程**，命令行上的 WebGPU 参数全部被忽略。若该进程拿不到可用的 WebGPU adapter，
-ForgeAX 回退到 `wgpu/WebGL2`，而 SDK 的 `CanvasTexture` 上传把 canvas 包成 `VideoFrame`，
-回退后端不接受该源，首帧（frameId 0）即抛：
-
-```
-app-system-update-failed → device-operation-failed → webgpu-runtime-error:
-copyExternalImageToTexture: unsupported source
-```
-
-只读 `navigator.gpu` 是否为真不能判断，必须看 `requestAdapter()` 是否返回 adapter，以及报错里的
-`renderer.capabilities.backendKind` 是否为 `wgpu-webgl2`。内置预览面板同理：它通常也没有 WebGPU。
-
-bat 用独立 `--user-data-dir=.chrome-webgpu-hw` 强制新进程，并带上：
-
-```
---enable-unsafe-webgpu --ignore-gpu-blocklist
---disable-gpu-driver-bug-workarounds
---disable-dawn-features=tiered_adapter_limits
---app=http://localhost:4174/
-```
-
-**默认不指定 adapter，让 Chrome 选硬件 GPU**。`--app=` 打开无地址栏/标签栏的独立
-游戏窗口。日常 Chrome 窗口不受影响。
-
-### 性能：必须走硬件 GPU
-
-`--use-webgpu-adapter=swiftshader` 会让 WebGPU 完全在 CPU 上做光栅化。本机实测对照
-（`artifacts/probe-perf.mjs`，5 秒 rAF 采样 + CDP CPU profile）：
-
-| adapter | `requestAdapter().info` | 帧率 | 平均帧耗时 |
-|:--|:--|:--|:--|
-| 强制 swiftshader | `google / swiftshader` | **3.95 fps** | 253.4 ms |
-| 自动（硬件） | `amd / rdna-3` | **144.17 fps** | 6.9 ms |
-
-swiftshader 下 CPU 被软件光栅化线程占满、页面 1–2 帧；硬件路径主线程占用约 9.7%。
-因此 bat 把硬件设为默认，`FX_SOFTWARE_GPU=1` 只在硬件 WebGPU 确实被驱动/策略屏蔽时
-作为兜底（能跑，但很慢）。
-
-双击等效验证（`artifacts/probe-bat-gpu.mjs`：真实 `cmd /c` 调用 bat + CDP 连接）结果：
-`adapter: available`、`amd / rdna-3`、**144.2 fps**、无 fatal、无 `unsupported source`，
-画面正常出图（截图 `artifacts/probe-bat-gpu.png`）。游戏左下角 HUD 也实时显示 FPS。
-
-| 环境变量 | 作用 |
-|:--|:--|
-| `FX_SOFTWARE_GPU=1` | 切到 CPU 软件 adapter（约 4 fps，仅兜底） |
-| `FX_BROWSER_WINDOW=1` | 用普通浏览器标签页代替独立 app 窗口 |
-| `FX_DRYRUN=1` | 只打印将要执行的启动命令，不真的开浏览器 |
-| `FX_DEBUG_PORT=9333` | 给专用浏览器开 CDP 端口，便于自检 |
-
-手动方式（等价命令）：
-
-```bash
-pnpm exec forgeax project preview --port 4174 --json
-```
-
-```
-chrome.exe --user-data-dir=D:\tools\zaohua\forgeax-game\.chrome-webgpu-hw ^
-  --no-first-run --no-default-browser-check --enable-unsafe-webgpu ^
-  --ignore-gpu-blocklist --disable-gpu-driver-bug-workarounds ^
-  --disable-dawn-features=tiered_adapter_limits ^
-  --app=http://localhost:4174/
-```
-
-> 换用新 profile 名是有意的：旧版 bat 的 `.chrome-webgpu` 可能仍被一个开着的老窗口
-> 占用，Chrome 会复用那个进程而忽略全部新参数。若从旧版升级，先关闭旧窗口或直接用
-> 新 bat（它已换名）。
-
-若帧率仍只有个位数，在**新开的那个窗口**访问 `chrome://gpu` 确认 WebGPU 状态为
-Hardware accelerated。完整诊断记录见 `docs/feedback.md`。
+局外独立演示页 `meta-ui/index.html` 仍可双击打开（无需服务器）。
 
 ## 工程结构（五模块 + 两层）
 
