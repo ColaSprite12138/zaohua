@@ -48,9 +48,9 @@
 |:--|:--|
 | 唯一状态 | 主窗口 `window.MetaShell.state`，meta UI 与 `shell-bridge.js` 都通过 `getState()` / `setState()` 读写**同一对象** |
 | 表目录注入 | `inject-shell.mjs` 把 `generated/item.ts` + `generated/weapon.ts` **按 id join** 成 `authoredItems` 写入 `MetaShell`（品质 / 伤害来自 weapon 表）；`meta-ui/index.html` 在 `registerItemDefs` 可用时注册 |
-| 出征 | `buildLoadout(state)` **只借出两个武器槽**（非武器装备留在局外），返回 `armedWeapons` / `activeWeaponSlot`；经 `BroadcastChannel('forgeax-arena-run')` 发 `deploy` |
+| 出征 | `buildLoadout(state)` **只读登记**两个武器槽（实例留在 `equipped`，局内角色面板据此显示本局穿戴），返回 `armedWeapons` / `activeWeaponSlot`；经 `BroadcastChannel('forgeax-arena-run')` 发 `deploy` |
 | 局内拾取 | 两武器槽都满时 Worker 发 `pickup { uid, itemId, name }`；`shell-bridge.js` 调 `M.addToBag(host.getState(), uid, itemId)` 占真实背包格，成功才 `host.render()`；**无论成败都要回 `pickupAck { uid, ok }`**，否则 Worker 的 `pendingPickup` 永远不解 |
-| 结算 | `settleRun(state, borrowed, settlement)`，`Settlement = { outcome, lootItemIds, carriedUids }`：`cleared` 归还借出武器 + 给 `lootItemIds`（局内装到武器槽的战利品 authored id）用 `findFirstFit()` 找格子入库，本局已进背包的战利品**原地保留**；`gameOver` 借出装备永久丢失，并按 `carriedUids` 用 `removeItem()` **从背包精确删除本局战利品** |
+| 结算 | `settleRun(state, borrowed, settlement)`，`Settlement = { outcome, lootItemIds, carriedUids }`：`cleared` 保留仍穿戴的借出武器（不重复创建实例）+ 给仍需找格子的 `lootItemIds` 用 `findFirstFit()` 入库，本局已进背包的战利品**原地保留**；`gameOver` 按 `carriedUids` 用 `removeItem()` **从背包精确删除本局战利品**、按 uid 删除借出武器，并**清空 `equipped` 全部 10 槽**；`stash` 与局外旧背包物品保留 |
 | 报告 | `SettlementReport` 的 `unregistered`（未知 id）/ `overflow`（bag + stash 都满）必须显式报告；**没有第四处存放区兜底，物品不会静默转移** |
 
 `file://` 双击页仍走 `createInventoryState()` 缺省路径，`MetaShell` 钩子只在 4174 注入页生效；
@@ -113,10 +113,14 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
   经 `BroadcastChannel` 发 `equip { slots: [bool|null, bool|null], activeWeaponSlot }`；
   `null` ＝「保留该槽出征时借出的武器」，避免把借出装备覆盖掉。
 - `game.pack.ts` 收到 `equip` 后直接改 `state.weaponSlots` / `activeWeaponSlot`，本局伤害与攻击距离立刻变化。
-- **借出/归还边界**：`buildLoadout()` 出征时把两个武器槽置空，所以局内背包看到的是空武器槽；
-  局内从背包装上的物品属于存档资产。结算时 `settleRun()` 归还借出武器优先填空槽、
-  满则 `findFirstFit()` 找 bag → stash、再满才进 `overflow` 报告（**没有 `loose` 兜底**）。
-  阵亡时借出装备与本局已进背包的战利品（按 `carriedUids`）丢失；局内从背包装上的资产仍留在存档中。
+- **登记 / 结算边界（2026-11-13 修订）**：`buildLoadout()` 只登记两个武器槽，**不清空 `equipped`**——
+  局内角色面板渲染的就是这个数组，置空会让带进去的武器与局内拾取的武器都看不见。局内
+  `weaponLoot { uid, itemId, slot }` 把拾取物作为真实实例写进 `equipped[slot]`；壳层结算时
+  把这些 authored id 从 `slotLootItemIds` 剔除，避免 `settleRun()` 再入一次库。
+  通关时借出武器若仍在 `state` 任意位置即算归还（不重复创建），满则 `findFirstFit()`
+  找 bag → stash、再满才进 `overflow` 报告（**没有 `loose` 兜底**）。
+  阵亡时本局已进背包的战利品（按 `carriedUids`）、借出武器（按 uid）与**全部 10 个装备槽**都清空；
+  `stash` 与局外旧背包物品保留。
 
 ## 平台 lifecycle 契约（2026-11-11 晚，发布准备）
 
@@ -133,7 +137,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
   `lock` / `unlock` 分支保留但**没有生产者**，`paused` 是唯一的冻结来源。
 - **局内背包不冻结**：B / I 打开的浮层不发 pause，怪物继续追击；这里新增的 pause
   只来自造化平台宿主的生命周期指令，两者语义不同。
-- **护栏**：`verify-shell.cjs` 的 2 条平台断言（29 条总数）验证 adapter 状态翻转与
+- **护栏**：`verify-shell.cjs` 的 2 条平台断言（31 条总数）验证 adapter 状态翻转与
   `pause`/`resume` 频道消息确实送达模拟 Worker；改这块必须保持这两条为绿。
 
 ## 旧骨架
@@ -170,7 +174,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 node scripts/build-meta-ui.mjs --check                     # 两个生成物与源码同步
 node scripts/verify-meta-ui.cjs                            # 独立页面 13 条真实拖放断言
 node scripts/inject-shell.mjs --check                      # dist 注入块与源同步
-node scripts/verify-shell.cjs                              # 4174 单页 29 条（无宿主不写盘/平台身份/KV 存档/局内背包/出征/通关/阵亡/返回/lifecycle）
+node scripts/verify-shell.cjs                              # 4174 单页 31 条（无宿主不写盘/平台身份/KV 存档/局内背包/局内拾取镜像/出征/通关/阵亡清 10 槽/返回/lifecycle）
 ```
 
 `scripts/build-meta-ui.mjs` 把 `inventory.ts` / `account.ts` 用 `ts.transpileModule` 转成普通脚本写入

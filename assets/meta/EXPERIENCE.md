@@ -54,7 +54,7 @@
 - **局内换装的 `equip` 消息用 `null` 哨兵**：出征时 `buildLoadout()` 已把两个武器槽借走并置空，Worker 的 `weaponSlots` 里是借出的武器。若直接把 `[!!equipped[0], !!equipped[1]]` 发过去，会把没被操作的槽也清成徒手。只发送**发生变化的槽**，未变化的发 `null`＝保留借出武器。deploy 前要重置基线，否则「借出置空」本身会被误判成一次卸下。
 - **老断言写死的数值会被新功能打破**：原 `verify-shell.cjs` 断言「阵亡丢失带出装备 1 件」，局内背包换装后通关会留下 2 把武器，第二次出征借出 2 件 → 红灯。正确做法是把期望值改成按 `S.cleared.weapon0/weapon1` 动态推导（断言更严），而不是把数字改大或删断言。
 - **独立页刻意不加账号**：`file://` 与 `http://localhost:4174` 不同源，账号库存不进去；给双击页加登录只会破坏「无服务器演示页」和 13 条拖放验收。账号脚本只由 `inject-shell.mjs` 注入 4174。
-- **已知边界**：局内背包看到的是被借空的武器槽（借出武器在 `borrowed` 快照里，不在 `InventoryState`）；阵亡时借出装备与本局战利品照常丢失，但局内从账号背包装上的武器仍留在存档中。要改成「阵亡也丢局内换装」需用户确认后再动 `settleRun`。
+- **已知边界（历史记录，2026-11-13 续二已修复，见文末）**：当时局内背包看到的是被借空的武器槽（借出武器在 `borrowed` 快照里，不在 `InventoryState`）；阵亡时借出装备与本局战利品照常丢失，但局内从账号背包装上的武器仍留在存档中。要改成「阵亡也丢局内换装」需用户确认后再动 `settleRun`。
 
 ## 2026-11-11 晚 · 壳层接进 Builder 产物链（发布到造化平台）
 
@@ -193,3 +193,27 @@
   run-settlement 7 → 8（新增阵亡删除本局 bag loot）；combat weapons 7 → 9、loot 13 → 14。
   全量 111 → 117，`verify-all.sh` 下限仍是 83（只防删断言，不随新增抬高）。
   独立页 13 条与单页 29 条总数不变、语义重写。
+
+## 2026-11-13（续二）— 装备栏与阵亡清空的真正根因
+
+- **两套状态不同步＝「装备栏空的」bug**：`buildLoadout()` 原先把 `equipped[0/1]` 移出到
+  `borrowed`，而局内 `updateDrops()` 只写 Worker 的 `GameState.weaponSlots`。主窗口角色面板
+  `buildEquip()` 读的是 `state.equipped[index]`，所以带进去的武器和局内拾取的武器都看不见。
+  修法不是画一个只读镜像，而是让 `equipped` 成为唯一真实来源。
+- **`buildLoadout` 改为只读登记**：实例留在 `equipped`，`borrowed.items` 只是 uid/defId 快照。
+  代价是「通关归还」不能直接放实例了 —— `settleRun()` 必须先 `findItem(state, item.uid)`，
+  命中就只累加 `returned`，否则会凭空多出一把剑（单测 `cleared does not duplicate ...` 守着）。
+- **combat 是纯逻辑，不能直接发 BroadcastChannel**：在 `GameState` 加 `weaponLootEvents`
+  队列（不投影、不注册 read），由 `game.pack.ts` 每帧 `splice(0)` drain 成 `weaponLoot`
+  消息；`reset()` / `setArena()` 清空队列，避免 R 重开 / 出征重放旧事件。
+- **写入 `equipped` 前必须预对齐 `lastEquipped[slot]`**：`syncBadge()` 会按布尔 delta 发
+  `equip` 回 Worker，消息里带主窗口的 `activeWeaponSlot`，会把 Worker 用 1/2 切好的槽重置回 0。
+- **已装在身上的战利品不能再入库一次**：壳层维护 `runEquipDefIds`，结算时从
+  `result.slotLootItemIds` 逐项剔除（按出现次数），日志 `brought` 再把这部分加回来。
+  `settleRun()` 保持纯逻辑，单测接口不用改。
+- **阵亡清空要精确到 uid**：`removeItem()` 只搜 bag / stash，**不搜 equipped**；借出武器
+  可能被玩家在局内拖进背包，所以先按 uid 删一遍，再清 `equipped` 全部 10 槽，两边不重复计
+  `lost`。`stash` 与局外旧背包物品不动。
+- **验收联动**：`buildLoadout` 不清槽后，`verify-shell.cjs` 原来「从 stash 装到空槽 0」不再产生
+  布尔 delta，`equip` 断言会红。改成先 `placeItem()` 卸到背包（`true→false`）再 `equipItem()`
+  装回（`false→true`），断言反而更严。单页 29 → 31 条、单测 128 → 131。

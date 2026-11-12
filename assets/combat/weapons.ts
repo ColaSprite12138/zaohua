@@ -37,6 +37,9 @@ export function updateDrops(s: GameState, dt: number): void {
     s.pickupTarget = null;
     s.carriedItems.push(itemId);
     s.slotLootItemIds.push(itemId);
+    // The main window owns the equipped grid; tell it to show this item in
+    // the character panel's weapon slot (the Worker only holds a WeaponId).
+    s.weaponLootEvents.push({ uid: drop.uid, itemId, slot: empty as 0 | 1 });
     say(s, `已拾取 ${label} · 装备到武器槽 ${empty + 1} · 按 1 / 2 切换`);
     burst(s, s.player.x, s.player.y - 30, '#ffd166', 20, 175);
   } else {

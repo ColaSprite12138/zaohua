@@ -443,18 +443,19 @@ function newUid(prefix: string): string {
 }
 
 /**
- * Take the two weapon slots out of the inventory and hand them to a run.
- * Non-weapon equipment (rings, armour...) stays home: only weapons are at
- * risk, matching the user's "borrowed loadout" model.
+ * Register the two weapon slots as the loadout lent to a run.
+ *
+ * The instances STAY in `state.equipped`: the in-run character panel renders
+ * that same array, so clearing them here would make a deployed player's
+ * weapon slots look empty. The run owns their fate: `settleRun()` either
+ * keeps them (cleared) or removes them together with every other worn item
+ * (gameOver). Non-weapon equipment stays visible in the panel too.
  */
 export function buildLoadout(state: InventoryState): BorrowedLoadout {
   const items: ItemInstance[] = [];
   for (const index of WEAPON_SLOT_INDICES) {
     const item = state.equipped[index];
-    if (item) {
-      items.push({ uid: item.uid, defId: item.defId });
-      state.equipped[index] = null;
-    }
+    if (item) items.push({ uid: item.uid, defId: item.defId });
   }
   return {
     items,
@@ -465,9 +466,10 @@ export function buildLoadout(state: InventoryState): BorrowedLoadout {
 
 /**
  * Settle a finished run.
- *  - cleared: borrowed weapons come home; loot that was equipped in battle
- *    still needs a grid home. Loot already picked into the bag stays there.
- *  - gameOver: borrowed weapons AND this run's bag loot are permanently lost.
+ *  - cleared: borrowed weapons stay where the player left them; loot that
+ *    still needs a grid home is banked. Bag loot stays in the bag.
+ *  - gameOver: this run's bag loot, the borrowed weapons and EVERY worn item
+ *    (all ten equipment slots) are permanently lost. The stash is untouched.
  * There is no fourth storage area: anything that fits nowhere is reported.
  */
 export function settleRun(
@@ -481,16 +483,36 @@ export function settleRun(
   let gained = 0;
 
   if (settlement.outcome === 'gameOver') {
-    for (const uid of settlement.carriedUids) removeItem(state, uid);
-    return {
-      returned: 0,
-      lost: borrowed.items.length + settlement.carriedUids.length,
-      gained: 0, unregistered, overflow,
-    };
+    // 1. Remove this run's bag loot (uids are exact, older items survive).
+    let lost = 0;
+    for (const uid of settlement.carriedUids) {
+      if (removeItem(state, uid)) lost += 1;
+    }
+    // 2. A borrowed weapon may have been dragged into the bag during the run;
+    //    `removeItem()` only searches the grids, so this catches that case.
+    for (const item of borrowed.items) {
+      if (removeItem(state, item.uid)) lost += 1;
+    }
+    // 3. Death drops EVERYTHING worn: both weapon slots AND the eight
+    //    armour / jewellery slots that never left home. This is the user's
+    //    2026-11-13 decision; the stash and older bag items are untouched.
+    for (let i = 0; i < state.equipped.length; i += 1) {
+      if (state.equipped[i] !== null) {
+        state.equipped[i] = null;
+        lost += 1;
+      }
+    }
+    return { returned: 0, lost, gained: 0, unregistered, overflow };
   }
 
-  // 1. Return borrowed weapons to their original slots (empty by contract).
+  // 1. Borrowed weapons were never moved out of `state` (buildLoadout is a
+  //    read-only registration), so an item still present anywhere counts as
+  //    returned without creating a duplicate instance.
   for (const item of borrowed.items) {
+    if (findItem(state, item.uid) !== null) {
+      returned += 1;
+      continue;
+    }
     const index = WEAPON_SLOT_INDICES.find((i) => state.equipped[i] === null);
     if (index !== undefined) {
       state.equipped[index] = item;

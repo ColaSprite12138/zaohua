@@ -102,3 +102,17 @@
   「可注入」改成「只读派生自 `map.monsters.length`」，随后按用户 2026-11-13 的要求
   把该字段从状态 / 部署协议 / 投影 / 结算 / ack / 局外 UI / 日志里**全部删干净**。
 
+## 2026-11-13（续二）— 局内武器槽事件化，供主窗口角色面板同步
+
+- **Worker 的 `weaponSlots` 只是 `WeaponId='longsword'` 兼容类别**，真实身份在
+  `slotLootItemIds` / drop 的 `itemId`。要让玩家在局内角色面板看到具体武器，必须把
+  `uid / itemId / slot` 一起带过去；只发一个布尔「有武器」不够。
+- **纯逻辑层不要引入 IO**：`weapons.ts::updateDrops()` 只 `push` 到
+  `GameState.weaponLootEvents`；`game.pack.ts` 在 `step()` 之后、`settleIfFinished()` 之前
+  drain 并 `postMessage({ type: 'weaponLoot' })`。事件不进 `projection()`，避免污染
+  `GameProjectionValue` 与 37 步 playthrough 的字段快照。
+- **事件队列必须随 `reset()` 清空**：`setArena()` / R 重开都会 `reset()`，否则上一局
+  的装备事件会在新一局被重放，主窗口往已占用的槽写实例。
+- **两槽都满的分支不变**：仍走 `pickup` / `pickupAck` 进背包；`weaponLoot` 只对应
+  「装进空武器槽」这一种路径，不要混成一个协议。
+

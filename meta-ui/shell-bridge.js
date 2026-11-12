@@ -32,6 +32,10 @@
   var borrowed = null;
   var inRun = false;
   var bagOpen = false;
+  // Authored ids of loot the Worker equipped into weapon slots THIS run.
+  // They already live in InventoryState.equipped, so settlement must not
+  // create a second instance in the bag.
+  var runEquipDefIds = [];
   var channel = null;
   // Baseline of the two weapon slots in the OUT-OF-RUN state. Only a CHANGE
   // caused by in-run bag drags is sent to the Worker; the weapons borrowed at
@@ -177,6 +181,22 @@
         if (channel) channel.postMessage({
           type: 'pickupAck', uid: msg.uid, ok: !!placed,
         });
+      } else if (msg.type === 'weaponLoot') {
+        // The Worker only holds a WeaponId; the character panel renders
+        // InventoryState.equipped. Mirror the pickup as a REAL instance so
+        // the weapon slot shows up and stays draggable / swappable in-run.
+        if (inRun && (msg.slot === 0 || msg.slot === 1)) {
+          var inv = host.getState();
+          if (inv.equipped[msg.slot] === null) {
+            inv.equipped[msg.slot] = { uid: msg.uid, defId: msg.itemId };
+            runEquipDefIds.push(msg.itemId);
+            // The Worker already armed this slot. Pre-align the delta baseline
+            // so syncBadge() does not echo an `equip` back (which would reset
+            // the Worker's activeWeaponSlot to the out-of-run value).
+            lastEquipped[msg.slot] = true;
+            host.render();
+          }
+        }
       }
     };
   }
@@ -186,9 +206,10 @@
     if (inRun) return;
     // Monster population comes solely from the active map's LDtk entity layer.
     borrowed = M.buildLoadout(host.getState());
-    // Borrowing empties the two slots. Reset the delta baseline BEFORE the
-    // render so this state change is not mistaken for an in-run unequip.
-    lastEquipped = [false, false];
+    // buildLoadout() only REGISTERS the worn weapons; the instances stay in
+    // equipped so the in-run character panel shows what the player brought.
+    runEquipDefIds = [];
+    lastEquipped = [!!host.getState().equipped[0], !!host.getState().equipped[1]];
     lastActiveSlot = host.getState().activeWeaponSlot;
     host.render();
     inRun = true;
@@ -205,6 +226,7 @@
   $('fx-back').addEventListener('click', function () {
     inRun = false;
     borrowed = null;
+    runEquipDefIds = [];
     showBattle(false);
     host.render();
     log('已返回局外 · 可重新配装出征');
@@ -229,13 +251,22 @@
     inRun = false;
     setRunBag(false);
     var state = host.getState();
+    var wornLoot = runEquipDefIds.slice();
+    // A loot item already mirrored into a weapon slot is brought home ON the
+    // character; strip its authored id so settleRun() does not bank a duplicate.
+    var pendingLoot = (result.slotLootItemIds || []).slice();
+    for (var w = 0; w < wornLoot.length; w += 1) {
+      var at = pendingLoot.indexOf(wornLoot[w]);
+      if (at >= 0) pendingLoot.splice(at, 1);
+    }
     var report = M.settleRun(state, borrowed, {
       outcome: result.outcome,
-      lootItemIds: result.slotLootItemIds || [],
+      lootItemIds: pendingLoot,
       carriedUids: result.bagLootUids || [],
     });
     host.setState(state);
     borrowed = null;
+    runEquipDefIds = [];
     showBattle(false);
 
     var lootNames = (result.lootLog || []).map(function (r) {
@@ -243,10 +274,10 @@
     });
     var text;
     if (result.outcome === 'gameOver') {
-      text = '阵亡 · 丢失带出装备 ' + report.lost + ' 件，本局战利品全部失去。';
+      text = '阵亡 · 丢失带出装备 ' + report.lost + ' 件（含身上穿戴），本局战利品全部失去。';
       log(text, true);
     } else {
-      var brought = (result.bagLootUids || []).length + report.gained;
+      var brought = (result.bagLootUids || []).length + report.gained + wornLoot.length;
       text = '通关 · 归还装备 ' + report.returned + ' 件，带回战利品 ' + brought + ' 件'
         + '（击杀 ' + result.kills + '）';
       if (report.overflow.length) text += '，' + report.overflow.length + ' 件因背包与仓库已满未能带回';

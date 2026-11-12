@@ -84,7 +84,7 @@ const SELFTEST = `
 (function () {
   var out = {
     steps: {}, ok: false, error: null,
-    store: {}, bag: {}, equipMessages: [], lockMessages: [], platformMessages: [],
+    store: {}, bag: {}, weaponLoot: {}, equipMessages: [], lockMessages: [], platformMessages: [],
   };
   var resultEl = document.getElementById('selftest-result');
   var publish = function () { resultEl.textContent = JSON.stringify(out); };
@@ -117,6 +117,7 @@ const SELFTEST = `
     var s = H.getState();
     out.steps[tag] = {
       noLoose: !('loose' in s), bag: s.bag.length, stash: s.stash.length,
+      worn: s.equipped.filter(Boolean).length,
       weapon0: s.equipped[0] ? s.equipped[0].defId : null,
       weapon1: s.equipped[1] ? s.equipped[1].defId : null,
       bagDefs: s.bag.map(function (i) { return i.defId; }),
@@ -243,10 +244,15 @@ const SELFTEST = `
       out.bag.panelVisible = getComputedStyle(document.getElementById('fx-bag-content')).display !== 'none';
       out.bag.stillInBattle = inBattle();
       var bagState = H.getState();
-      var stashUid = bagState.stash.length ? bagState.stash[0].uid : null;
-      out.bag.equippedInRun = stashUid ? M.equipItem(bagState, stashUid, 0) : false;
+      // buildLoadout() no longer empties the weapon slot, so an "equip" delta
+      // needs a real unequip first. Both directions must reach the Worker.
+      var wornUid = bagState.equipped[0] ? bagState.equipped[0].uid : null;
+      out.bag.unequippedInRun = wornUid ? M.placeItem(bagState, wornUid, 'bag', 0, 0) : false;
       H.render();
-      await waitFor(function () { return out.equipMessages.length > 0; });
+      await waitFor(function () { return out.equipMessages.length >= 1; });
+      out.bag.equippedInRun = wornUid ? M.equipItem(bagState, wornUid, 0) : false;
+      H.render();
+      await waitFor(function () { return out.equipMessages.length >= 2; });
       out.bag.equipMsg = out.equipMessages[out.equipMessages.length - 1] || null;
       out.bag.armedSlot0 = H.getState().equipped[0] !== null;
       out.bag.noNewLock = out.lockMessages.filter(function (x) { return x === 'lock'; }).length
@@ -254,17 +260,34 @@ const SELFTEST = `
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       out.bag.closedByEsc = !document.getElementById('fx-shell').classList.contains('fx-run-bag-open');
 
-      // A cleared run returns the weapon and banks two authored loot items.
+      // ---- Worker announces a loot item equipped into the EMPTY weapon slot.
+      //      The character panel must mirror it as a real equipped instance.
+      chan.postMessage({ type: 'weaponLoot', uid: 'run-loot-slot', itemId: '10006', slot: 1 });
+      await waitFor(function () {
+        return H.getState().equipped[1] !== null && H.getState().equipped[1].defId === '10006';
+      });
+      out.weaponLoot.shownInState = H.getState().equipped[1] !== null
+        && H.getState().equipped[1].defId === '10006';
+      out.weaponLoot.filledSlots = document.querySelectorAll('.equip-slot.filled').length;
+
+      // A second loot item goes through the existing cross-heap bag protocol.
+      chan.postMessage({ type: 'pickup', uid: 'run-bag-loot', itemId: '20006' });
+      await waitFor(function () {
+        return H.getState().bag.some(function (i) { return i.uid === 'run-bag-loot'; });
+      });
+
+      // Cleared: the worn loot stays on the character, the bag loot stays in
+      // the bag, and neither is banked a second time by settleRun().
       sendResult({
         outcome: 'cleared',
-        slotLootItemIds: ['10006', '20006'], bagLootUids: [],
+        slotLootItemIds: ['10006'], bagLootUids: ['run-bag-loot'],
         lootLog: [{ name: '霜之哀伤', quality: '暗金' }, { name: '射日', quality: '暗金' }],
         kills: 8,
       });
       await waitFor(function () { return !inBattle() && /通关/.test(logText()); });
       snap('cleared');
 
-      // Second run: gameOver must permanently lose the borrowed weapon.
+      // Second run: gameOver must wipe EVERY worn item (all ten slots).
       document.getElementById('fx-deploy').click();
       await waitFor(function () { return inBattle() && /出征中/.test(logText()); });
       snap('secondDeploy');
@@ -371,10 +394,14 @@ const checks = [
     result.bag.openedByKey === true && result.bag.panelVisible === true, result.bag],
   ['the bag does not leave or freeze the battle',
     result.bag.stillInBattle === true && result.bag.noNewLock === true, result.bag],
-  ['drag-equipping in the bag pushes an immediate equip message',
-    result.bag.equippedInRun === true && result.bag.armedSlot0 === true
+  ['unequip + re-equip in the bag pushes an immediate equip message',
+    result.bag.unequippedInRun === true && result.bag.equippedInRun === true
+      && result.bag.armedSlot0 === true
       && !!result.bag.equipMsg && result.bag.equipMsg.slots[0] === true, result.bag],
   ['ESC closes the in-run bag', result.bag.closedByEsc === true, result.bag],
+  ['in-run loot is mirrored into the character panel weapon slot',
+    result.weaponLoot.shownInState === true && result.weaponLoot.filledSlots === 2,
+    result.weaponLoot],
   ['authored item catalog registered in the shell', result.authoredRegistered === true, result.authoredRegistered],
   ['bag 5x8 = 40 cells, stash 16x10 = 160 cells', result.gridCells.bag === 40 && result.gridCells.stash === 160, result.gridCells],
   ['ten equipment slots', result.equipSlots === 10, result.equipSlots],
@@ -384,16 +411,21 @@ const checks = [
     result.noMonsterInput === true
       && Object.keys(d).sort().join(',') === 'activeWeaponSlot,armedWeapons,seed'
       && d.armedWeapons === 1 && typeof d.seed === 'number', d],
-  ['deploy borrows the weapon out of the inventory', S.deployed.weapon0 === null, S.deployed],
+  ['deploy keeps the borrowed weapon visible in the character panel',
+    S.deployed.weapon0 === 'longsword', S.deployed],
   ['deploy switches the page into battle mode', S.deployed.inBattle === true && /战斗/.test(S.deployed.phase), S.deployed],
   ['cleared returns the borrowed weapon', S.cleared.weapon0 === 'longsword', S.cleared],
-  ['cleared banks both authored loot items in the bag',
-    S.cleared.bagDefs.length === 2 && S.cleared.bagDefs.indexOf('10006') >= 0 && S.cleared.bagDefs.indexOf('20006') >= 0, S.cleared],
+  ['cleared keeps worn loot equipped and banks the bag loot once',
+    S.cleared.weapon1 === '10006' && S.cleared.bagDefs.indexOf('20006') >= 0
+      && S.cleared.bagDefs.length === 1, S.cleared],
   ['cleared leaves battle mode and reports the outcome',
     S.cleared.inBattle === false && /通关/.test(S.cleared.log), S.cleared.log],
-  ['a second deploy borrows the weapon again', S.secondDeploy.weapon0 === null, S.secondDeploy],
+  ['a second deploy keeps the loadout visible in the character panel',
+    S.secondDeploy.weapon0 === 'longsword', S.secondDeploy],
   ['gameOver permanently loses the borrowed weapon', S.gameOver.weapon0 === null, S.gameOver],
-  ['gameOver does not bank any loot', S.gameOver.bagDefs.length === 2, S.gameOver],
+  ['gameOver wipes ALL ten equipment slots', S.gameOver.worn === 0, S.gameOver],
+  ['gameOver does not bank any loot',
+    S.gameOver.bagDefs.length === S.cleared.bagDefs.length, S.gameOver],
   ['gameOver reports the loss of every borrowed weapon',
     /阵亡/.test(S.gameOver.log)
       && S.gameOver.log.indexOf('丢失带出装备 ' + expectedLoss + ' 件') >= 0,

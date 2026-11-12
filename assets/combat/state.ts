@@ -111,6 +111,17 @@ export interface PendingPickup {
   readonly name: string;
 }
 
+/**
+ * A loot item that was just equipped into an empty in-run weapon slot.
+ * `combat` is pure logic, so the Engine Worker drains this queue each frame
+ * and forwards it to the main window's InventoryState (character panel).
+ */
+export interface WeaponLootEvent {
+  readonly uid: string;
+  readonly itemId: string;
+  readonly slot: 0 | 1;
+}
+
 let dropUidCounter = 0;
 /** Monotonic across runs so a bag uid never collides with a previous run. */
 export function nextDropUid(): string {
@@ -179,6 +190,8 @@ export interface GameState {
   runBagUids: string[];
   /** Authored ids equipped into weapon slots (brought home on clear). */
   slotLootItemIds: string[];
+  /** Drained by the Engine Worker to sync the in-run character panel. */
+  weaponLootEvents: WeaponLootEvent[];
 }
 
 export interface RunConfig {
@@ -226,6 +239,7 @@ export function createState(config: RunConfig = {}): GameState {
     pendingPickup: null,
     runBagUids: [],
     slotLootItemIds: [],
+    weaponLootEvents: [],
   };
   reset(state);
   return state;
@@ -277,6 +291,7 @@ export function reset(s: GameState): void {
   s.pendingPickup = null;
   s.runBagUids.length = 0;
   s.slotLootItemIds.length = 0;
+  s.weaponLootEvents.length = 0;
   s.toast = { text: '单击地面移动 · 单击掉落物拾取 · 单击敌人攻击 · 长按跟随光标 · 空格闪避', life: 4.2 };
   s.moveMode = 'idle';
   s.targetEnemy = null;

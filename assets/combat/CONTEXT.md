@@ -35,13 +35,16 @@
 `movement.ts::classifyPointer()` 才写 `s.pickupTarget = drop.uid`（点地面 / 点敌人 /
 长按跟随都会清空它），`weapons.ts::updateDrops()` 要求 `pickupTarget !== null`、
 `pendingPickup === null` 且玩家距掉落物 `<50px`，到达才结算：
-有空武器槽 → 装入第一个空槽、移除掉落物、记 `carriedItems` + `slotLootItemIds`；
+有空武器槽 → 装入第一个空槽、移除掉落物、记 `carriedItems` + `slotLootItemIds`，并 push
+`weaponLootEvents { uid, itemId, slot }`（供 `game.pack.ts` 同步主窗口角色面板）；
 两槽都满 → 设 `pendingPickup`，交给主窗口判断背包格子（见下）。
 `1/2` 在 `game.pack.ts` 读 `justPressedCode('Digit1'|'Digit2')`，
 经 `StepInput.switchWeapon` 传入 `step()`。
 `projection.equippedWeapon` **保留旧字段名**，改为返回 `activeWeapon(s)`（兼容既有断言）；
 新增 `weaponSlots` / `activeWeaponSlot` / `pickupTarget` / `pendingPickup`（只投影 uid）/
-`runBagUids` / `slotLootItemIds`。`reset()` 清空两槽、拾取状态与本局 loot 记录并回到槽 1。
+`runBagUids` / `slotLootItemIds`。`GameState.weaponLootEvents` 是**纯逻辑事件队列**（不投影、不注册 read），
+`game.pack.ts` 每帧 drain 一次转成 `weaponLoot` 消息。`reset()` / `setArena()` 清空两槽、事件队列、
+拾取状态与本局 loot 记录并回到槽 1。
 
 **跨堆拾取协议（Worker ↔ 主窗口）**：Worker 与主窗口是独立 JS 堆，Worker 看不到
 `InventoryState.bag` 的格子。两槽满时 `game.pack.ts` 用 `pickupSent` 去重，每帧只在
@@ -60,7 +63,7 @@
 | 掉落算法 | `loot.ts::rollLoot(monsterId, rng)` 按 `loot_pool.xlsx` 权重累计抽取；两池各 6 件、权重 `10/8/6/4/2/1` |
 | 随机源 | `makeRng(seed)` Mulberry32，`runSeed` 默认 `0x5eed1234`；`reset()` 重建，保证 R 重开 loot 序列一致 |
 | 战利品记录 | `GameState.lootLog`（掉落明细）、`carriedItems`（已拾取的 authored id，仅供 HUD / 报告计数）、`runSeed`；**没有怪数字段** |
-| 拾取记录 | `runBagUids`（本局已放进背包的掉落 uid，阵亡按 uid 删除）、`slotLootItemIds`（拾取进武器槽的 authored id，通关时找格子入库）；**两者不可合并** |
+| 拾取记录 | `runBagUids`（本局已放进背包的掉落 uid，阵亡按 uid 删除）、`slotLootItemIds`（拾取进武器槽的 authored id，通关时找格子入库）；**两者不可合并**。`weaponLootEvents` 是同步角色面板用的队列，不属于结算记录 |
 | 怪物部署 | `spawnFromMap(map)` 是**唯一**生成入口，严格按 `map.monsters`。`deployRun(s, { seed, armedWeapons, activeWeaponSlot })` 只处理种子 / 借出武器 / 激活槽，协议里没有数量字段；`setArena(s, map)` 切图并重建本局 |
 
 `Drop.kind` 仍为 `'longsword'`，只是**视觉/兼容类别**；真实物品身份走 `drop.itemId` / `name` / `quality`，
@@ -68,7 +71,8 @@
 `WeaponId` 仍是 `'longsword'`（armed vs bare），不换成表里的 12 个 id。`projection()` 追加
 `runSeed` / `lootLog` / `carriedItems` / `dropItems` / `pickupTarget` /
 `pendingPickup` / `runBagUids` / `slotLootItemIds`，**不得改旧字段名，也不得再出现 score 或怪数字段**。
-引擎层通过 `game.pack.ts` 的 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、在清场/阵亡时发 `result`。
+引擎层通过 `game.pack.ts` 的 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、在清场/阵亡时发 `result`，
+并把 `weaponLootEvents` 转成 `weaponLoot { uid, itemId, slot }` 发给主窗口（角色面板的 `equipped` 槽）。
 **`game.state` 必须保持唯一 read projection**：`project play` 以「唯一注册的 projection」解析默认读取，
 多注册一个（哪怕是 `run.result`）会让全部 35 步 playthrough 报 `state-unavailable`。
 

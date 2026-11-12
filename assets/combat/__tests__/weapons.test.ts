@@ -52,6 +52,29 @@ describe('two weapon slots', () => {
     expect(s.weaponSlots).toEqual(['longsword', 'longsword']);
   });
 
+  it('equipping loot emits one character-panel event per slot, cleared on reset', () => {
+    const s = createState();
+    s.drops.push({
+      uid: 'loot-a', x: s.player.x, y: s.player.y,
+      kind: 'longsword', t: 0, itemId: '10006',
+    });
+    s.pickupTarget = 'loot-a';
+    updateDrops(s, 1 / 60);
+    s.drops.push({
+      uid: 'loot-b', x: s.player.x, y: s.player.y,
+      kind: 'longsword', t: 0, itemId: '20006',
+    });
+    s.pickupTarget = 'loot-b';
+    updateDrops(s, 1 / 60);
+    expect(s.weaponLootEvents).toEqual([
+      { uid: 'loot-a', itemId: '10006', slot: 0 },
+      { uid: 'loot-b', itemId: '20006', slot: 1 },
+    ]);
+    expect(s.slotLootItemIds).toEqual(['10006', '20006']);
+    reset(s);
+    expect(s.weaponLootEvents).toEqual([]);
+  });
+
   it('a third sword waits for a bag decision; there is no score at all', () => {
     const s = createState();
     collectSword(s);

@@ -293,6 +293,20 @@ export const game: Plugin = {
                 resultSent = false;
                 pickupSent = null;
               }
+              // A loot item equipped into an empty weapon slot must also
+              // appear in the in-run character panel. That panel renders the
+              // main window's InventoryState, so forward the pure-logic event
+              // over the run channel and drain it exactly once.
+              if (state.weaponLootEvents.length > 0) {
+                for (const ev of state.weaponLootEvents.splice(0)) {
+                  channel?.postMessage({
+                    type: 'weaponLoot',
+                    uid: ev.uid,
+                    itemId: ev.itemId,
+                    slot: ev.slot,
+                  });
+                }
+              }
               // Both weapon slots were full: ask the main window to find a
               // free bag cell. It answers with `pickupAck`; the drop stays on
               // the ground until then (and forever if the bag is full).

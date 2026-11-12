@@ -213,7 +213,7 @@
   6. 独立 `file://` 页若引入账号脚本会与 4174 不同源、且破坏「双击可用」→ `account.js` / `auth-ui.js` 只由 `inject-shell.mjs` 注入，独立页 13/13 保持不动。
 - Evidence: `verify-all.sh` ALL GREEN（84 单测 / 35 playthrough / 4 resize / 28 单页 / 13 独立页）；真实 4174 硬件 WebGPU 冒烟 `artifacts/verify/smoke-login-bag.json` **14/14 全通过**（登录遮罩冻结、刷新后存档保持、局内背包不冻结、换装立即让 `weaponSlots[0]` 变为 longsword）。
 - Status: implemented
-- Note: **已知边界**：出征时 `buildLoadout()` 借空两个武器槽，局内背包看到的是空槽（借出武器在 `borrowed` 快照里）；阵亡时借出装备与本局战利品照常丢失，但局内从账号背包装上的武器仍留在存档中，如需「阵亡也丢局内换装」要用户确认后再改 `settleRun`。账号存档无跨设备导入导出；正式 Web ZIP 仍在注入前打包，不含登录与局内背包。
+- Note: **已知边界（历史记录，2026-11-13 续二已由用户确认并修复）**：当时出征 `buildLoadout()` 借空两个武器槽，局内背包看到的是空槽（借出武器在 `borrowed` 快照里）；阵亡时借出装备与本局战利品照常丢失，但局内从账号背包装上的武器仍留在存档中，如需「阵亡也丢局内换装」要用户确认后再改 `settleRun`。账号存档无跨设备导入导出；正式 Web ZIP 仍在注入前打包，不含登录与局内背包。
 
 ### 2026-11-11 — 壳层接进 Game Builder 发布产物链
 
@@ -532,4 +532,33 @@
 - Status: fixed
 - Note: 上一节 502–504 行的「留待用户确认」三项已由本条全部关闭；攻击 spec 分派 / 互射
   仍属下一批，本轮未动。
+
+### 2026-11-13（续二）— 阵亡清空全身穿戴、局内装备栏真实同步
+
+- Request: 用户报两个问题「1.玩家死亡退出时，现在清空了背包里的道具，玩家身上穿戴的道具
+  也要默认清空掉。2.进到对局后，拾取武器后，打开角色面板，装备栏还是空的。应该是有bug」。
+  按长期规矩先出「保留清单 + 删除清单」确认，用户选 **「全部 10 个装备槽」** 与
+  **「真实同步到 equipped」**（明确接受同步改结算与断言）。
+- Actual: ① `settleRun(gameOver)` 只删 `carriedUids` 与不归还借出武器；`buildLoadout()`
+  只借两个武器槽，8 个护甲 / 首饰槽阵亡时一个都不动，局内背包手动穿上的武器也不清。
+  ② 角色面板 `buildEquip()` 读主窗口 `InventoryState.equipped`，而 `buildLoadout()` 出征时
+  把两槽移空，局内 `updateDrops()` 又只写 Worker 的 `GameState.weaponSlots`，两套状态
+  从没同步过，所以装备栏恒为空。
+- Resolution:
+  1. `buildLoadout()` 改为**只读登记**（实例留在 `equipped`）；`settleRun(gameOver)` 按
+     `carriedUids` 删本局 bag loot、按 uid 删借出武器、再清 `equipped` 全部 10 槽；
+     `cleared` 先 `findItem(uid)` 命中即只累加 `returned`，杜绝重复实例。`stash` 保留。
+  2. combat 新增 `GameState.weaponLootEvents`（不投影），`updateDrops()` 装空槽时 push；
+     `game.pack.ts` 每帧 drain 发 `weaponLoot { uid, itemId, slot }`；`shell-bridge.js`
+     写入 `InventoryState.equipped[slot]` 并预对齐 `lastEquipped` 防回环；结算时从
+     `slotLootItemIds` 剔除已装在身上的 id，日志把这部分计入「带回」。
+  3. 保留：显式点击拾取、`pickup` / `pickupAck` 跨堆协议、`slotLootItemIds` /
+     `runBagUids` 不可合并、37 步 playthrough 的武器断言、无宿主不写盘契约。
+- Evidence: `bash scripts/verify-all.sh` ALL GREEN（2026-11-13 01:21:56）：131 单测
+  （下限 83）/ typecheck 0 error / playthrough `passed=true steps=37` / resize 4 steps /
+  单页 **31/31**（+2：`in-run loot is mirrored into the character panel weapon slot`、
+  `gameOver wipes ALL ten equipment slots`）。
+- Status: fixed
+- Note: 下方 216 行与 `meta/EXPERIENCE.md` 57 行记录的「已知边界：局内背包看到空槽 /
+  阵亡只丢借出装备」已由本条关闭；攻击 spec 分派 / 互射仍属下一批。
 

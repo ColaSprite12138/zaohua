@@ -33,13 +33,15 @@ describe('standard extraction-shooter settlement', () => {
     expect(equipItem(state, 'sword-1', 0)).toBe(true);
   });
 
-  it('buildLoadout borrows only weapon slots, leaving armour at home', () => {
+  it('buildLoadout registers worn weapons without hiding them from the in-run panel', () => {
     const loan = buildLoadout(state);
     expect(loan.items).toHaveLength(1);
     expect(loan.armedWeapons).toBe(1);
     expect(loan.items[0]!.defId).toBe('longsword');
-    expect(state.equipped[0]).toBeNull();
-    expect(findItem(state, 'sword-1')).toBeNull();
+    // The instances stay equipped: clearing them here made the character
+    // panel's weapon slots look empty during a run (user-reported bug).
+    expect(state.equipped[0]?.uid).toBe('sword-1');
+    expect(findItem(state, 'sword-1')?.where).toBe('equipped');
     expect(state.stash).toHaveLength(1);
     expect(EQUIP_SLOTS).toHaveLength(10);
   });
@@ -92,6 +94,32 @@ describe('standard extraction-shooter settlement', () => {
     expect(total + report.overflow.length).toBe(31);
     expect(report.overflow.length).toBeGreaterThan(0);
     expect('loose' in state).toBe(false);
+  });
+
+  it('cleared does not duplicate a borrowed weapon that stayed equipped', () => {
+    const loan = buildLoadout(state);
+    const report = settleRun(state, loan, {
+      outcome: 'cleared', lootItemIds: [], carriedUids: [],
+    });
+    expect(report.returned).toBe(1);
+    expect(state.equipped[0]?.uid).toBe('sword-1');
+    expect(state.bag.filter((i) => i.uid === 'sword-1')).toHaveLength(0);
+    expect(state.stash.filter((i) => i.uid === 'sword-1')).toHaveLength(0);
+  });
+
+  it('gameOver clears every worn item, not just the two weapon slots', () => {
+    // Grid logic does not police slot kinds; hand-place two worn non-weapon
+    // items so the ten-slot wipe is exercised end to end.
+    state.equipped[2] = { uid: 'ring-1', defId: 'longsword' };
+    state.equipped[9] = { uid: 'boots-1', defId: 'longsword' };
+    const stashBefore = state.stash.length;
+    const loan = buildLoadout(state);
+    const report = settleRun(state, loan, {
+      outcome: 'gameOver', lootItemIds: [], carriedUids: [],
+    });
+    expect(state.equipped.every((slot) => slot === null)).toBe(true);
+    expect(report.lost).toBe(3); // borrowed weapon + ring + boots
+    expect(state.stash).toHaveLength(stashBefore);
   });
 
   it('a lost run removes this run\'s bag loot but keeps older stash items', () => {
