@@ -78,20 +78,6 @@
     background: rgba(74,222,128,.16); z-index: 3; pointer-events: none; display: none;
   }
   .preview.bad { border-color: var(--red); background: rgba(255,123,123,.16); }
-  .tray {
-    display: flex; gap: 10px; flex-wrap: wrap; min-height: 92px; margin-top: 6px;
-    padding: 10px; border: 1px dashed var(--line); border-radius: 10px; background: var(--cell);
-  }
-  .tray.dragover { border-color: var(--cyan); }
-  .tray .loose-item {
-    width: 88px; height: 70px; border: 1px solid var(--sword); border-radius: 8px;
-    background: linear-gradient(150deg, rgba(255,209,102,.28), rgba(255,209,102,.08));
-    color: var(--sword); display: flex; flex-direction: column; align-items: center;
-    justify-content: center; cursor: grab; user-select: none;
-  }
-  .tray .loose-item .glyph { font-size: 20px; }
-  .tray .loose-item .name { font-size: 11px; font-weight: 700; }
-  .tray .loose-item.dragging { opacity: .35; }
   .hint { color: var(--muted); font-size: 11px; margin-top: 8px; max-width: 300px; }
   .legend { margin-top: 14px; color: var(--muted); font-size: 11px; line-height: 1.9; }
   .legend code { color: var(--gold); }
@@ -110,7 +96,6 @@
   </div>
 
   <div class="toolbar">
-    <button id="add-sword">＋ 补充一把长剑</button>
     <button id="reset">重置演示数据</button>
     <span class="status" id="status"></span>
   </div>
@@ -145,15 +130,6 @@
     </section>
   </div>
 
-  <section class="panel" style="margin-top:18px">
-    <div class="panel-title"><h2>待分配物品</h2><small>拖到背包或仓库</small></div>
-    <div class="tray" id="tray"></div>
-    <div class="legend">
-      长剑默认占 <b>2 列 × 3 行 = 6 格</b>；拖放时显示绿色（可放）/ 红色（越界或重叠）落点预览。
-      物品可在待分配区 ↔ 背包 ↔ 仓库 ↔ 装备栏之间任意拖动。
-      后续物品属性由 Excel 配置表提供，本页目前使用代码里的 <code>ITEM_DEFS</code>。
-    </div>
-  </section>
   </div>
 
 <script src="./inventory.js"></script>
@@ -293,31 +269,6 @@
     });
   }
 
-  function buildTray() {
-    const el = $('tray');
-    el.innerHTML = '';
-    state.loose.forEach((item) => {
-      const def = M.itemDef(item.defId);
-      const node = document.createElement('div');
-      node.className = 'loose-item';
-      node.draggable = true;
-      node.dataset.uid = item.uid;
-      node.innerHTML = '<span class="glyph">' + def.glyph + '</span>'
-        + '<span class="name">' + def.name + ' ' + def.cols + '×' + def.rows + '</span>';
-      node.addEventListener('dragstart', (e) => startDrag(e, node, item, 0));
-      node.addEventListener('dragend', () => {
-        node.classList.remove('dragging');
-        drag = null;
-        clearPreview();
-        render();
-      });
-      el.appendChild(node);
-    });
-    if (state.loose.length === 0) {
-      el.innerHTML = '<span class="hint">空 · 点击上方「补充一把长剑」，或从格子 / 装备栏拖回这里</span>';
-    }
-  }
-
   function clearPreview() {
     for (const c of ['bag', 'stash']) {
       $('preview-' + c).style.display = 'none';
@@ -371,27 +322,10 @@
     });
   }
 
-  function bindTray() {
-    const el = $('tray');
-    el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('dragover'); });
-    el.addEventListener('dragleave', () => el.classList.remove('dragover'));
-    el.addEventListener('drop', (e) => {
-      e.preventDefault();
-      el.classList.remove('dragover');
-      const uid = e.dataTransfer.getData('text/plain') || (drag && drag.uid);
-      drag = null;
-      if (!uid) return;
-      const ok = M.unplaceItem(state, uid);
-      say(ok ? '已放回待分配区' : '该物品已在待分配区', !ok);
-      render();
-    });
-  }
-
   function render() {
     buildGrid('bag');
     buildGrid('stash');
     buildEquip();
-    buildTray();
     const active = M.activeWeapon(state);
     $('status').title = active ? '当前武器：' + M.itemDef(active.defId).name : '当前空手';
     if (host.onRender) host.onRender();
@@ -405,11 +339,6 @@
   host.getState = () => state;
   host.M = M;
 
-  $('add-sword').addEventListener('click', () => {
-    state.loose.push({ uid: 'sword-' + Date.now(), defId: 'longsword' });
-    say('已补充一把长剑，可以拖到背包 / 仓库 / 装备栏');
-    render();
-  });
   $('reset').addEventListener('click', () => {
     host.setState(M.createInventoryState(3));
     say('已重置演示数据');
@@ -424,9 +353,8 @@
 
   bindGrid('bag');
   bindGrid('stash');
-  bindTray();
   render();
-  say('拖动长剑开始：绿色预览＝可放，红色＝放不下');
+  say('三把长剑已在仓库：拖到背包或装备栏开始配装（绿色预览＝可放，红色＝放不下）');
 })();
 </script>
 </body>

@@ -4,7 +4,7 @@ import { swingAtTarget } from '../attack.ts';
 import { NO_MODIFIERS } from '../modifiers.ts';
 import { activeWeapon, createState, reset, type GameState, type StepInput } from '../simulation.ts';
 import { projection, step } from '../simulation.ts';
-import { updateDrops } from '../weapons.ts';
+import { resolvePickupAck, updateDrops } from '../weapons.ts';
 
 const input = (over: Partial<StepInput> = {}): StepInput => ({
   mouse: undefined,
@@ -16,10 +16,21 @@ const input = (over: Partial<StepInput> = {}): StepInput => ({
   ...over,
 });
 
-/** Walk the player onto a dropped sword so updateDrops() collects it. */
+/** Explicitly order a pickup, then let updateDrops() resolve it on arrival. */
 function collectSword(s: GameState): void {
-  s.drops.push({ x: s.player.x, y: s.player.y, kind: 'longsword', t: 0 });
+  const uid = `test-drop-${s.carriedItems.length + 1}`;
+  s.drops.push({ uid, x: s.player.x, y: s.player.y, kind: 'longsword', t: 0 });
+  s.pickupTarget = uid;
   updateDrops(s, 1 / 60);
+}
+
+/** Both slots full -> the drop must wait for the main window's bag decision. */
+function queueThirdSword(s: GameState): string {
+  const uid = 'test-drop-3';
+  s.drops.push({ uid, x: s.player.x, y: s.player.y, kind: 'longsword', t: 0 });
+  s.pickupTarget = uid;
+  updateDrops(s, 1 / 60);
+  return uid;
 }
 
 describe('two weapon slots', () => {
@@ -41,15 +52,39 @@ describe('two weapon slots', () => {
     expect(s.weaponSlots).toEqual(['longsword', 'longsword']);
   });
 
-  it('a third sword converts to score when both slots are full', () => {
+  it('a third sword waits for a bag decision; there is no score at all', () => {
     const s = createState();
     collectSword(s);
     collectSword(s);
-    const before = s.score;
-    collectSword(s);
+    const uid = queueThirdSword(s);
     expect(s.weaponSlots).toEqual(['longsword', 'longsword']);
-    expect(s.score).toBe(before + 80);
+    expect(s.pendingPickup?.uid).toBe(uid);
+    expect(s.drops).toHaveLength(1);
+    expect('score' in s).toBe(false);
+  });
+
+  it('a rejected bag pickup leaves the drop on the ground', () => {
+    const s = createState();
+    collectSword(s);
+    collectSword(s);
+    const uid = queueThirdSword(s);
+    resolvePickupAck(s, false, uid);
+    expect(s.drops).toHaveLength(1);
+    expect(s.runBagUids).toEqual([]);
+    expect(s.pendingPickup).toBeNull();
+    expect(s.carriedItems).toHaveLength(2);
+  });
+
+  it('an accepted bag pickup removes the drop and records its uid', () => {
+    const s = createState();
+    collectSword(s);
+    collectSword(s);
+    const uid = queueThirdSword(s);
+    resolvePickupAck(s, true, uid);
     expect(s.drops).toHaveLength(0);
+    expect(s.runBagUids).toEqual([uid]);
+    expect(s.carriedItems).toHaveLength(3);
+    expect(s.pendingPickup).toBeNull();
   });
 
   it('Digit1 / Digit2 switch the active slot without moving items', () => {

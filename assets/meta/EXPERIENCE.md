@@ -159,3 +159,36 @@
   `localDevIdentity` 改写成 `noLocalSave`）。保护清单「断言减少必须解释」按此逐条对齐。
 - **顺序纪律（用户新立的硬规矩）**：问清范围再动手。语气强 / 强调多次 ≠ 范围明确。
   本次先给「保留清单 + 删除清单」让用户一句话确认，才避免了把平台云存档一起删掉。
+
+## 2026-11-12 · 只保留三处存放，删 `loose`；局内拾取占真实背包格子
+
+- **用户要的是「存放区域只有三个」**：`InventoryState.loose` 是「待分配物品」托盘背后的第四个
+  隐藏存放区，只删 UI 会留下数据层幽灵物品。删除必须同时覆盖四处：类型字段 +
+  `ItemLocation` 分支 + `unplaceItem()` + `settleRun()` 的 `bag → stash → loose` 兜底 +
+  `meta-ui/index.html` 的 `.tray` CSS / `buildTray()` / `bindTray()` / 「补充一把长剑」按钮 +
+  生成物 `inventory.js` + 所有断言。只改页面会被 `--check` 抓到漂移。
+- **三把长剑默认在仓库**：`createInventoryState(3)` 把 `sword-1..3` 放进 `stash`
+  的 `(0,0) / (2,0) / (4,0)`（`perRow = floor(STASH.cols/2)`，更多则换 3 行带）。
+  首屏不再是 `loose`，`verify-meta-ui.cjs` 的拖放源全部改成 `#wrap-stash .grid-item`，
+  13 条断言总数不变但语义重写为「仓库起步 / stash → bag / 无 loose tray」。
+- **换装不再往 `loose` 塞**：`equipItem()` 若目标槽已有物品，被换下的必须先能落回网格
+  （优先对方原格位，其次 `findFirstFit()` 的 bag → stash）；**放不下就整次换装拒绝、状态不变**，
+  绝不静默丢物品。这比"塞进待分配区"更符合三处存放契约。
+- **`addToBag()` 只写 bag**：局内拾取是「带出战利品」，仓库是局外存储，不参与战斗拾取；
+  背包无空位就返回 `null`、不改状态，掉落物留在地上。`findFirstFit()` 才用于**结算时**入库
+  （bag → stash），两者别混用。
+- **结算按 uid 而不是 defId 删**：`Settlement` 拆成 `lootItemIds`（武器槽战利品 authored id）
+  + `carriedUids`（本局已进背包的 uid）。`gameOver` 用 `removeItem(state, uid)` 精确删除
+  本局战利品；用 defId 会把仓库里的同名长剑一起删掉。`cleared` 归还借出武器、
+  给 `lootItemIds` 找格子，满格只进 `overflow` 报告，**不再有 `loose` 兜底**。
+- **跨堆协议只在局内生效**：`shell-bridge.js` 收到 `pickup` 时用
+  `inRun ? M.addToBag(host.getState(), uid, itemId) : null`，局外 / 演示页不会误改状态；
+  无论成败都要回 `pickupAck { uid, ok }`，否则 Worker 的 `pendingPickup` 永远不解，
+  玩家再也捡不了东西。
+- **`account.ts` 的存档校验要同步**：`isValidInventoryState()` 原来要求 `Array.isArray(s.loose)`，
+  删字段后所有平台 KV 存档都会被判为损坏并回退默认状态。现在只校验 `bag` / `stash`
+  数组与 `equipped` 长度；`verify-shell.cjs` 的 `corruptFallback` 探针改用 `{ bag: null }`。
+- **断言数量变化要解释**：inventory 14 → 16（新增「三处存放 + `addToBag` 满仓返回 null」）、
+  run-settlement 7 → 8（新增阵亡删除本局 bag loot）；combat weapons 7 → 9、loot 13 → 14。
+  全量 111 → 117，`verify-all.sh` 下限仍是 83（只防删断言，不随新增抬高）。
+  独立页 13 条与单页 29 条总数不变、语义重写。

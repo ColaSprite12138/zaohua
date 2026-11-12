@@ -26,13 +26,31 @@
 | 空格 / R | 闪避（短暂无敌）/ 重开 |
 
 短按判定 `<0.35s` 且位移 `<12px`；点击分流优先级 **掉落物 → 存活敌人身体框 → 地面**。
+**本游戏没有得分**：`GameState` 里没有 `score`，击杀 / 拾取都不加分，HUD 只显示
+`击杀 / 剩余骷髅 / 已拾取`；`projection()` 与结算板同样不得出现 score。
 
-**双武器槽**：`GameState.weaponSlots: [WeaponId|null, WeaponId|null]` + `activeWeaponSlot: 0|1`，
-`activeWeapon(s)` 是唯一取值入口。走近掉落的长剑自动装入第一个空槽（战斗内穿戴），
-两槽满折算 80 分。`1/2` 在 `game.pack.ts` 读 `justPressedCode('Digit1'|'Digit2')`，
+**双武器槽 + 显式拾取（2026-11-12 改造）**：
+`GameState.weaponSlots: [WeaponId|null, WeaponId|null]` + `activeWeaponSlot: 0|1`，
+`activeWeapon(s)` 是唯一取值入口。拾取**不是走过即拿**：只有短按且点中掉落物时
+`movement.ts::classifyPointer()` 才写 `s.pickupTarget = drop.uid`（点地面 / 点敌人 /
+长按跟随都会清空它），`weapons.ts::updateDrops()` 要求 `pickupTarget !== null`、
+`pendingPickup === null` 且玩家距掉落物 `<50px`，到达才结算：
+有空武器槽 → 装入第一个空槽、移除掉落物、记 `carriedItems` + `slotLootItemIds`；
+两槽都满 → 设 `pendingPickup`，交给主窗口判断背包格子（见下）。
+`1/2` 在 `game.pack.ts` 读 `justPressedCode('Digit1'|'Digit2')`，
 经 `StepInput.switchWeapon` 传入 `step()`。
 `projection.equippedWeapon` **保留旧字段名**，改为返回 `activeWeapon(s)`（兼容既有断言）；
-新增 `weaponSlots` / `activeWeaponSlot`。`reset()` 清空两槽并回到槽 1。
+新增 `weaponSlots` / `activeWeaponSlot` / `pickupTarget` / `pendingPickup`（只投影 uid）/
+`runBagUids` / `slotLootItemIds`。`reset()` 清空两槽、拾取状态与本局 loot 记录并回到槽 1。
+
+**跨堆拾取协议（Worker ↔ 主窗口）**：Worker 与主窗口是独立 JS 堆，Worker 看不到
+`InventoryState.bag` 的格子。两槽满时 `game.pack.ts` 用 `pickupSent` 去重，每帧只在
+`pendingPickup !== null && pickupSent === null` 时发一次
+`pickup { uid, itemId, name }`；主窗口 `shell-bridge.js` 调 `M.addToBag()` 判断背包并回
+`pickupAck { uid, ok }`；Worker 用 `resolvePickupAck(s, ok, uid)` 收口：
+`ok=true` 移除掉落物 + 记 `runBagUids`，`ok=false`（背包满）提示「留在地上」、
+**不移除掉落物、不记战利品**。`Drop.uid` 来自 `nextDropUid()`（模块级单调递增，
+跨局不重置）。
 
 **数据表驱动的掉落与多怪**（2026-11-11）：
 
@@ -41,12 +59,15 @@
 | 怪物种类 | `Skeleton.monsterId`（`100001` 骷髅剑士 / `200001` 骷髅弓手），对应 `monster.xlsx` 的掉落池 |
 | 掉落算法 | `loot.ts::rollLoot(monsterId, rng)` 按 `loot_pool.xlsx` 权重累计抽取；两池各 6 件、权重 `10/8/6/4/2/1` |
 | 随机源 | `makeRng(seed)` Mulberry32，`runSeed` 默认 `0x5eed1234`；`reset()` 重建，保证 R 重开 loot 序列一致 |
-| 战利品记录 | `GameState.lootLog`（掉落明细）、`carriedItems`（已拾取的 authored id）、`monsterCount` / `runSeed` |
+| 战利品记录 | `GameState.lootLog`（掉落明细）、`carriedItems`（已拾取的 authored id，仅供 HUD / 报告计数）、`monsterCount` / `runSeed` |
+| 拾取记录 | `runBagUids`（本局已放进背包的掉落 uid，阵亡按 uid 删除）、`slotLootItemIds`（拾取进武器槽的 authored id，通关时找格子入库）；**两者不可合并** |
 | 多怪部署 | `spawnSkeletons(count)` 默认 **2**（保护 35 步 playthrough），额外怪按网格生成；`deployRun(s, { monsterCount, seed, armedWeapons, activeWeaponSlot })` 从单页壳层注入 |
 
-`Drop.kind` 仍为 `'longsword'`，只是**视觉/兼容类别**；真实物品身份走 `drop.itemId` / `name` / `quality`。
+`Drop.kind` 仍为 `'longsword'`，只是**视觉/兼容类别**；真实物品身份走 `drop.itemId` / `name` / `quality`，
+每件掉落额外带稳定 `uid`（跨堆消息对齐用）。
 `WeaponId` 仍是 `'longsword'`（armed vs bare），不换成表里的 12 个 id。`projection()` 追加
-`monsterCount` / `runSeed` / `lootLog` / `carriedItems` / `dropItems`，**不得改旧字段名**。
+`monsterCount` / `runSeed` / `lootLog` / `carriedItems` / `dropItems` / `pickupTarget` /
+`pendingPickup` / `runBagUids` / `slotLootItemIds`，**不得改旧字段名，也不得再出现 score**。
 引擎层通过 `game.pack.ts` 的 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、在清场/阵亡时发 `result`。
 **`game.state` 必须保持唯一 read projection**：`project play` 以「唯一注册的 projection」解析默认读取，
 多注册一个（哪怕是 `run.result`）会让全部 35 步 playthrough 报 `state-unavailable`。
@@ -59,10 +80,14 @@
 4. 掉落物点击优先于敌人，否则压在骷髅脚下的长剑永远捡不到。
 5. `assets/game/simulation.ts` 是**兼容门面**，只做 re-export，禁止在此写玩法逻辑。
 6. 攻击数值/范围只读 `activeWeapon(s)`，禁止直接读 `weaponSlots[0]` 或任何"是否装备过任何武器"的判断 —— 否则切到空槽仍会打出长剑伤害。
-7. `equippedWeapon` 投影字段名不得改（32 步 playthrough 依赖），语义＝当前激活槽武器。
+7. `equippedWeapon` 投影字段名不得改（35 步 playthrough 依赖），语义＝当前激活槽武器。
 8. 掉落数值只读 `resource/generated/*.ts`；`loot.ts` 是唯一抽取入口，报告脚本不得镜像算法。
 9. `createState()` / `spawnSkeletons()` 默认怪数必须保持 **2**；多怪只能由 `deployRun()` 或显式 `RunConfig` 注入。
-10. 两武器槽已满时拾取折算 80 分，但**仍要写入 `carriedItems`**，否则搜打撤结算会漏战利品。
+10. **没有得分**：`GameState` / `projection()` / HUD / 结算板 / 断言里都不得出现 `score`；`kills` 是唯一击杀计数。
+11. **拾取必须显式**：只有短按点中掉落物会产生 `pickupTarget`；走过掉落物、点地面、点敌人、长按跟随都不得触发拾取。`playthrough.mjs` 与 `loot.test.ts` 各有反例断言守着。
+12. **背包满时掉落物留在地上**：`resolvePickupAck(s, false, uid)` 不得移除 drop、不得写 `runBagUids` / `carriedItems`；只有 `ok=true` 才算拾取成功。
+13. **`pendingPickup` 只能投影 uid 字符串或 null**：`GameProjectionValue` 不接受 `interface`（缺索引签名），直接塞对象会 `tsc` 报错。
+14. 两武器槽已满时必须走 `pickup` / `pickupAck` 跨堆协议，**不得在 Worker 里自己决定背包空间**；`pickupSent` 去重是必需的，否则同一件战利品会被重复塞进背包。
 
 ## 目录与依赖方向（单向，禁止反向 import）
 
@@ -84,7 +109,10 @@ combat/simulation.ts       ← 编排 step/projection/deployRun，唯一对外�
 ## 对外接口
 
 `createState(config?: RunConfig)` / `reset(s)` / `step(s, dt, input, modifiers?)` / `projection(s)` /
-`NO_MODIFIERS` / `activeWeapon(s)` / `switchWeaponSlot(s, slot)`（`weapons.ts`） /
+`NO_MODIFIERS` / `activeWeapon(s)` / `switchWeaponSlot(s, slot)` / `updateDrops(s, dt)` /
+`resolvePickupAck(s, ok, uid)` / `checkCleared(s)`（`weapons.ts`）/
+`dropAtPoint(s, x, y)` / `hitTestDrop()`（`attack.ts`，点击命中判定唯一入口）/
+`nextDropUid()` / `PendingPickup`（`state.ts`）/
 `deployRun(s, config?: Deployment)` / `spawnSkeletons(count)` / `makeRng(seed)` / `rollLoot(monsterId, rng)` /
 `itemRow(id)` / `weaponRow(id)` / `authoredItem(id)`（**item + weapon 的唯一 join 点**）/
 `AuthoredItemView` / `monsterRow(id)` / `poolEntries(poolId)` / `theoreticalDistribution(poolId)`。
@@ -116,7 +144,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun，唯一对外�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 54 条（含 loot 13 / attack-spec 10 / projectiles 10）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 57 条（weapons 9 / loot 14 / movement 11 / attack-spec 10 / projectiles 10 / modifiers 3）
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json

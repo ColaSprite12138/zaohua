@@ -26,10 +26,19 @@
 | 装备槽 | 10 个，索引 0/1 固定为武器槽 | `EQUIP_SLOTS` |
 | 当前武器 | `activeWeaponSlot: 0 \| 1`，只有这一把生效 | `setActiveWeapon` / `activeWeapon` |
 
+- **三处存放区域（2026-11-12 用户拍板）**：物品只能存在于 `equipped`（身上穿戴）/
+  `bag`（背包）/ `stash`（仓库）。`InventoryState` **没有 `loose`**，也没有「待分配区」UI；
+  `isValidInventoryState()` 只校验 `bag` / `stash` 数组与 `equipped` 长度。
 - **网格约定**：`5×8` 读作 **列 × 行**（宽 × 高），与 `2×3` 一致。若设计改为行 × 列，只改 `BAG` / `STASH`。
 - `canPlace` 做整数边界 + 矩形相交检查；**所有变更先校验再提交**，失败时状态完全不变。
 - 装备槽按 `EquipKind` 匹配（`weapon/ring/necklace/gloves/helmet/chest/pants/boots`）；类型不符或同槽重复穿戴直接拒绝。
-- 槽位被占用时，被换下的物品优先回到来源格位，放不下则回 `loose`，**永不丢失**。
+- **换装不静默丢物品**：槽位被占用时，被换下的优先回到对方原格位，其次 `findFirstFit()`
+  （bag → stash）；**两者都放不下就整次换装拒绝、状态完全不变**（`equipItem()` 返回 `false`）。
+- `createInventoryState(seedSwords = 3)` 把三把长剑默认放进 `stash` 的 `(0,0) / (2,0) / (4,0)`；
+  `bag` 初始为空，首屏不再有待分配物品。
+- `addToBag(state, uid, defId)` **只写 bag**：局内拾取占用真实背包 2×3 格，无空位返回 `null`
+  且状态不变（掉落物留在地上）；仓库是局外存储，不参与战斗拾取。
+  `findFirstFit()`（bag → stash）与 `removeItem(state, uid)` 只在**结算**时用，别与 `addToBag()` 混用。
 - `ITEM_DEFS` 内置 `longsword` 作为默认占位；`registerItemDefs(rows)` 把表里的 13 行
   （`10001`-`20006` + `30001` 弹药）注册进目录，**不覆盖已有 id**，物品属性不得在别处散落。
 
@@ -40,8 +49,9 @@
 | 唯一状态 | 主窗口 `window.MetaShell.state`，meta UI 与 `shell-bridge.js` 都通过 `getState()` / `setState()` 读写**同一对象** |
 | 表目录注入 | `inject-shell.mjs` 把 `generated/item.ts` + `generated/weapon.ts` **按 id join** 成 `authoredItems` 写入 `MetaShell`（品质 / 伤害来自 weapon 表）；`meta-ui/index.html` 在 `registerItemDefs` 可用时注册 |
 | 出征 | `buildLoadout(state)` **只借出两个武器槽**（非武器装备留在局外），返回 `armedWeapons` / `activeWeaponSlot`；经 `BroadcastChannel('forgeax-arena-run')` 发 `deploy` |
-| 结算 | `settleRun(state, borrowed, { outcome, lootItemIds })`：`cleared` 归还借出武器 + 战利品按 `bag → stash → loose` 入库；`gameOver` **借出装备与本局战利品永久丢失** |
-| 报告 | `SettlementReport` 的 `unregistered`（未知 id）/ `overflow`（满格）必须显式报告，**永不静默丢物品** |
+| 局内拾取 | 两武器槽都满时 Worker 发 `pickup { uid, itemId, name }`；`shell-bridge.js` 调 `M.addToBag(host.getState(), uid, itemId)` 占真实背包格，成功才 `host.render()`；**无论成败都要回 `pickupAck { uid, ok }`**，否则 Worker 的 `pendingPickup` 永远不解 |
+| 结算 | `settleRun(state, borrowed, settlement)`，`Settlement = { outcome, lootItemIds, carriedUids }`：`cleared` 归还借出武器 + 给 `lootItemIds`（局内装到武器槽的战利品 authored id）用 `findFirstFit()` 找格子入库，本局已进背包的战利品**原地保留**；`gameOver` 借出装备永久丢失，并按 `carriedUids` 用 `removeItem()` **从背包精确删除本局战利品** |
+| 报告 | `SettlementReport` 的 `unregistered`（未知 id）/ `overflow`（bag + stash 都满）必须显式报告；**没有第四处存放区兜底，物品不会静默转移** |
 
 `file://` 双击页仍走 `createInventoryState()` 缺省路径，`MetaShell` 钩子只在 4174 注入页生效；
 两条入口共用 `meta-ui/inventory.js` 生成物与 `inventory.ts` 唯一逻辑源。
@@ -93,8 +103,9 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 
 ## 战局内背包契约（2026-11-11，用户选择：不冻结 + 立即生效）
 
-- `meta-ui/index.html` 把 `.layout`（装备栏 / 背包 / 仓库）和待分配区包进 `#fx-bag-content`；
-  战斗中按 **B / I**（或顶栏「背包」按钮）打开，以右侧浮层显示，ESC 关闭。
+- `meta-ui/index.html` 把 `.layout`（装备栏 / 背包 / 仓库）包进 `#fx-bag-content`；
+  **没有待分配区**（`loose` 已删除），战斗中按 **B / I**（或顶栏「背包」按钮）打开，
+  以右侧浮层显示，ESC 关闭。
 - **不冻结**：`#fx-shell.fx-in-battle` 仍 `pointer-events:none`，只有浮层 `auto`；
   浮层外的点击照常打到 ForgeAX canvas，怪物继续追击；**局内背包本身不发 pause/freeze**
   （平台 lifecycle 的 pause/resume 是另一条独立契约，见下节）。
@@ -103,8 +114,9 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
   `null` ＝「保留该槽出征时借出的武器」，避免把借出装备覆盖掉。
 - `game.pack.ts` 收到 `equip` 后直接改 `state.weaponSlots` / `activeWeaponSlot`，本局伤害与攻击距离立刻变化。
 - **借出/归还边界**：`buildLoadout()` 出征时把两个武器槽置空，所以局内背包看到的是空武器槽；
-  局内从背包装上的物品属于存档资产，结算时 `settleRun()` 归还借出武器会优先填空槽、满则进 `loose`，
-  **永不静默丢物品**。阵亡时借出装备与本局战利品照常丢失；局内从背包装上的武器仍留在存档中。
+  局内从背包装上的物品属于存档资产。结算时 `settleRun()` 归还借出武器优先填空槽、
+  满则 `findFirstFit()` 找 bag → stash、再满才进 `overflow` 报告（**没有 `loose` 兜底**）。
+  阵亡时借出装备与本局已进背包的战利品（按 `carriedUids`）丢失；局内从背包装上的资产仍留在存档中。
 
 ## 平台 lifecycle 契约（2026-11-11 晚，发布准备）
 
@@ -132,13 +144,18 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 ## 对外接口
 
 `inventory.ts`：`BAG` / `STASH` / `CONTAINERS` / `ITEM_DEFS` / `EQUIP_SLOTS` / `WEAPON_SLOT_INDICES` /
-`createInventoryState` / `itemDef` / `canPlace` / `findItem` / `placeItem` / `moveItem` / `unplaceItem` /
+`createInventoryState` / `itemDef` / `canPlace` / `findItem` / `placeItem` / `moveItem` /
 `equipItem` / `unequipItem` / `setActiveWeapon` / `activeWeapon` / `coveredCells` /
-`registerItemDefs` / `buildLoadout` / `settleRun`（+ `AuthoredItem` / `BorrowedLoadout` / `Settlement` / `SettlementReport` 类型）。
+`findFirstFit` / `addToBag` / `removeItem` /
+`registerItemDefs` / `buildLoadout` / `settleRun`
+（+ `GridSpot` / `AuthoredItem` / `BorrowedLoadout` / `Settlement` / `SettlementReport` 类型）。
+**没有 `loose` / `unplaceItem` / `ContainerId='loose'`**；`Settlement` 字段是
+`{ outcome, lootItemIds, carriedUids }`。
 
-`account.ts`：`STORAGE_KEY` / `sha256Hex` / `emptyDb` / `loadDb` / `saveDb` / `listUsers` / `lastUser` /
-`validateName` / `validatePassword` / `register` / `login` / `logout` / `currentUser` /
-`loadState` / `saveState`（+ `AccountDb` / `AccountRecord` / `AuthResult` 类型）。全部**同步**。
+`account.ts`：`SAVE_KEY` / `SCHEMA_VERSION` / `encodeSave` / `isValidInventoryState` /
+`decodeSave` / `readSave` / `createSaveQueue` / `writeSave`
+（+ `SaveEnvelope` / `SaveAdapter` / `SaveQueue` 类型）。全部**同步**、零 import；
+`isValidInventoryState()` 只校验 `bag` / `stash` 数组与 `equipped` 长度（**不校验 `loose`**）。
 
 ## 依赖方向
 
@@ -149,7 +166,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/meta/__tests__      # 35 条（inventory 14 + run-settlement 7 + meta 3 + platform-KV account 11）
+./node_modules/.bin/vitest run assets/meta/__tests__      # 38 条（inventory 16 + account 11 + run-settlement 8 + meta 3）
 node scripts/build-meta-ui.mjs --check                     # 两个生成物与源码同步
 node scripts/verify-meta-ui.cjs                            # 独立页面 13 条真实拖放断言
 node scripts/inject-shell.mjs --check                      # dist 注入块与源同步
@@ -176,3 +193,7 @@ node scripts/verify-shell.cjs                              # 4174 单页 29 条�
 已完成（2026-11-11）：Excel 表 → `generated/*.ts` → `registerItemDefs`；局外↔战斗 4174 单页连续流程与搜打撤结算；
 **平台玩家身份 + 单 key KV 云存档（本地零存盘，上线后才验）** + 战局内不冻结且立即生效的背包换装。
 （中间曾做过一版「本地多账号注册/登录」与一版「本地镜像存盘」，2026-11-11 晚按用户要求依次整体删除。）
+
+已完成（2026-11-12）：**删除 `loose` 与「待分配物品」UI，收口为 `equipped` / `bag` / `stash` 三处**；
+三把长剑默认进仓库；局内拾取改显式点击且经 `pickup` / `pickupAck` 占真实背包格；
+`Settlement` 拆 `lootItemIds` + `carriedUids`，满仓只进 `overflow` 报告、不再静默转移。

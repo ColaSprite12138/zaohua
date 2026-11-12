@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  buildLoadout, createInventoryState, equipItem, findItem,
+  addToBag, buildLoadout, createInventoryState, equipItem, findItem,
   itemDef, registerItemDefs, settleRun, EQUIP_SLOTS,
   type InventoryState,
 } from '../inventory.ts';
@@ -40,14 +40,14 @@ describe('standard extraction-shooter settlement', () => {
     expect(loan.items[0]!.defId).toBe('longsword');
     expect(state.equipped[0]).toBeNull();
     expect(findItem(state, 'sword-1')).toBeNull();
-    expect(state.loose).toHaveLength(1);
+    expect(state.stash).toHaveLength(1);
     expect(EQUIP_SLOTS).toHaveLength(10);
   });
 
   it('cleared returns borrowed weapons and banks authored loot', () => {
     const loan = buildLoadout(state);
     const report = settleRun(state, loan, {
-      outcome: 'cleared', lootItemIds: ['10006', '20006'],
+      outcome: 'cleared', lootItemIds: ['10006', '20006'], carriedUids: [],
     });
     expect(report).toEqual({
       returned: 1, lost: 0, gained: 2, unregistered: [], overflow: [],
@@ -60,44 +60,57 @@ describe('standard extraction-shooter settlement', () => {
   it('gameOver permanently loses borrowed weapons and loot', () => {
     const loan = buildLoadout(state);
     const report = settleRun(state, loan, {
-      outcome: 'gameOver', lootItemIds: ['10006'],
+      outcome: 'gameOver', lootItemIds: ['10006'], carriedUids: [],
     });
     expect(report).toEqual({
       returned: 0, lost: 1, gained: 0, unregistered: [], overflow: [],
     });
     expect(state.equipped[0]).toBeNull();
     expect(state.bag).toHaveLength(0);
-    expect(state.loose).toHaveLength(1); // only the spare demo sword
+    expect(state.stash).toHaveLength(1); // only the spare demo sword
   });
 
   it('unknown loot ids are reported, never silently dropped', () => {
     const loan = buildLoadout(state);
     const report = settleRun(state, loan, {
-      outcome: 'cleared', lootItemIds: ['99999', '10001'],
+      outcome: 'cleared', lootItemIds: ['99999', '10001'], carriedUids: [],
     });
     expect(report.unregistered).toEqual(['99999']);
     expect(report.gained).toBe(1);
     expect(state.bag.map((i) => i.defId)).toEqual(['10001']);
   });
 
-  it('a full bag spills loot into the stash, then the loose tray', () => {
+  it('a full bag spills settlement loot into the stash; the rest is reported', () => {
     const loan = buildLoadout(state);
-    // 5x8 bag holds at most 4 of the 2x3 items per row-pair; stash 16x10 holds
-    // far more. Push 30 items so both grids overflow.
     const ids = Array.from({ length: 30 }, () => '10001');
-    const report = settleRun(state, loan, { outcome: 'cleared', lootItemIds: ids });
+    const report = settleRun(state, loan, {
+      outcome: 'cleared', lootItemIds: ids, carriedUids: [],
+    });
     expect(report.gained).toBe(30);
-    const total = state.bag.length + state.stash.length + state.loose.length;
-    // 1 spare demo sword + 30 loot items, none discarded.
-    expect(total).toBe(31);
+    const total = state.bag.length + state.stash.length;
+    // 1 spare demo sword + every placed item; overflow is reported, never hidden.
+    expect(total + report.overflow.length).toBe(31);
     expect(report.overflow.length).toBeGreaterThan(0);
+    expect('loose' in state).toBe(false);
+  });
+
+  it('a lost run removes this run\'s bag loot but keeps older stash items', () => {
+    const loan = buildLoadout(state);
+    expect(addToBag(state, 'run-loot-1', '10001')).not.toBeNull();
+    const before = state.stash.length;
+    const report = settleRun(state, loan, {
+      outcome: 'gameOver', lootItemIds: [], carriedUids: ['run-loot-1'],
+    });
+    expect(report.lost).toBe(2); // 1 borrowed weapon + 1 bag loot
+    expect(findItem(state, 'run-loot-1')).toBeNull();
+    expect(state.stash).toHaveLength(before);
   });
 
   it('two borrowed weapons both come home on a clear', () => {
     expect(equipItem(state, 'sword-2', 1)).toBe(true);
     const loan = buildLoadout(state);
     expect(loan.armedWeapons).toBe(2);
-    const report = settleRun(state, loan, { outcome: 'cleared', lootItemIds: [] });
+    const report = settleRun(state, loan, { outcome: 'cleared', lootItemIds: [], carriedUids: [] });
     expect(report.returned).toBe(2);
     expect(state.equipped[0]?.uid).toBe('sword-1');
     expect(state.equipped[1]?.uid).toBe('sword-2');

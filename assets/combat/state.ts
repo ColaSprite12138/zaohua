@@ -70,6 +70,8 @@ export interface Skeleton {
 }
 
 export interface Drop {
+  /** Stable identity for an explicit pickup order / cross-window request. */
+  uid: string;
   x: number;
   y: number;
   /** Visual / compatibility category: every weapon drop is drawn as a sword. */
@@ -93,6 +95,19 @@ export interface LootRecord {
   poolId: number;
 }
 
+export interface PendingPickup {
+  readonly uid: string;
+  readonly itemId: string;
+  readonly name: string;
+}
+
+let dropUidCounter = 0;
+/** Monotonic across runs so a bag uid never collides with a previous run. */
+export function nextDropUid(): string {
+  dropUidCounter += 1;
+  return `drop-${dropUidCounter}`;
+}
+
 export interface Player {
   x: number;
   y: number;
@@ -114,7 +129,6 @@ export interface GameState {
   attacks: number;
   hp: number;
   maxHp: number;
-  score: number;
   kills: number;
   player: Player;
   target: { x: number; y: number };
@@ -139,8 +153,16 @@ export interface GameState {
   rng: () => number;
   /** Every weighted roll this run, in order. Drives the loot report. */
   lootLog: LootRecord[];
-  /** Authored item ids actually walked over and picked up (run settlement). */
+  /** Authored item ids explicitly picked up this run (run report). */
   carriedItems: string[];
+  /** Drop uid the player clicked; null = no pickup order. */
+  pickupTarget: string | null;
+  /** Request waiting for the main window to find a bag cell. */
+  pendingPickup: PendingPickup | null;
+  /** Uids placed into the bag during this run (lost on death). */
+  runBagUids: string[];
+  /** Authored ids equipped into weapon slots (brought home on clear). */
+  slotLootItemIds: string[];
 }
 
 export interface RunConfig {
@@ -154,7 +176,6 @@ export function createState(config: RunConfig = {}): GameState {
     attacks: 0,
     hp: 100,
     maxHp: 100,
-    score: 0,
     kills: 0,
     player: {
       x: 400, y: 470, vx: 0, vy: 0, face: 0,
@@ -179,6 +200,10 @@ export function createState(config: RunConfig = {}): GameState {
     rng: makeRng(config.seed ?? DEFAULT_RUN_SEED),
     lootLog: [],
     carriedItems: [],
+    pickupTarget: null,
+    pendingPickup: null,
+    runBagUids: [],
+    slotLootItemIds: [],
   };
   reset(state);
   return state;
@@ -217,7 +242,6 @@ export function reset(s: GameState): void {
   s.t = 0;
   s.attacks = 0;
   s.hp = s.maxHp;
-  s.score = 0;
   s.kills = 0;
   s.weaponSlots = [null, null];
   s.activeWeaponSlot = 0;
@@ -230,7 +254,11 @@ export function reset(s: GameState): void {
   s.rng = makeRng(s.runSeed);
   s.lootLog.length = 0;
   s.carriedItems.length = 0;
-  s.toast = { text: '单击地面移动 · 单击敌人攻击 · 长按跟随光标 · 空格闪避', life: 4.2 };
+  s.pickupTarget = null;
+  s.pendingPickup = null;
+  s.runBagUids.length = 0;
+  s.slotLootItemIds.length = 0;
+  s.toast = { text: '单击地面移动 · 单击掉落物拾取 · 单击敌人攻击 · 长按跟随光标 · 空格闪避', life: 4.2 };
   s.moveMode = 'idle';
   s.targetEnemy = null;
   s.attackOrder = false;

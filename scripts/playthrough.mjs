@@ -247,31 +247,29 @@ export default async function playthrough(play) {
       if (after.kills >= 1) killed = true;
     }
     const s = await play.state('game.state');
-    assert.ok(killed, `enemy clicks must kill a skeleton (attacks=${s.attacks}, hp=${s.hp}, score=${s.score}, kills=${s.kills})`);
-    // Walking to the kill spot can pick the drop up in the same pass.
-    assert.ok(
-      s.drops.includes('longsword') || s.equippedWeapon === 'longsword',
-      'killing a skeleton yields a longsword (dropped or picked up on the way)',
-    );
+    assert.ok(killed, `enemy clicks must kill a skeleton (attacks=${s.attacks}, hp=${s.hp}, kills=${s.kills})`);
+    // Pickups are explicit: walking to the kill spot must NOT collect the drop.
+    assert.ok(s.drops.includes('longsword'), 'killing a skeleton leaves a longsword on the ground');
+    assert.equal(s.equippedWeapon, null, 'walking past a drop never equips it automatically');
     await play.screenshot('longsword-drop');
   });
 
   await play.step('click the drop to walk over it and equip the main weapon', async () => {
     const before = await play.state('game.state');
-    if (before.dropAt) {
-      await play.mouse.click([before.dropAt.x, before.dropAt.y]);
-      let equipped = null;
-      for (let i = 0; i < 20 && equipped === null; i += 1) {
-        await play.advance(0.4);
-        const snapshot = await play.state('game.state');
-        if (snapshot.equippedWeapon === 'longsword') equipped = snapshot;
-      }
-      assert.ok(equipped, 'clicking the drop must walk over it and equip it');
-      assert.ok(equipped.score > before.score, 'equipping awards score');
-    } else {
-      assert.equal(before.equippedWeapon, 'longsword', 'the sword was equipped while walking to the kill');
-      assert.ok(before.score > 100, 'kill and pickup both awarded score');
+    assert.ok(before.dropAt, 'the drop must be on the ground before an explicit pickup');
+    assert.equal(before.equippedWeapon, null, 'no weapon before the pickup click');
+    // A short click ON the drop is the only pickup order, then walking to it
+    // resolves the collection. Empty weapon slot wins over the bag.
+    await play.mouse.click([before.dropAt.x, before.dropAt.y]);
+    let equipped = null;
+    for (let i = 0; i < 20 && equipped === null; i += 1) {
+      await play.advance(0.4);
+      const snapshot = await play.state('game.state');
+      if (snapshot.equippedWeapon === 'longsword') equipped = snapshot;
     }
+    assert.ok(equipped, 'clicking the drop must walk over it and equip it');
+    assert.equal(equipped.drops.length, 0, 'the picked-up drop leaves the ground');
+    assert.equal('score' in equipped, false, 'there is no score in this game');
     await play.screenshot('longsword-equipped');
   });
 
@@ -313,7 +311,7 @@ export default async function playthrough(play) {
       await play.advance(0.6);
     }
     const s = await play.state('game.state');
-    assert.ok(s.score >= before.score, 'score never decreases');
+    assert.ok(s.kills >= before.kills, 'kills never decrease');
     await play.screenshot('armed-melee');
   });
 

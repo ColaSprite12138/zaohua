@@ -157,8 +157,7 @@ export interface PlacedItem extends ItemInstance {
 }
 
 export interface InventoryState {
-  /** Items not yet put into a grid (the drag source / loot tray). */
-  loose: ItemInstance[];
+  /** Items can only live in the bag, the stash, or an equipment slot. */
   bag: PlacedItem[];
   stash: PlacedItem[];
   /** Parallel to EQUIP_SLOTS. */
@@ -174,14 +173,19 @@ export function itemDef(defId: string): ItemDef {
 }
 
 export function createInventoryState(seedSwords = 3): InventoryState {
-  const loose: ItemInstance[] = [];
+  const stash: PlacedItem[] = [];
+  // Demo longswords start in the stash, side by side (2x3 each). First three
+  // land on (0,0), (2,0), (4,0); larger seeds wrap to the next 3-row band.
+  const perRow = Math.floor(STASH.cols / 2);
   for (let i = 0; i < seedSwords; i += 1) {
-    loose.push({ uid: `sword-${i + 1}`, defId: 'longsword' });
+    const col = (i % perRow) * 2;
+    const row = Math.floor(i / perRow) * 3;
+    if (row + 3 > STASH.rows) break;
+    stash.push({ uid: `sword-${i + 1}`, defId: 'longsword', container: 'stash', col, row });
   }
   return {
-    loose,
     bag: [],
-    stash: [],
+    stash,
     equipped: EQUIP_SLOTS.map(() => null),
     activeWeaponSlot: 0,
   };
@@ -217,13 +221,10 @@ export function canPlace(
 }
 
 export type ItemLocation =
-  | { readonly where: 'loose'; readonly item: ItemInstance; readonly index: number }
   | { readonly where: 'grid'; readonly item: PlacedItem; readonly index: number; readonly container: ContainerId }
   | { readonly where: 'equipped'; readonly item: ItemInstance; readonly index: number };
 
 export function findItem(state: InventoryState, uid: string): ItemLocation | null {
-  const l = state.loose.findIndex((it) => it.uid === uid);
-  if (l >= 0) return { where: 'loose', item: state.loose[l]!, index: l };
   for (const container of ['bag', 'stash'] as const) {
     const i = listOf(state, container).findIndex((it) => it.uid === uid);
     if (i >= 0) {
@@ -236,10 +237,6 @@ export function findItem(state: InventoryState, uid: string): ItemLocation | nul
 }
 
 function detach(state: InventoryState, loc: ItemLocation): ItemInstance {
-  if (loc.where === 'loose') {
-    state.loose.splice(loc.index, 1);
-    return loc.item;
-  }
   if (loc.where === 'grid') {
     listOf(state, loc.container).splice(loc.index, 1);
     return { uid: loc.item.uid, defId: loc.item.defId };
@@ -249,7 +246,7 @@ function detach(state: InventoryState, loc: ItemLocation): ItemInstance {
 }
 
 /**
- * Move ANY item (loose / grid / equipped / other container) to a grid cell.
+ * Move any grid or equipped item to a grid cell.
  * Validates first, then commits — a rejected move leaves state untouched.
  */
 export function placeItem(
@@ -270,19 +267,11 @@ export function placeItem(
 /** Alias with clearer intent for cross-container dragging. */
 export const moveItem = placeItem;
 
-/** Drop an item back into the loose tray (e.g. dragged off the grids). */
-export function unplaceItem(state: InventoryState, uid: string): boolean {
-  const loc = findItem(state, uid);
-  if (loc === null || loc.where === 'loose') return false;
-  const item = detach(state, loc);
-  state.loose.push(item);
-  return true;
-}
-
 /**
  * Equip an item into a slot. Type must match. If the slot is occupied, the
- * previous item tries to take the source position; if that is impossible it
- * falls back to the loose tray (never silently deleted).
+ * displaced item must fit back into a grid: first its counterpart's old cell,
+ * then the first free cell in bag -> stash. With no space the whole swap is
+ * rejected and state stays untouched (nothing may vanish silently).
  */
 export function equipItem(state: InventoryState, uid: string, slotIndex: number): boolean {
   const slot = EQUIP_SLOTS[slotIndex];
@@ -292,23 +281,24 @@ export function equipItem(state: InventoryState, uid: string, slotIndex: number)
   if (loc.where === 'equipped' && loc.index === slotIndex) return false;
 
   const displaced = state.equipped[slotIndex] ?? null;
+  let displacedSpot: GridSpot | null = null;
+  if (displaced !== null) {
+    if (loc.where === 'grid'
+      && canPlace(state, loc.container, displaced.defId, loc.item.col, loc.item.row, uid)) {
+      displacedSpot = { container: loc.container, col: loc.item.col, row: loc.item.row };
+    } else {
+      displacedSpot = findFirstFit(state, displaced.defId, uid);
+    }
+    if (displacedSpot === null) return false;
+  }
+
   const item = detach(state, loc);
   state.equipped[slotIndex] = item;
-
-  if (displaced !== null) {
-    let restored = false;
-    if (loc.where === 'grid'
-      && canPlace(state, loc.container, displaced.defId, loc.item.col, loc.item.row)) {
-      listOf(state, loc.container).push({
-        uid: displaced.uid,
-        defId: displaced.defId,
-        container: loc.container,
-        col: loc.item.col,
-        row: loc.item.row,
-      });
-      restored = true;
-    }
-    if (!restored) state.loose.push(displaced);
+  if (displaced !== null && displacedSpot !== null) {
+    listOf(state, displacedSpot.container).push({
+      uid: displaced.uid, defId: displaced.defId,
+      container: displacedSpot.container, col: displacedSpot.col, row: displacedSpot.row,
+    });
   }
   return true;
 }
@@ -351,6 +341,66 @@ export function coveredCells(item: PlacedItem): { col: number; row: number }[] {
   return cells;
 }
 
+export interface GridSpot {
+  readonly container: ContainerId;
+  readonly col: number;
+  readonly row: number;
+}
+
+/** First free cell that fits an item, searching bag -> stash. */
+export function findFirstFit(
+  state: InventoryState,
+  defId: string,
+  ignoreUid?: string,
+): GridSpot | null {
+  const def = itemDef(defId);
+  for (const container of ['bag', 'stash'] as const) {
+    const grid = CONTAINERS[container];
+    for (let row = 0; row <= grid.rows - def.rows; row += 1) {
+      for (let col = 0; col <= grid.cols - def.cols; col += 1) {
+        if (canPlace(state, container, defId, col, row, ignoreUid)) {
+          return { container, col, row };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Add a brand-new in-run pickup to the BAG only. The stash is out-of-run
+ * storage and never participates in a battle pickup. Returns null (and does
+ * not mutate state) when the bag has no free footprint for the item.
+ */
+export function addToBag(
+  state: InventoryState,
+  uid: string,
+  defId: string,
+): PlacedItem | null {
+  if (ITEM_DEFS[defId] === undefined) return null;
+  const def = itemDef(defId);
+  for (let row = 0; row <= BAG.rows - def.rows; row += 1) {
+    for (let col = 0; col <= BAG.cols - def.cols; col += 1) {
+      if (canPlace(state, 'bag', defId, col, row)) {
+        const placed: PlacedItem = { uid, defId, container: 'bag', col, row };
+        state.bag.push(placed);
+        return placed;
+      }
+    }
+  }
+  return null;
+}
+
+/** Remove an item by uid from bag or stash. Used when a run is lost. */
+export function removeItem(state: InventoryState, uid: string): boolean {
+  for (const container of ['bag', 'stash'] as const) {
+    const list = listOf(state, container);
+    const i = list.findIndex((it) => it.uid === uid);
+    if (i >= 0) { list.splice(i, 1); return true; }
+  }
+  return false;
+}
+
 /* ------------------------------------------------------------------ *
  * Run deployment / settlement (standard extraction-shooter rules)      *
  * ------------------------------------------------------------------ */
@@ -371,8 +421,10 @@ export interface Deployment {
 
 export interface Settlement {
   readonly outcome: 'cleared' | 'gameOver';
-  /** Authored item ids picked up in battle. */
+  /** Authored ids picked up INTO WEAPON SLOTS (still need a grid home). */
   readonly lootItemIds: readonly string[];
+  /** Uids already placed into the bag during the run (kept on clear, lost on death). */
+  readonly carriedUids: readonly string[];
 }
 
 export interface SettlementReport {
@@ -381,7 +433,7 @@ export interface SettlementReport {
   readonly gained: number;
   /** Loot that could not be registered (unknown authored id), never dropped silently. */
   readonly unregistered: string[];
-  /** Items that found no grid space, kept in the loose tray. */
+  /** Items that found no grid space on settlement. */
   readonly overflow: string[];
 }
 
@@ -414,9 +466,10 @@ export function buildLoadout(state: InventoryState): BorrowedLoadout {
 
 /**
  * Settle a finished run.
- *  - cleared: borrowed weapons come home first, then loot is added.
- *  - gameOver: borrowed weapons are permanently lost, loot is lost too.
- * Loot always tries bag -> stash -> loose, and is NEVER silently discarded.
+ *  - cleared: borrowed weapons come home; loot that was equipped in battle
+ *    still needs a grid home. Loot already picked into the bag stays there.
+ *  - gameOver: borrowed weapons AND this run's bag loot are permanently lost.
+ * There is no fourth storage area: anything that fits nowhere is reported.
  */
 export function settleRun(
   state: InventoryState,
@@ -429,47 +482,42 @@ export function settleRun(
   let gained = 0;
 
   if (settlement.outcome === 'gameOver') {
+    for (const uid of settlement.carriedUids) removeItem(state, uid);
     return {
-      returned: 0, lost: borrowed.items.length, gained: 0,
-      unregistered, overflow,
+      returned: 0,
+      lost: borrowed.items.length + settlement.carriedUids.length,
+      gained: 0, unregistered, overflow,
     };
   }
 
-  // 1. Return borrowed weapons to their original slots (still empty by contract).
+  // 1. Return borrowed weapons to their original slots (empty by contract).
   for (const item of borrowed.items) {
     const index = WEAPON_SLOT_INDICES.find((i) => state.equipped[i] === null);
-    if (index === undefined) {
-      state.loose.push(item);
-    } else {
+    if (index !== undefined) {
       state.equipped[index] = item;
+    } else {
+      const spot = findFirstFit(state, item.defId);
+      if (spot) {
+        listOf(state, spot.container).push({ ...item, ...spot });
+      } else {
+        overflow.push(item.defId);
+      }
     }
     returned += 1;
   }
 
-  // 2. Add battle loot. Unknown ids are reported, not dropped into ITEM_DEFS.
+  // 2. Loot equipped into a weapon slot gets a grid home; unknown ids are
+  //    reported instead of being dropped into ITEM_DEFS.
   for (const defId of settlement.lootItemIds) {
     if (ITEM_DEFS[defId] === undefined) {
       unregistered.push(defId);
       continue;
     }
     const instance: ItemInstance = { uid: newUid('loot'), defId };
-    let placed = false;
-    for (const container of ['bag', 'stash'] as const) {
-      const grid = CONTAINERS[container];
-      const def = itemDef(defId);
-      outer: for (let row = 0; row <= grid.rows - def.rows; row += 1) {
-        for (let col = 0; col <= grid.cols - def.cols; col += 1) {
-          if (canPlace(state, container, defId, col, row)) {
-            listOf(state, container).push({ ...instance, container, col, row });
-            placed = true;
-            break outer;
-          }
-        }
-      }
-      if (placed) break;
-    }
-    if (!placed) {
-      state.loose.push(instance);
+    const spot = findFirstFit(state, defId);
+    if (spot) {
+      listOf(state, spot.container).push({ ...instance, ...spot });
+    } else {
       overflow.push(defId);
     }
     gained += 1;

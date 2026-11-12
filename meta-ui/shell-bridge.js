@@ -172,6 +172,14 @@
         log('出征中 · ' + msg.monsterCount + ' 只怪物 · 清场或阵亡后自动结算');
       } else if (msg.type === 'result') {
         settle(msg.result);
+      } else if (msg.type === 'pickup') {
+        // The bag grid lives HERE (main window); the Engine Worker only owns
+        // the two in-run weapon slots. A rejected pickup stays on the ground.
+        var placed = inRun ? M.addToBag(host.getState(), msg.uid, msg.itemId) : null;
+        if (placed) host.render();
+        if (channel) channel.postMessage({
+          type: 'pickupAck', uid: msg.uid, ok: !!placed,
+        });
       }
     };
   }
@@ -227,7 +235,8 @@
     var state = host.getState();
     var report = M.settleRun(state, borrowed, {
       outcome: result.outcome,
-      lootItemIds: result.carriedItems || [],
+      lootItemIds: result.slotLootItemIds || [],
+      carriedUids: result.bagLootUids || [],
     });
     host.setState(state);
     borrowed = null;
@@ -241,9 +250,10 @@
       text = '阵亡 · 丢失带出装备 ' + report.lost + ' 件，本局战利品全部失去。';
       log(text, true);
     } else {
-      text = '通关 · 归还装备 ' + report.returned + ' 件，带回战利品 ' + report.gained + ' 件'
+      var brought = (result.bagLootUids || []).length + report.gained;
+      text = '通关 · 归还装备 ' + report.returned + ' 件，带回战利品 ' + brought + ' 件'
         + '（击杀 ' + result.kills + '）';
-      if (report.overflow.length) text += '，' + report.overflow.length + ' 件放入待分配区';
+      if (report.overflow.length) text += '，' + report.overflow.length + ' 件因背包与仓库已满未能带回';
       if (report.unregistered.length) text += '，未登记物品 ' + report.unregistered.length + ' 件';
       if (lootNames.length) text += ' · 掉落：' + lootNames.join('、');
       log(text);

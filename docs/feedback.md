@@ -414,3 +414,59 @@
   写入会 `WinError 5` / `Errno 13`，`os.replace` 与直接覆盖都会被拒绝。
   另：Windows Python 的临时目录在 C:、工程在 D:，`os.replace` 跨盘会 `WinError 17`，
   临时文件要放在工程盘内。
+
+### 2026-11-12 — 局内得分 / 自动拾取 / 待分配区与玩家预期不符，局内局外一起收口
+
+- Scope: runtime / gameplay / UI
+- Reproduction: 玩家击杀骷髅掉长剑后，只要走过去就自动装进空的武器槽，槽满还折算成
+  「分数」；局外首屏另有一个「待分配物品」托盘承接放不下的物品（`InventoryState.loose`）。
+  用户逐条明确：局内不该有得分；装备必须**显式拾取**才能进背包或装备栏；局内拾取应立刻
+  占用背包格子；玩家能存放物品的地方**只有身上穿戴 / 背包 / 仓库三处**；身上和背包都满时
+  战利品留在地上、捡不起来；三把长剑默认都在仓库。
+- Expected: 得分整套删除；点击掉落物 → 走过去 → 到达才拾取，走过不拾取；优先装入空的武器槽，
+  两槽都满时改问主窗口能否放进背包，背包也满则掉落物留在地上；结算只认三处存放区域，
+  满仓只做 `overflow` 报告，不再静默塞进第四处。
+- Actual: `score` 分散在 `GameState` / `attack.ts` 加分 / `projection()` / `paint.ts` HUD 与结算板
+  / `playthrough.mjs` 断言五处，只删状态字段会 `tsc` + 浏览器断言同时红；`updateDrops()`
+  原本无条件走近即拾取；`loose` 是隐藏的第四个存放区，`settleRun()` 还会把满仓物品塞进去；
+  Engine Worker 与主窗口是独立 JS 堆，Worker 里**看不到** `InventoryState.bag` 的格子。
+- Resolution: ① 删光 `score` 全链路，HUD 改 `击杀 / 剩余骷髅 / 已拾取`；
+  ② `Drop` 加稳定 `uid`（`nextDropUid()`），`movement.ts` 只在**短按且点中掉落物**时写
+  `pickupTarget`，`updateDrops()` 要求 `pickupTarget !== null` 且距离 `<50px` 才结算；
+  ③ 新增跨堆协议：Worker 发 `pickup{uid,itemId,name}` → 主窗口 `M.addToBag()` 判断格子 →
+  回 `pickupAck{uid,ok}` → `resolvePickupAck()` 决定移除掉落物或留在地上；`game.pack.ts` 用
+  `pickupSent` 防每帧重复发；④ 局外删 `loose` / `unplaceItem` / 待分配区 UI，三把长剑进
+  `stash`，`equipItem()` 换下物品放不下则整次拒绝；⑤ `Settlement` 拆 `lootItemIds`
+  （武器槽战利品）+ `carriedUids`（本局已进背包的 uid，阵亡按 uid 精确删除）；
+  ⑥ `account.ts::isValidInventoryState()` 同步去掉 `loose` 校验，否则所有平台存档都会
+  被判损坏并回退默认状态。
+- Evidence: `bash scripts/verify-all.sh` **ALL GREEN**（单测 **117** / 下限 83、
+  `tsc --noEmit` 0 error、playthrough 35 步、resize 4 步、独立页 13/13、单页 29/29、
+  package + 壳层注入全过）；`playthrough.mjs` 新增 `'score' in equipped === false` 与
+  「走过掉落物不自动装备」；`meta-ui` 验收改为「仓库起步 / 无 loose tray」。
+- Status: fixed
+- Note: 用户交互选项拍板为「点击掉落物走近拾取 / 优先空武器槽其次背包 / 阵亡从背包移除」。
+  **别把 `addToBag()`（只写 bag、局内拾取）与 `findFirstFit()`（bag→stash、结算入库）混用**；
+  也别把 `slotLootItemIds` 与 `runBagUids` 合并成一个数组 —— 前者是 authored id，后者是 uid。
+
+### 2026-11-12 — 造化插件普通预览开局没有装备界面，`validate:true` 才有
+
+- Scope: build / runtime
+- Reproduction: 删除本地 `.bat` 启动器、改用造化插件后执行普通 `preview_start`，
+  打开 `http://127.0.0.1:<port>/__zaohua/preview` 直接是战斗画面，没有局外配装顶栏；
+  改执行 `preview_reload(validate: true)` 则完整单页（装备 → 出征 → 结算）正常出现。
+- Expected: 预览与发布产物一致，首屏能进装备界面。
+- Actual: 普通预览服务的是 `project build` 生成的 `dist/`，`build` / `play` / `package`
+  都会重建 `dist/` 并抹掉构建后注入的单页壳层（实测 `dist/index.html` 从 101460 B /
+  `FORGEAX_META_SHELL_BEGIN=1` 变 45123 B / marker=0），且普通预览**不走**
+  `package.json#scripts.package`；只有 `validate:true` / 上传经 `buildForgeaxPlayer` 调用
+  `scripts/package-with-shell.mjs`，产物 `.game-builder/artifacts/forgeax-player/index.html`
+  同时含 `FORGEAX_META_SHELL_BEGIN`、`data-zaohua-platform-init` 与 `id="fx-shell"`。
+- Resolution: 要看完整单页统一用 `preview_reload(validate: true)`（或上传后的玩家产物）；
+  普通预览只作为「裸战斗页」排障用。文档里「插件预览 / 上传都走 `scripts.package`」
+  的旧描述已改成分清两条链路。
+- Evidence: `preview_reload(validate:true)` 必需校验 **5/5 通过**，玩家产物
+  `index.html` = 101694 B，三个 marker 各 = 1；同期 `dist/index.html` 仍 44892 B / marker=0。
+- Status: fixed
+- Note: 与登录、平台身份、KV 存档**无关**，纯粹是壳层注入被 `build` 重建抹掉。
+  4174 直连要恢复壳层，跑 `node scripts/inject-shell.mjs`（`verify-all.sh` 最后一步也会重注入）。

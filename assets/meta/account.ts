@@ -59,9 +59,8 @@ export function encodeSave(state: unknown): SaveEnvelope {
 export function isValidInventoryState(raw: unknown, slotCount: number): boolean {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
   const s = raw as Record<string, unknown>;
-  return Array.isArray(s.loose) && Array.isArray(s.bag)
-    && Array.isArray(s.stash) && Array.isArray(s.equipped)
-    && s.equipped.length === slotCount;
+  return Array.isArray(s.bag) && Array.isArray(s.stash)
+    && Array.isArray(s.equipped) && s.equipped.length === slotCount;
 }
 
 /** Corrupt, foreign or future-version data falls back, never throws at the UI. */

@@ -29,6 +29,7 @@ import {
   type Deployment,
 } from './simulation.ts';
 import { paint } from './paint.ts';
+import { resolvePickupAck } from '../combat/weapons.ts';
 
 const PACKAGE_ID = definePackageId('019fb7ce-3d00-7000-8000-000000000001');
 
@@ -47,6 +48,8 @@ export type RunResult = {
   lootLog: { monsterId: string; itemId: string; name: string; quality: string }[];
   kills: number;
   monsterCount: number;
+  bagLootUids: string[];
+  slotLootItemIds: string[];
 };
 
 export const game: Plugin = {
@@ -78,6 +81,7 @@ export const game: Plugin = {
     // Platform lifecycle pause (publishing validation). Kept INDEPENDENT of
     // `locked`: `unlock` resets to a fresh run, which a resume must never do.
     let paused = false;
+    let pickupSent: string | null = null;
     let channel: BroadcastChannel | null = null;
     if (typeof BroadcastChannel !== 'undefined') {
       channel = new BroadcastChannel(RUN_CHANNEL);
@@ -88,12 +92,15 @@ export const game: Plugin = {
           requestId?: number;
           slots?: (boolean | null)[];
           activeWeaponSlot?: 0 | 1;
+          uid?: string;
+          ok?: boolean;
         } | null;
         if (!msg || typeof msg !== 'object') return;
         if (msg.type === 'deploy') {
           deployRun(state, msg.deployment ?? {});
           lastResult = null;
           resultSent = false;
+          pickupSent = null;
           channel?.postMessage({ type: 'deployed', monsterCount: state.monsterCount });
         } else if (msg.type === 'hello') {
           channel?.postMessage({ type: 'ready' });
@@ -124,6 +131,12 @@ export const game: Plugin = {
           }
           if (msg.activeWeaponSlot === 0 || msg.activeWeaponSlot === 1) {
             state.activeWeaponSlot = msg.activeWeaponSlot;
+          }
+        } else if (msg.type === 'pickupAck') {
+          // The main window owns the bag grid; only it can confirm a pickup.
+          pickupSent = null;
+          if (typeof msg.uid === 'string') {
+            resolvePickupAck(state, msg.ok === true, msg.uid);
           }
         } else if (msg.type === 'probe') {
           // Read-only observability seam for REAL 4174 acceptance runs. The
@@ -169,6 +182,8 @@ export const game: Plugin = {
         })),
         kills: state.kills,
         monsterCount: state.monsterCount,
+        bagLootUids: [...state.runBagUids],
+        slotLootItemIds: [...state.slotLootItemIds],
       };
       channel?.postMessage({ type: 'result', result: lastResult });
     };
@@ -258,6 +273,19 @@ export const game: Plugin = {
               if (restart) {
                 lastResult = null;
                 resultSent = false;
+                pickupSent = null;
+              }
+              // Both weapon slots were full: ask the main window to find a
+              // free bag cell. It answers with `pickupAck`; the drop stays on
+              // the ground until then (and forever if the bag is full).
+              if (state.pendingPickup !== null && pickupSent === null) {
+                pickupSent = state.pendingPickup.uid;
+                channel?.postMessage({
+                  type: 'pickup',
+                  uid: state.pendingPickup.uid,
+                  itemId: state.pendingPickup.itemId,
+                  name: state.pendingPickup.name,
+                });
               }
               settleIfFinished();
             }
@@ -272,7 +300,7 @@ export const game: Plugin = {
         id: 'game.state',
         title: '2.5D arena state',
         description:
-          'Player position, health, score, kills, living skeletons, drops, equipped main weapon, cooldowns and loot log.',
+          'Player position, health, kills, living skeletons, drops, equipped main weapon, cooldowns and loot log.',
         read: () => projection(state),
       });
       if (unregister !== undefined) yield unregister;

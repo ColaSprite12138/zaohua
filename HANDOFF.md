@@ -1,7 +1,7 @@
 # HANDOFF — 2.5D 骷髅竞技场
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-12 全套验收通过**（详见「验收基线」；4174 已合并为局外→战斗→结算单页流程）
+> 状态：**2026-11-12 全套验收通过**（117 条单测 / 35 步 playthrough；**同一个游戏单页**已合并为局外配装→出征→战斗→结算流程）
 > 这份文件记录**当前已实现的功能与不可回退的约束**。新会话先读它，再动手。
 > 改了功能 → 必须同步改本文件，追加 `docs/feedback.md`，**做完即提交并推送到 `origin/main`**。
 > 工作区级总索引：`D:\tools\zaohua\AGENTS.md`（工作区地图、跨工程硬约束、备份边界）；本文件是工程级交接。
@@ -11,10 +11,10 @@
 | 项 | 值 |
 |:--|:--|
 | 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad |
-| 怎么开 | 统一用造化插件（Game Builder）预览 / 发布产物链：`package.json#scripts.package` → `scripts/package-with-shell.mjs`（产物含单页壳层 + 平台 bootstrap）；本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收。**游戏单页**含「局外配装 → 出征 → 结算」顶栏。局外独立演示页仍可双击 `meta-ui/index.html` |
+| 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 110）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
-| 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；Game Builder 预览 / 上传经 `package.json#scripts.package` 自动调用，产物**含单页壳层** |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **117**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
 | 怎么还原 | `git checkout HEAD -- <path>`；整包兜底见「可回滚基线」 |
 
@@ -24,7 +24,7 @@
 2. **`assets/<模块>/CONTEXT.md`** — 该模块的契约、不变量、对外接口、依赖方向、独立验收；
    配套 `EXPERIENCE.md` 是该模块独立经验库（踩坑按模块追加，不混进全局 feedback 编号）
 3. `README.md` — 工程结构、交互契约、点击分类、验收脚本逐条说明、坐标映射原理
-4. `docs/feedback.md` — 18 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**
+4. `docs/feedback.md` — 26 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**（按条追加，不改写历史条目；第 18 / 19 条是 Builder 产物链，最后两条是本次拾取改造与预览链路澄清）
 5. `.workbuddy/memory/YYYY-MM-DD.md` — 工作流水账，只作线索，不是规范
 6. `AGENTS.md` — ForgeAX 引擎模板自带的**通用** SDK 规范（顶部另有本工程的 Git 提交纪律）；查引擎 API 时才读
 
@@ -42,12 +42,23 @@
 | 单击地面 | 设落点走过去停下，**不挥砍** |
 | 单击敌人 | 锁定；距离不够先自动接近，**进攻击距离才挥砍一次**；**只扣这一只**的血 |
 | 长按左键 | 落点实时跟随光标；松开停止跟随、按最后落点走完停下；**全程不攻击** |
+| **单击掉落物** | 下一条**显式拾取指令**：走过去、到达才拾取（走过不拾取），优先装进空武器槽；两槽满则问主窗口能否放进背包，背包也满则**掉落物留在地上** |
 | **1 / 2** | **切换当前使用的武器槽**；只有激活槽那把参与攻击，空槽＝徒手（22 伤害 / 140 范围） |
 | 空格 / R | 闪避（无敌 + 冷却 + 残影） / 重开 |
 
-击杀骷髅掉长剑，走近拾取即**自动装入第一个空武器槽**（战斗内穿戴）；两槽满则折算 80 分。
-`game.state` 新增 `weaponSlots` / `activeWeaponSlot`；`equippedWeapon` **保留旧字段名**，语义改为
-"当前激活槽的武器"，所以既有 32 步断言不破。
+**本游戏没有得分**（2026-11-12 用户拍板）：`GameState` 里没有 `score`，击杀 / 拾取都不加分，
+HUD 只显示 `击杀 / 剩余骷髅 / 已拾取`，结算板显示 `击杀 / 拾取`。
+击杀骷髅掉长剑，**只有短按且点中掉落物**才写 `pickupTarget`；`updateDrops()` 要求到达
+`<50px` 才结算，有空槽则装备并记 `slotLootItemIds`，两槽都满则走下面的跨堆协议。
+`game.state` 暴露 `weaponSlots` / `activeWeaponSlot`；`equippedWeapon` **保留旧字段名**，语义为
+"当前激活槽的武器"，所以既有断言不破。
+
+**跨堆拾取协议**：Engine Worker 与主窗口是独立 JS 堆，Worker 看不到 `InventoryState.bag`。
+两槽满时 `game.pack.ts`（`pickupSent` 去重）发一次 `pickup { uid, itemId, name }`；
+`shell-bridge.js` 用 `M.addToBag()` 占真实背包 2×3 格并回 `pickupAck { uid, ok }`；
+`resolvePickupAck()` 在 `ok=true` 时移除掉落物并记 `runBagUids`，`ok=false` 时提示「背包已满 ·
+留在地上」且不移除。`Drop.uid` 由 `nextDropUid()` 单调递增生成，跨局不重置。
+**无论成败都必须回 ack**，否则 `pendingPickup` 永不解除、之后再也捡不了东西。
 
 **掉落已改为数据表驱动**（2026-11-11）：怪物 `monsterId` → `monster.xlsx` 的池 → `loot_pool.xlsx`
 权重 `10/8/6/4/2/1` → `item.xlsx` + `weapon.xlsx` 按 `id` join 的 13 行物品属性，
@@ -78,14 +89,18 @@
 
 | 项 | 规格 |
 |:--|:--|
+| **存放区域** | **只有三处**：`equipped`（身上穿戴）/ `bag`（背包）/ `stash`（仓库）。`InventoryState` **没有 `loose`**，页面上没有「待分配物品」托盘 |
 | 背包 | 5 列 × 8 行 = 40 格 |
 | 仓库 | 16 列 × 10 行 = 160 格 |
 | 长剑 | 2 列 × 3 行 = 6 格（后续由 Excel 配置表提供） |
 | 装备栏 | 10 槽：2 武器（1/2 切换激活）+ 2 戒指 + 项链 + 护手 + 头盔 + 胸甲 + 裤子 + 靴子 |
-| 拖放 | 待分配区 ↔ 背包 ↔ 仓库 ↔ 装备栏任意方向；越界/重叠拒绝且状态不变；类型不匹配的槽拒绝穿戴 |
+| 初始物品 | `createInventoryState(3)` 把**三把长剑默认放进仓库** `(0,0) / (2,0) / (4,0)`，背包为空 |
+| 拖放 | 背包 ↔ 仓库 ↔ 装备栏任意方向；越界/重叠拒绝且状态不变；类型不匹配的槽拒绝穿戴；换装时被换下的物品若放不回网格则**整次换装拒绝** |
 
 **逻辑唯一权威** `assets/meta/inventory.ts`；`meta-ui/inventory.js` 是
 `node scripts/build-meta-ui.mjs` 的生成物（已提交，保证双击即用），`--check` 防止两者漂移。
+`addToBag()` 只写 bag（局内拾取用），`findFirstFit()`（bag → stash）与 `removeItem()` 只在结算时用，
+三者不要混用；`account.ts::isValidInventoryState()` 同步只校验 `bag` / `stash` / `equipped`。
 
 ### 4174 单页连续流程（2026-11-11，标准搜打撤：失败丢失）
 
@@ -95,11 +110,15 @@
 
 | 阶段 | 行为 |
 |:--|:--|
-| 局外 | 配装 / 拖放 / 填怪物数量（默认 8，范围 1–24） |
+| 局外 | 配装 / 拖放 / 填怪物数量（默认 8，范围 1–24）；三把长剑起步在仓库 |
 | 出征 | `buildLoadout()` **只借出两个武器槽**（非武器装备留局外）→ 发 `deploy{ monsterCount, seed, armedWeapons, activeWeaponSlot }` → 顶栏切到战斗态，meta 面板隐藏且 `#fx-shell` 指针透明，点击直达 canvas |
-| 通关 | `settleRun()` 归还借出武器 + 战利品按 `bag → stash → loose` 入库，永不静默丢弃 |
-| 阵亡 | 借出装备**和本局战利品永久丢失** |
-| 返回局外 | 重新配装出征；每次 render 把 `InventoryState` 写成一个平台 KV blob（本地开发写镜像），无需登录（见下节） |
+| 战斗拾取 | 显式点击掉落物 → 走近才拾取；优先空武器槽，两槽满则经 `pickup` / `pickupAck` 放进**背包并占真实格子**；背包也满则掉落物留在地上 |
+| 通关 | `settleRun()` 归还借出武器；`lootItemIds`（局内装到武器槽的战利品）用 `findFirstFit()` 按 bag → stash 入库；本局已进背包的战利品原地保留；满仓只进 `overflow` 报告，**没有 `loose` 兜底** |
+| 阵亡 | 借出装备永久丢失，并按 `carriedUids`（＝`RunResult.bagLootUids`）用 `removeItem()` **从背包精确删除本局战利品** |
+| 返回局外 | 重新配装出征；每次 render 把 `InventoryState` 写成一个平台 KV blob（**无宿主时零写入**，无需登录，见下节） |
+
+`Settlement = { outcome, lootItemIds, carriedUids }`：`lootItemIds` 是 authored id，
+`carriedUids` 是掉落 uid，**不能合并成一个数组**（否则阵亡会误删仓库里的同名长剑）。
 
 `scripts/inject-shell.mjs` 把局外 UI 注入 `dist/index.html`（`dist/` 是 gitignored 生成物，
 `build` / `play` / `package` 都会重建它），CSS 由 `scopeCss()` 限定到 `#fx-shell`，`--check` 防漂移。
@@ -130,27 +149,33 @@
 关键取舍（都是用户明确拍板或实测修正过的，别"顺手优化"）：
 
 - 单击判定 = 短按（< 0.35 s、位移 < 12 逻辑像素）在**释放沿**结算；超时或拖动算长按。
-- 点击分类优先级：**掉落物 → 存活敌人身体框 → 地面**。掉落物优先是为了让压在骷髅脚下的长剑能被拾取。
+- 点击分类优先级：**掉落物 → 存活敌人身体框 → 地面**。掉落物优先是为了让压在骷髅脚下的长剑能被点中；
+  命中掉落物只写 `pickupTarget`（**不是**攻击指令），且只有这一条路径能产生拾取。
 - 攻击**没有**锥形范围、软锁定、溅射；`attackOrder + targetEnemy` 单体结算，一次点击只挥一次。
 - 闪避期间鼠标不改写落点、攻击指令不结算。
-- 初始两只骷髅、**两个武器槽都空**；击杀掉长剑，走近装进第一个空槽；激活槽为长剑时范围 140→170、伤害 22→46。**默认场景恒为 2 只**，多怪只在单页出征 `deployRun()` 时注入，别改 `spawnSkeletons()` 默认值。
+- 初始两只骷髅、**两个武器槽都空**；击杀掉长剑，**显式点击并走到 <50px** 才装进第一个空槽；
+  激活槽为长剑时范围 140→170、伤害 22→46。**默认场景恒为 2 只**，多怪只在单页出征
+  `deployRun()` 时注入，别改 `spawnSkeletons()` 默认值。
+- **没有得分、没有自动拾取、没有 `loose`**（三者都是用户 2026-11-12 明确要求删除的）；
+  战利品只能进背包或装备栏才带得出，背包与装备栏都满就留在地上捡不起来。
 - **局内局外靠同一页面内内存共享**（跨标签页 / Worker 是独立 JS 堆，`file://` 与 `http://localhost:4174` 也不同源，靠跨页面 `localStorage` 互通走不通）。持久化层现在是**平台 KV 单 blob**：用户先拍板「内存里缓存下来直接用」+ 标准搜打撤（失败丢失），中间做过一版「本地注册登录 + 按账号存盘」，2026-11-11 晚用户拍板**删掉自研登录、改用平台玩家身份与云存档**；`1/2` 在两边各自切换激活槽。
 - `GameState.moveMode` 三态：`idle` / `point` / `follow`；`game.state` 投影暴露 `moveMode`、`target`、`followingPointer`、`attackOrder`、`attackTarget`、`skeletons`（坐标/血量/存活）。
 
 ## 保护清单（改之前先说清改什么、为什么）
 
-1. 交互语义唯一来源：`assets/combat/state.ts` 的 `StepInput`（`pointerDown` / `pointerHeld` / `pointerUp` / `switchWeapon`）、`assets/combat/movement.ts` 的三态移动与点击分类、`assets/combat/attack.ts` 的单体攻击指令、`assets/meta/inventory.ts` 的格子/装备规则。`assets/game/simulation.ts` **只是纯 re-export 兼容门面**，禁止在这里写玩法逻辑。
-   战斗与局外**共用 weapon slot 语义**（2 槽 + 1 激活），但各自持有状态；`meta-ui/inventory.js` 是生成物，改逻辑改 `.ts` 后必须重跑 `build-meta-ui.mjs`。
+1. 交互语义唯一来源：`assets/combat/state.ts` 的 `StepInput`（`pointerDown` / `pointerHeld` / `pointerUp` / `switchWeapon`）与 `GameState`（`pickupTarget` / `pendingPickup` / `runBagUids` / `slotLootItemIds`）、`assets/combat/movement.ts` 的三态移动与点击分类、`assets/combat/weapons.ts` 的显式拾取与 `resolvePickupAck()`、`assets/combat/attack.ts` 的单体攻击指令与 `dropAtPoint()`、`assets/meta/inventory.ts` 的三处存放/格子/装备规则。`assets/game/simulation.ts` **只是纯 re-export 兼容门面**，禁止在这里写玩法逻辑。
+   战斗与局外**共用 weapon slot 语义**（2 槽 + 1 激活），但各自持有状态；`meta-ui/inventory.js` / `account.js` 是生成物，改逻辑改 `.ts` 后必须重跑 `build-meta-ui.mjs`。
+   **跨堆边界**：Worker 只管两个武器槽 + 掉落物，主窗口独占 `InventoryState.bag` 格子；两者只经 `pickup` / `pickupAck` 与 `deploy` / `result` 通信，别在 Worker 里造第二份背包。
 2. `assets/game/game.pack.ts` 每帧用 `host.drawingBufferSize()` 把物理像素换算回逻辑坐标。Worker 里没有 `document`，`gameHost.canvas` 是 `undefined`；**不要**改回 `VIEW_W/VIEW_H` 常量分母。
 3. `scripts/playthrough.mjs` / `scripts/playthrough-resize.mjs` 的断言，以及 `assets/combat/__tests__/`、`assets/{battle,meta,talent,resource}/__tests__/` 的独立单测 —— **不允许为了让脚本变绿而放宽断言或改游戏逻辑迎合测试**。断言减少必须解释。
-4. 启动统一走造化插件（Game Builder）预览 / 发布产物链（`package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物含单页壳层）；**不再提供本地 `.bat` 启动器**。旧 `forgeax project preview` 链路只监听 IPv6 `[::1]:4174`，URL 必须是 `localhost`（见 feedback 第 14 条），仅作排障与单页验收。
+4. 启动统一走造化插件（Game Builder），但**预览有两条链路**：普通 `preview_start` 走 `project build` 的 `dist/`（**无壳层、只有战斗画面**）；要看完整单页必须用 **`preview_reload(validate: true)` / 上传**，它才走 `package.json#scripts.package` → `scripts/package-with-shell.mjs` 的玩家产物（含单页壳层 + 平台 bootstrap）。**不再提供本地 `.bat` 启动器**。旧 `forgeax project preview` 链路只监听 IPv6 `[::1]:4174`，URL 必须是 `localhost`（见 feedback 第 14 条），仅作排障与单页验收。
 5. WebGPU 需硬件 adapter + 独立 Chrome profile；`--use-webgpu-adapter=swiftshader` 只作显式兜底（约 4 fps / CPU 占满，硬件约 144 fps），内置预览面板通常没有 WebGPU。诊断细节见 feedback 第 12–13 条。
 6. 引擎通用红线见 `AGENTS.md`：不手改 `dist/`、`pack-index.json`、`.forgeax/`，不新增并行 manifest/入口。
 7. `meta-ui/index.html` 必须保持**双击可用**（`file://`、无服务器、普通 `<script src>`）：不要改成 ESM `type="module"`、不要加 fetch、不要引入打包器。浏览器验收脚本强制用独立 `--user-data-dir`，否则 Windows 会复用日常 Chrome 导致 dump 到执行前的 DOM。
 8. 独立页面验收只认 `scripts/verify-meta-ui.cjs` 的结果（模拟真实 DragEvent），不要退化成"只检查 DOM 存在"。
 9. 人工 Excel 表只放 `assets/resource/tables/`：小写 snake_case 文件名、英文 snake_case 表头、首列唯一 `id`、单 Sheet、禁公式；`generated/*.ts` 是 `scripts/export_tables.py` 的生成物，**禁止手改**，改表后先跑生成器再 `--check`。`xls/` 是用户原始拷贝，已 gitignore，不作权威源。
 10. `dist/index.html` 的单页壳层是**构建后注入**的生成物：`build` / `play` / `package` **都会重建 `dist/`**，注入必须是全流程最后一步，否则 4174 会静默丢掉单页流程。`verify-all.sh` 已把它放在 `package` 之后。不要手改 `dist/`。
-    **发布产物另走一条路**：`package.json#scripts.package` = `scripts/package-with-shell.mjs`，对官方 Web ZIP 解包 → 注入壳层 → 同步 `forgeax-dist.json` 的 `bytes`/`sha256` → 重打包；Game Builder 预览 / 上传自动调用它（`buildForgeaxPlayer` 优先用工程 script）。**`verify-all.sh` 的 `package` 步骤也走同一脚本**：`--json` 时 stdout 只输出一行 `{"ok":true,...}` 供 `run_json` 解析（引擎自身的 JSON 转 stderr），并重算与重打包后字节匹配的 `.zip.sha256`；验收包 `artifacts/verify/forgeax-game-web.zip` 已含壳层，且新增断言检查 marker + manifest（`release/` 不被验收改动）。两条入口共用 `inject-shell.mjs` 导出的 `injectInto()`，改壳层只需维护一处。
+    **发布产物另走一条路**：`package.json#scripts.package` = `scripts/package-with-shell.mjs`，对官方 Web ZIP 解包 → 注入壳层 → 同步 `forgeax-dist.json` 的 `bytes`/`sha256` → 重打包；Game Builder 的 **`validate:true` 预览 / 上传**自动调用它（`buildForgeaxPlayer` 优先用工程 script；**普通预览不调用**，服务的是被重建的 `dist/`）。**`verify-all.sh` 的 `package` 步骤也走同一脚本**：`--json` 时 stdout 只输出一行 `{"ok":true,...}` 供 `run_json` 解析（引擎自身的 JSON 转 stderr），并重算与重打包后字节匹配的 `.zip.sha256`；验收包 `artifacts/verify/forgeax-game-web.zip` 已含壳层，且新增断言检查 marker + manifest（`release/` 不被验收改动）。两条入口共用 `inject-shell.mjs` 导出的 `injectInto()`，改壳层只需维护一处。
 11. `assets/game/game.pack.ts` 里 **`game.state` 必须保持唯一 read projection**：`project play` 以「唯一注册」解析默认读取，多注册一个（哪怕 `run.result`）会让 35 步 playthrough 首步报 `state-unavailable`。部署 / 结算只走 BroadcastChannel，别加 projection seam。2026-11-11 追加的只读 `probe` → `state` 消息只是把 `projection(state)`（外加全部掉落点坐标）序列化到主窗口，**不注册新 projection**，供真实 4174 页面端到端取证；不要把它改成 `registerRead`。
 
 12. **平台身份 + KV 存档契约（2026-11-11 晚改造，替换原「本地账号」条款；同日按用户结论删光本地存盘）**：`assets/meta/account.ts` 零 import，产出 `meta-ui/account.js`（`build-meta-ui.mjs` 生成、`--check` 防漂移）；只负责 envelope / 结构校验 / 版本兜底 / 写队列，**不含登录、密码、SHA-256，也不含任何本地 adapter / 镜像 key / 本地开发身份**。`SAVE_KEY='forgeax.save.v1'` 是**唯一**存档 key；`encodeSave()` 强制纯 JSON（宿主预览用 `structuredClone`、平台/devStub 用 `JSON.stringify`，Date/Map 会变形）。`meta-ui/platform-store.js` 与 `account.js` 只由 `inject-shell.mjs` 注入 4174，独立双击页不得引用。经典壳层脚本先于 deferred ESM 入口执行，所以身份切换只能是 `MetaShell.mountPlatformStore()` **由 ESM 推下来**；`initial` 必须是已 await 的值。**平台桥未挂载时 `MetaStore.persist()` 必须什么都不写**（`verify-shell.cjs` 的 `noLocalSave` 断言守着），不要重新引入任何本地镜像 / localStorage 兜底。`lock` / `unlock` / `equip` 只走 BroadcastChannel，别加 projection seam；`equip` 的 `slots[i] === null` 表示「保留该槽借出的武器」，不要改成布尔全覆盖。
@@ -183,7 +208,7 @@
 
 ```bash
 ./node_modules/.bin/forgeax project check --json
-./node_modules/.bin/forgeax project test --json          # 83/83（下限 83）
+./node_modules/.bin/forgeax project test --json          # 117/117（下限 83）
 node scripts/build-meta-ui.mjs --check                  # 生成物与源码同步
 python scripts/export_tables.py --check                  # xlsx 与 generated/*.ts 同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000   # 真实 rollLoot 跑批
@@ -198,12 +223,12 @@ node scripts/inject-shell.mjs --check
 node scripts/verify-shell.cjs                            # 4174 单页 29/29
 ```
 
-验收基线（2026-11-12 02:27:23 `bash scripts/verify-all.sh` ALL GREEN，新会话应以实际输出为准）：
+验收基线（2026-11-12 22:12:43 `bash scripts/verify-all.sh` ALL GREEN，新会话应以实际输出为准）：
 
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **111** 项全过（`verify-all.sh` 下限仍为 **83**：combat 54 + meta 35 + battle 4 + talent 3 + resource 13 + 模板 2。新增来源：LDtk 地图 6、攻击架构 20、拆表 join 2、OOXML 包护栏 1；account 单测 15 → 11 是 2026-11-11 删本地存盘后的历史基线） |
+| `test` | **117** 项全过（`verify-all.sh` 下限仍为 **83**：combat 57 + meta 38 + battle 4 + talent 3 + resource 13 + 模板 2。历史来源：LDtk 地图 6、攻击架构 20、拆表 join 2、OOXML 包护栏 1；account 单测 15 → 11 是 2026-11-11 删本地存盘后的基线；本轮 +6：weapons 7→9、loot 13→14、inventory 14→16、run-settlement 7→8） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` 四张表与 `generated/*.ts` 一致，且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
@@ -221,9 +246,9 @@ node scripts/verify-shell.cjs                            # 4174 单页 29/29
 
 下表把「当前功能契约」逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 111 条＝combat 54（movement 11 + modifiers 3 + weapons 7 +
-loot 13 + attack-spec 10 + projectiles 10）、
-meta 35（meta 3 + inventory 14 + run-settlement 7 + platform-KV account 11）、battle 4、talent 3、
+删断言不会让这张表悄悄失效。单测 117 条＝combat 57（loot 14 + movement 11 + attack-spec 10 +
+projectiles 10 + weapons 9 + modifiers 3）、
+meta 38（inventory 16 + platform-KV account 11 + run-settlement 8 + meta 3）、battle 4、talent 3、
 resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不随新增断言抬高）。
 浏览器验收：playthrough 13 个命名场景（展开 35 steps）、独立页 13 条、4174 单页 29 条
 （含 7 条平台身份 / KV 存档 + 1 条「无宿主不写盘」+ 2 条平台 lifecycle）。
@@ -244,14 +269,19 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 点远处敌人先接近、进距离才挥砍 | `clicking a distant enemy approaches first and swings only in range` | `clicking a distant enemy approaches, then swings once in range` |
 | 掉落物优先于敌人判定（且不误伤点敌人） | `clicking a drop that sits under an enemy walks to loot, not to attack` + `a body-centre click still attacks the enemy even with a drop at its feet` | `click the drop to walk over it and equip the main weapon` |
 | 装备后近战仍可用 | — | `armed melee still works on a clicked enemy` |
-| 两武器槽 / 1·2 切换 / 空槽徒手 / 只按激活槽结算 | `assets/combat/__tests__/weapons.test.ts`（7 条） | `Digit1 / Digit2 switch which weapon slot is in use` |
-| 背包 5×8、仓库 16×10、长剑 2×3、10 装备槽、占格碰撞/越界、跨容器拖放、穿脱、类型校验 | `assets/meta/__tests__/inventory.test.ts`（14 条） | `scripts/verify-meta-ui.cjs`（13 条真实拖放断言） |
+| 两武器槽 / 1·2 切换 / 空槽徒手 / 只按激活槽结算 | `assets/combat/__tests__/weapons.test.ts`（9 条） | `Digit1 / Digit2 switch which weapon slot is in use` |
+| **没有得分** | `weapons.test.ts`：`'score' in s === false` | `playthrough.mjs`：`'score' in equipped === false`、`kills never decrease` |
+| **拾取必须显式点击、走过不自动拿** | `loot.test.ts`：`walking past a drop without clicking never collects it` + 显式设 `pickupTarget` 才拾取 | `playthrough.mjs`：击杀后断言 `drops.includes('longsword')`、`equippedWeapon === null`，再 `mouse.click(dropAt)` 才装备 |
+| **背包满时掉落物留在地上** | `weapons.test.ts`：`resolvePickupAck(false)` 后 drop 仍在、`runBagUids` 为空 | — |
+| **跨堆 `pickup` / `pickupAck` 协议** | `weapons.test.ts`：第三把剑等待 bag decision、`ack(true)` 移除掉落物并记 uid | — **目前只有单测覆盖**；`verify-shell.cjs` 的结算断言只验 `slotLootItemIds` / `bagLootUids` 字段被消费，浏览器层尚无 `pickup` 消息断言（已知护栏缺口，补断言需用户确认） |
+| **只有三处存放区域（无 `loose`）** | `inventory.test.ts`：`'loose' in s === false`、`addToBag()` 满仓返回 `null`；`account.test.ts` 结构校验不含 `loose` | `verify-meta-ui.cjs`：`starts with 3 swords in the stash and no loose tray`（`trayCount() === 0`）；`verify-shell.cjs` 的 `snap()` 记 `noLoose` 供取证，**但该字段未挂断言** |
+| 背包 5×8、仓库 16×10、长剑 2×3、10 装备槽、占格碰撞/越界、跨容器拖放、穿脱、类型校验 | `assets/meta/__tests__/inventory.test.ts`（16 条） | `scripts/verify-meta-ui.cjs`（13 条真实拖放断言） |
 | 表结构 / 生成物 SHA-256 / 权重梯 / 引用完整性 | `assets/resource/__tests__/tables.test.ts`（5 条）+ `export_tables.py --check` | `scripts/loot-report.mjs`（31000 次/池，偏差 >1% 即失败） |
-| 权重掉落、固定种子可复现、多怪部署、战利品记录 | `assets/combat/__tests__/loot.test.ts`（13 条） | — |
-| 单页借出 / 通关归还 / 阵亡丢失 / 返回局外 | `assets/meta/__tests__/run-settlement.test.ts`（7 条） | `scripts/verify-shell.cjs`（30 条，含出征广播、战斗态切换与平台 lifecycle） |
+| 权重掉落、固定种子可复现、多怪部署、战利品记录 | `assets/combat/__tests__/loot.test.ts`（14 条） | — |
+| 单页借出 / 通关归还 / 阵亡丢失（含本局 bag loot）/ 返回局外 | `assets/meta/__tests__/run-settlement.test.ts`（8 条） | `scripts/verify-shell.cjs`（29 条，含出征广播、战斗态切换与平台 lifecycle） |
 | 初始状态 / reload 可玩 | `empty-project.test.ts`（2 条工程契约） | `spawn: ...` + `reload preserves a playable frame` |
 | 平台 lifecycle：pause/resume 真实停战斗、状态可翻转、消息送达 Worker | — | `scripts/verify-shell.cjs`：`platform lifecycle adapter flips paused and stays registered` + `pause/resume are forwarded to the Engine Worker over the run channel` |
-| 平台身份 / KV 存档：无登录、单 key 版本化 blob、刷新恢复、损坏兜底、平台桥切换、纯 JSON 写入 | `assets/meta/__tests__/account.test.ts`（15 条：envelope / 校验 / 迁移兜底 / 本地 adapter / 写队列） | `scripts/verify-shell.cjs`（8 条，`store.*`；账号数据隔离不在本地验，发布到平台后再验） |
+| 平台身份 / KV 存档：无登录、单 key 版本化 blob、刷新恢复、损坏兜底、平台桥切换、纯 JSON 写入 | `assets/meta/__tests__/account.test.ts`（11 条：envelope / 校验 / 迁移兜底 / 写队列） | `scripts/verify-shell.cjs`（8 条，`store.*`；账号数据隔离不在本地验，发布到平台后再验） |
 
 ## 已知陷阱速查
 
@@ -263,11 +293,14 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 「优化」成 `127.0.0.1` 后 4174 永远探测不到 | preview 只监听 IPv6 `[::1]:4174`：`curl 127.0.0.1` = 000，`curl -6 localhost` = 200；**URL 必须保持 `localhost`** |
 | 点敌人后读不到 `attackOrder` | `justReleased` 释放沿要等引擎下一帧，验收脚本点完需 `advance` 一帧 |
 | 长剑捡不到、角色停在 132 px 外挥砍 | 掉落点旁有活骷髅，点击被判成「点敌人」；已加掉落物优先级 |
+| 走过掉落物却没自动装备 | **这是新规则不是 bug**：拾取必须短按点中掉落物，走过去不会自动捡（`pickupTarget` 为 null）。`updateDrops()` 还要求走到 `<50px` 才结算 |
+| 拾取一次之后再也捡不了东西 | `pendingPickup` 没被解除：主窗口收到 `pickup` 后**无论成败都要回 `pickupAck { uid, ok }`**；`pickupSent` 在 `deploy` / R 重开时也要清空 |
+| 背包已满但战利品凭空消失 / 出现在仓库 | 满仓时 `addToBag()` 返回 `null`、掉落物留在地上；`findFirstFit()`（bag→stash）只在**结算**时用，别在拾取时调用 |
 | 大视口四象限点地面被判成点敌人 | 骷髅会追过来；移动类验收步骤前按 R 隔离 |
 | `pnpm: command not found` / build 被拦 | 用 `./node_modules/.bin/*`；build / package 带 `CODEBUDDY_SAFE_DELETE_ENABLED=0` |
 | 两个窗口同时跑 `verify-all.sh`，汇总和截图互相覆盖 | 已加 `.verify-all.lock`：第二个实例报 `[BUSY]` 并 `exit 2`；别同时开两个验收 |
 | git 还原后 `.sh` 报 `\r: command not found` | 本机 `core.autocrlf=true`；`.gitattributes` 已强制 `eol=lf`，别删它 |
-| 独立页面验收输出 `PENDING` / `loose=1` | Windows 复用日常 Chrome 实例，dump 到执行前 DOM；必须独立 `--user-data-dir` |
+| 独立页面验收输出 `PENDING` | Windows 复用日常 Chrome 实例，dump 到执行前 DOM；必须独立 `--user-data-dir` |
 | 改了 `inventory.ts` 页面行为没变 | 忘记重跑 `node scripts/build-meta-ui.mjs`；`--check` 会拦住 |
 | 自测脚本报 `$ is not defined` | `const $` 声明在 `try` 块内，块外访问越界；写结果用 `document.getElementById` 直接调用 |
 | `project play` 报 `state-unavailable: Several read projections are registered` | `game.state` 之外又注册了 read projection；引擎以「唯一注册」解析默认读取，**必须保持 `game.state` 唯一**（脚本显式传 id 也救不了隐式读取路径） |
@@ -275,8 +308,10 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 单页结算快照拍到「出征中」、日志被覆盖 | BroadcastChannel 投递是排队 task，固定 `setTimeout` 在虚拟时间下先触发；改成条件轮询等状态迁移，并等 `deployed` ack 处理完再发 `result` |
 | 4174 打开后没有局外顶栏 | `build` / `play` / `package` **任何一个都会重建 `dist/`** 并抹掉注入块；注入必须是最后一步。`verify-all.sh` 已固化为「… → package → inject → check → 单页验收」。曾实测 package 后 `dist/index.html` 从 85008 B 退回 44892 B、marker 归零 |
 | 掉落跑批偶发「偏差 >1%」 | `--samples` 太小（1000）时尾部稀有项因方差本身超标；验收固定 31000 次/池 |
-| 造化插件普通预览后 4174 报 `PlatformClient was not ready before Tian Gong Engine initialize` | Builder 普通预览服务的是 `dist/`（不是发布用的玩家产物），会重建 dist 抹掉壳层，并往 `<head>` 注入 `data-zaohua-platform-init`；该 bootstrap 在 import 引擎前等宿主注入的 `window.PlatformClient`，4174 没有。启动统一走造化插件预览 / 发布产物链；恢复 4174 需 `forgeax project build` 后重跑 `inject-shell.mjs`。**发布请走 `scripts.package`**（含壳层玩家产物），别拿 4174 的 dist 当发布包 |
+| 造化插件普通预览后 4174 报 `PlatformClient was not ready before Tian Gong Engine initialize` | Builder 普通预览服务的是 `dist/`（不是发布用的玩家产物），会重建 dist 抹掉壳层，并往 `<head>` 注入 `data-zaohua-platform-init`；该 bootstrap 在 import 引擎前等宿主注入的 `window.PlatformClient`，4174 没有。恢复 4174 需 `forgeax project build` 后重跑 `inject-shell.mjs`。**发布请走 `scripts.package`**（含壳层玩家产物），别拿 4174 的 dist 当发布包 |
+| **普通预览打开只有战斗画面、没有装备界面** | 普通 `preview_start` 走 `project build` 的 `dist/`，壳层注入块被重建抹掉（101460 B / marker=1 → 45123 B / marker=0），且它**不调用** `scripts.package`。要看完整单页必须用 `preview_reload(validate: true)` 或上传后的玩家产物（`.game-builder/artifacts/forgeax-player/`，含壳层 + 平台 bootstrap）。见 feedback 最后一条 |
 | 想「先注入再打包」让 Web ZIP 带壳层，结果没带上 | `project package` 内部重新 build 覆盖 `dist/` 且无 post-build hook，`verifyDist` 逐字节校验产物；`--html-head` 只在 `project build` 生效、package 调 build 时不传。正解是 `scripts.package` 接管：官方 ZIP → 解包注入 → 同步 manifest → 重打包 |
+| 删了「待分配物品」UI，但存档仍回退默认 / 出现幽灵物品 | `loose` 是隐藏的第四处存放区，必须连 `InventoryState` 字段、`settleRun()` 兜底、`unplaceItem()` 与 `account.ts::isValidInventoryState()` 的 `Array.isArray(s.loose)` 校验一起删；只删 UI 会让所有平台 KV 存档被判损坏 |
 
 ## 可回滚基线（两层）
 

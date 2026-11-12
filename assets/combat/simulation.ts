@@ -96,7 +96,6 @@ export function projection(s: GameState) {
   return {
     hp: s.hp,
     maxHp: s.maxHp,
-    score: s.score,
     kills: s.kills,
     attacks: s.attacks,
     skeletonsAlive: s.skeletons.filter((sk) => sk.alive).length,
@@ -129,6 +128,10 @@ export function projection(s: GameState) {
       poolId: r.poolId,
     })),
     carriedItems: [...s.carriedItems],
+    pickupTarget: s.pickupTarget,
+    pendingPickup: s.pendingPickup ? s.pendingPickup.uid : null,
+    runBagUids: [...s.runBagUids],
+    slotLootItemIds: [...s.slotLootItemIds],
     dropItems: s.drops.map((d) => d.itemId ?? null),
     player: { x: s.player.x / VIEW_W, y: s.player.y / VIEW_H },
     moveMode: s.moveMode,

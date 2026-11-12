@@ -115,7 +115,7 @@ const SELFTEST = `
   var snap = function (tag) {
     var s = H.getState();
     out.steps[tag] = {
-      loose: s.loose.length, bag: s.bag.length, stash: s.stash.length,
+      noLoose: !('loose' in s), bag: s.bag.length, stash: s.stash.length,
       weapon0: s.equipped[0] ? s.equipped[0].defId : null,
       weapon1: s.equipped[1] ? s.equipped[1].defId : null,
       bagDefs: s.bag.map(function (i) { return i.defId; }),
@@ -124,9 +124,12 @@ const SELFTEST = `
       log: document.getElementById('fx-log').textContent,
     };
   };
-  var equipFromLoose = function (slot) {
+  var addProbe = function (s, uid, col) {
+    s.stash.push({ uid: uid, defId: 'longsword', container: 'stash', col: col, row: 0 });
+  };
+  var equipFromStash = function (slot) {
     var s = H.getState();
-    var uid = s.loose[0].uid;
+    var uid = s.stash[0].uid;
     var ok = M.equipItem(s, uid, slot);
     H.render();
     return ok;
@@ -165,11 +168,11 @@ const SELFTEST = `
         && !/请先登录/.test(logText());
       var noLocalSave = Store.mode() !== 'platform'
         && Store.writeCount() === 0
-        && H.getState().loose.length === 3;
+        && H.getState().stash.length === 3;
 
       // Build the known 4-item state used by deploy/settlement below. Rendering
       // here must NOT produce any write (no platform adapter yet).
-      H.getState().loose.push({ uid: 'save-probe', defId: 'longsword' });
+      addProbe(H.getState(), 'save-probe', 6);
       H.render();
       out.store.noLocalSave = noLocalSave
         && Store.writeCount() === 0
@@ -177,8 +180,8 @@ const SELFTEST = `
 
       // Corrupt / future-version blobs fall back without touching any store.
       out.store.corruptFallback =
-        A.decodeSave({ schemaVersion: 99, state: { loose: [] } }, fallback, slots).loose.length === 3
-        && A.decodeSave(null, fallback, slots).loose.length === 3;
+        A.decodeSave({ schemaVersion: 99, state: { bag: null } }, fallback, slots).stash.length === 3
+        && A.decodeSave(null, fallback, slots).stash.length === 3;
 
       // Mock the platform bridge: real identity shape + a single KV writer.
       var platformWrites = [];
@@ -189,14 +192,14 @@ const SELFTEST = `
         read: function () { return null; },
       });
       out.store.mountPlatform = mounted === true && Store.mode() === 'platform'
-        && Store.currentUser() === 'alice' && H.getState().loose.length === 4;
-      H.getState().loose.push({ uid: 'platform-probe', defId: 'longsword' });
+        && Store.currentUser() === 'alice' && H.getState().stash.length === 4;
+      addProbe(H.getState(), 'platform-probe', 8);
       H.render();
       await waitFor(function () { return platformWrites.length >= 1; });
       var written = platformWrites[0] || null;
       out.store.kvEnvelope = !!written && written.schemaVersion === A.SCHEMA_VERSION
         && A.isValidInventoryState(written.state, slots)
-        && written.state.loose.length === 5;
+        && written.state.stash.length === 5;
       out.store.platformKvWrite = platformWrites.length === 1
         && !!written
         && JSON.stringify(written) === JSON.stringify(A.encodeSave(H.getState()));
@@ -206,7 +209,7 @@ const SELFTEST = `
       // assertions above have already been captured.
       platformWrites.length = 0;
       var restored = M.createInventoryState(3);
-      restored.loose.push({ uid: 'save-probe', defId: 'longsword' });
+      addProbe(restored, 'save-probe', 6);
       H.setState(restored);
 
       out.authoredRegistered = (function () {
@@ -221,7 +224,7 @@ const SELFTEST = `
       snap('initial');
 
       // Equip one weapon, then deploy with 8 monsters.
-      out.equipped = equipFromLoose(0);
+      out.equipped = equipFromStash(0);
       snap('beforeDeploy');
       document.getElementById('fx-monsters').value = '8';
       document.getElementById('fx-deploy').click();
@@ -239,8 +242,8 @@ const SELFTEST = `
       out.bag.panelVisible = getComputedStyle(document.getElementById('fx-bag-content')).display !== 'none';
       out.bag.stillInBattle = inBattle();
       var bagState = H.getState();
-      var looseUid = bagState.loose.length ? bagState.loose[0].uid : null;
-      out.bag.equippedInRun = looseUid ? M.equipItem(bagState, looseUid, 0) : false;
+      var stashUid = bagState.stash.length ? bagState.stash[0].uid : null;
+      out.bag.equippedInRun = stashUid ? M.equipItem(bagState, stashUid, 0) : false;
       H.render();
       await waitFor(function () { return out.equipMessages.length > 0; });
       out.bag.equipMsg = out.equipMessages[out.equipMessages.length - 1] || null;
@@ -253,7 +256,7 @@ const SELFTEST = `
       // A cleared run returns the weapon and banks two authored loot items.
       sendResult({
         outcome: 'cleared',
-        carriedItems: ['10006', '20006'],
+        slotLootItemIds: ['10006', '20006'], bagLootUids: [],
         lootLog: [{ name: '霜之哀伤', quality: '暗金' }, { name: '射日', quality: '暗金' }],
         kills: 8, monsterCount: 8,
       });
@@ -265,7 +268,7 @@ const SELFTEST = `
       await waitFor(function () { return inBattle() && /出征中/.test(logText()); });
       snap('secondDeploy');
       sendResult({
-        outcome: 'gameOver', carriedItems: ['10001'],
+        outcome: 'gameOver', slotLootItemIds: ['10001'], bagLootUids: [],
         lootLog: [{ name: '巨剑', quality: '白' }], kills: 2, monsterCount: 8,
       });
       await waitFor(function () { return !inBattle() && /阵亡/.test(logText()); });

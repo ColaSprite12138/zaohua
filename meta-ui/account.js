@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/account.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: c4fe5be301515a0aef38ac3c6359b517fc1771a72680860fed966095893ae1cd
+ * Source SHA-256: d8e96b19cfe32a316e1f8fcf92b7f16055fdb9fe3ef81c041c9ba9c0a15c27bd
  */
 (function (root) {
 "use strict";
@@ -58,9 +58,8 @@ function isValidInventoryState(raw, slotCount) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw))
         return false;
     const s = raw;
-    return Array.isArray(s.loose) && Array.isArray(s.bag)
-        && Array.isArray(s.stash) && Array.isArray(s.equipped)
-        && s.equipped.length === slotCount;
+    return Array.isArray(s.bag) && Array.isArray(s.stash)
+        && Array.isArray(s.equipped) && s.equipped.length === slotCount;
 }
 /** Corrupt, foreign or future-version data falls back, never throws at the UI. */
 function decodeSave(raw, fallback, slotCount) {

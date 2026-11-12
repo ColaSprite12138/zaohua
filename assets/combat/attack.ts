@@ -8,7 +8,8 @@ import { burst, say, setTarget } from './effects.ts';
 import { rollLoot } from './loot.ts';
 import type { CombatModifiers } from './modifiers.ts';
 import {
-  activeWeapon, MELEE_RANGE_ARMED, MELEE_RANGE_BARE, type GameState,
+  activeWeapon, MELEE_RANGE_ARMED, MELEE_RANGE_BARE, nextDropUid,
+  type Drop, type GameState,
 } from './state.ts';
 
 /** Clickable body box of a living skeleton (art spans about [-21,21] x [-57,0]). */
@@ -29,8 +30,12 @@ export function hitTestEnemy(s: GameState, x: number, y: number): number | null 
 }
 
 /** Drops win the click over enemies so a sword under a skeleton stays lootable. */
+export function dropAtPoint(s: GameState, x: number, y: number): Drop | null {
+  return s.drops.find((drop) => Math.hypot(x - drop.x, y - drop.y) <= 26) ?? null;
+}
+
 export function hitTestDrop(s: GameState, x: number, y: number): boolean {
-  return s.drops.some((drop) => Math.hypot(x - drop.x, y - drop.y) <= 26);
+  return dropAtPoint(s, x, y) !== null;
 }
 
 export function clearAttackOrder(s: GameState): void {
@@ -53,7 +58,6 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   p.face = aim;
   p.attackAim = aim;
   s.attacks += 1;
-  s.score += 5;
 
   sk.hp -= mods.damageMultiplier(armed ? 46 : 22);
   sk.hit = 0.24;
@@ -65,7 +69,6 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   if (sk.hp <= 0) {
     sk.alive = false;
     s.kills += 1;
-    s.score += 100;
     // Weighted roll from the authored loot table. `kind` stays 'longsword'
     // (visual category) so the existing drop art and playthrough assertions
     // remain valid; the authored identity rides in itemId/name/quality.
@@ -81,6 +84,7 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
         poolId: loot.poolId,
       });
       s.drops.push({
+        uid: nextDropUid(),
         x: sk.x, y: sk.y, kind: 'longsword', t: 0,
         itemId: loot.itemId, name: loot.name, quality: loot.quality,
         monsterId: sk.monsterId,

@@ -48,3 +48,31 @@
 - `GameProjectionValue` 不接受 `interface`（缺索引签名）也不接受 `readonly T[]`（要求可变数组）；`RunResult` 用 `type` + 可变字段。`projection()` 加字段只能**追加**，旧字段 `equippedWeapon` 不能改名。
 - 跑批报告样本量要够：`--samples 1000` 时尾部稀有项偏差可到 1.3%，会因方差本身触发 1% 阈值；验收固定 31000/池（总权重 31，每格期望 ≥1000 次）。
 - **`game.state` 必须是唯一 read projection**：曾为「Play 验收驱动部署」额外注册 `run.result` / `run.deploy`，结果 `project play` 以「唯一 projection」解析默认读取，多一个就让 35 步 playthrough 首步报 `state-unavailable`（脚本里明明都写了 `play.state('game.state')`）。部署与结算走 BroadcastChannel 即可，不要为了「将来可能有用」加 projection seam。这只有全量验收能抓到。
+
+## 2026-11-12 · 删除得分、显式拾取与跨堆背包协议
+
+- **删 `score` 要连投影一起删**：除了 `GameState.score`，还有 `attack.ts` 的击杀 / 拾取加分、
+  `projection()` 里的 `score` 字段、`paint.ts` 的右上角 HUD 与结算板、`playthrough.mjs` 的
+  「score never decreases」。只删状态字段会让 `tsc` 与浏览器断言同时红。HUD 换成
+  `击杀 / 剩余骷髅 / 已拾取`，结算板换成 `击杀 / 拾取`，并新增 `'score' in equipped === false` 反例断言。
+- **显式拾取指令必须落在释放沿短按分支**：`movement.ts` 用 `dropAtPoint()` 判断短按是否点中掉落物，
+  命中才写 `s.pickupTarget = drop.uid`，点地面 / 点敌人一律清空；长按 `follow` 分支也要清
+  `pickupTarget`。`updateDrops()` 只在 `pickupTarget !== null && pendingPickup === null`
+  且玩家距掉落物 `< 50px` 时结算 —— **走过掉落物绝不自动拾取**。
+- **掉落物必须有稳定 uid**：跨堆 `pickup` / `pickupAck` 靠 uid 对齐具体掉落物。
+  `state.ts::nextDropUid()` 用模块级单调递增计数器（跨局不重置，避免与上一局背包 uid 撞车）；
+  所有手工构造 `s.drops` 的单测都要补 `uid`，否则 ack 永远匹配不上。
+- **`pendingPickup` 不能整个对象进投影**：`GameProjectionValue` 不接受 `interface`（缺索引签名），
+  只投影 `s.pendingPickup ? s.pendingPickup.uid : null`；直接塞对象会 `tsc` 报错。
+- **每帧要防止重复发消息**：`game.pack.ts` 用 `pickupSent` 记住已发 uid，只有
+  `pendingPickup !== null && pickupSent === null` 才发 `pickup`；收到 `pickupAck`、
+  `deploy` 或 R 重开时清空。否则主窗口会 `addToBag()` 多次，同一件战利品塞进背包好几份。
+- **背包满时掉落物留在地上**：`resolvePickupAck(s, false, uid)` 只清 pending 并提示，
+  **不移除 drop、不写 `runBagUids`**；`ok=true` 才移除掉落物并记 uid。这是用户
+  「身上和背包都满了就捡不起来」的落点。
+- **结算字段分工**：`slotLootItemIds`（拾取进武器槽的 authored id，通关时找格子入库）与
+  `runBagUids`（局内已占背包的 uid，阵亡时按 uid 从 `bag` 删除）不能混成一个 `carriedItems`；
+  `carriedItems` 只用于 HUD / 报告数量。
+- **旧断言改成反例而不是删**：`loot.test.ts` 原「走过去自动拾取」改成显式设 `pickupTarget` 后拾取，
+  并新增「不点击时走过掉落物不会拾取」；`playthrough.mjs` 的 35 步不变，拾取步骤前新增
+  「掉落物还在地上、`equippedWeapon` 为 null」，拾取后断言 `drops.length === 0`。

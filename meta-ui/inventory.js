@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 3eada07b02efae747ae1332cd5adcb4b297e57110ce3957f52bc8e2ae1f04cec
+ * Source SHA-256: 32e133d839c1cf3ff4d3e0a3e19e985cf779d16d823ecd07740dd4205db93ca0
  */
 (function (root) {
 "use strict";
@@ -32,12 +32,14 @@ exports.createInventoryState = createInventoryState;
 exports.canPlace = canPlace;
 exports.findItem = findItem;
 exports.placeItem = placeItem;
-exports.unplaceItem = unplaceItem;
 exports.equipItem = equipItem;
 exports.unequipItem = unequipItem;
 exports.setActiveWeapon = setActiveWeapon;
 exports.activeWeapon = activeWeapon;
 exports.coveredCells = coveredCells;
+exports.findFirstFit = findFirstFit;
+exports.addToBag = addToBag;
+exports.removeItem = removeItem;
 exports.buildLoadout = buildLoadout;
 exports.settleRun = settleRun;
 exports.BAG = { cols: 5, rows: 8, label: '背包' };
@@ -118,14 +120,20 @@ function itemDef(defId) {
     return def;
 }
 function createInventoryState(seedSwords = 3) {
-    const loose = [];
+    const stash = [];
+    // Demo longswords start in the stash, side by side (2x3 each). First three
+    // land on (0,0), (2,0), (4,0); larger seeds wrap to the next 3-row band.
+    const perRow = Math.floor(exports.STASH.cols / 2);
     for (let i = 0; i < seedSwords; i += 1) {
-        loose.push({ uid: `sword-${i + 1}`, defId: 'longsword' });
+        const col = (i % perRow) * 2;
+        const row = Math.floor(i / perRow) * 3;
+        if (row + 3 > exports.STASH.rows)
+            break;
+        stash.push({ uid: `sword-${i + 1}`, defId: 'longsword', container: 'stash', col, row });
     }
     return {
-        loose,
         bag: [],
-        stash: [],
+        stash,
         equipped: exports.EQUIP_SLOTS.map(() => null),
         activeWeaponSlot: 0,
     };
@@ -154,9 +162,6 @@ function canPlace(state, container, defId, col, row, ignoreUid) {
     return true;
 }
 function findItem(state, uid) {
-    const l = state.loose.findIndex((it) => it.uid === uid);
-    if (l >= 0)
-        return { where: 'loose', item: state.loose[l], index: l };
     for (const container of ['bag', 'stash']) {
         const i = listOf(state, container).findIndex((it) => it.uid === uid);
         if (i >= 0) {
@@ -169,10 +174,6 @@ function findItem(state, uid) {
     return null;
 }
 function detach(state, loc) {
-    if (loc.where === 'loose') {
-        state.loose.splice(loc.index, 1);
-        return loc.item;
-    }
     if (loc.where === 'grid') {
         listOf(state, loc.container).splice(loc.index, 1);
         return { uid: loc.item.uid, defId: loc.item.defId };
@@ -181,7 +182,7 @@ function detach(state, loc) {
     return loc.item;
 }
 /**
- * Move ANY item (loose / grid / equipped / other container) to a grid cell.
+ * Move any grid or equipped item to a grid cell.
  * Validates first, then commits — a rejected move leaves state untouched.
  */
 function placeItem(state, uid, container, col, row) {
@@ -196,19 +197,11 @@ function placeItem(state, uid, container, col, row) {
 }
 /** Alias with clearer intent for cross-container dragging. */
 exports.moveItem = placeItem;
-/** Drop an item back into the loose tray (e.g. dragged off the grids). */
-function unplaceItem(state, uid) {
-    const loc = findItem(state, uid);
-    if (loc === null || loc.where === 'loose')
-        return false;
-    const item = detach(state, loc);
-    state.loose.push(item);
-    return true;
-}
 /**
  * Equip an item into a slot. Type must match. If the slot is occupied, the
- * previous item tries to take the source position; if that is impossible it
- * falls back to the loose tray (never silently deleted).
+ * displaced item must fit back into a grid: first its counterpart's old cell,
+ * then the first free cell in bag -> stash. With no space the whole swap is
+ * rejected and state stays untouched (nothing may vanish silently).
  */
 function equipItem(state, uid, slotIndex) {
     const slot = exports.EQUIP_SLOTS[slotIndex];
@@ -220,23 +213,25 @@ function equipItem(state, uid, slotIndex) {
     if (loc.where === 'equipped' && loc.index === slotIndex)
         return false;
     const displaced = state.equipped[slotIndex] ?? null;
+    let displacedSpot = null;
+    if (displaced !== null) {
+        if (loc.where === 'grid'
+            && canPlace(state, loc.container, displaced.defId, loc.item.col, loc.item.row, uid)) {
+            displacedSpot = { container: loc.container, col: loc.item.col, row: loc.item.row };
+        }
+        else {
+            displacedSpot = findFirstFit(state, displaced.defId, uid);
+        }
+        if (displacedSpot === null)
+            return false;
+    }
     const item = detach(state, loc);
     state.equipped[slotIndex] = item;
-    if (displaced !== null) {
-        let restored = false;
-        if (loc.where === 'grid'
-            && canPlace(state, loc.container, displaced.defId, loc.item.col, loc.item.row)) {
-            listOf(state, loc.container).push({
-                uid: displaced.uid,
-                defId: displaced.defId,
-                container: loc.container,
-                col: loc.item.col,
-                row: loc.item.row,
-            });
-            restored = true;
-        }
-        if (!restored)
-            state.loose.push(displaced);
+    if (displaced !== null && displacedSpot !== null) {
+        listOf(state, displacedSpot.container).push({
+            uid: displaced.uid, defId: displaced.defId,
+            container: displacedSpot.container, col: displacedSpot.col, row: displacedSpot.row,
+        });
     }
     return true;
 }
@@ -271,6 +266,53 @@ function coveredCells(item) {
     }
     return cells;
 }
+/** First free cell that fits an item, searching bag -> stash. */
+function findFirstFit(state, defId, ignoreUid) {
+    const def = itemDef(defId);
+    for (const container of ['bag', 'stash']) {
+        const grid = exports.CONTAINERS[container];
+        for (let row = 0; row <= grid.rows - def.rows; row += 1) {
+            for (let col = 0; col <= grid.cols - def.cols; col += 1) {
+                if (canPlace(state, container, defId, col, row, ignoreUid)) {
+                    return { container, col, row };
+                }
+            }
+        }
+    }
+    return null;
+}
+/**
+ * Add a brand-new in-run pickup to the BAG only. The stash is out-of-run
+ * storage and never participates in a battle pickup. Returns null (and does
+ * not mutate state) when the bag has no free footprint for the item.
+ */
+function addToBag(state, uid, defId) {
+    if (exports.ITEM_DEFS[defId] === undefined)
+        return null;
+    const def = itemDef(defId);
+    for (let row = 0; row <= exports.BAG.rows - def.rows; row += 1) {
+        for (let col = 0; col <= exports.BAG.cols - def.cols; col += 1) {
+            if (canPlace(state, 'bag', defId, col, row)) {
+                const placed = { uid, defId, container: 'bag', col, row };
+                state.bag.push(placed);
+                return placed;
+            }
+        }
+    }
+    return null;
+}
+/** Remove an item by uid from bag or stash. Used when a run is lost. */
+function removeItem(state, uid) {
+    for (const container of ['bag', 'stash']) {
+        const list = listOf(state, container);
+        const i = list.findIndex((it) => it.uid === uid);
+        if (i >= 0) {
+            list.splice(i, 1);
+            return true;
+        }
+    }
+    return false;
+}
 let uidCounter = 0;
 function newUid(prefix) {
     uidCounter += 1;
@@ -298,9 +340,10 @@ function buildLoadout(state) {
 }
 /**
  * Settle a finished run.
- *  - cleared: borrowed weapons come home first, then loot is added.
- *  - gameOver: borrowed weapons are permanently lost, loot is lost too.
- * Loot always tries bag -> stash -> loose, and is NEVER silently discarded.
+ *  - cleared: borrowed weapons come home; loot that was equipped in battle
+ *    still needs a grid home. Loot already picked into the bag stays there.
+ *  - gameOver: borrowed weapons AND this run's bag loot are permanently lost.
+ * There is no fourth storage area: anything that fits nowhere is reported.
  */
 function settleRun(state, borrowed, settlement) {
     const unregistered = [];
@@ -308,47 +351,44 @@ function settleRun(state, borrowed, settlement) {
     let returned = 0;
     let gained = 0;
     if (settlement.outcome === 'gameOver') {
+        for (const uid of settlement.carriedUids)
+            removeItem(state, uid);
         return {
-            returned: 0, lost: borrowed.items.length, gained: 0,
-            unregistered, overflow,
+            returned: 0,
+            lost: borrowed.items.length + settlement.carriedUids.length,
+            gained: 0, unregistered, overflow,
         };
     }
-    // 1. Return borrowed weapons to their original slots (still empty by contract).
+    // 1. Return borrowed weapons to their original slots (empty by contract).
     for (const item of borrowed.items) {
         const index = exports.WEAPON_SLOT_INDICES.find((i) => state.equipped[i] === null);
-        if (index === undefined) {
-            state.loose.push(item);
+        if (index !== undefined) {
+            state.equipped[index] = item;
         }
         else {
-            state.equipped[index] = item;
+            const spot = findFirstFit(state, item.defId);
+            if (spot) {
+                listOf(state, spot.container).push({ ...item, ...spot });
+            }
+            else {
+                overflow.push(item.defId);
+            }
         }
         returned += 1;
     }
-    // 2. Add battle loot. Unknown ids are reported, not dropped into ITEM_DEFS.
+    // 2. Loot equipped into a weapon slot gets a grid home; unknown ids are
+    //    reported instead of being dropped into ITEM_DEFS.
     for (const defId of settlement.lootItemIds) {
         if (exports.ITEM_DEFS[defId] === undefined) {
             unregistered.push(defId);
             continue;
         }
         const instance = { uid: newUid('loot'), defId };
-        let placed = false;
-        for (const container of ['bag', 'stash']) {
-            const grid = exports.CONTAINERS[container];
-            const def = itemDef(defId);
-            outer: for (let row = 0; row <= grid.rows - def.rows; row += 1) {
-                for (let col = 0; col <= grid.cols - def.cols; col += 1) {
-                    if (canPlace(state, container, defId, col, row)) {
-                        listOf(state, container).push({ ...instance, container, col, row });
-                        placed = true;
-                        break outer;
-                    }
-                }
-            }
-            if (placed)
-                break;
+        const spot = findFirstFit(state, defId);
+        if (spot) {
+            listOf(state, spot.container).push({ ...instance, ...spot });
         }
-        if (!placed) {
-            state.loose.push(instance);
+        else {
             overflow.push(defId);
         }
         gained += 1;

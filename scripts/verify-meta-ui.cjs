@@ -46,7 +46,7 @@ const SELFTEST = `
   try {
     const $ = (id) => document.getElementById(id);
     const status = () => $('status').textContent;
-    const looseCount = () => document.querySelectorAll('.loose-item').length;
+    const trayCount = () => document.querySelectorAll('.tray, .loose-item').length;
     const bagCount = () => document.querySelectorAll('#wrap-bag .grid-item').length;
     const stashCount = () => document.querySelectorAll('#wrap-stash .grid-item').length;
     const filled = () => document.querySelectorAll('.equip-slot.filled').length;
@@ -61,7 +61,7 @@ const SELFTEST = `
     };
     const snap = (tag) => {
       out.steps[tag] = {
-        loose: looseCount(), bag: bagCount(), stash: stashCount(),
+        tray: trayCount(), bag: bagCount(), stash: stashCount(),
         filled: filled(), active: activeIdx(), status: status(),
       };
     };
@@ -95,17 +95,17 @@ const SELFTEST = `
     out.equipSlots = document.querySelectorAll('.equip-slot').length;
     snap('initial');
 
-    // loose -> bag (0,0): a 2x3 longsword fits a 5x8 bag.
-    dragToGrid(document.querySelector('.loose-item'), 'bag', 0, 0);
+    // stash -> bag (0,0): a 2x3 longsword fits a 5x8 bag.
+    dragToGrid(document.querySelector('#wrap-stash .grid-item'), 'bag', 0, 0);
     snap('dropIntoBag');
     // Same cells again: overlapping footprint must be rejected atomically.
-    dragToGrid(document.querySelector('.loose-item'), 'bag', 0, 0);
+    dragToGrid(document.querySelector('#wrap-stash .grid-item'), 'bag', 0, 0);
     snap('overlapRejected');
     // Free spot (3,5): 3+2<=5 and 5+3<=8, so it fits.
-    dragToGrid(document.querySelector('.loose-item'), 'bag', 3, 5);
+    dragToGrid(document.querySelector('#wrap-stash .grid-item'), 'bag', 3, 5);
     snap('secondBagSlot');
     // Out of bounds (4,0): 4+2>5 must be rejected.
-    dragToGrid(document.querySelector('.loose-item'), 'bag', 4, 0);
+    dragToGrid(document.querySelector('#wrap-stash .grid-item'), 'bag', 4, 0);
     snap('boundsRejected');
     // bag -> stash: cross-container move.
     dragToGrid(document.querySelector('#wrap-bag .grid-item'), 'stash', 0, 0);
@@ -119,7 +119,7 @@ const SELFTEST = `
     document.dispatchEvent(new KeyboardEvent('keydown', { key: '1', bubbles: true }));
     snap('key1');
     // Wrong-type equip: a sword cannot go into a ring slot.
-    dragToSlot(document.querySelector('.loose-item'), 2);
+    dragToSlot(document.querySelector('#wrap-stash .grid-item'), 2);
     snap('wrongTypeRejected');
     out.ok = true;
   } catch (e) {
@@ -181,13 +181,13 @@ const checks = [
   ['bag renders 5x8 = 40 cells', result.gridCells.bag === 40, result.gridCells.bag],
   ['stash renders 16x10 = 160 cells', result.gridCells.stash === 160, result.gridCells.stash],
   ['ten equipment slots', result.equipSlots === 10, result.equipSlots],
-  ['starts with 3 loose swords, empty grids', S.initial.loose === 3 && S.initial.bag === 0 && S.initial.stash === 0, S.initial],
-  ['drag loose -> bag places one 2x3 item', S.dropIntoBag.bag === 1 && S.dropIntoBag.loose === 2, S.dropIntoBag],
-  ['overlapping drop rejected without state change', S.overlapRejected.bag === 1 && S.overlapRejected.loose === 2 && /放不下/.test(S.overlapRejected.status), S.overlapRejected],
-  ['a second sword fits a free 2x3 spot', S.secondBagSlot.bag === 2 && S.secondBagSlot.loose === 1, S.secondBagSlot],
-  ['out-of-bounds drop rejected', S.boundsRejected.bag === 2 && S.boundsRejected.loose === 1, S.boundsRejected],
-  ['bag -> stash cross-container drag', S.movedToStash.bag === 1 && S.movedToStash.stash === 1, S.movedToStash],
-  ['stash -> weapon slot equips and frees the cell', S.equipped.filled === 1 && S.equipped.stash === 0, S.equipped],
+  ['starts with 3 swords in the stash and no loose tray', S.initial.stash === 3 && S.initial.bag === 0 && S.initial.tray === 0, S.initial],
+  ['drag stash -> bag places one 2x3 item', S.dropIntoBag.bag === 1 && S.dropIntoBag.stash === 2, S.dropIntoBag],
+  ['overlapping drop rejected without state change', S.overlapRejected.bag === 1 && S.overlapRejected.stash === 2 && /放不下/.test(S.overlapRejected.status), S.overlapRejected],
+  ['a second sword fits a free 2x3 spot', S.secondBagSlot.bag === 2 && S.secondBagSlot.stash === 1, S.secondBagSlot],
+  ['out-of-bounds drop rejected', S.boundsRejected.bag === 2 && S.boundsRejected.stash === 1, S.boundsRejected],
+  ['bag -> stash cross-container drag', S.movedToStash.bag === 1 && S.movedToStash.stash === 2, S.movedToStash],
+  ['stash -> weapon slot equips and frees the cell', S.equipped.filled === 1 && S.equipped.stash === 1, S.equipped],
   ['key 2 activates weapon slot 2', S.key2.active === 1, S.key2],
   ['key 1 activates weapon slot 1', S.key1.active === 0, S.key1],
   ['wrong-type equip into a ring slot rejected', S.wrongTypeRejected.filled === 1 && /不能穿戴/.test(S.wrongTypeRejected.status), S.wrongTypeRejected],

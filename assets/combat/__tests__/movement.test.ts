@@ -170,7 +170,7 @@ describe('targeted melee contract', () => {
     // Snapshot the position: the skeleton chases the player during stepping.
     const dropX = s.skeletons[0]!.x;
     const dropY = s.skeletons[0]!.y;
-    s.drops.push({ x: dropX, y: dropY, kind: 'longsword', t: 0 });
+    s.drops.push({ uid: 'test-drop-a', x: dropX, y: dropY, kind: 'longsword', t: 0 });
     s.player.x = dropX - 80;
     s.player.y = dropY;
 
@@ -185,7 +185,7 @@ describe('targeted melee contract', () => {
     const s = createState();
     const sx = s.skeletons[0]!.x;
     const sy = s.skeletons[0]!.y;
-    s.drops.push({ x: sx, y: sy, kind: 'longsword', t: 0 });
+    s.drops.push({ uid: 'test-drop-b', x: sx, y: sy, kind: 'longsword', t: 0 });
     s.player.x = sx - 80;
     s.player.y = sy;
 

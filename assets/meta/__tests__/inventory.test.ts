@@ -6,16 +6,18 @@ import {
   ITEM_DEFS,
   STASH,
   activeWeapon,
+  addToBag,
   canPlace,
+  findFirstFit,
   coveredCells,
   createInventoryState,
   equipItem,
   findItem,
   moveItem,
   placeItem,
+  removeItem,
   setActiveWeapon,
   unequipItem,
-  unplaceItem,
 } from '../inventory.ts';
 
 const at = (
@@ -59,7 +61,7 @@ describe('placement', () => {
     expect(canPlace(s, 'bag', 'longsword', 1.5, 0)).toBe(false);
     expect(placeItem(s, 'sword-1', 'bag', 4, 0)).toBe(false);
     expect(s.bag).toHaveLength(0);
-    expect(s.loose).toHaveLength(1);
+    expect(s.stash).toHaveLength(1);
   });
 
   it('rejects rectangular overlap, including partial overlap', () => {
@@ -70,7 +72,7 @@ describe('placement', () => {
     expect(canPlace(s, 'bag', 'longsword', 0, 3)).toBe(true); // below, no overlap
     expect(placeItem(s, 'sword-2', 'bag', 1, 2)).toBe(false);
     expect(s.bag).toHaveLength(1);
-    expect(s.loose).toHaveLength(1);
+    expect(s.stash).toHaveLength(1);
   });
 
   it('moves an item inside the same container using its own uid as ignore', () => {
@@ -92,15 +94,35 @@ describe('placement', () => {
     expect(at(s, 'sword-1', 'bag')).toMatchObject({ container: 'bag', col: 0, row: 0 });
   });
 
-  it('can unplace back into the loose tray and refuses unknown uids', () => {
+  it('removeItem drops a run-loot uid and refuses unknown uids', () => {
     const s = createInventoryState(1);
-    placeItem(s, 'sword-1', 'stash', 2, 2);
-    expect(unplaceItem(s, 'sword-1')).toBe(true);
-    expect(s.stash).toHaveLength(0);
-    expect(s.loose).toHaveLength(1);
-    expect(unplaceItem(s, 'sword-1')).toBe(false);
+    expect(addToBag(s, 'loot-1', 'longsword')).not.toBeNull();
+    expect(s.bag).toHaveLength(1);
+    expect(removeItem(s, 'loot-1')).toBe(true);
+    expect(s.bag).toHaveLength(0);
+    expect(removeItem(s, 'ghost')).toBe(false);
     expect(placeItem(s, 'ghost', 'bag', 0, 0)).toBe(false);
     expect(findItem(s, 'ghost')).toBeNull();
+  });
+});
+
+describe('three storage areas only', () => {
+  it('starts with three swords in the stash and no fourth container', () => {
+    const s = createInventoryState(3);
+    expect(s.bag).toHaveLength(0);
+    expect(s.stash).toHaveLength(3);
+    expect(s.stash.map((i) => [i.col, i.row])).toEqual([[0, 0], [2, 0], [4, 0]]);
+    expect('loose' in s).toBe(false);
+  });
+
+  it('addToBag occupies cells and reports a full bag instead of hiding items', () => {
+    const s = createInventoryState(0);
+    const placed = [0, 1, 2, 3].map((i) => addToBag(s, `loot-${i}`, 'longsword'));
+    expect(placed.every((p) => p !== null)).toBe(true);
+    expect(s.bag).toHaveLength(4);
+    expect(addToBag(s, 'loot-overflow', 'longsword')).toBeNull();
+    expect(s.bag).toHaveLength(4);
+    expect(findFirstFit(s, 'longsword')?.container).toBe('stash');
   });
 });
 
@@ -111,7 +133,7 @@ describe('equipment', () => {
     expect(s.equipped[2]).toBeNull();
     expect(equipItem(s, 'sword-1', 0)).toBe(true);
     expect(s.equipped[0]).toMatchObject({ uid: 'sword-1' });
-    expect(s.loose).toHaveLength(0);
+    expect(s.stash).toHaveLength(0);
   });
 
   it('equips directly from a grid cell and unequips back to a chosen cell', () => {
@@ -136,10 +158,11 @@ describe('equipment', () => {
     const s = createInventoryState(2);
     placeItem(s, 'sword-1', 'bag', 0, 0);
     equipItem(s, 'sword-1', 0);
-    // sword-2 comes from the loose tray, so the displaced sword falls back there.
+    // sword-2 comes from the stash; the displaced sword must land in a grid.
     expect(equipItem(s, 'sword-2', 0)).toBe(true);
     expect(s.equipped[0]).toMatchObject({ uid: 'sword-2' });
-    expect(s.loose.some((it) => it.uid === 'sword-1')).toBe(true);
+    expect(findItem(s, 'sword-1')?.where).toBe('grid');
+    expect(s.bag.length + s.stash.length + s.equipped.filter(Boolean).length).toBe(2);
   });
 });
 

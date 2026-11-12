@@ -506,12 +506,12 @@ function hud(g: Painter, s: GameState): void {
   text(g, `${Math.round(s.hp)} / ${s.maxHp}`, 174, 70, 11, '#08131c', 'center', '800');
   text(g, 'HP', 40, 90, 11, '#8fa9bb', 'left', '600');
 
-  // Top-right: score and kill count.
+  // Top-right: kill count and run status. There is no score in this game.
   g.fillStyle = 'rgba(8,16,24,0.66)';
   roundRect(g, VIEW_W - 244, 20, 220, 82, 14);
   g.fill();
-  text(g, `分数  ${s.score}`, VIEW_W - 40, 44, 18, '#ffd166', 'right', '700');
-  text(g, `击杀 ${s.kills}  ·  剩余骷髅 ${s.skeletons.filter((sk) => sk.alive).length}`, VIEW_W - 40, 72, 13, '#a9c4d6', 'right', '600');
+  text(g, `击杀 ${s.kills}`, VIEW_W - 40, 44, 18, '#ffd166', 'right', '700');
+  text(g, `剩余骷髅 ${s.skeletons.filter((sk) => sk.alive).length}  ·  已拾取 ${s.carriedItems.length}`, VIEW_W - 40, 72, 13, '#a9c4d6', 'right', '600');
   text(g, s.cleared ? '试炼完成' : s.gameOver ? '挑战失败' : '进行中', VIEW_W - 40, 91, 11, s.cleared ? '#4ade80' : '#8fa9bb', 'right', '600');
 
   // Bottom-centre: two weapon slots. Only the active one drives melee.
@@ -620,7 +620,7 @@ function hud(g: Painter, s: GameState): void {
     roundRect(g, VIEW_W / 2 - 230, VIEW_H / 2 - 96, 460, 192, 18);
     g.stroke();
     text(g, s.cleared ? '试炼完成' : '挑战失败', VIEW_W / 2, VIEW_H / 2 - 46, 34, s.cleared ? '#ffd166' : '#ff9b9b', 'center', '800');
-    text(g, `分数 ${s.score}   ·   击杀 ${s.kills}`, VIEW_W / 2, VIEW_H / 2, 17, '#dbe9f5', 'center', '600');
+    text(g, `击杀 ${s.kills}   ·   拾取 ${s.carriedItems.length}`, VIEW_W / 2, VIEW_H / 2, 17, '#dbe9f5', 'center', '600');
     text(g, '按 R 重新开始', VIEW_W / 2, VIEW_H / 2 + 46, 15, '#8fa9bb', 'center', '600');
   }
 }

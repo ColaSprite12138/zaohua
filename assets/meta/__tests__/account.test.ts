@@ -76,7 +76,7 @@ describe('decodeSave: foreign data never breaks the UI', () => {
   });
 
   it('falls back for a valid version with a corrupted state', () => {
-    const env = { schemaVersion: A.SCHEMA_VERSION, state: { loose: [] } };
+    const env = { schemaVersion: A.SCHEMA_VERSION, state: { bag: [] } };
     expect(A.decodeSave(env, fallback, slots)).toEqual(fallback());
   });
 });
@@ -85,13 +85,13 @@ describe('save queue: an older async write must never win', () => {
   it('coalesces a burst of pushes, keeping the newest value last', async () => {
     const writes: A.SaveEnvelope[] = [];
     const queue = A.createSaveQueue((env) => { writes.push(env); });
-    queue.push(A.encodeSave({ loose: [1] }));
-    queue.push(A.encodeSave({ loose: [1, 2] }));
-    queue.push(A.encodeSave({ loose: [1, 2, 3] }));
+    queue.push(A.encodeSave({ bag: [1] }));
+    queue.push(A.encodeSave({ bag: [1, 2] }));
+    queue.push(A.encodeSave({ bag: [1, 2, 3] }));
     await tick();
     expect(queue.calls()).toBe(2);
-    expect(writes[writes.length - 1]!.state).toEqual({ loose: [1, 2, 3] });
-    expect(queue.last()).toEqual(A.encodeSave({ loose: [1, 2, 3] }));
+    expect(writes[writes.length - 1]!.state).toEqual({ bag: [1, 2, 3] });
+    expect(queue.last()).toEqual(A.encodeSave({ bag: [1, 2, 3] }));
   });
 
   it('keeps accepting saves after a failed write', async () => {
@@ -101,12 +101,12 @@ describe('save queue: an older async write must never win', () => {
       if (fail) throw new Error('network');
       writes.push(env);
     });
-    queue.push(A.encodeSave({ loose: [1] }));
+    queue.push(A.encodeSave({ bag: [1] }));
     await tick();
     fail = false;
-    queue.push(A.encodeSave({ loose: [2] }));
+    queue.push(A.encodeSave({ bag: [2] }));
     await tick();
-    expect(writes).toEqual([A.encodeSave({ loose: [2] })]);
+    expect(writes).toEqual([A.encodeSave({ bag: [2] })]);
     expect(queue.calls()).toBe(2);
   });
 });

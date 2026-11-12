@@ -155,19 +155,34 @@ describe('arena population and loot settlement', () => {
     expect(s.lootLog.map((r) => r.itemId)).toEqual(before);
   });
 
-  it('walking over a drop carries its authored item id to settlement', () => {
+  it('explicitly picking up a drop carries its authored item id to settlement', () => {
     const s = createState({ seed: 777 });
     s.skeletons[0]!.hp = 1;
     swingAtTarget(s, 0, NO_MODIFIERS);
     const expected = s.lootLog[0]!.itemId;
-    // Move the player onto the drop and let one frame resolve the pickup.
+    // A click on the drop is the ONLY thing that orders a pickup.
+    const drop = s.drops[0]!;
+    s.player.x = drop.x;
+    s.player.y = drop.y;
+    s.pickupTarget = drop.uid;
+    updateDrops(s, 1 / 60);
+    expect(s.drops).toHaveLength(0);
+    expect(s.carriedItems).toEqual([expected]);
+    expect(s.slotLootItemIds).toEqual([expected]);
+    expect(s.weaponSlots[0]).toBe('longsword');
+  });
+
+  it('walking past a drop without clicking never collects it', () => {
+    const s = createState({ seed: 777 });
+    s.skeletons[0]!.hp = 1;
+    swingAtTarget(s, 0, NO_MODIFIERS);
     const drop = s.drops[0]!;
     s.player.x = drop.x;
     s.player.y = drop.y;
     updateDrops(s, 1 / 60);
-    expect(s.drops).toHaveLength(0);
-    expect(s.carriedItems).toEqual([expected]);
-    expect(s.weaponSlots[0]).toBe('longsword');
+    expect(s.drops).toHaveLength(1);
+    expect(s.carriedItems).toHaveLength(0);
+    expect(s.weaponSlots[0]).toBeNull();
   });
 
   it('deployRun injects monster count, seed and borrowed weapons', () => {

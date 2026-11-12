@@ -16,11 +16,18 @@ engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas �
 | **1 / 2** | 切换当前使用的武器槽；只有激活槽那把参与攻击，空槽＝徒手 |
 | 空格 | 闪避，短暂无敌，带冷却与残影 |
 | R | 重新开始 |
+| **单击掉落物** | 下一条**显式拾取指令**：走过去、到达才拾取；**走过不自动捡**。优先装进空武器槽，两槽满则放进背包并占真实格子，背包也满则掉落物留在地上 |
 | **B / I** | 战斗中打开 / 关闭**局内背包**（不暂停战斗，ESC 关闭） |
 
-初始场上两只骷髅、**两个武器槽都空**。击杀骷髅掉落长剑，走近拾取自动装入第一个空槽；
-激活槽为长剑时攻击范围（140 → 170）与伤害（22 → 46）提升，两槽都满后再拾取折算 80 分。
+初始场上两只骷髅、**两个武器槽都空**。击杀骷髅掉落长剑，**必须短按点中掉落物**才下拾取指令，
+玩家走到 `<50px` 才结算；激活槽为长剑时攻击范围（140 → 170）与伤害（22 → 46）提升。
+**本游戏没有得分**：击杀 / 拾取都不加分，HUD 显示 `击杀 / 剩余骷髅 / 已拾取`。
 `game.state` 投影的 `equippedWeapon` 保留旧字段名，语义为「当前激活槽的武器」。
+
+两武器槽都满时，Engine Worker 看不到主窗口的背包格子，走跨堆协议：
+Worker 发 `pickup { uid, itemId, name }` → 主窗口 `shell-bridge.js` 调 `M.addToBag()`
+占真实 2×3 格 → 回 `pickupAck { uid, ok }` → `resolvePickupAck()` 决定移除掉落物或让它留在地上。
+`game.pack.ts` 用 `pickupSent` 防每帧重复发；**无论成败都必须回 ack**。
 
 ### 局外系统（独立页面）
 
@@ -28,13 +35,18 @@ engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas �
 
 | 项 | 规格 |
 |:--|:--|
+| 存放区域 | **只有三处**：身上穿戴（`equipped`）/ 背包（`bag`）/ 仓库（`stash`）。没有 `loose`，也没有「待分配物品」托盘 |
 | 背包 | 5 列 × 8 行（40 格） |
 | 仓库 | 16 列 × 10 行（160 格） |
 | 长剑占格 | 2 列 × 3 行（6 格），后续由 Excel 配置表提供 |
 | 装备栏 | 10 槽：2 武器（1/2 切换）+ 2 戒指 + 项链 + 护手 + 头盔 + 胸甲 + 裤子 + 靴子 |
+| 初始物品 | **三把长剑默认都在仓库** `(0,0) / (2,0) / (4,0)`，背包为空 |
 
-物品可在**待分配区 ↔ 背包 ↔ 仓库 ↔ 装备栏**任意拖动；绿色预览＝可放，红色＝越界或重叠；
-类型不匹配的装备槽会拒绝穿戴，槽位被占用时被换下的物品回到来源格位或待分配区。
+物品可在**背包 ↔ 仓库 ↔ 装备栏**任意拖动；绿色预览＝可放，红色＝越界或重叠；
+类型不匹配的装备槽会拒绝穿戴；换装时被换下的物品优先回到对方原格位，其次按
+bag → stash 找空格，**都放不下就整次换装拒绝**（绝不静默丢物品）。
+局内拾取用 `addToBag()` **只写背包、占真实格子**，无空位返回 `null` 且状态不变；
+`findFirstFit()` / `removeItem()` 只在搜打撤结算时用。
 规则唯一权威是 `assets/meta/inventory.ts`（纯 TS、零依赖），页面加载的
 `meta-ui/inventory.js` 由 `node scripts/build-meta-ui.mjs` 转译生成并已提交，
 因此逻辑不写两份；`node scripts/build-meta-ui.mjs --check` 防止两者漂移。
@@ -51,9 +63,10 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 | 阶段 | 规则 |
 |:--|:--|
 | 出征 | 顶栏填怪物数（默认 8，1–24），`buildLoadout()` 只借出两个武器槽（非武器装备留局外） |
-| 战斗 | `#fx-shell` 透明且指针穿透，点击直达 canvas；掉落按 `item.xlsx` / `loot_pool.xlsx` 权重结算 |
-| 通关 | 归还借出武器，战利品按 `背包 → 仓库 → 待分配区` 入库，永不静默丢弃 |
-| 阵亡 | **借出装备与本局战利品永久丢失**（标准搜打撤） |
+| 战斗 | `#fx-shell` 透明且指针穿透，点击直达 canvas；掉落按 `item.xlsx` / `loot_pool.xlsx` 权重结算；**拾取必须显式点击**，走过不捡 |
+| 结算数据 | `Settlement = { outcome, lootItemIds, carriedUids }`：`lootItemIds` 是局内装到武器槽的 authored id，`carriedUids` 是本局已进背包的掉落 uid |
+| 通关 | 归还借出武器；`lootItemIds` 用 `findFirstFit()` 按 `背包 → 仓库` 入库；本局已进背包的战利品原地保留；两处都满只进 `overflow` 报告，**没有待分配区兜底** |
+| 阵亡 | 借出装备永久丢失，并按 `carriedUids` 用 `removeItem()` **从背包精确删除本局战利品**（标准搜打撤） |
 
 `scripts/inject-shell.mjs` 把局外 UI 注入 `dist/index.html`；**`build` / `play` / `package` 都会重建 `dist/`**，
 所以注入必须是全流程最后一步（`verify-all.sh` 已放在 `package` 之后）。`scopeCss()` 把独立页 CSS
@@ -114,9 +127,10 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 
 单击按位置分流，优先级依次为：
 
-1. **掉落物**（点击点距掉落中心 ≤ 26 px）→ 视为地面点移，保证压在骷髅脚下的长剑仍可拾取。
+1. **掉落物**（点击点距掉落中心 ≤ 26 px）→ 写 `pickupTarget = drop.uid`，玩家走过去、
+   到达 `<50px` 才拾取；优先级最高是为了让压在骷髅脚下的长剑仍能被点中。**走过掉落物不会自动捡**。
 2. **存活敌人**（`|dx| ≤ 30` 且 `dy ∈ [-70, +12]`）→ 锁定该敌人，压入一条攻击指令。
-3. **地面** → 设定固定落点，走到后停下。
+3. **地面** → 设定固定落点，走到后停下，同时清空 `pickupTarget`。
 
 `GameState.moveMode` 三态决定人物是否移动：
 
@@ -138,15 +152,20 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 
 ## 打开游戏
 
-统一用**造化插件（Game Builder）预览**：插件的预览 / 上传走
-`package.json#scripts.package` → `scripts/package-with-shell.mjs`，
-产出含单页壳层（局外配装 → 出征 → 结算）与平台 bootstrap 的玩家产物，
-见 `docs/feedback.md` 第 18 / 19 条。
+统一用**造化插件（Game Builder）**，但**两条预览链路必须分清**：
+
+| 方式 | 走哪条链 | 结果 |
+|:--|:--|:--|
+| 普通 `preview_start` | `project build` 生成的 `dist/` | **只有战斗画面**：build 会重建 `dist/` 并抹掉构建后注入的单页壳层，且**不调用** `scripts.package` |
+| **`preview_reload(validate: true)` / 上传** | `package.json#scripts.package` → `scripts/package-with-shell.mjs` → `.game-builder/artifacts/forgeax-player/` | **完整单页**（局外配装 → 出征 → 结算），含单页壳层 + 平台 bootstrap，必需校验 5/5 |
+
+要看装备界面 / 完整流程，请用 `validate: true` 预览或上传后的玩家产物；普通预览只适合
+排障裸战斗页。产物链细节见 `docs/feedback.md` 第 18 / 19 条，两种预览的差异见最后一条。
 
 本地 `open-2.5d-game.bat` 启动器已删除，不再以 `http://localhost:4174/` 直连作为启动方式。
 `forgeax project preview` / 4174 仅保留作排障与单页壳层验收（`scripts/verify-shell.cjs`）：
 普通预览会重建 `dist/`、抹掉构建后注入的壳层，并往 `<head>` 注入平台 bootstrap，
-与 4174 抢同一目录，两条链路不要同时用。
+与 4174 抢同一目录，两条链路不要同时用。恢复 4174 壳层跑 `node scripts/inject-shell.mjs`。
 
 WebGPU 需硬件 adapter；软件 adapter（swiftshader）约 4 fps、硬件约 144 fps。
 IPv6 `[::1]` 回环与内置预览面板的已知问题见 `docs/feedback.md` 第 12–14 条。
@@ -160,7 +179,7 @@ IPv6 `[::1]` 回环与内置预览面板的已知问题见 `docs/feedback.md` �
 | `assets/combat/` | **最重**：技能交互、怪物、武器、玩家技能、数值运行时；天赋效果的**执行** | `CONTEXT.md` / `EXPERIENCE.md` | `vitest run assets/combat/__tests__` + `scripts/playthrough*.mjs` |
 | `assets/battle/` | 局内关卡：地图、触发器、关卡事件、单局目标、机关 | 同上 | `vitest run assets/battle/__tests__` |
 | `assets/meta/` | 局外：养成、格子背包/仓库/装备栏、外围关卡（战斗入口）、货币 | 同上 | `vitest run assets/meta/__tests__` + `scripts/verify-meta-ui.cjs` |
-| `meta-ui/` | 独立可视化页面（双击 `index.html` 可开）+ 4174 单页壳层 `shell.css` / `shell-bridge.js` | 逻辑归 `assets/meta/` | `verify-meta-ui.cjs`（独立页 13 条）、`verify-shell.cjs`（单页 16 条） |
+| `meta-ui/` | 独立可视化页面（双击 `index.html` 可开）+ 4174 单页壳层 `shell.css` / `shell-bridge.js` | 逻辑归 `assets/meta/` | `verify-meta-ui.cjs`（独立页 13 条）、`verify-shell.cjs`（单页 29 条） |
 | `assets/talent/` | 局外天赋养成与选择；只输出 `effectIds`，**不算效果数值** | 同上 | `vitest run assets/talent/__tests__` |
 | `assets/resource/` | 人工 Excel 数据表（唯一数值入口）→ `generated/*.ts`；`export_tables.py` 转换 | 同上 | `vitest run assets/resource/__tests__` + `export_tables.py --check` + `loot-report.mjs` |
 | `assets/shared/` | 常量与纯类型，所有模块可单向 import | — | 改动触发全量验收 |
@@ -182,7 +201,7 @@ IPv6 `[::1]` 回环与内置预览面板的已知问题见 `docs/feedback.md` �
 独立单测（combat 代码改动才额外跑浏览器 playthrough），并始终跑一次全局 `tsc`。
 命中 `shared/` / 引擎层 / 构建配置、或显式 `--all` 时自动转全量。
 **发版前 / 跨模块改动跑全量**：`bash scripts/verify-all.sh`，输出在 `artifacts/verify/summary.txt`；
-它强制单测 ≥ 72 条、`playthrough` ≥ 35 步、`resize` ≥ 4 步，并跑独立页面与 4174 单页浏览器验收
+它强制单测 ≥ 83 条（当前 **117**）、`playthrough` ≥ 35 步、`resize` ≥ 4 步，并跑独立页面与 4174 单页浏览器验收
 —— **删断言让测试变绿会直接失败**。注入 + 单页验收是全流程最后一步（build/play/package 都会重建 dist）。
 
 ```bash
@@ -191,7 +210,7 @@ python scripts/export_tables.py --check     # xlsx 与 generated/*.ts 同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000   # 真实 rollLoot 跑批
 node scripts/verify-meta-ui.cjs            # 局外页面 13 条真实拖放断言
 node scripts/inject-shell.mjs --check      # dist 单页注入块与源同步
-node scripts/verify-shell.cjs              # 4174 单页 16 条（出征/通关/阵亡/返回）
+node scripts/verify-shell.cjs              # 4174 单页 29 条（出征/通关/阵亡/返回/平台 lifecycle/KV 存档）
 pnpm exec forgeax project check --json
 pnpm test
 pnpm typecheck
@@ -212,19 +231,24 @@ pnpm exec forgeax project preview --port 4174 --json
 **任意视口下点击四个象限→人物同向行走**、**单击落点到达后停下且之后悬停不再启动**、
 **长按左键实时改落点并折返、松开后落点冻结且全程零攻击**、**点击远处敌人先接近、进入
 攻击距离才挥砍一次、旁观骷髅不掉血**、范围内二次点击立即挥砍、点击敌人击杀产出长剑、
-拾取装备、**按 1/2 切换武器槽（切到空槽＝徒手，切换不触发攻击）**、空格闪避、装备后近战、
-reload 重置。断言读 `game.state` read projection，不依赖画面识别；每个需求保存一张命名
-截图到 `artifacts/play/scripts/playthrough/`。
+**击杀后断言掉落物仍在地上且未自动装备**、**显式点击掉落物走过去才拾取**（含
+`'score' in equipped === false`）、**按 1/2 切换武器槽（切到空槽＝徒手，切换不触发攻击）**、
+空格闪避、装备后近战、reload 重置。断言读 `game.state` read projection，不依赖画面识别；
+每个需求保存一张命名截图到 `artifacts/play/scripts/playthrough/`。
 
 `scripts/verify-meta-ui.cjs` 是独立页面的浏览器验收：把 `index.html` 复制成临时页并注入
 真实 `DragEvent` 序列，用无头 Chrome `--dump-dom` 读回结果，断言 40/160 格渲染、10 装备槽、
-拖入背包、重叠与越界拒绝、背包↔仓库移动、穿戴、1/2 切换、类型不匹配穿戴拒绝共 13 条。
+**三把长剑起步在仓库且无待分配托盘**、从仓库拖入背包、重叠与越界拒绝、背包↔仓库移动、
+穿戴、1/2 切换、类型不匹配穿戴拒绝共 13 条。
 必须带独立 `--user-data-dir`，否则 Windows 复用日常 Chrome 会 dump 到执行前的 DOM。
 
 `scripts/verify-shell.cjs` 是 4174 单页壳层的浏览器验收：从 `dist/index.html` 抽出注入块，构造
 **只含壳层的最小骨架页**（不能保留整份引擎页——启动遮罩会在 window 捕获阶段拦截所有 `click`），
 用 `BroadcastChannel` 模拟 Engine Worker，断言出征借出武器、通关归还+战利品入库、二次出征、
-阵亡永久丢失、返回局外共 16 条。等消息用**条件轮询**而非固定延时，因为投递是排队 task。
+阵亡永久丢失、返回局外、平台身份 / KV 存档、平台 lifecycle 共 **29 条**。结算用例改用
+`slotLootItemIds` / `bagLootUids` 字段，损坏存档探针用 `{ bag: null }`；`snap()` 记 `noLoose`
+供取证但**未挂断言**，跨堆 `pickup` / `pickupAck` 目前只有单测覆盖（浏览器层是已知护栏缺口）。
+等消息用**条件轮询**而非固定延时，因为投递是排队 task。
 
 > 移动类步骤前会按 R 重开隔离敌人：骷髅会主动追击，大视口上耗时较长时可能走到地面落点
 > 上，把「点地面」误判成「点敌人」。点敌人时用投影里的实时骷髅坐标（身体中心 `y-30`），

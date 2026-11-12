@@ -9,7 +9,7 @@
 
 import { burst, setTarget } from './effects.ts';
 import {
-  clearAttackOrder, hitTestDrop, hitTestEnemy,
+  clearAttackOrder, dropAtPoint, hitTestEnemy,
 } from './attack.ts';
 import {
   CLICK_DRAG_PIXELS, CLICK_HOLD_SECONDS, type GameState, type StepInput,
@@ -28,6 +28,7 @@ export function classifyPointer(s: GameState, dt: number, input: StepInput): voi
     }
     if (input.pointerHeld && s.press.hold) {
       clearAttackOrder(s);
+      s.pickupTarget = null;
       if (input.mouse) setTarget(s, input.mouse.x, input.mouse.y);
       s.moveMode = 'follow';
     } else if (s.moveMode === 'follow') {
@@ -36,9 +37,12 @@ export function classifyPointer(s: GameState, dt: number, input: StepInput): voi
     }
     if (input.pointerUp) {
       if (!s.press.hold) {
-        const onDrop = hitTestDrop(s, s.press.x, s.press.y);
-        const enemy = onDrop ? null : hitTestEnemy(s, s.press.x, s.press.y);
+        const drop = dropAtPoint(s, s.press.x, s.press.y);
+        const enemy = drop ? null : hitTestEnemy(s, s.press.x, s.press.y);
         clearAttackOrder(s);
+        // A short click ON a drop is the ONLY thing that orders a pickup;
+        // walking past a drop never collects it.
+        s.pickupTarget = drop ? drop.uid : null;
         if (enemy !== null) {
           s.targetEnemy = enemy;
           s.attackOrder = true;
