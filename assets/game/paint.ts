@@ -190,7 +190,10 @@ function drawSword(
 
 function drawPlayer(g: Painter, s: GameState): void {
   const p = s.player;
-  const armed = activeWeapon(s) === 'longsword';
+  // `weaponSlots` holds authored item ids ("10006"), never the visual category,
+  // so comparing against 'longsword' made an equipped weapon still draw as
+  // bare hands (short grey sword). Any weapon in the active slot is armed.
+  const armed = activeWeapon(s) !== null;
   const bob = Math.sin(s.t * 9) * (Math.hypot(p.vx, p.vy) > 20 ? 2.5 : 1);
 
   for (const mark of p.trail) {
