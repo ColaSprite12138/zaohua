@@ -281,7 +281,7 @@ def build():
         'entityInstances': [],
     })
 
-    def entity(identifier, uid, col, row, width, height, px, fields=()):
+    def entity(identifier, uid, col, row, width, height, px, fields=(), tile=None):
         iid = str(uuid.uuid5(uuid.NAMESPACE_URL, f'arena/{identifier}/{col}/{row}/{len(fields)}'))
         return {
             '__grid': [col, row],
@@ -289,7 +289,8 @@ def build():
             '__pivot': [0.5, 1],
             '__smartColor': '#C084FC',
             '__tags': [],
-            '__tile': None,
+            # 实体的图块：LDtk 保存时会写上，缺了编辑器可能不画图集贴图。
+            '__tile': tile,
             'defUid': uid,
             'fieldInstances': list(fields),
             'height': height,
@@ -324,6 +325,8 @@ def build():
             rect_px['w'], rect_px['h'],
             [col * GRID + (rect_px.get('footprintW', 1) * GRID) // 2,
              (row + rect_px.get('footprintH', 1)) * GRID],
+            tile={'tilesetUid': tileset_uid, 'x': rect_px['x'], 'y': rect_px['y'],
+                  'w': rect_px['w'], 'h': rect_px['h']},
         ))
     props_inst = dict(base_layer)
     props_inst.update({

@@ -552,7 +552,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 96,
+        "w": 384,
+        "h": 352
+       },
        "defUid": 104,
        "fieldInstances": [],
        "height": 352,
@@ -575,7 +581,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -598,7 +610,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -621,7 +639,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -644,7 +668,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -667,7 +697,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -690,7 +726,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -713,7 +755,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -736,7 +784,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -759,7 +813,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -782,7 +842,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -805,7 +871,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -828,7 +900,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -851,7 +929,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -874,7 +958,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -897,7 +987,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -920,7 +1016,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -943,7 +1045,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -966,7 +1074,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -989,7 +1103,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1012,7 +1132,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1035,7 +1161,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1058,7 +1190,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1081,7 +1219,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1104,7 +1248,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1127,7 +1277,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1150,7 +1306,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1173,7 +1335,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1196,7 +1364,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1219,7 +1393,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1242,7 +1422,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1265,7 +1451,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1288,7 +1480,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1311,7 +1509,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1334,7 +1538,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 0,
+        "y": 0,
+        "w": 256,
+        "h": 96
+       },
        "defUid": 102,
        "fieldInstances": [],
        "height": 96,
@@ -1357,7 +1567,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 256,
+        "y": 0,
+        "w": 64,
+        "h": 64
+       },
        "defUid": 103,
        "fieldInstances": [],
        "height": 64,
@@ -1380,7 +1596,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 256,
+        "y": 0,
+        "w": 64,
+        "h": 64
+       },
        "defUid": 103,
        "fieldInstances": [],
        "height": 64,
@@ -1403,7 +1625,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 256,
+        "y": 0,
+        "w": 64,
+        "h": 64
+       },
        "defUid": 103,
        "fieldInstances": [],
        "height": 64,
@@ -1426,7 +1654,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 256,
+        "y": 0,
+        "w": 64,
+        "h": 64
+       },
        "defUid": 103,
        "fieldInstances": [],
        "height": 64,
@@ -1449,7 +1683,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 256,
+        "y": 0,
+        "w": 64,
+        "h": 64
+       },
        "defUid": 103,
        "fieldInstances": [],
        "height": 64,
@@ -1472,7 +1712,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 256,
+        "y": 0,
+        "w": 64,
+        "h": 64
+       },
        "defUid": 103,
        "fieldInstances": [],
        "height": 64,
@@ -1495,7 +1741,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 256,
+        "y": 0,
+        "w": 64,
+        "h": 64
+       },
        "defUid": 103,
        "fieldInstances": [],
        "height": 64,
@@ -1518,7 +1770,13 @@
        ],
        "__smartColor": "#C084FC",
        "__tags": [],
-       "__tile": null,
+       "__tile": {
+        "tilesetUid": 100,
+        "x": 256,
+        "y": 0,
+        "w": 64,
+        "h": 64
+       },
        "defUid": 103,
        "fieldInstances": [],
        "height": 64,
