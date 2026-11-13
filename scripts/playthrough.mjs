@@ -314,21 +314,36 @@ export default async function playthrough(play) {
     await play.screenshot('longsword-drop');
   });
 
-  await play.step('click the drop to walk over it and equip the main weapon', async () => {
+  await play.step('loot is picked up by clicking its highlighted name plate', async () => {
     const before = await play.state('game.state');
     assert.ok(before.dropAt, 'the drop must be on the ground before an explicit pickup');
+    assert.ok(before.dropLabel, 'the drop name plate must be projected');
     assert.equal(before.equippedWeapon, null, 'no weapon before the pickup click');
-    // A short click ON the drop is the only pickup order, then walking to it
-    // resolves the collection. Empty weapon slot wins over the bag.
-    await play.mouse.click([before.dropAt.x, before.dropAt.y]);
+
+    // The name plate is the click target: even with a monster standing on the
+    // drop the pointer must NOT become a sword there, it must promise loot.
+    await play.mouse.move([before.dropLabel.x, before.dropLabel.y]);
+    await play.wait(150);
+    const hovered = await play.state('game.state');
+    assert.ok(
+      hovered.hoverDrop !== null,
+      'hovering the name plate reports the drop under the cursor',
+    );
+    assert.equal(hovered.hoverEnemy, null, 'the name plate suppresses the sword cursor');
+    await play.screenshot('drop-name-plate-hover');
+
+    // A short click ON the plate is the only pickup order, then walking to the
+    // item resolves the collection. Empty weapon slot wins over the bag.
+    await play.mouse.click([before.dropLabel.x, before.dropLabel.y]);
     let equipped = null;
     for (let i = 0; i < 20 && equipped === null; i += 1) {
       await play.advance(0.4);
       const snapshot = await play.state('game.state');
       if (snapshot.equippedWeapon === 'longsword') equipped = snapshot;
     }
-    assert.ok(equipped, 'clicking the drop must walk over it and equip it');
+    assert.ok(equipped, 'clicking the name plate must walk over the drop and equip it');
     assert.equal(equipped.drops.length, 0, 'the picked-up drop leaves the ground');
+    assert.equal(equipped.hoverDrop, null, 'a collected drop leaves no hover target behind');
     assert.equal('score' in equipped, false, 'there is no score in this game');
     await play.screenshot('longsword-equipped');
   });

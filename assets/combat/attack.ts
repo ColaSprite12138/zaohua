@@ -9,7 +9,8 @@ import { rollLoot } from './loot.ts';
 import { weaponDamage } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
 import {
-  activeWeapon, MELEE_RANGE_ARMED, MELEE_RANGE_BARE, nextDropUid,
+  activeWeapon, DROP_MODEL_RADIUS, dropLabelRect, MELEE_RANGE_ARMED,
+  MELEE_RANGE_BARE, nextDropUid,
   type Drop, type GameState,
 } from './state.ts';
 
@@ -57,9 +58,40 @@ export function hitTestEnemy(s: GameState, x: number, y: number): number | null 
   return boxHit ?? nearHit;
 }
 
-/** Drops win the click over enemies so a sword under a skeleton stays lootable. */
+/**
+ * Which drop is under this point: its NAME PLATE box, or the small model.
+ *
+ * Loot used to win inside a 26px circle around the item, which meant that a
+ * monster standing on a drop could not be attacked at all -- every click near
+ * its feet walked over to loot instead. The plate is an explicit target the
+ * player aims at, so loot only wins where the player actually pointed at its
+ * name; the rest of the body stays an enemy click.
+ *
+ * Shared by the click and the hover feedback, like `hitTestEnemy`.
+ */
 export function dropAtPoint(s: GameState, x: number, y: number): Drop | null {
-  return s.drops.find((drop) => Math.hypot(x - drop.x, y - drop.y) <= 26) ?? null;
+  let plateHit: Drop | null = null;
+  let plateBest = Infinity;
+  let modelHit: Drop | null = null;
+  let modelBest = Infinity;
+  for (const drop of s.drops) {
+    const rect = dropLabelRect(drop);
+    if (x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h) {
+      // Overlapping plates: the one whose centre is nearest wins.
+      const d = Math.hypot(x - drop.x, y - (rect.y + rect.h / 2));
+      if (d < plateBest) {
+        plateBest = d;
+        plateHit = drop;
+      }
+      continue;
+    }
+    const d = Math.hypot(x - drop.x, y - drop.y);
+    if (d <= DROP_MODEL_RADIUS && d < modelBest) {
+      modelBest = d;
+      modelHit = drop;
+    }
+  }
+  return plateHit ?? modelHit;
 }
 
 export function hitTestDrop(s: GameState, x: number, y: number): boolean {

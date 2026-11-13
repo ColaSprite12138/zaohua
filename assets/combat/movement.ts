@@ -74,14 +74,19 @@ export function classifyPointer(s: GameState, input: StepInput): void {
         const drop = dropAtPoint(s, cx, cy);
         const enemy = drop ? null : hitTestEnemy(s, cx, cy);
         clearAttackOrder(s);
-        // A short click ON a drop is the ONLY thing that orders a pickup;
-        // walking past a drop never collects it.
+        // A short click ON a drop (its name plate or small model) is the ONLY
+        // thing that orders a pickup; walking past a drop never collects it.
         s.pickupTarget = drop ? drop.uid : null;
         if (enemy !== null) {
           s.targetEnemy = enemy;
           s.attackOrder = true;
           const sk = s.skeletons[enemy];
           if (sk) setTarget(s, sk.x, sk.y);
+        } else if (drop) {
+          // Walk to the ITEM, not to the plate: the plate floats above the
+          // ground, so aiming at its far edge must not send the player to an
+          // unwalkable spot behind the drop.
+          setTarget(s, drop.x, drop.y);
         } else {
           setTarget(s, cx, cy);
         }

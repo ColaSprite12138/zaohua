@@ -108,6 +108,37 @@ export interface Drop {
   monsterId?: string;
 }
 
+/**
+ * Ground loot is a TINY model plus a name plate, and the plate is the click
+ * target. The old 26px radius around the item swallowed the whole monster
+ * standing on it: a player aiming at the skeleton kept ordering a pickup.
+ * Now a click only loots when it lands on the plate (or the small model), so
+ * the same click on the body still attacks.
+ */
+export const DROP_MODEL_RADIUS = 12;
+/** Top of the tiny model above the ground point; the plate floats above it. */
+export const DROP_MODEL_TOP = -26;
+export const DROP_LABEL_H = 20;
+export const DROP_LABEL_GAP = 8;
+
+/** Display name of a drop; unlabelled debug drops still read as a sword. */
+export function dropLabelName(drop: Drop): string {
+  return drop.name !== undefined && drop.name.length > 0 ? drop.name : '长剑';
+}
+
+/**
+ * The plate's WORLD-space box. `attack.ts` uses it for hit testing and
+ * `paint.ts` for drawing, so the visible highlight and the clickable area can
+ * never disagree. Width is estimated from the name (CJK glyphs are ~1em at
+ * 12px) because the Engine Worker has no text-measuring layout authority here.
+ */
+export function dropLabelRect(drop: Drop): { x: number; y: number; w: number; h: number } {
+  const name = dropLabelName(drop);
+  const w = Math.max(44, Array.from(name).length * 13 + 20);
+  const bottom = drop.y + DROP_MODEL_TOP - DROP_LABEL_GAP;
+  return { x: drop.x - w / 2, y: bottom - DROP_LABEL_H, w, h: DROP_LABEL_H };
+}
+
 /** One weighted loot roll, recorded for the run report and settlement. */
 export interface LootRecord {
   monsterId: string;
@@ -158,6 +189,12 @@ export interface GameState {
    * classification.
    */
   hoverEnemy: number | null;
+  /**
+   * Drop uid whose NAME PLATE (or tiny model) is under the free cursor. When
+   * set, `hoverEnemy` is NULL: the plate wins the pointer so the page shows the
+   * move cursor, not the sword, even though a monster stands on the same spot.
+   */
+  hoverDrop: string | null;
   attackOrder: boolean;
   /**
    * The button currently down. `vx/vy` are the press point in VIEW space (used
@@ -232,6 +269,7 @@ export function createState(config: RunConfig = {}): GameState {
     moveMode: 'idle',
     targetEnemy: null,
     hoverEnemy: null,
+    hoverDrop: null,
     attackOrder: false,
     press: null,
     skeletons: [],
@@ -307,6 +345,7 @@ export function reset(s: GameState): void {
   s.moveMode = 'idle';
   s.targetEnemy = null;
   s.hoverEnemy = null;
+  s.hoverDrop = null;
   s.attackOrder = false;
   s.press = null;
   const p = s.player;

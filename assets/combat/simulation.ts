@@ -6,7 +6,7 @@
  */
 
 import { VIEW_H, VIEW_W } from '../shared/constants.ts';
-import { hitTestEnemy, resolveAttackOrder } from './attack.ts';
+import { dropAtPoint, hitTestEnemy, resolveAttackOrder } from './attack.ts';
 import { updateSkeletons } from './enemies.ts';
 import { tickParticles, tickToast } from './effects.ts';
 import {
@@ -18,7 +18,7 @@ import { say } from './effects.ts';
 import { makeRunInventory } from './run-inventory.ts';
 import type { RunLoadout } from '../meta/inventory.ts';
 import {
-  activeWeapon, createState, reset, setArena, syncWeaponSlots,
+  activeWeapon, createState, dropLabelRect, reset, setArena, syncWeaponSlots,
   type GameState, type StepInput,
 } from './state.ts';
 import { checkCleared, switchWeaponSlot, updateDrops } from './weapons.ts';
@@ -71,10 +71,18 @@ export function step(
   checkCleared(s);
   tickParticles(s, dt);
   // Hover feedback LAST: it must describe the frame that is about to be
-  // painted, using the very same hit test a click would use.
-  s.hoverEnemy = s.cleared || input.pointerOnHud || input.mouse === undefined
+  // painted, using the very same hit test a click would use. Loot's name plate
+  // wins the pointer over an enemy standing on the same spot -- that is what
+  // turns the sword cursor back into the move cursor and promises a pickup.
+  const noHover = s.cleared || input.pointerOnHud || input.mouse === undefined;
+  const pointer = input.mouse;
+  const hoveredDrop = pointer !== undefined && !noHover
+    ? dropAtPoint(s, pointer.x, pointer.y)
+    : null;
+  s.hoverDrop = hoveredDrop ? hoveredDrop.uid : null;
+  s.hoverEnemy = pointer === undefined || noHover || hoveredDrop !== null
     ? null
-    : hitTestEnemy(s, input.mouse.x, input.mouse.y);
+    : hitTestEnemy(s, pointer.x, pointer.y);
   // Camera is the single authority for input and painting. Updating it AFTER
   // movement keeps this frame's screen->world conversion (done by the engine
   // before step) consistent with what paint() will draw.
@@ -128,6 +136,15 @@ export function projection(s: GameState) {
   const cam = s.camera;
   const scr = (x: number, y: number) => worldToScreen(cam, x, y);
   const dropScreen = first ? scr(first.x, first.y) : null;
+  // Centre of the first drop's NAME PLATE. Acceptance scripts click the plate
+  // (not the item) so the "loot is an explicit, labelled click" contract is
+  // what actually gets exercised.
+  const labelScreen = first
+    ? (() => {
+      const r = dropLabelRect(first);
+      return scr(r.x + r.w / 2, r.y + r.h / 2);
+    })()
+    : null;
   const playerScreen = scr(s.player.x, s.player.y);
   const targetScreen = scr(s.target.x, s.target.y);
   return {
@@ -144,8 +161,11 @@ export function projection(s: GameState) {
     attackOrder: s.attackOrder,
     /** Enemy under the free cursor; drives the sword cursor and the hover ring. */
     hoverEnemy: s.hoverEnemy,
+    /** Drop uid under the free cursor (name plate wins over the enemy). */
+    hoverDrop: s.hoverDrop,
     drops: s.drops.map((drop) => drop.kind),
     dropAt: dropScreen ? { x: dropScreen.x / VIEW_W, y: dropScreen.y / VIEW_H } : null,
+    dropLabel: labelScreen ? { x: labelScreen.x / VIEW_W, y: labelScreen.y / VIEW_H } : null,
     // Legacy field names kept for the 35-step playthrough: they report the
     // visual 'longsword' CATEGORY. The authored ids live in `weaponDefIds`.
     equippedWeapon: activeWeapon(s) !== null ? 'longsword' : null,
@@ -201,7 +221,11 @@ export { activeWeapon, createState, reset, setArena, syncWeaponSlots };
 export type {
   Drop, GameState, MoveMode, Particle, Player, Skeleton, StepInput,
 } from './state.ts';
-export { CLICK_DRAG_PIXELS, MELEE_RANGE_ARMED, MELEE_RANGE_BARE } from './state.ts';
+export {
+  CLICK_DRAG_PIXELS, DROP_LABEL_GAP, DROP_LABEL_H, DROP_MODEL_RADIUS,
+  DROP_MODEL_TOP, dropLabelName, dropLabelRect, MELEE_RANGE_ARMED,
+  MELEE_RANGE_BARE,
+} from './state.ts';
 export type { ArenaMap } from './world.ts';
 export type { CombatModifiers } from './modifiers.ts';
 export { NO_MODIFIERS } from './modifiers.ts';

@@ -600,3 +600,20 @@
 - Evidence: `@forgeax/engine/node_modules/@forgeax/engine-app/dist/game-context.d.ts` 的 GameHost 接口注释（"Source-only realms omit it."）；本工程改用 Worker 发消息、主窗口设置样式
 - Status: workaround
 - Workaround: 光标归 presentation realm 管。Engine Worker 只在悬停目标变化时经既有的 `BroadcastChannel('forgeax-arena-run')` 发 `{ type:'hoverEnemy', index }`，主窗口 `meta-ui/shell-bridge.js` 设 `#app.style.cursor`（内联 SVG 长剑 data-URI，热点在剑尖），悬停消失 / 退出战斗时复位。逐帧发消息不必要，也不需要新增引擎能力
+
+### 2026-11-14 — 掉落物命中区改成「名字牌」，拾取优先不再吃掉怪物
+
+- Scope: combat（点击分流）+ presentation（光标语义）
+- 现象（用户反馈）：怪物和掉落物重叠时，左键永远先捡东西，打不到那只怪。
+- 根因：`dropAtPoint()` 用「点击点距掉落中心 ≤26px」判定，而怪物躯干盒只有
+  `|dx| ≤ 30`、`y ∈ [-70,+12]`，脚边完全被这个圆覆盖 —— 优先级绑的是**猜测半径**，
+  不是玩家真正指到的对象。
+- 决策：地面上只画一个 **12×35px 小模型**；可点区域主要是浮在它上方的**名字牌**
+  （`state.ts::dropLabelRect()`，底边 `drop.y-34`、高 20、按名字字数估宽）。名字牌单独一层
+  画在所有身体之后，怪物压上去也看得见；悬停时 `hoverDrop` = 该 uid、`hoverEnemy` = null，
+  主窗口沿用既有的 `{type:'hoverEnemy', index:null}` 把长剑光标复位成移动指针 —— **不新增
+  消息类型**，跨堆契约不变。
+- 副作用与约束：牌带 `y ∈ [-54,-34]` 刚好落在躯干中心 `-30` 之上，所以「点胸口攻击」与
+  「点名字拾取」不会互相抢；点中牌子时落点仍取 `drop.x/drop.y`（牌面浮空，不能当落点）。
+- Evidence: `movement.test.ts` +3 条（快照 92 条 combat，全项目 154 条）；
+  `playthrough.mjs` 拾取步骤改为悬停 + 点击 `dropLabel`，断言 `hoverDrop !== null && hoverEnemy === null`。

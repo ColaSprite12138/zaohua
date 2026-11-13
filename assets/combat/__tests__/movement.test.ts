@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { hitTestEnemy } from '../attack.ts';
 import {
   createState,
+  dropLabelRect,
   step,
   type GameState,
   type StepInput,
@@ -211,6 +212,73 @@ describe('targeted melee contract', () => {
     expect(s.attackOrder).toBe(false);
     expect(s.targetEnemy).toBe(null);
     expect(s.attacks).toBe(0);
+  });
+});
+
+describe('ground loot: tiny model + clickable name plate', () => {
+  /**
+   * The bug this guards: loot used to claim a 26px circle around the item, so a
+   * monster standing on a drop could not be attacked -- every click near its
+   * feet ordered a pickup. Loot now owns only its name plate (+ the small
+   * model), which is what the player deliberately aims at.
+   */
+  it('hovering a drop name plate reports the drop and suppresses the sword', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    // Inside the monster's hold range, so it does not walk off during the test.
+    s.player.x = sk.x - 30;
+    s.player.y = sk.y;
+    s.drops.push({
+      uid: 'plate-hover', x: sk.x, y: sk.y, kind: 'longsword', t: 0, name: '霜之哀伤',
+    });
+    const rect = dropLabelRect(s.drops[0]!);
+
+    step(s, 1 / 60, input({ mouse: { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 } }));
+    expect(s.hoverDrop).toBe('plate-hover');
+    expect(s.hoverEnemy).toBe(null);
+
+    // The same monster a few pixels above the plate is still a sword target.
+    const live = s.skeletons[0]!;
+    step(s, 1 / 60, input({ mouse: { x: live.x, y: live.y - 30 } }));
+    expect(s.hoverDrop).toBe(null);
+    expect(s.hoverEnemy).toBe(0);
+  });
+
+  it('clicking the name plate loots even with a monster standing on the drop', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    // Out of pickup range (50px): the order must survive the release frame.
+    s.player.x = sk.x - 80;
+    s.player.y = sk.y;
+    const dropX = sk.x;
+    const dropY = sk.y;
+    s.drops.push({
+      uid: 'plate-click', x: dropX, y: dropY, kind: 'longsword', t: 0, name: '霜之哀伤',
+    });
+    const rect = dropLabelRect(s.drops[0]!);
+
+    click(s, rect.x + rect.w / 2, rect.y + rect.h / 2);
+    expect(s.attackOrder).toBe(false);
+    expect(s.attacks).toBe(0);
+    expect(s.pickupTarget).toBe('plate-click');
+    expect(s.moveMode).toBe('point');
+    // The waypoint is the ITEM, not the plate floating 40px above it.
+    expect(s.target.x).toBeCloseTo(dropX, 5);
+    expect(s.target.y).toBeCloseTo(dropY, 5);
+  });
+
+  it('a click beside the tiny model is a plain move, not a pickup', () => {
+    const s = createState();
+    const dropX = s.player.x + 200;
+    const dropY = s.player.y;
+    s.drops.push({ uid: 'plate-far', x: dropX, y: dropY, kind: 'longsword', t: 0, name: '巨剑' });
+
+    // 40px away: outside the model radius, outside the plate, no monster near.
+    click(s, dropX + 40, dropY);
+    expect(s.pickupTarget).toBe(null);
+    expect(s.attacks).toBe(0);
+    expect(s.moveMode).toBe('point');
+    expect(s.target.x).toBe(dropX + 40);
   });
 });
 

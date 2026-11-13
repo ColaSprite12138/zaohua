@@ -26,6 +26,12 @@ export {
   syncWeaponSlots,
   NO_MODIFIERS,
   CLICK_DRAG_PIXELS,
+  DROP_LABEL_GAP,
+  DROP_LABEL_H,
+  DROP_MODEL_RADIUS,
+  DROP_MODEL_TOP,
+  dropLabelName,
+  dropLabelRect,
   MELEE_RANGE_BARE,
   MELEE_RANGE_ARMED,
 } from '../combat/simulation.ts';

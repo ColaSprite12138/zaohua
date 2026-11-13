@@ -2,6 +2,9 @@
 
 import {
   activeWeapon,
+  DROP_MODEL_TOP,
+  dropLabelName,
+  dropLabelRect,
   MINIMAP,
   VIEW_H,
   VIEW_W,
@@ -358,19 +361,120 @@ function drawSkeleton(g: Painter, sk: Skeleton): void {
   g.fill();
 }
 
-function drawDrop(g: Painter, drop: Drop): void {
-  const float = Math.sin(drop.t * 3) * 5;
-  shadow(g, drop.x, drop.y + 2, 20, 7, 0.35);
-  const halo = g.createRadialGradient(drop.x, drop.y - 26 + float, 2, drop.x, drop.y - 26 + float, 58);
-  halo.addColorStop(0, 'rgba(255,209,102,0.55)');
+/**
+ * Authored quality → name colour. The plate is the only place the item's
+ * identity is readable, so the colour has to come from the drop, not from a
+ * hard-coded sword label.
+ */
+const QUALITY_COLOR: Record<string, string> = {
+  白: '#e8eef5',
+  绿: '#4ade80',
+  蓝: '#60a5fa',
+  紫: '#c084fc',
+  橙: '#fb923c',
+};
+
+function qualityColor(quality?: string): string {
+  return quality !== undefined && QUALITY_COLOR[quality] !== undefined
+    ? QUALITY_COLOR[quality]!
+    : '#ffd166';
+}
+
+/**
+ * Tiny ground model: a ~12x35px sword. It is deliberately much smaller than
+ * the old 46px blade + 68px plate so it no longer covers the monster standing
+ * on it; the clickable identity of a drop is its NAME PLATE above.
+ */
+function drawDropModel(g: Painter, x: number, y: number): void {
+  g.save();
+  g.translate(x, y);
+  g.rotate(-0.42);
+  g.fillStyle = '#f6e2a8';
+  g.beginPath();
+  g.moveTo(-2.4, -22);
+  g.lineTo(0, -28);
+  g.lineTo(2.4, -22);
+  g.lineTo(2, -8);
+  g.lineTo(-2, -8);
+  g.closePath();
+  g.fill();
+  g.fillStyle = '#c9922f';
+  g.fillRect(-6, -8, 12, 3);
+  g.fillStyle = '#8a5a2b';
+  g.fillRect(-1.6, -5, 3.2, 9);
+  g.fillStyle = '#e0b25a';
+  g.beginPath();
+  g.arc(0, 5, 2, 0, Math.PI * 2);
+  g.fill();
+  g.restore();
+}
+
+function drawDrop(g: Painter, drop: Drop, hovered: boolean): void {
+  const float = Math.sin(drop.t * 3) * 3;
+  const color = qualityColor(drop.quality);
+  shadow(g, drop.x, drop.y + 2, hovered ? 13 : 9, hovered ? 5 : 3.5, 0.32);
+  // Soft aura instead of the old 120px halo block: visible on dark ground,
+  // small enough that it does not read as an object.
+  const cy = drop.y + DROP_MODEL_TOP / 2 + float;
+  const halo = g.createRadialGradient(drop.x, cy, 2, drop.x, cy, hovered ? 34 : 26);
+  halo.addColorStop(0, hovered ? 'rgba(255,255,255,0.42)' : 'rgba(255,209,102,0.34)');
   halo.addColorStop(1, 'rgba(255,209,102,0)');
   g.fillStyle = halo;
-  g.fillRect(drop.x - 60, drop.y - 90 + float, 120, 120);
-  drawSword(g, drop.x, drop.y - 12 + float, -0.42, 46, true);
-  g.fillStyle = 'rgba(10,18,26,0.82)';
-  roundRect(g, drop.x - 34, drop.y + 12, 68, 20, 8);
-  g.fill();
-  text(g, '长剑', drop.x, drop.y + 22, 12, '#ffd166', 'center', '700');
+  g.fillRect(drop.x - 36, cy - 36, 72, 72);
+  drawDropModel(g, drop.x, drop.y + 2 + float);
+  if (hovered) {
+    // Ground ring under the model: confirms "this one is the pickup target".
+    g.save();
+    g.strokeStyle = color;
+    g.globalAlpha = 0.85;
+    g.lineWidth = 1.6;
+    g.beginPath();
+    g.ellipse(drop.x, drop.y + 2, 17, 7, 0, 0, Math.PI * 2);
+    g.stroke();
+    g.restore();
+  }
+}
+
+/**
+ * Name plates are drawn AFTER every body, so a monster standing on the loot
+ * can never hide the name the player is meant to click. This is presentation
+ * only -- `dropAtPoint()` uses the very same box for hit testing.
+ */
+function drawDropLabels(g: Painter, s: GameState): void {
+  for (const drop of s.drops) {
+    const rect = dropLabelRect(drop);
+    const active = s.hoverDrop === drop.uid;
+    const color = qualityColor(drop.quality);
+    const cx = rect.x + rect.w / 2;
+
+    g.save();
+    // Connector notch, so the plate visibly belongs to the item under it.
+    g.globalAlpha = active ? 0.95 : 0.6;
+    g.fillStyle = active ? '#ffffff' : 'rgba(160,182,200,0.9)';
+    g.beginPath();
+    g.moveTo(cx - 3, rect.y + rect.h);
+    g.lineTo(cx + 3, rect.y + rect.h);
+    g.lineTo(cx, rect.y + rect.h + 4);
+    g.closePath();
+    g.fill();
+
+    g.globalAlpha = active ? 1 : 0.9;
+    if (active) {
+      g.shadowColor = color;
+      g.shadowBlur = 12;
+    }
+    g.fillStyle = active ? 'rgba(26,38,50,0.97)' : 'rgba(8,16,24,0.82)';
+    roundRect(g, rect.x, rect.y, rect.w, rect.h, rect.h / 2);
+    g.fill();
+    g.shadowBlur = 0;
+    g.strokeStyle = active ? '#ffffff' : color;
+    g.lineWidth = active ? 2 : 1;
+    roundRect(g, rect.x, rect.y, rect.w, rect.h, rect.h / 2);
+    g.stroke();
+    text(g, dropLabelName(drop), cx, rect.y + rect.h / 2 + 0.5, 12,
+      active ? '#ffffff' : color, 'center', '700');
+    g.restore();
+  }
 }
 
 function drawParticles(g: Painter, s: GameState): void {
@@ -618,11 +722,15 @@ export function paint(g: Painter, s: GameState): void {
   // Depth sort: everything on the ground plane shares one y order.
   const items: { y: number; draw: () => void }[] = [];
   for (const sk of s.skeletons) items.push({ y: sk.y, draw: () => drawSkeleton(g, sk) });
-  for (const drop of s.drops) items.push({ y: drop.y - 1, draw: () => drawDrop(g, drop) });
+  for (const drop of s.drops) {
+    items.push({ y: drop.y - 1, draw: () => drawDrop(g, drop, s.hoverDrop === drop.uid) });
+  }
   items.push({ y: s.player.y, draw: () => drawPlayer(g, s) });
   items.sort((a, b) => a.y - b.y);
   for (const item of items) item.draw();
 
+  // Name plates last: a body can cover the tiny model, never the clickable name.
+  drawDropLabels(g, s);
   drawParticles(g, s);
   g.restore();
   hud(g, s);

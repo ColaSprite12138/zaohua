@@ -138,7 +138,9 @@
   // The arena runs in an Engine Worker: that realm has no `document`, so it
   // cannot style the page cursor. It broadcasts which enemy (if any) is under
   // the free cursor and THIS window owns the CSS. Sword = "this click will
-  // attack that one"; default = "this click is a move / nothing".
+  // attack that one"; default = "this click is a move". A drop's name plate
+  // wins the pointer over the monster standing on it, so the Worker reports
+  // index:null there on purpose -- loot must never promise an attack.
   var SWORD_SVG =
     '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">' +
     '<path d="M4 4L19.5 19.5" stroke="#08131c" stroke-width="6.5" stroke-linecap="round"/>' +
