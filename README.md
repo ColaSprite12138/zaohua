@@ -212,14 +212,16 @@ IPv6 `[::1]` 回环与内置预览面板的已知问题见 `docs/feedback.md` �
 
 依赖方向单向：`shared/` ← 各模块；`talent/` --(effectIds)--> `combat/modifiers.ts`。
 `battle/` `meta/` `talent/` **不得 import `combat/` 内部文件**。
-文档权威顺序：`HANDOFF.md` > 模块 `CONTEXT.md` > 本 README / `docs/feedback.md`。
+文档分工（2026-11-14 拆分后）：**模块功能契约的正本在 `assets/<模块>/CONTEXT.md`**；
+`HANDOFF.md` 只管**跨模块红线 + 保护清单 + 验收基线 + 陷阱 + 回滚**；
+本 README 保留操作表、点击语义叙事与坐标映射原理；`docs/feedback.md` 记跨模块踩坑与决策。
 `EXPERIENCE.md` 是各模块独立经验库，踩坑按模块追加，不混进全局 feedback 编号。
 
 > 命名红线：`battle/` ＝**单局内**关卡，`meta/` ＝**跨局**节点图 / 战斗入口。两者都叫「关卡」，先分清再动手。
 
 ## 运行与验收
 
-新会话接手工程时先读 [`HANDOFF.md`](HANDOFF.md)（当前功能契约与保护清单），再按改动模块读
+新会话接手工程时先读 [`HANDOFF.md`](HANDOFF.md)（跨模块红线、保护清单与验收基线），再按改动模块读
 对应的 `assets/<模块>/CONTEXT.md`。
 
 **日常改动跑增量验收**：`bash scripts/verify.sh` —— 从 git 改动推断受影响模块，只跑该模块的

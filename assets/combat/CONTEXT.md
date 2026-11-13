@@ -1,16 +1,16 @@
 # CONTEXT — combat（战斗体验，最重模块）
 
-> **2026-11-13 续三修订（权威）**：`GameState.runInventory` 是 **Engine Worker 独占的局内 `InventoryState`**
-> （`bag` + 10 个 `equipped` 槽，`stash` 恒空）。`assets/combat/run-inventory.ts` 是局内规则入口，
-> 它把 `assets/meta/inventory.ts` 当作**零 import 的无状态规则库** import（依赖方向 combat -> meta 的**规则库**，
-> 仍然单向；meta 不 import combat，也不共享状态对象）。
-> 本文下方含 `pendingPickup` / `pickupAck` / `weaponLootEvents` / `runBagUids` / `slotLootItemIds` /
-> `armedWeapons` 的段落均为**续三之前的历史契约**，已作废，以 `HANDOFF.md`「当前功能契约」为准。
-> 现行：拾取在 Worker 堆内由 `collectDrop()` 完成；`weaponSlots` 存真实 `defId`，伤害取 `weapon.xlsx` 中值；
-> `projection().equippedWeapon` / `weaponSlots` 仍报视觉类别，`weaponDefIds` 报真实 id。
+> **2026-11-14：本文件是 combat 功能契约的正本。** 原文在 `HANDOFF.md`「当前功能契约」，
+> 该节已按模块拆分迁入本文件（一处一版，HANDOFF 不再保留副本，只留跨模块红线与验收基线）。
+> 跨堆边界：`GameState.runInventory` 是 **Engine Worker 独占的局内 `InventoryState`**
+> （`bag` + 10 个 `equipped` 槽，`stash` 恒空）；`assets/combat/run-inventory.ts` 是局内规则入口，
+> 它把 `assets/meta/inventory.ts` 当作**零 import 的无状态规则库** import（依赖单向；meta 不 import
+> combat，也不共享状态对象）。局外那一份见 `assets/meta/CONTEXT.md`。
+> `weaponSlots` 存真实 authored `defId`，伤害取 `weapon.xlsx` 中值；`projection().equippedWeapon` /
+> `weaponSlots` 报视觉类别（`'longsword'`），`weaponDefIds` 报真实 id。
 
-> 权威顺序：`HANDOFF.md` > 本文件 > `README.md` / `docs/feedback.md`。冲突时以 HANDOFF 为准。
-> 改了本模块契约 → 同步 `HANDOFF.md`「当前功能契约」，并把踩坑追加到本目录 `EXPERIENCE.md`。
+> 权威顺序：本文件 > `README.md` / `docs/feedback.md`；**跨模块红线与验收基线以 `HANDOFF.md` 为准**。
+> 改了本模块契约 → 改本文件 + 追加本目录 `EXPERIENCE.md`；跨模块的才写 `docs/feedback.md`。
 
 ## 职责
 
@@ -23,72 +23,73 @@
 关卡地图 / 触发器 / 单局目标 / 机关（`battle/`）；局外养成 / 背包 / 货币 / 战斗入口（`meta/`）；
 天赋树与选择（`talent/`）；人工数据表（`resource/`）；引擎装配与渲染（`game/`）。
 
-## 当前功能契约（改这里就是覆写已有功能）
+## 功能契约（正文）
+
+### 输入与点击语义
 
 | 输入 | 行为 |
 |:--|:--|
-| 悬停 | 不产生移动指令，人物静止；**悬停敌人时 `hoverEnemy` = 该敌人下标**（光标变剑 + 脚下白环），与点击共用 `hitTestEnemy()` |
-| 单击地面 | 只设定落点、走过去停下；`attacks` 不增加 |
-| 单击敌人 | 锁定该敌人 + 压入一条攻击指令；距离不够先接近，**进距离才挥砍一次，只扣这一只的血** |
-| 长按左键 | 落点实时跟随光标，人物持续前进；**不攻击**；松开按最后落点走完停下 |
-| **1 / 2** | 切换当前武器槽；只有激活槽的武器参与攻击，空槽＝徒手 |
-| 空格 / R | 闪避（短暂无敌）/ 重开 |
+| 悬停鼠标 | 完全不产生指令；**悬停在存活敌人身上时光标变长剑、该骷髅脚下亮白环**（指针在小地图上时由 `pointerOnHud` 抑制） |
+| 单击地面 | 设落点走过去停下，`attacks` 不增加 |
+| 单击敌人 | 锁定该敌人 + 压入一条攻击指令；距离不够先接近，**进距离才挥砍一次**，只扣这一只 |
+| 长按左键（拖动） | 落点实时跟随光标；松开按最后落点走完停下；**全程不攻击** |
+| 单击掉落物 | **显式拾取指令**：走过去、到达 `<50px` 才拾取（走过不拾取）；优先空武器槽 → 局内背包占 2×3 格 → 都不行则留在地上 |
+| **1 / 2** | 切换激活武器槽；只有激活槽参与攻击，空槽＝徒手（22 伤害 / 140 范围）；有武器取 `weapon.xlsx` 中值，无表行回落 46 / 170 |
+| 空格 / R | 闪避（无敌 + 冷却 + 残影）/ 重开 |
 
-短按判定**只看位移**：按下到释放的指针位移 `<12px` 即算单击（**与按住多久无关**），
-在**释放沿**结算、**取按下那一刻的世界点**；位移按**屏幕空间**（`mouse − camera`）超过 12px 才算长按跟随。
-点击分流优先级 **掉落物 → 存活敌人身体框（含 46px 躯干容错）→ 地面**。
-`movement.ts::resolveBodyOverlap()` 每帧在移动与击退之后跑：玩家↔怪物、怪物↔怪物按脚印半径
-12 / 10 软推开，位移过 `canStand()`，**不会重叠也不会被挤进墙**。
-攻击**不画扇形指示区**（`Player.attackAim` 已删），反馈只有挥剑动作 + 命中粒子。
-**本游戏没有得分**：`GameState` 里没有 `score`，击杀 / 拾取都不加分，HUD 只显示
-`击杀 / 剩余骷髅 / 已拾取`；`projection()` 与结算板同样不得出现 score。
+单击判定**只看位移，不看时长**：屏幕空间（`mouse − camera`）位移 `< 12` 逻辑像素即算单击，
+在**释放沿**结算、结算点取**按下那一刻的世界点**（`press.wx/wy`）；位移 `> 12` 才算长按跟随。
+分流优先级：**掉落物（≤26px）→ 存活敌人身体盒（`abs(dx) ≤ 30`、`y ∈ [-70,+12]`，盒外 46px 躯干容错）→ 地面**。
 
-**双武器槽 + 显式拾取（2026-11-12 改造）**：
-`GameState.weaponSlots: [WeaponId|null, WeaponId|null]` + `activeWeaponSlot: 0|1`，
-`activeWeapon(s)` 是唯一取值入口。拾取**不是走过即拿**：只有短按且点中掉落物时
-`movement.ts::classifyPointer()` 才写 `s.pickupTarget = drop.uid`（点地面 / 点敌人 /
-长按跟随都会清空它），`weapons.ts::updateDrops()` 要求 `pickupTarget !== null`、
-`updateDrops()` 在 `pickupTarget !== null` 且玩家距掉落物 `<50px` 时结算 —— **走过掉落物绝不自动拾取**，全部写入 Worker 自己的 `runInventory`。
-有空武器槽 → `collectDrop()` 写 `runInventory.equipped`；两槽满 → `addToBag()` 占局内背包真实格子；满仓 → 掉落物留地上。`syncWeaponSlots()` 从 `equipped[0/1]` 重算武器槽。
-`weaponLootEvents { uid, itemId, slot }`（供 `game.pack.ts` 同步主窗口角色面板）；
-没有跨堆 `pickup` 请求，也没有 ack 去重；Worker 每帧比较 `snapshotRun()` 签名，变化才发 `runState`。
-`1/2` 在 `game.pack.ts` 读 `justPressedCode('Digit1'|'Digit2')`，
-经 `StepInput.switchWeapon` 传入 `step()`。
-`projection.equippedWeapon` **保留旧字段名**，改为返回 `activeWeapon(s)`（兼容既有断言）；
-新增 `runInventory` / `weaponSlots`（真实 `defId`）/ `activeWeaponSlot` / `pickupTarget`；
-删除 `pendingPickup` / `runBagUids` / `slotLootItemIds` / `weaponLootEvents`。`reset()` 保留 `runInventory`（本局重开不丢带入装备），只重建怪物 / 掉落 / 计时器。
-`game.pack.ts` 每帧 drain 一次转成 `weaponLoot` 消息。`reset()` / `setArena()` 清空两槽、事件队列、
-拾取状态与本局 loot 记录并回到槽 1。
+### 指针反馈与身体碰撞
 
-**跨堆拾取协议（Worker ↔ 主窗口）**：Worker 与主窗口是独立 JS 堆，Worker 看不到
-`runInventory.bag` 的格子由 Worker 自己校验。
-`pendingPickup !== null && pickupSent === null` 时发一次
-`pickup { uid, itemId, name }`；主窗口 `shell-bridge.js` 调 `M.addToBag()` 判断背包并回
-`pickupAck { uid, ok }`；Worker 用 `resolvePickupAck(s, ok, uid)` 收口：
-`ok=true` 移除掉落物 + 记 `runBagUids`，`ok=false`（背包满）提示「留在地上」、
-**不移除掉落物、不记战利品**。`Drop.uid` 来自 `nextDropUid()`（模块级单调递增，
-跨局不重置）。
-
-**数据表驱动的掉落与多怪**（2026-11-11）：
-
-| 项 | 权威 |
+| 项 | 契约 |
 |:--|:--|
-| 怪物种类 | `Skeleton.monsterId`（`100001` 骷髅剑士 / `200001` 骷髅弓手），对应 `monster.xlsx` 的掉落池 |
-| 掉落算法 | `loot.ts::rollLoot(monsterId, rng)` 按 `loot_pool.xlsx` 权重累计抽取；两池各 6 件、权重 `10/8/6/4/2/1` |
-| 随机源 | `makeRng(seed)` Mulberry32，`runSeed` 默认 `0x5eed1234`；`reset()` 重建，保证 R 重开 loot 序列一致 |
-| 战利品记录 | `GameState.lootLog`（掉落明细）、`carriedItems`（已拾取的 authored id，仅供 HUD / 报告计数）、`runSeed`；**没有怪数字段** |
-| 拾取记录 | 只保留 `carriedItems`（本局拾取的 authored id，用于战报）；没有按 uid 的结算清单，因为通关整份搬回、失败整份丢弃 |
-| 怪物部署 | `spawnFromMap(map)` 是**唯一**生成入口，严格按 `map.monsters`。`deployRun(s, { seed, loadout })` 处理种子与整份搬入，协议里没有数量字段；`setArena(s, map)` 切图并重建本局 |
+| 唯一命中权威 | `attack.ts::hitTestEnemy()` **同时**供点击与悬停使用；`GameState.hoverEnemy` 帧末计算并进 `projection()`，不会出现「光标变剑但点不动」 |
+| 光标实现 | Engine Worker 没有 `document` / canvas，**改不了 CSS**：只在 `hoverEnemy` 变化时发 `{type:'hoverEnemy', index}`，主窗口 `meta-ui/shell-bridge.js` 设 `#app.style.cursor`（内联 SVG 长剑，热点剑尖 `3 3`），退出战斗 / 阵亡复位 |
+| 指针粘性 | 输入快照**只在有指针事件的帧**带 `position`；`game.pack.ts` 记住最后位置，缺了就复用，否则「按下帧没有位置」会让整次点击丢失（点了没反应） |
+| 攻击弧 | **已删除**扇形指示区与只服务它的 `Player.attackAim`；攻击反馈只有挥剑动作 + 命中粒子 |
+| 身体碰撞 | `movement.ts::resolveBodyOverlap()`：玩家↔怪物、怪物↔怪物不得重叠。移动与击退之后跑 2 遍软推开（各让一半，被墙卡住的一方让份额给对方），推挤位移也过 `canStand()`；脚印半径玩家 12 / 怪物 10（墙仍是 `canStand` 的 10px 探针） |
 
-`Drop.kind` 仍为 `'longsword'`，只是**视觉/兼容类别**；真实物品身份走 `drop.itemId` / `name` / `quality`，
-每件掉落额外带稳定 `uid`（跨堆消息对齐用）。
-`WeaponId` 仍是 `'longsword'`（armed vs bare），不换成表里的 12 个 id。`projection()` 追加
-`runSeed` / `lootLog` / `carriedItems` / `dropItems` / `pickupTarget` /
-`pendingPickup` / `runBagUids` / `slotLootItemIds`，**不得改旧字段名，也不得再出现 score 或怪数字段**。
-引擎层通过 `game.pack.ts` 的 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、在清场/阵亡时发 `result`，
-并把 `weaponLootEvents` 转成 `weaponLoot { uid, itemId, slot }` 发给主窗口（角色面板的 `equipped` 槽）。
-**`game.state` 必须保持唯一 read projection**：`project play` 以「唯一注册的 projection」解析默认读取，
-多注册一个（哪怕是 `run.result`）会让全部 35 步 playthrough 报 `state-unavailable`。
+### 本局状态与投影
+
+- **没有得分**：`GameState` 没有 `score`，击杀 / 拾取都不加分；HUD 右上角是**只读小地图**，结算板显示 `击杀 / 拾取`。
+- **局内 `InventoryState` 在 Worker 堆内**（`GameState.runInventory`：`bag` + 10 槽，`stash` 恒空）。
+  拾取由 `weapons.ts::updateDrops()` → `run-inventory.ts::collectDrop()` 完成，成功后 `syncWeaponSlots()`。
+- `reset()` **保留 `runInventory`**（本局重开不丢带入装备），只重建怪物 / 掉落 / 计时器 / 投影计数；
+  `setArena(s, map)` 切图并按新图重建本局。
+- 战利品记录：`lootLog`（每次掉落明细）、`carriedItems`（已拾取的 authored id）、`runSeed`；
+  **没有按 uid 的结算清单**（通关整份搬回、失败整份丢弃，见 `assets/meta/CONTEXT.md`）。
+- `projection()` 暴露 `weaponSlots`（视觉类别）/ `weaponDefIds`（真实 defId）/ `activeWeaponSlot` /
+  `runInventory` 快照 / `hoverEnemy`；`equippedWeapon` **保留旧字段名**，语义＝激活槽是否有武器。
+- `moveMode` 三态：`idle` / `point` / `follow`；`target` / `followingPointer` / `attackOrder` /
+  `attackTarget` / `skeletons`（坐标 / 血量 / 存活）都在投影里，供验收脚本直接断言。
+
+### 掉落（数据表驱动）
+
+怪物 `monsterId` → `monster.xlsx` 的池 → `loot_pool.xlsx` 权重 `10/8/6/4/2/1` →
+`item.xlsx` + `weapon.xlsx` 按 `id` join 的 13 行属性。`loot.ts::rollLoot()` 是**唯一**抽取入口，
+Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）。
+`Drop.kind` 恒为 `'longsword'`（视觉 / 兼容类别），真实身份走 `drop.itemId` / `name` / `quality`。
+表结构、join 点、`weapon_subtype` 权威与 OOXML 约束见 `assets/resource/CONTEXT.md`「现有表与消费方登记」。
+
+### 地图运行时（2026-11-13 接入）
+
+| 项 | 契约 |
+|:--|:--|
+| 权威源 | `resource/maps/arena.ldtk`（64×48 格 @32px = **2048×1536** 世界像素）→ `arena.generated.ts`（`import_map.py` 生成，禁止手改） |
+| 逻辑层 | `world.ts`：`makeWorld()` / `walkable()` / `blocks()` / `nearestWalkable()` / `cameraFor()` / `screenToWorld()` / `worldToScreen()` / `findPath()`（8 邻域 A*，禁止对角穿角）/ `lineOfSight()`。只 import `shared/` |
+| 地形 | IntGrid `0` 地面 / `2` 道路可走；`1` 墙 / `3` 深渊挡走 + 挡视线；越界视作阻挡 |
+| 坐标 | `GameState` 一律**世界像素**；`game.pack.ts` 每帧 `screenToWorld(state.camera, ...)`；`paint.ts` 一次 `translate(-cam.x,-cam.y)` 画世界，HUD / 小地图留在屏幕空间 |
+| 相机 | `cameraFor()` 居中跟随 + clamp 到边界；`step()` 末尾更新，是输入与渲染的**唯一权威** |
+| 碰撞 / 寻路 | 玩家与怪物都做分轴滑动（`canStand()` 检查中心 + 极点）；点击目标走 A*（`GameState.path`）；怪物每 0.7 s 重算到玩家的路径 |
+| 小地图 | `MINIMAP = { x:1036, y:20, w:220, h:165 }`，**只能看不能点**：`game.pack.ts` 丢弃该矩形内的全部指针指令 |
+| 怪物 | `spawnFromMap(map.monsters)` 是**唯一**生成入口；运行时**没有任何怪数字段**；正式图 7 只（`100001` ×4 / `200001` ×3），改数量只能改 LDtk 实体层 |
+| 自动验收夹具 | `resource/maps/arena-test.ts`：40×22 格 = **1280×704**、全可走、spawn `(400,470)`、2 只 `100001`；尺寸 ≤ 视口 ⇒ 相机恒 `(0,0)` ⇒ 屏幕归一化坐标不变。**不入 `import_map.py` 链** |
+| 地图切换 | `createState()` 默认夹具；`deploy` 时 `game.pack.ts` 调 `setArena(state, arena)` 切正式图并重建本局 |
+| 状态形状 | `GameState` 新增 `map` / `world` / `camera` / `path`；`Skeleton` 新增带节流的 `path` / `repath` |
+| 落点解析 | `setTarget()` = 世界边界 clamp + `nearestWalkable()` 吸附 + A* 出路径；`walk()` 沿 `GameState.path` 逐点走并做分轴滑动碰撞 |
+| 旧竞技场 | 已删除 `backdrop()` / `ground()` / `GROUND_TOP` / 一屏 clamp / 硬编码怪坐标 / `/VIEW_W` 归一化。**单轨**，无双轨兼容层 |
 
 ## 不变量（任一破坏 = 验收必须红）
 
@@ -98,14 +99,14 @@
 4. 掉落物点击优先于敌人，否则压在骷髅脚下的长剑永远捡不到。
 5. `assets/game/simulation.ts` 是**兼容门面**，只做 re-export，禁止在此写玩法逻辑。
 6. 攻击数值/范围只读 `activeWeapon(s)`，禁止直接读 `weaponSlots[0]` 或任何"是否装备过任何武器"的判断 —— 否则切到空槽仍会打出长剑伤害。
-7. `equippedWeapon` 投影字段名不得改（35 步 playthrough 依赖），语义＝当前激活槽武器。
+7. `equippedWeapon` 投影字段名不得改（playthrough 依赖），语义＝当前激活槽武器。
 8. 掉落数值只读 `resource/generated/*.ts`；`loot.ts` 是唯一抽取入口，报告脚本不得镜像算法。
 9. **没有默认出怪逻辑，也没有怪数字段**：`spawnFromMap(map)` 严格按 `map.monsters`；`GameState` / `RunConfig` / `Deployment` / `projection()` / `RunResult` / `deployed` ack 里都不得出现 `monsterCount`。正式 LDtk 地图 7 只，自动验收夹具 2 只。
 10. **没有得分**：`GameState` / `projection()` / HUD / 结算板 / 断言里都不得出现 `score`；`kills` 是唯一击杀计数。
 11. **拾取必须显式**：只有短按点中掉落物会产生 `pickupTarget`；走过掉落物、点地面、点敌人、长按跟随都不得触发拾取。`playthrough.mjs` 与 `loot.test.ts` 各有反例断言守着。
-12. **背包满时掉落物留在地上**：`resolvePickupAck(s, false, uid)` 不得移除 drop、不得写 `runBagUids` / `carriedItems`；只有 `ok=true` 才算拾取成功。
+12. **背包满时掉落物留在地上**：`collectDrop()` 返回 `where:'full'` 时不得移除 drop、不得写 `carriedItems`；只有 `weapon` / `bag` 两种结果才算拾取成功。
 13. **`pendingPickup` 只能投影 uid 字符串或 null**：`GameProjectionValue` 不接受 `interface`（缺索引签名），直接塞对象会 `tsc` 报错。
-14. 两武器槽已满时必须走 `pickup` / `pickupAck` 跨堆协议，**不得在 Worker 里自己决定背包空间**；`pickupSent` 去重是必需的，否则同一件战利品会被重复塞进背包。
+14. **拾取全在 Worker 堆内完成**：`collectDrop()` 自己决定「空武器槽 → 局内背包 → 留在地上」，不走跨堆 `pickup` / `pickupAck`；主窗口只在 `runState` 快照里看到结果，不得替 Worker 决定格子空间。
 
 15. **坐标一律世界像素**：`StepInput.mouse` 由引擎层 `screenToWorld()` 转换好；`projection()` 的
     `player` / `skeletons` / `dropAt` / `target` 必须保持屏幕归一化，世界事实走
@@ -136,28 +137,14 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 
 `createState(config?: RunConfig)` / `reset(s)` / `step(s, dt, input, modifiers?)` / `projection(s)` /
 `NO_MODIFIERS` / `activeWeapon(s)` / `switchWeaponSlot(s, slot)` / `updateDrops(s, dt)` /
-`resolvePickupAck(s, ok, uid)` / `checkCleared(s)`（`weapons.ts`）/
-`dropAtPoint(s, x, y)` / `hitTestDrop()`（`attack.ts`，点击命中判定唯一入口）/
-`nextDropUid()` / `PendingPickup`（`state.ts`）/
+`checkCleared(s)`（`weapons.ts`）/
+`hitTestEnemy(s, x, y)`（**点击与悬停共用的命中唯一入口**）/ `dropAtPoint(s, x, y)` /
+`classifyPointer(s, input)` / `resolveBodyOverlap(s)`（`movement.ts`）/
+`nextDropUid()`（`state.ts`）/
 `deployRun(s, config?: Deployment)` / `setArena(s, map)` / `spawnFromMap(map)` / `makeRng(seed)` / `rollLoot(monsterId, rng)` /
 `itemRow(id)` / `weaponRow(id)` / `authoredItem(id)`（**item + weapon 的唯一 join 点**）/
 `AuthoredItemView` / `monsterRow(id)` / `poolEntries(poolId)` / `theoreticalDistribution(poolId)`。
 引擎层从 `assets/game/simulation.ts` 门面 import；新代码应直接 import 本模块。
-
-## 地图运行时（2026-11-13 接入）
-
-`combat/world.ts` 是纯地图运行时（只 import `shared/`，地图数据由引擎层注入）：
-`makeWorld()` / `walkable()` / `blocks()` / `nearestWalkable()` / `cameraFor()` /
-`screenToWorld()` / `worldToScreen()` / `findPath()`（8 邻域 A*、禁止对角穿角）/ `lineOfSight()`。
-`GameState` 新增 `map` / `world` / `camera` / `path`；`Skeleton` 新增带节流的 `path` / `repath`。
-
-- 坐标一律**世界像素**：`StepInput.mouse` 已是世界坐标（`game.pack.ts` 用 `screenToWorld()` 转换）；
-  `projection()` 的旧字段仍用 `worldToScreen() / VIEW_W, / VIEW_H` 保持屏幕归一化。
-- `setTarget()` 做世界边界 clamp + `nearestWalkable()` 吸附 + A*；`walk()` 沿 `GameState.path`
-  逐点走并做分轴滑动碰撞；`updateSkeletons()` 每 0.7 s 重算一次到玩家的路径。
-- `spawnFromMap(map)` 严格按 `map.monsters` 生成；`setArena(s, map)` 切图并重建本局；
-  `deployRun()` 只处理 seed / 借出武器 / 激活槽，协议里没有任何怪数字段。
-- 只读小地图的指针屏蔽在 `game.pack.ts`（`MINIMAP` 矩形），本模块不感知 HUD。
 
 ## 攻击规格与资源预留（架构层，2026-11-12 新增，**尚未接入运行时**）
 
@@ -180,12 +167,12 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 - 子弹射程无限：只因命中合法目标 / 地形阻挡 / 飞出世界而销毁。`advanceProjectiles()` 按
   8px 子步推进防穿透；`NO_COLLISION` 保持旧竞技场行为；真实格子查询已在 `combat/world.ts::lineOfSight()` 备好，但要等下一批「攻击运行时接线」才注入（本批只做地图）。
 - 当前消费方：`assets/combat/__tests__/{attack-spec,projectiles}.test.ts`（20 条：10 + 10）。
-  **`step()` / `attack.ts` / `enemies.ts` / `paint.ts` 尚未引用**，37 步 playthrough 不受影响。
+  **`step()` / `attack.ts` / `enemies.ts` / `paint.ts` 尚未引用**，playthrough 不受影响。
 
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 68 条（weapons 9 / loot 14 / movement 11 / world 11 / attack-spec 10 / projectiles 10 / modifiers 3）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 89 条（loot 14 / movement 23 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3）
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json

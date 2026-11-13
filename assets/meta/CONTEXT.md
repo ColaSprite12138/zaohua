@@ -1,12 +1,13 @@
 # CONTEXT — meta（系统设计 / 局外）
 
-> **2026-11-13 续三修订（权威）**：局外 `InventoryState` 只在主窗口，局内 `InventoryState` 只在 Engine Worker，
-> 两份状态**不共享对象**。本文下方含 `buildLoadout` / `settleRun` / `pickupAck` / `weaponLoot` /
-> `borrowed` / `carriedUids` 的表格行均为**续三之前的历史契约**，已作废，以 `HANDOFF.md`「当前功能契约」为准。
+> **2026-11-14：本文件是 meta / meta-ui 功能契约的正本。** 原文在 `HANDOFF.md`「当前功能契约」，
+> 该节已按模块拆分迁入本文件（一处一版，HANDOFF 只留跨模块红线与验收基线）。
+> 跨堆边界：局外 `InventoryState` **只在主窗口**，局内 `InventoryState` **只在 Engine Worker**，
+> 两份状态**不共享对象**，只经 `BroadcastChannel('forgeax-arena-run')` 传结构化克隆快照。
 > 现行接口：`takeIntoRun(lobby)` / `bringBack(lobby, loadout)` / `runInventoryFrom(loadout)` /
 > `loadoutFromRun(state)`；`RunLoadout = { bag, equipped, activeWeaponSlot }`，仓库 `stash` 永不进战局。
 
-> 权威顺序：`HANDOFF.md` > 本文件 > README / feedback。经验库：本目录 `EXPERIENCE.md`。
+> 权威顺序：**本文件 = 本模块契约正本**；跨模块红线与验收基线以 `HANDOFF.md` 为准。经验库：本目录 `EXPERIENCE.md`。
 
 ## 职责
 
@@ -58,6 +59,25 @@
 | 局内拾取 | **完全在 Engine Worker 堆内**：`combat/run-inventory.ts::collectDrop()` 优先写 `equipped` 空武器槽，其次 `addToBag()` 占局内背包格子；满则掉落物留地上。Worker 回 `runState` 快照给只读面板 |
 | 结算 | `result.loadout`（通关整份）→ `bringBack(lobby, loadout)` 覆盖回局外；阵亡 / 中途退出 `loadout: null`，主窗口不写回，**全部丢失**，`stash` 保留 |
 | 报告 | 没有 `SettlementReport` / `unregistered` / `overflow`：物品不是「找回来的」，搬入时整份复制、通关整份搬回、失败整份丢弃 |
+
+### 出征 / 战斗 / 结算的阶段表（2026-11-14 由 HANDOFF 迁入）
+
+主窗口 `window.MetaShell.state` 是**局外 `InventoryState`**；Engine Worker 的 `GameState.runInventory`
+是**局内 `InventoryState`**（`stash` 恒空）。两个 JS 堆只经同源 `BroadcastChannel('forgeax-arena-run')`
+传结构化克隆的快照。
+
+| 阶段 | 行为 |
+|:--|:--|
+| 局外 | 配装 / 拖放；三把长剑起步在仓库。顶栏只有「出征 / 返回局外 / 背包」，**没有怪物数量输入** |
+| 出征 | `M.takeIntoRun(lobby)` 复制 `bag + equipped` 成 `RunLoadout` 并**清空局外这两处**（`stash` 不动）→ 发 `deploy { seed, loadout }`（**没有任何数量字段**）→ Worker `setArena(state, arena)` 切正式 LDtk 图并 `makeRunInventory(loadout)`；主窗口 `host.enterRun(loadout)` 把角色面板切成只读快照；战斗态隐藏 meta 面板且 `#fx-shell` 指针透明 |
+| 战斗拾取 | 显式点击掉落物 → 走近才拾取；`combat/run-inventory.ts::collectDrop()` 在 **Worker 堆内**优先写 `equipped` 空武器槽，其次 `addToBag()` 占真实 2×3 格，背包满则留在地上。Worker 每帧比签名，变化才发 `runState` |
+| 局内换装 | 仓库面板隐藏且拖放被拦截；拖放与 1/2 一律走 `runCommand { action: place / equip / unequip / active }`，Worker 校验后回 `runState`；**局内快照永不写平台 KV** |
+| 通关 | `result { outcome:'cleared', loadout }` 带**整份局内状态**，主窗口 `M.bringBack(lobby, loadout)` 整份覆盖回局外；不找格子、不新建实例、不统计 overflow |
+| 阵亡 | `result { outcome:'gameOver', loadout: null }`；主窗口不写回任何东西。局外在出征时已清空 ⇒ **带入物品与本局战利品全部丢失**，`stash` 保留 |
+| 中途退出 / 刷新 / 关预览 | 发 `abort`，Worker 丢弃局内状态，**按阵亡处理**；无宿主不写盘，刷新恢复不了局内物品 |
+
+`RunLoadout = { bag, equipped, activeWeaponSlot }` 是**唯一**跨堆载荷：没有 `borrowed`、
+没有 `carriedUids` / `lootItemIds` / `findFirstFit` 还原式入库，也没有 `overflow` / `unregistered`。
 
 `file://` 双击页仍走 `createInventoryState()` 缺省路径，`MetaShell` 钩子只在 4174 注入页生效；
 两条入口共用 `meta-ui/inventory.js` 生成物与 `inventory.ts` 唯一逻辑源。
@@ -119,14 +139,11 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
   经 `BroadcastChannel` 发 `equip { slots: [bool|null, bool|null], activeWeaponSlot }`；
   `null` ＝「保留该槽出征时借出的武器」，避免把借出装备覆盖掉。
 - `game.pack.ts` 收到 `equip` 后直接改 `state.weaponSlots` / `activeWeaponSlot`，本局伤害与攻击距离立刻变化。
-- **两份状态边界（2026-11-13 续三）**：`inventory.ts` 是零 import 的**无状态规则库**，主窗口与 Worker 各自持有一份 `InventoryState`；跨堆只传 `RunLoadout` 快照，绝不共享引用。局内快照不写平台 KV |
-  局内角色面板渲染的就是这个数组，置空会让带进去的武器与局内拾取的武器都看不见。局内
-  `weaponLoot { uid, itemId, slot }` 把拾取物作为真实实例写进 `equipped[slot]`；壳层结算时
-  把这些 authored id 从 `slotLootItemIds` 剔除，避免 `settleRun()` 再入一次库。
-  通关时借出武器若仍在 `state` 任意位置即算归还（不重复创建），满则 `findFirstFit()`
-  找 bag → stash、再满才进 `overflow` 报告（**没有 `loose` 兜底**）。
-  阵亡时本局已进背包的战利品（按 `carriedUids`）、借出武器（按 uid）与**全部 10 个装备槽**都清空；
-  `stash` 与局外旧背包物品保留。
+- **两份状态边界（2026-11-13 续三）**：`inventory.ts` 是零 import 的**无状态规则库**，主窗口与
+  Worker 各自持有一份 `InventoryState`；跨堆只传 `RunLoadout` 快照，绝不共享引用。局内快照不写平台 KV
+- **局内换装不走布尔档**：`equip { slots, activeWeaponSlot }` / `weaponLoot` / `slotLootItemIds` /
+  `settleRun()` / `overflow` 都是**续三之前的历史协议，已删除**；现行只有 `runCommand` 与
+  `runState` 快照，通关整份搬回、失败整份丢弃。
 
 ## 平台 lifecycle 契约（2026-11-11 晚，发布准备）
 
@@ -143,7 +160,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
   `lock` / `unlock` 分支保留但**没有生产者**，`paused` 是唯一的冻结来源。
 - **局内背包不冻结**：B / I 打开的浮层不发 pause，怪物继续追击；这里新增的 pause
   只来自造化平台宿主的生命周期指令，两者语义不同。
-- **护栏**：`verify-shell.cjs` 的 2 条平台断言（37 条总数）验证 adapter 状态翻转与
+- **护栏**：`verify-shell.cjs` 的 2 条平台断言（39 条总数）验证 adapter 状态翻转与
   `pause`/`resume` 频道消息确实送达模拟 Worker；改这块必须保持这两条为绿。
 
 ## 旧骨架
@@ -176,11 +193,11 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/meta/__tests__      # 38 条（inventory 16 + account 11 + run-settlement 8 + meta 3）
+./node_modules/.bin/vitest run assets/meta/__tests__      # 40 条（inventory 16 + account 11 + run-settlement 10 + meta 3）
 node scripts/build-meta-ui.mjs --check                     # 两个生成物与源码同步
 node scripts/verify-meta-ui.cjs                            # 独立页面 13 条真实拖放断言
 node scripts/inject-shell.mjs --check                      # dist 注入块与源同步
-node scripts/verify-shell.cjs                              # 4174 单页 37 条（无宿主不写盘/平台身份/KV 存档/局内背包/局内拾取镜像/出征/通关/阵亡清 10 槽/返回/lifecycle）
+node scripts/verify-shell.cjs                              # 4174 单页 39 条（无宿主不写盘/平台身份/KV 存档/局内背包/局内拾取镜像/出征/通关/阵亡清 10 槽/返回/lifecycle）
 ```
 
 `scripts/build-meta-ui.mjs` 把 `inventory.ts` / `account.ts` 用 `ts.transpileModule` 转成普通脚本写入
