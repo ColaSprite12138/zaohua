@@ -1,7 +1,8 @@
 # 2.5D 骷髅竞技场（ForgeAX 工程版）
 
 基于 ForgeAX SDK 0.4.19 的 `empty` 模板构建的可运行 2.5D 游戏模板。场景、角色、骷髅、
-掉落物与 HUD 由 `assets/game/paint.ts` 的 Canvas 2D 绘制层生成，经 `CanvasTexture` 送进
+掉落物与 HUD 由 `assets/game/paint.ts` 的 Canvas 2D 绘制层生成（**全部为体素/像素方块，
+模型与烘焙在 `assets/game/voxel.ts`，规格见 `docs/art-style.md`**），经 `CanvasTexture` 送进
 engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas 是真实渲染像素，
 而不是 `flat-canvas` 门禁会拒绝的纯 UI canvas。
 
@@ -334,7 +335,8 @@ const canvasH = extent?.height || VIEW_H;
 |:--|:--|
 | `forge.json` | 工程身份与持久插件组合的权威配置；`roots.engine` 指向游戏插件。 |
 | `assets/game/simulation.ts` | 纯逻辑层（无 engine import）：状态、步进、投影。 |
-| `assets/game/paint.ts` | Canvas 2D 2.5D 绘制层，按 y 排序做遮挡。 |
+| `assets/game/paint.ts` | Canvas 2D 2.5D 绘制层，按 y 排序做遮挡；只负责「摆什么、放哪里」，不负责画方块。 |
+| `assets/game/voxel.ts` | 体素美术内核：方块模型 DSL、烘焙精灵、地砖/墙块/像素环/光晕/阴影。风格规格见 `docs/art-style.md`。 |
 | `assets/game/game.pack.ts` | engine root 的原生 Cordis Plugin：输入、系统、纹理与相机。 |
 | `assets/runtime/zaohua-platform-init.js` | 非 Pack runtime entry，平台 SDK 初始化。 |
 | `assets/__tests__/` | 与 author source 就近的 Vitest 测试。 |

@@ -1,7 +1,7 @@
 # HANDOFF — 2.5D 骷髅竞技场
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-14 全套验收通过**（157 条单测 / 独立页 13 条 / 单页 39 条 / playthrough 40 steps / resize 4 steps；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、通关整份搬回、阵亡或中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效）。**steps 会浮动**：15 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 39–40 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-14 全套验收通过**（157 条单测 / 独立页 13 条 / 单页 39 条 / playthrough 38 steps / resize 4 steps；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、通关整份搬回、阵亡或中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效；**画面已全量体素化，风格见 `docs/art-style.md`**）。**steps 会浮动**：15 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 38–40 间变化，`verify-all.sh` 下限固定 35。
 > 这份文件记录**跨模块红线、保护清单、验收基线与回滚方案**；**模块功能契约的正本在
 > `assets/<模块>/CONTEXT.md`**（2026-11-14 拆分，见下节「模块契约在哪」）。
 > 新会话先读本文件与「模块契约在哪」，再按改动模块读对应 `CONTEXT.md`。
@@ -13,7 +13,7 @@
 
 | 项 | 值 |
 |:--|:--|
-| 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad |
+| 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad。**画风是体素/立体积素（Voxel）**：所有实体/地形/反馈都由 `assets/game/voxel.ts` 的方块模型烘焙成精灵后绘制，规格见 `docs/art-style.md` |
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
 | 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **157**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
@@ -30,6 +30,9 @@
 4. `docs/feedback.md` — 28 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**（按条追加，不改写历史条目；第 18 / 19 条是 Builder 产物链，最后两条是本次拾取改造与预览链路澄清）
 5. `.workbuddy/memory/YYYY-MM-DD.md` — 工作流水账，只作线索，不是规范
 6. `AGENTS.md` — ForgeAX 引擎模板自带的**通用** SDK 规范（顶部另有本工程的 Git 提交纪律）；查引擎 API 时才读
+
+**美术资产的唯一风格依据是 `docs/art-style.md`**（调色板、格数规格、新增模型流程、必看截图清单），
+实现内核是 `assets/game/voxel.ts`。改任何画面相关代码先读这两处，不要在 `paint.ts` 里新造一套画法。
 
 工程分五个模块：`combat/`（战斗，最重）/ `battle/`（局内关卡）/ `meta/`（局外系统）/
 `talent/`（局外天赋养成）/ `resource/`（人工 Excel 数据表），另有 `shared/`（常量）与
@@ -88,7 +91,9 @@
 
 14. **地图运行时红线（2026-11-13）**：`arena.ldtk` / `arena.generated.ts` 是唯一权威地图源，禁止手改生成物；`arena-test.ts` 只服务自动验收，禁止把 `game.pack.ts` 的默认地图改成正式地图（自动验收会被 7 只怪打死）；`deploy` 是两张地图的唯一切换点；`projection()` 的 `player` / `skeletons` / `dropAt` / `target` 必须保持**屏幕归一化**（世界事实另开 `worldPlayer` / `camera` / `map` 字段），否则全部浏览器验收坐标失效；`MINIMAP` 矩形内的指针必须在 `game.pack.ts` 被丢弃（小地图只读）；删旧竞技场绘制时不要顺手删角色 / HUD / 结算板。
 
-`scripts/check-drift.sh` 会把上面 1–14 涉及的文件单独列出来，接手时先看它。
+15. **体素美术红线（2026-11-14）**：画面只允许由 `assets/game/voxel.ts` 产出的方块构成。① **一个方块 = 一格屏幕高度**（`unit·unit` 像素），顶面高光是格内的 2px 亮条，不要再叠一层「顶面 + 正面」，否则角色高度翻倍、头盔会吞掉脸；② 模型 `y=0` 是地面、`x=0` 是身体中线、**`z` 只允许 0**（一格厚的立牌，体积感靠三面着色）；③ 禁 `createLinearGradient` / `createRadialGradient` / `shadowBlur` / `ctx.arc|ellipse` 描边 / 真圆角，反馈环用 `drawPixelRing`、光晕用 `drawPixelGlow`、阴影用 `drawShadow`；④ **站在地面上的东西必须进 `paint.ts` 的 `items` 按落地 `y` 排序**（墙块 key = `y+grid`，掉落物 `y+0.5`），单独插一层会让墙后被遮挡的角色盖到墙上；⑤ 新增模型只在 `voxel.ts` 加工厂函数 + 登记 `MODELS`，不要在 `paint.ts` 里手摆矩形；⑥ 精灵按「模型 + flash 变体」烘焙缓存，禁止每帧重画方块。
+
+`scripts/check-drift.sh` 会把上面 1–15 涉及的文件单独列出来，接手时先看它。
 
 ## 改完必跑（任何一项不绿 = 不许交付）
 
@@ -237,6 +242,11 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 小测试地图做成 24 行后投影整体偏移 | 24×32 = 768 > 720，相机被 clamp 到 y=48；夹具必须 ≤ 视口（现为 22 行 = 704）才能让 camera 恒 `(0,0)`、屏幕归一化不漂移 |
 | 正式地图里玩家点地面走进墙 / 怪卡在墙后 | `setTarget()` 要 `nearestWalkable()` 吸附 + `findPath()` 出路径；`walk()` / `updateSkeletons()` 必须做分轴滑动碰撞，直线追击会穿墙 |
 | 出征后怪数还是 2 / 找怪物数量输入 | 数量只由 `map.monsters` 决定；运行时与 UI 已彻底删除怪数字段，`deploy` 只发 `seed / loadout`，`deployed` ack 也不带数量。自动验收默认夹具 2 只、出征后正式地图 7 只 |
+| 角色被拉得细长、头盔盖住眼睛 | 每格画成了「顶面 + 正面」两层 → 高度翻倍；一格只能占一格屏幕高，顶面高光压进格内 2px（见保护清单 15） |
+| 站在墙后仍被画在墙上面 | 墙块没进 `paint.ts` 的 `items` 深度排序；地形层只画地板，墙块按 `y+grid` 进排序 |
+| 换画风后整屏发糊 / 斜边有锯齿 | `imageSmoothingEnabled` 被判 true，或坐标/缩放不是整数；每帧首行 `prepareScene()`，精灵用整数 `drawImage` |
+| 空手/装备时剑的颜色反了 | `voxel.ts::sword(golden)` 的参数语义要和 `SWORD_STEEL` / `SWORD_GOLD` 的调用值对齐（曾把 `sword(true)` 赋给铁剑，导致空手也拿金剑） |
+| 掉落物在地上「消失」 | 掉落物的横向压缩 `squash` 被压到 ≈0（转到侧边）+ 排序 key 偏后，被尸体盖住；`squash` 下限 0.55，掉落物排序 key `y+0.5` |
 
 ## 可回滚基线（两层）
 

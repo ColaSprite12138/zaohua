@@ -12,6 +12,8 @@ PROTECTED=(
   assets/game/simulation.ts
   assets/game/game.pack.ts
   assets/game/paint.ts
+  assets/game/voxel.ts
+  docs/art-style.md
   assets/__tests__/movement.test.ts
   scripts/playthrough.mjs
   scripts/playthrough-resize.mjs
