@@ -46,6 +46,30 @@ export default async function playthrough(play) {
     await play.screenshot('hover-idle');
   });
 
+  await play.step('the enemy under the free cursor is reported for the sword cursor', async () => {
+    // The Worker cannot style the page cursor (no document), so it publishes
+    // the hovered index; the shell turns that into the sword cursor. This step
+    // asserts the source of that message and that hovering never acts.
+    const s = await play.state('game.state');
+    const index = s.skeletons.findIndex((sk) => sk.alive);
+    assert.ok(index >= 0, 'a living enemy exists');
+
+    await play.mouse.move(enemyPoint(s.skeletons[index]));
+    await play.wait(150);
+    const hovered = await play.state('game.state');
+    assert.equal(hovered.hoverEnemy, index, 'hovering a skeleton reports that enemy');
+    assert.equal(hovered.attackOrder, false, 'hovering must not queue an attack');
+    assert.equal(hovered.attacks, 0, 'hovering must never swing');
+    assert.equal(hovered.moveMode, 'idle', 'hovering must not order a move');
+    await play.screenshot('hover-enemy');
+
+    await play.mouse.move([0.06, 0.9]);
+    await play.wait(150);
+    const away = await play.state('game.state');
+    assert.equal(away.hoverEnemy, null, 'empty ground reports no hovered enemy');
+    await play.screenshot('hover-clear');
+  });
+
   await play.step('a click on the ground moves but never attacks', async () => {
     const before = await play.state('game.state');
     await play.mouse.click([0.2, 0.8]);

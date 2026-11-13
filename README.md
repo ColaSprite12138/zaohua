@@ -9,7 +9,7 @@ engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas �
 
 | 输入 | 行为 |
 |:--|:--|
-| 悬停鼠标 | **不产生移动指令**，人物保持静止（自由光标，未锁定指针） |
+| 悬停鼠标 | **不产生移动指令**，人物保持静止（自由光标，未锁定指针）；**悬停在骷髅身上时光标变成长剑、该骷髅脚下亮起白色脉冲环**，移开即恢复箭头 |
 | 单击左键（地面） | 设定落点，人物走到该点停下；**不挥砍** |
 | 单击左键（敌人） | 锁定该敌人；距离不够先自动接近，**进入攻击距离才挥砍一次**；只对该目标造成伤害 |
 | 长按左键 | 落点实时跟随光标，人物始终朝鼠标方向前进；松开后停止跟随，按最后落点走完并停下；**长按不攻击** |
@@ -19,8 +19,11 @@ engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas �
 | **单击掉落物** | 下一条**显式拾取指令**：走过去、到达才拾取；**走过不自动捡**。优先装进空武器槽，两槽满则放进背包并占真实格子，背包也满则掉落物留在地上 |
 | **B / I** | 战斗中打开 / 关闭**局内背包**（不暂停战斗，ESC 关闭） |
 
-自动验收夹具里两只骷髅、正式 `arena.ldtk` 地图 7 只（**怪物只由地图实体层生成，数量不可注入**），
-**两个武器槽都空**。击杀骷髅掉落长剑，**必须短按点中掉落物**才下拾取指令，
+**身体有碰撞**：玩家↔怪物、怪物↔怪物不能重叠（脚印半径 12 / 10），软推开、被墙卡住时把份额让给对方，
+所以不会把谁挤进墙里，也不会互相穿过去。**攻击不再画扇形指示区**——只有挥剑动作与命中粒子，
+「这一下能不能打到」看光标有没有变成长剑（判断用的是与点击同一个命中函数，还带 46px 躯干容错）。
+
+自动验收夹具里两只骷髅、正式 `arena.ldtk` 地图 7 只（**怪物只由地图实体层生成，数量不可注入**），**两个武器槽都空**。击杀骷髅掉落长剑，**必须短按点中掉落物**才下拾取指令，
 玩家走到 `<50px` 才结算；激活槽为长剑时攻击范围（140 → 170）与伤害（22 → 46）提升。
 **本游戏没有得分**：击杀 / 拾取都不加分，HUD 右上角是**只读小地图**（原击杀面板已删），
 结算板仍显示 `击杀 / 拾取`。
@@ -198,7 +201,7 @@ IPv6 `[::1]` 回环与内置预览面板的已知问题见 `docs/feedback.md` �
 | `assets/combat/` | **最重**：技能交互、怪物、武器、玩家技能、数值运行时；天赋效果的**执行** | `CONTEXT.md` / `EXPERIENCE.md` | `vitest run assets/combat/__tests__` + `scripts/playthrough*.mjs` |
 | `assets/battle/` | 局内关卡：地图、触发器、关卡事件、单局目标、机关 | 同上 | `vitest run assets/battle/__tests__` |
 | `assets/meta/` | 局外：养成、格子背包/仓库/装备栏、外围关卡（战斗入口）、货币 | 同上 | `vitest run assets/meta/__tests__` + `scripts/verify-meta-ui.cjs` |
-| `meta-ui/` | 独立可视化页面（双击 `index.html` 可开）+ 4174 单页壳层 `shell.css` / `shell-bridge.js` | 逻辑归 `assets/meta/` | `verify-meta-ui.cjs`（独立页 13 条）、`verify-shell.cjs`（单页 37 条） |
+| `meta-ui/` | 独立可视化页面（双击 `index.html` 可开）+ 4174 单页壳层 `shell.css` / `shell-bridge.js` | 逻辑归 `assets/meta/` | `verify-meta-ui.cjs`（独立页 13 条）、`verify-shell.cjs`（单页 39 条） |
 | `assets/talent/` | 局外天赋养成与选择；只输出 `effectIds`，**不算效果数值** | 同上 | `vitest run assets/talent/__tests__` |
 | `assets/resource/` | 人工 Excel 数据表（唯一数值入口）→ `generated/*.ts`；`export_tables.py` 转换 | 同上 | `vitest run assets/resource/__tests__` + `export_tables.py --check` + `loot-report.mjs` |
 | `assets/shared/` | 常量与纯类型，所有模块可单向 import | — | 改动触发全量验收 |
@@ -220,7 +223,7 @@ IPv6 `[::1]` 回环与内置预览面板的已知问题见 `docs/feedback.md` �
 独立单测（combat 代码改动才额外跑浏览器 playthrough），并始终跑一次全局 `tsc`。
 命中 `shared/` / 引擎层 / 构建配置、或显式 `--all` 时自动转全量。
 **发版前 / 跨模块改动跑全量**：`bash scripts/verify-all.sh`，输出在 `artifacts/verify/summary.txt`；
-它强制单测 ≥ 83 条（当前 **131**）、`playthrough` ≥ 35 步（实际 36–37 步，`advance` 子步随帧时序浮动）、`resize` ≥ 4 步，并跑独立页面与 4174 单页浏览器验收
+它强制单测 ≥ 83 条（当前 **146**）、`playthrough` ≥ 35 步（实际 37–38 步，`advance` 子步随帧时序浮动）、`resize` ≥ 4 步，并跑独立页面与 4174 单页浏览器验收
 —— **删断言让测试变绿会直接失败**。注入 + 单页验收是全流程最后一步（build/play/package 都会重建 dist）。
 
 ```bash
@@ -229,7 +232,7 @@ python scripts/export_tables.py --check     # xlsx 与 generated/*.ts 同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000   # 真实 rollLoot 跑批
 node scripts/verify-meta-ui.cjs            # 局外页面 13 条真实拖放断言
 node scripts/inject-shell.mjs --check      # dist 单页注入块与源同步
-node scripts/verify-shell.cjs              # 4174 单页 37 条（出征/局内拾取镜像/通关/阵亡清 10 槽/返回/平台 lifecycle/KV 存档）
+node scripts/verify-shell.cjs              # 4174 单页 39 条（出征/局内拾取镜像/通关/阵亡清 10 槽/返回/平台 lifecycle/KV 存档/光标反馈）
 ./node_modules/.bin/forgeax project check --json
 ./node_modules/.bin/forgeax project test --json
 ./node_modules/.bin/tsc --noEmit
@@ -269,7 +272,7 @@ node scripts/inject-shell.mjs              # 最后一步：build/play/package �
 **只含壳层的最小骨架页**（不能保留整份引擎页——启动遮罩会在 window 捕获阶段拦截所有 `click`），
 用 `BroadcastChannel` 模拟 Engine Worker（它持有自己的局内 `InventoryState`），断言出征 `takeIntoRun()` 清空局外、
 镜像到装备栏、通关保留穿戴战利品 + 背包战利品不重复入库、二次出征、**阵亡清空全部 10 个装备槽**、
-返回局外、平台身份 / KV 存档、平台 lifecycle 共 **37 条**。结算用例改用
+返回局外、平台身份 / KV 存档、平台 lifecycle、光标反馈共 **39 条**。结算用例改用
 `slotLootItemIds` / `bagLootUids` 字段，损坏存档探针用 `{ bag: null }`；`snap()` 记 `noLoose`
 供取证但**未挂断言**，记 `worn` 供「阵亡 10 槽清空」断言使用。浏览器层已模拟 `pickup` 消息
 并断言 uid 落进背包，`pickupAck` 回包本身仍未挂断言。

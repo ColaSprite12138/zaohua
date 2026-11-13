@@ -80,6 +80,11 @@ export const game: Plugin = {
     // playable LDtk arena is selected by `deploy` below.
     const state = createState({ map: testArena });
 
+    // Last hover index announced to the presentation realm. The pointer style
+    // itself lives in the page (an Engine Worker has no `document` and no
+    // canvas), so a change is the only thing worth broadcasting.
+    let lastHover: number | null = null;
+
     // Meta <-> run bridge. `lastResult` is posted to the shell exactly once
     // per run (on cleared / gameOver) and read back by playthrough assertions.
     let lastResult: RunResult | null = null;
@@ -301,6 +306,9 @@ export const game: Plugin = {
                   : (snapshot?.keyboard?.justPressedCode('Digit2') ?? false) ? 1 : null,
                 dodge: snapshot?.keyboard?.justPressedCode('Space') ?? false,
                 restart,
+                // Hover feedback must not light up while the pointer sits on
+                // the read-only minimap: that rectangle is not world space.
+                pointerOnHud: onMinimap,
               });
               // An in-run restart (R) starts a fresh settlement window.
               if (restart) {
@@ -314,6 +322,13 @@ export const game: Plugin = {
             }
             paint(painter, state);
             texture.update();
+            // Pointer feedback: the source realm cannot touch CSS, so tell the
+            // main window which enemy (if any) is under the free cursor. Sent
+            // only on change -- this is not a per-frame state stream.
+            if (state.hoverEnemy !== lastHover) {
+              lastHover = state.hoverEnemy;
+              channel?.postMessage({ type: 'hoverEnemy', index: lastHover });
+            }
           },
         })
         .unwrap();

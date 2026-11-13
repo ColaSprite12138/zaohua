@@ -134,3 +134,24 @@
 - `projection().equippedWeapon` / `weaponSlots` 保留 `'longsword'` 视觉类别以守住 37 步
   playthrough，真实 id 另开 `weaponDefIds`，局内状态快照开 `runInventory`。
 - `reset()` 保留 `runInventory`（本局重开不丢带入装备），`deployRun()` 才替换整份。
+
+## 2026-11-13（续四）— 指针反馈 / 命中容错 / 身体碰撞
+
+- **光标属于 presentation realm**：Engine Worker 里没有 `document`、`gameHost.canvas` 是
+  `undefined`、`uiRoot` 在 source-only realm 被省略，**没有任何设光标的接口**（已记入
+  `docs/feedback.md`）。不要试图在 `paint.ts` 里画一个"假光标"再隐藏系统光标——软件 adapter
+  只有几 fps，画出来的光标会拖影；CSS 游标是合成器驱动的，永远跟手。
+- 正确做法：Worker 只在 `hoverEnemy` **变化时**广播 `{ type:'hoverEnemy', index }`，
+  主窗口 `meta-ui/shell-bridge.js` 设 `#app.style.cursor`（内联 SVG data-URI，热点在剑尖）。
+  逐帧发消息既浪费也没必要。
+- **光标与点击必须共用同一个 `hitTestEnemy()`**：两套判定一旦漂移，就会出现「光标变剑但点不动」
+  这种最招骂的组合。`hoverEnemy` 在 `step()` 末尾算，描述的正是这一帧要画出去的画面。
+- 追击中的骷髅一直在动，严格贴贴图会点不中：盒外给 46px **躯干半径容错**，但**盒内命中优先**，
+  多个候选取躯干最近的。点击在**释放沿**用释放点结算（不用按下点），移动目标明显更好点。
+- **身体碰撞是软推开，不是硬阻挡**：`separate()` 各让一半，被墙卡住的一方把份额让给对方；
+  推挤位移本身也要过 `canStand()`。硬阻挡会让怪物把玩家顶在墙上动不了。
+  玩家击退怪物（`swingAtTarget` 里 +16/+12px）会制造重叠，所以分离必须排在击退之后。
+- **坑：`scripts/verify-shell.cjs` 的 SELFTEST 是一个模板字符串**，里面写正则要二次转义
+  （`\\(` 才输出 `\(`）。写错时整个脚本**解析失败**，页面只会一直显示 `PENDING`，
+  完全没有报错——排查时先把页面里最后一个 `<script>` 抠出来 `node --check`。
+  同类判断优先用 `indexOf`，别在两层字符串里写正则。

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { hitTestEnemy } from '../attack.ts';
 import {
   createState,
   step,
@@ -205,5 +206,100 @@ describe('targeted melee contract', () => {
     expect(s.attackOrder).toBe(false);
     expect(s.targetEnemy).toBe(null);
     expect(s.attacks).toBe(0);
+  });
+});
+
+describe('hover feedback (sword cursor + ring)', () => {
+  it('the skeleton under the free cursor is reported, nothing else is', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    step(s, 1 / 60, input({ mouse: { x: sk.x, y: sk.y - 30 } }));
+    expect(s.hoverEnemy).toBe(0);
+
+    const before = s.hoverEnemy;
+    step(s, 1 / 60, input({ mouse: { x: 120, y: 120 } }));
+    expect(before).toBe(0);
+    expect(s.hoverEnemy).toBe(null);
+  });
+
+  it('hover is suppressed while the pointer is on the HUD minimap', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    step(s, 1 / 60, input({ mouse: { x: sk.x, y: sk.y - 30 }, pointerOnHud: true }));
+    expect(s.hoverEnemy).toBe(null);
+  });
+
+  it('hover never moves the player or orders an attack', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    const x = s.player.x;
+    const y = s.player.y;
+    for (let i = 0; i < 40; i += 1) {
+      step(s, 1 / 60, input({ mouse: { x: sk.x, y: sk.y - 30 } }));
+    }
+    expect(s.player.x).toBe(x);
+    expect(s.player.y).toBe(y);
+    expect(s.attackOrder).toBe(false);
+    expect(s.attacks).toBe(0);
+  });
+
+  it('a click that just misses the body box still targets that skeleton', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    // Body centre is clickable, and a 33px sideways miss is inside the assist
+    // radius around the torso (a chasing skeleton is hard to pin exactly).
+    expect(hitTestEnemy(s, sk.x, sk.y - 30)).toBe(0);
+    expect(hitTestEnemy(s, sk.x + 33, sk.y - 30)).toBe(0);
+    // Far away, or high above the skull, there is nothing to target.
+    expect(hitTestEnemy(s, sk.x + 80, sk.y - 30)).toBe(null);
+    expect(hitTestEnemy(s, sk.x, sk.y - 120)).toBe(null);
+  });
+});
+
+describe('body vs body collision', () => {
+  it('the player cannot walk through a monster', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    s.player.x = sk.x - 160;
+    s.player.y = sk.y;
+
+    // Click 60px PAST the monster: the order is a ground move, not an attack.
+    const dest = { x: sk.x + 60, y: sk.y };
+    click(s, dest.x, dest.y);
+    expect(s.attackOrder).toBe(false);
+
+    frames(s, 200, { mouse: dest });
+    const gap = Math.hypot(s.player.x - sk.x, s.player.y - sk.y);
+    expect(gap).toBeGreaterThan(21);
+    expect(s.player.x).toBeLessThan(sk.x + 60);
+  });
+
+  it('two monsters never share one footprint', () => {
+    const s = createState();
+    const [a, b] = s.skeletons;
+    // Stack them on purpose: the frame must untangle them.
+    b!.x = a!.x + 3;
+    b!.y = a!.y;
+    frames(s, 30);
+    const gap = Math.hypot(a!.x - b!.x, a!.y - b!.y);
+    expect(gap).toBeGreaterThan(19);
+  });
+
+  it('separation never pushes a body into a wall', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    // Wall the pair into the top-right corner, where x is clamped by the map.
+    const cols = s.world.cols;
+    const rows = s.world.rows;
+    const grid = s.world.grid;
+    sk.x = cols * grid - 12;
+    sk.y = 12;
+    s.player.x = sk.x - 4;
+    s.player.y = sk.y;
+    frames(s, 4);
+    expect(s.player.x).toBeGreaterThanOrEqual(0);
+    expect(s.player.y).toBeGreaterThanOrEqual(0);
+    expect(s.player.x).toBeLessThanOrEqual(cols * grid);
+    expect(s.player.y).toBeLessThanOrEqual(rows * grid);
   });
 });

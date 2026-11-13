@@ -28,6 +28,12 @@ export interface StepInput {
   /** Digit1 / Digit2 select which of the two weapon slots is in use. */
   readonly switchWeapon?: 0 | 1 | null;
   readonly restart: boolean;
+  /**
+   * True while the pointer sits on a HUD panel (the read-only minimap). Hover
+   * feedback is pure presentation, so it must not light up under the pointer
+   * when the pointer is not over the world.
+   */
+  readonly pointerOnHud?: boolean;
 }
 
 /**
@@ -133,7 +139,6 @@ export interface Player {
   attackCd: number;
   attackFx: number;
   hurt: number;
-  attackAim: number;
   trail: { x: number; y: number; life: number }[];
 }
 
@@ -147,6 +152,13 @@ export interface GameState {
   target: { x: number; y: number };
   moveMode: MoveMode;
   targetEnemy: number | null;
+  /**
+   * Enemy index under the free cursor this frame, using the SAME hit test as a
+   * click. Pure feedback: the painter rings it and the page turns the pointer
+   * into a sword. It never orders anything and is never part of the input
+   * classification.
+   */
+  hoverEnemy: number | null;
   attackOrder: boolean;
   press: { x: number; y: number; elapsed: number; hold: boolean } | null;
   skeletons: Skeleton[];
@@ -202,11 +214,12 @@ export function createState(config: RunConfig = {}): GameState {
     player: {
       x, y, vx: 0, vy: 0, face: 0,
       invuln: 0, dodge: 0, dodgeCd: 0, attackCd: 0,
-      attackFx: 0, hurt: 0, attackAim: 0, trail: [],
+      attackFx: 0, hurt: 0, trail: [],
     },
     target: { x, y },
     moveMode: 'idle',
     targetEnemy: null,
+    hoverEnemy: null,
     attackOrder: false,
     press: null,
     skeletons: [],
@@ -281,6 +294,7 @@ export function reset(s: GameState): void {
   s.toast = { text: '单击地面移动 · 单击掉落物拾取 · 单击敌人攻击 · 长按跟随光标 · 空格闪避', life: 4.2 };
   s.moveMode = 'idle';
   s.targetEnemy = null;
+  s.hoverEnemy = null;
   s.attackOrder = false;
   s.press = null;
   const p = s.player;
@@ -295,7 +309,6 @@ export function reset(s: GameState): void {
   p.attackCd = 0;
   p.attackFx = 0;
   p.hurt = 0;
-  p.attackAim = 0;
   p.trail.length = 0;
   s.target = { x: p.x, y: p.y };
   s.path = [];

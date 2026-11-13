@@ -6,10 +6,12 @@
  */
 
 import { VIEW_H, VIEW_W } from '../shared/constants.ts';
-import { resolveAttackOrder } from './attack.ts';
+import { hitTestEnemy, resolveAttackOrder } from './attack.ts';
 import { updateSkeletons } from './enemies.ts';
 import { tickParticles, tickToast } from './effects.ts';
-import { applyDodge, classifyPointer, walk } from './movement.ts';
+import {
+  applyDodge, classifyPointer, resolveBodyOverlap, walk,
+} from './movement.ts';
 import { NO_MODIFIERS, type CombatModifiers } from './modifiers.ts';
 import { makeRng } from './loot.ts';
 import { say } from './effects.ts';
@@ -44,7 +46,11 @@ export function step(
     reset(s);
     return;
   }
-  if (s.gameOver) return;
+  if (s.gameOver) {
+    // Nothing below can be clicked any more: drop the sword cursor / hover ring.
+    s.hoverEnemy = null;
+    return;
+  }
 
   s.t += dt;
   tickTimers(s, dt);
@@ -58,9 +64,17 @@ export function step(
   walk(s, dt);
   resolveAttackOrder(s, modifiers);
   updateSkeletons(s, dt);
+  // Nobody may stand inside anybody. Runs after both sides moved AND after
+  // swing knockback, so a hit never leaves two bodies fused.
+  resolveBodyOverlap(s);
   updateDrops(s, dt);
   checkCleared(s);
   tickParticles(s, dt);
+  // Hover feedback LAST: it must describe the frame that is about to be
+  // painted, using the very same hit test a click would use.
+  s.hoverEnemy = s.cleared || input.pointerOnHud || input.mouse === undefined
+    ? null
+    : hitTestEnemy(s, input.mouse.x, input.mouse.y);
   // Camera is the single authority for input and painting. Updating it AFTER
   // movement keeps this frame's screen->world conversion (done by the engine
   // before step) consistent with what paint() will draw.
@@ -128,6 +142,8 @@ export function projection(s: GameState) {
     }),
     attackTarget: s.targetEnemy,
     attackOrder: s.attackOrder,
+    /** Enemy under the free cursor; drives the sword cursor and the hover ring. */
+    hoverEnemy: s.hoverEnemy,
     drops: s.drops.map((drop) => drop.kind),
     dropAt: dropScreen ? { x: dropScreen.x / VIEW_W, y: dropScreen.y / VIEW_H } : null,
     // Legacy field names kept for the 35-step playthrough: they report the

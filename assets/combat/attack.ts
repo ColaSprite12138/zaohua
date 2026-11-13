@@ -14,20 +14,47 @@ import {
 } from './state.ts';
 
 /** Clickable body box of a living skeleton (art spans about [-21,21] x [-57,0]). */
+export const ENEMY_BODY_HALF_WIDTH = 30;
+export const ENEMY_BODY_TOP = -70;
+export const ENEMY_BODY_BOTTOM = 12;
+/** Vertical centre of the torso, used as the distance anchor for targeting. */
+export const ENEMY_TORSO_Y = -30;
+/**
+ * Generous radius around the torso for a click that just misses the box. A
+ * chasing skeleton moves between press and release, so a strict silhouette
+ * makes it feel unselectable; an in-box hit always beats a near miss, and the
+ * nearest torso wins among candidates.
+ */
+export const ENEMY_NEAR_MISS_PX = 46;
+
+/**
+ * Which living skeleton is under this point -- the ONE authority shared by the
+ * click and the hover feedback (sword cursor / ring), so the two can never
+ * disagree.
+ */
 export function hitTestEnemy(s: GameState, x: number, y: number): number | null {
-  let hit: number | null = null;
-  let best = Infinity;
+  let boxHit: number | null = null;
+  let boxBest = Infinity;
+  let nearHit: number | null = null;
+  let nearBest = Infinity;
   for (let i = 0; i < s.skeletons.length; i += 1) {
     const sk = s.skeletons[i];
     if (sk === undefined || !sk.alive) continue;
-    if (Math.abs(x - sk.x) > 30 || y < sk.y - 70 || y > sk.y + 12) continue;
-    const d = Math.hypot(x - sk.x, y - (sk.y - 30));
-    if (d < best) {
-      best = d;
-      hit = i;
+    const dx = x - sk.x;
+    const d = Math.hypot(dx, y - (sk.y + ENEMY_TORSO_Y));
+    if (Math.abs(dx) <= ENEMY_BODY_HALF_WIDTH
+      && y >= sk.y + ENEMY_BODY_TOP
+      && y <= sk.y + ENEMY_BODY_BOTTOM) {
+      if (d < boxBest) {
+        boxBest = d;
+        boxHit = i;
+      }
+    } else if (d <= ENEMY_NEAR_MISS_PX && d < nearBest) {
+      nearBest = d;
+      nearHit = i;
     }
   }
-  return hit;
+  return boxHit ?? nearHit;
 }
 
 /** Drops win the click over enemies so a sword under a skeleton stays lootable. */
@@ -61,7 +88,6 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   p.attackCd = 0.4;
   p.attackFx = 0.26;
   p.face = aim;
-  p.attackAim = aim;
   s.attacks += 1;
 
   sk.hp -= mods.damageMultiplier(baseline);

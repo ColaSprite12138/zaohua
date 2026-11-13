@@ -290,6 +290,24 @@ const SELFTEST = `
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       out.bag.closedByEsc = !document.getElementById('fx-shell').classList.contains('fx-run-bag-open');
 
+      // ---- pointer feedback: the Worker names the hovered enemy, the shell
+      //      owns the CSS cursor (a Worker has no document / canvas) ----
+      var canvas = document.getElementById('app');
+      chan.postMessage({ type: 'hoverEnemy', index: 0 });
+      await waitFor(function () { return /svg/.test(canvas.style.cursor); });
+      var cursorCss = canvas.style.cursor;
+      out.cursor = {
+        // No regex here: this whole block is a template literal, and escaping
+        // parens through two layers is a trap. Plain substring checks are exact.
+        sword: cursorCss.indexOf('url("data:image/svg+xml') === 0
+          && cursorCss.indexOf('%3Csvg') > 0,
+        hotspot: cursorCss.indexOf('") 3 3, default') > 0,
+        css: cursorCss.slice(0, 48),
+      };
+      chan.postMessage({ type: 'hoverEnemy', index: null });
+      await waitFor(function () { return canvas.style.cursor === ''; });
+      out.cursor.reset = canvas.style.cursor === '';
+
       // Cleared: the WHOLE Worker state (brought-in + loot) comes home whole.
       sendResult({
         outcome: 'cleared',
@@ -347,6 +365,7 @@ const testPage = path.join(outDir, 'shell-selftest.html');
 fs.writeFileSync(testPage, `<!doctype html>
 <html><head><meta charset="utf-8"><title>ForgeAX shell self-test</title></head>
 <body>
+<canvas id="app" width="64" height="64"></canvas>
 ${EARLY}
 ${shellBlock}
 ${SELFTEST}
@@ -478,6 +497,10 @@ const checks = [
     !!result.platform.messages && result.platform.messages.indexOf('pause') >= 0
       && result.platform.messages.indexOf('resume') >= 0,
     result.platform.messages],
+  ['a hovered enemy turns the page cursor into a sword (hotspot on the tip)',
+    result.cursor.sword === true && result.cursor.hotspot === true, result.cursor],
+  ['the cursor goes back to the platform default when nothing is hovered',
+    result.cursor.reset === true, result.cursor],
 ];
 let failed = 0;
 for (const [name, ok, detail] of checks) {

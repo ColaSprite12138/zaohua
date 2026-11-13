@@ -264,30 +264,6 @@ function drawPlayer(g: Painter, s: GameState): void {
   drawSword(g, 0, 0, aim + Math.PI / 2 - swing * 1.5, armed ? 52 : 28, armed);
   g.restore();
   g.restore();
-
-  // Attack arc.
-  if (p.attackFx > 0) {
-    const progress = 1 - p.attackFx / 0.26;
-    const aim = p.attackAim;
-    const radius = armed ? 158 : 122;
-    g.save();
-    g.globalAlpha = (1 - progress) * 0.9;
-    const arc = g.createRadialGradient(p.x, p.y - 22, radius * 0.35, p.x, p.y - 22, radius);
-    arc.addColorStop(0, 'rgba(255,220,150,0)');
-    arc.addColorStop(1, armed ? 'rgba(255,209,102,0.85)' : 'rgba(180,225,255,0.8)');
-    g.fillStyle = arc;
-    g.beginPath();
-    g.moveTo(p.x, p.y - 22);
-    g.arc(p.x, p.y - 22, radius, aim - 0.95, aim + 0.95);
-    g.closePath();
-    g.fill();
-    g.strokeStyle = armed ? '#ffd166' : '#cfe8ff';
-    g.lineWidth = 4;
-    g.beginPath();
-    g.arc(p.x, p.y - 22, radius - 6, aim - 0.95 + progress * 0.8, aim + 0.95 - progress * 0.1);
-    g.stroke();
-    g.restore();
-  }
 }
 
 function drawSkeleton(g: Painter, sk: Skeleton): void {
@@ -470,6 +446,32 @@ function drawTargetLock(g: Painter, s: GameState): void {
   g.restore();
 }
 
+/**
+ * Hover feedback: the living skeleton under the free cursor gets a soft ring
+ * at its feet. The page ALSO switches the mouse pointer to a sword for the
+ * same index (meta-ui/shell-bridge.js), so "can I click this one?" is answered
+ * twice. Pure presentation -- it never orders anything.
+ */
+function drawHoverMark(g: Painter, s: GameState): void {
+  if (s.hoverEnemy === null || s.gameOver || s.cleared) return;
+  const sk = s.skeletons[s.hoverEnemy];
+  if (sk === undefined || !sk.alive) return;
+  // A locked target already owns the red ring + 「目标」 label; do not double up.
+  if (s.attackOrder && s.targetEnemy === s.hoverEnemy) return;
+  const pulse = 0.5 + 0.5 * Math.sin(s.t * 7);
+  g.save();
+  g.beginPath();
+  g.ellipse(sk.x, sk.y + 2, 23 + pulse * 2, 9 + pulse, 0, 0, Math.PI * 2);
+  g.globalAlpha = 0.16;
+  g.fillStyle = '#eaf8ff';
+  g.fill();
+  g.globalAlpha = 0.55 + pulse * 0.3;
+  g.strokeStyle = '#eaf8ff';
+  g.lineWidth = 2;
+  g.stroke();
+  g.restore();
+}
+
 function hud(g: Painter, s: GameState): void {
   // Top-left: title + health.
   g.fillStyle = 'rgba(8,16,24,0.66)';
@@ -608,6 +610,7 @@ export function paint(g: Painter, s: GameState): void {
   drawTerrain(g, s);
   drawMoveTarget(g, s);
   drawTargetLock(g, s);
+  drawHoverMark(g, s);
 
   // Depth sort: everything on the ground plane shares one y order.
   const items: { y: number; draw: () => void }[] = [];

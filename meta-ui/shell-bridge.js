@@ -84,6 +84,8 @@
     // Only the top bar, the hint and (when opened) the in-run bag get events.
     setRunBag(false);
     root.classList.toggle('fx-in-battle', on);
+    // The arena owns the pointer style only while it is being played.
+    if (!on) applyCursor(false);
     $('fx-deploy').disabled = on;
     $('fx-back').disabled = !on;
     $('fx-bag').disabled = !on;
@@ -132,6 +134,34 @@
     getState: function () { return { paused: platformPaused }; },
   };
 
+  /* -------------------------- pointer feedback -------------------------- */
+  // The arena runs in an Engine Worker: that realm has no `document`, so it
+  // cannot style the page cursor. It broadcasts which enemy (if any) is under
+  // the free cursor and THIS window owns the CSS. Sword = "this click will
+  // attack that one"; default = "this click is a move / nothing".
+  var SWORD_SVG =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">' +
+    '<path d="M4 4L19.5 19.5" stroke="#08131c" stroke-width="6.5" stroke-linecap="round"/>' +
+    '<path d="M4 4L19.5 19.5" stroke="#f2f8ff" stroke-width="3" stroke-linecap="round"/>' +
+    '<path d="M4 4L10.5 6.5L6.5 10.5z" fill="#ffffff" stroke="#08131c" stroke-width="1.4"/>' +
+    '<path d="M12.8 18.7L18.7 12.8" stroke="#c9922f" stroke-width="3.6" stroke-linecap="round"/>' +
+    '<path d="M20 20L25.5 25.5" stroke="#8a5a2b" stroke-width="3.6" stroke-linecap="round"/>' +
+    '<circle cx="26.5" cy="26.5" r="2.4" fill="#e0b25a" stroke="#08131c" stroke-width="1"/>' +
+    '</svg>';
+  // Hotspot at the blade tip, so the point of the sword IS the click point.
+  var SWORD_CURSOR = 'url("data:image/svg+xml;utf8,' + encodeURIComponent(SWORD_SVG) + '") 3 3, default';
+  var swordCursor = false;
+
+  function applyCursor(sword) {
+    if (sword === swordCursor) return;
+    swordCursor = sword;
+    // Package pages put the engine canvas at #app; a page without it (the
+    // verify harness skeleton) simply keeps the platform default.
+    var canvas = document.getElementById('app');
+    if (!canvas) return;
+    canvas.style.cursor = sword ? SWORD_CURSOR : '';
+  }
+
   /* ------------------------------ channel ------------------------------ */
   try {
     channel = new BroadcastChannel(CHANNEL);
@@ -157,6 +187,8 @@
         if (inRun && msg.loadout) host.updateRun(msg.loadout);
       } else if (msg.type === 'result') {
         settle(msg.result);
+      } else if (msg.type === 'hoverEnemy') {
+        applyCursor(typeof msg.index === 'number');
       }
     };
   }

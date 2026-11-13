@@ -1,7 +1,7 @@
 # HANDOFF — 2.5D 骷髅竞技场
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-13 全套验收通过**（139 条单测 / 独立页 13 条 / 单页 37 条 / playthrough 37 steps / resize 4 steps；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、通关整份搬回、阵亡或中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效）。**steps 会浮动**：13 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 36–37 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-13 全套验收通过**（146 条单测 / 独立页 13 条 / 单页 39 条 / playthrough 38 steps / resize 4 steps；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、通关整份搬回、阵亡或中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效）。**steps 会浮动**：13 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 37–38 间变化，`verify-all.sh` 下限固定 35。
 > 这份文件记录**当前已实现的功能与不可回退的约束**。新会话先读它，再动手。
 > 改了功能 → 必须同步改本文件，追加 `docs/feedback.md`，**做完即提交并推送到 `origin/main`**。
 > 工作区级总索引：`D:\tools\zaohua\AGENTS.md`（工作区地图、跨工程硬约束、备份边界）；本文件是工程级交接。
@@ -13,7 +13,7 @@
 | 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad |
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **139**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **146**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
 | 怎么还原 | `git checkout HEAD -- <path>`；整包兜底见「可回滚基线」 |
@@ -38,13 +38,25 @@
 
 | 输入 | 行为 |
 |:--|:--|
-| 悬停鼠标 | 完全不动，不产生移动指令 |
+| 悬停鼠标 | 完全不动，不产生移动指令；**悬停在敌人身上时光标由箭头变长剑、该骷髅脚下出现白色脉冲环** |
 | 单击地面 | 设落点走过去停下，**不挥砍** |
 | 单击敌人 | 锁定；距离不够先自动接近，**进攻击距离才挥砍一次**；**只扣这一只**的血 |
 | 长按左键 | 落点实时跟随光标；松开停止跟随、按最后落点走完停下；**全程不攻击** |
 | **单击掉落物** | 下一条**显式拾取指令**：走过去、到达才拾取（走过不拾取），优先装进空武器槽；两槽满则放进**局内背包**并占真实 2×3 格；背包也满则**掉落物留在地上** |
 | **1 / 2** | **切换当前使用的武器槽**；只有激活槽那把参与攻击，空槽＝徒手（22 伤害 / 140 范围）；有武器时伤害取 `weapon.xlsx` 的 `(damage_min+damage_max)/2`，无表行的演示长剑回落 46 / 170 范围 |
 | 空格 / R | 闪避（无敌 + 冷却 + 残影） / 重开 |
+
+**指针反馈与身体碰撞**（2026-11-13，用户三项要求）：
+
+| 项 | 契约 |
+|:--|:--|
+| 目标反馈 | 悬停在敌人身上时，**鼠标光标变长剑**、该骷髅脚下出现白色脉冲环；指针移到小地图上时 `StepInput.pointerOnHud` 抑制悬停。悬停**不产生任何指令**（不移动、不攻击） |
+| 唯一命中权威 | 光标变剑与点击攻击共用同一个 `attack.ts::hitTestEnemy()`，所以不会出现「光标变剑但点了没反应」。`GameState.hoverEnemy` 是帧末算出的敌人下标，`projection()` 也报 `hoverEnemy` |
+| 命中容错 | 身体盒仍是 `abs(dx) ≤ 30`、`y ∈ [-70, +12]`；盒外再给**躯干 46px 半径容错**（追击中的骷髅一直在动，严格贴贴图点不中）。**盒内命中永远优先于容错命中**，多个候选取躯干离指针最近的 |
+| 短按结算点 | 在**释放沿用释放点**（`StepInput.mouse`）结算掉落 / 敌人 / 地面，不再用按下点；快照没有位置时回落到按下点。移动中的目标因此好点得多 |
+| 光标实现 | Engine Worker 没有 `document`、`gameHost.canvas` 也是 `undefined`，**改不了 CSS**。Worker 只在 `hoverEnemy` 变化时经 `BroadcastChannel('forgeax-arena-run')` 发 `{ type:'hoverEnemy', index }`，主窗口 `meta-ui/shell-bridge.js` 设 `#app` 的 `style.cursor`（内联 SVG 长剑 data-URI，热点在剑尖 `3 3`）；退出战斗 / 阵亡 / 悬停消失时复位为 `''` |
+| 攻击弧 | **已删除** `paint.ts` 的扇形攻击指示区，以及只服务于它的 `Player.attackAim` 字段。攻击的可见反馈只剩挥剑动作 + 命中粒子 |
+| 身体碰撞 | `movement.ts::resolveBodyOverlap()`：**玩家↔怪物、怪物↔怪物不得重叠**。在双方都移动完、挥砍击退之后跑，2 遍软推开（各让一半），被墙卡住的一方把自己的份额让给对方；**推挤位移本身也过 `canStand()`**，不会被挤进墙里。足迹半径：玩家 12 / 怪物 10（墙仍用 `canStand` 的 10px 探针，两者独立） |
 
 **本游戏没有得分**（2026-11-12 用户拍板）：`GameState` 里没有 `score`，击杀 / 拾取都不加分，
 HUD 右上角已改成**只读小地图**（击杀 / 剩余骷髅 / 状态面板按用户要求删除），结算板仍显示 `击杀 / 拾取`。
@@ -222,7 +234,7 @@ Engine Worker 持**局内** `InventoryState`（`GameState.runInventory`，`bag /
 它除了跑下面各项 + meta-ui 页面验收，还强制 `test` ≥ **83** 条、`playthrough` ≥ 35 步、
 `resize` ≥ 4 步 —— **新会话删断言让测试变绿，会在这里失败**。
 `verify.sh` 按模块附加：命中 `meta` 跑 `build-meta-ui.mjs --check`、`verify-meta-ui.cjs`（13 条真实拖放）
-与 `inject-shell.mjs --check` + `verify-shell.cjs`（37 条单页断言）；命中 `resource` 跑
+与 `inject-shell.mjs --check` + `verify-shell.cjs`（39 条单页断言）；命中 `resource` 跑
 `export_tables.py --check`；命中 `combat` 跑 31000 次/池掉落跑批。
 `verify-all.sh` 把壳层注入 + 单页验收放在**全流程最后一步**：`build` / `play` / `package`
 **都会重建 `dist/`**，只在 build 后注入会被后面的 `package` 冲掉，4174 又变回无壳层页面。
@@ -252,14 +264,14 @@ node scripts/verify-shell.cjs                            # 4174 单页 29/29
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **139** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-13 续三：+8 `run-inventory.test.ts`、weapons 9→10、run-settlement 8→10，删去旧结算 / 跨堆拾取断言） |
+| `test` | **146** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-13 续四：movement 11→18，+7 条悬停反馈 / 命中容错 / 身体碰撞） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` 四张表与 `generated/*.ts` 一致，且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
 | `meta-ui` | 生成物同步 + 独立页面浏览器验收 13/13 |
 | `build` | `ok` |
-| `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **31/31**（含 7 条平台身份 / KV 存档、1 条「无宿主不写盘」、2 条平台 lifecycle、局内背包、局内拾取镜像到装备栏、阵亡清空全部 10 槽） |
-| `playthrough` 1600x900 | `passed:true`、36–37 steps（下限 35，advance 子步浮动）、0 errors |
+| `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **39/39**（含 7 条平台身份 / KV 存档、1 条「无宿主不写盘」、2 条平台 lifecycle、局内背包、局内拾取镜像到装备栏、阵亡清空全部 10 槽、2 条光标反馈） |
+| `playthrough` 1600x900 | `passed:true`、37–38 steps（下限 35，advance 子步浮动）、0 errors |
 | `playthrough-resize` 1700x1000 | `passed:true`、4 steps、0 errors |
 | `package` | sha256 校验通过，包内 README + feedback 齐全 |
 | `web-zip shell`（发布产物） | `verify-all.sh` 的 `package` 步骤产出 `artifacts/verify/forgeax-game-web.zip`：`sha256sum -c` 通过、`index.html` 含 `FORGEAX_META_SHELL_BEGIN`、`forgeax-dist.json` 的 `bytes`/`sha256` 与实际一致；Builder 玩家产物同时含壳层与平台 bootstrap |
@@ -270,19 +282,23 @@ node scripts/verify-shell.cjs                            # 4174 单页 29/29
 
 下表把「当前功能契约」逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 139 条＝combat 69（loot 14 + movement 11 + attack-spec 10 +
-projectiles 10 + weapons **10** + **world 11** + modifiers 3）、
+删断言不会让这张表悄悄失效。单测 146 条＝combat 76（loot 14 + movement **18** + attack-spec 10 +
+projectiles 10 + weapons **10** + **world 11** + modifiers 3）+ 局内 `run-inventory` 8、
 meta 40（inventory 16 + platform-KV account 11 + run-settlement **10** + meta 3）、battle 4、talent 3、
 resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不随新增断言抬高）。
-浏览器验收：playthrough 13 个命名场景（展开 36–37 steps，下限 35）、独立页 13 条、4174 单页 37 条
-（含 7 条平台身份 / KV 存档 + 1 条「无宿主不写盘」+ 2 条平台 lifecycle + 2 条本轮新增）。
+浏览器验收：playthrough 14 个命名场景（展开 37–38 steps，下限 35）、独立页 13 条、4174 单页 39 条
+（含 7 条平台身份 / KV 存档 + 1 条「无宿主不写盘」+ 2 条平台 lifecycle + 2 条光标反馈）。
 真实硬件 WebGPU 冒烟（历史一次性脚本）：`node artifacts/smoke-login-bag.mjs` 曾覆盖「强制登录 / 刷新后存档」，
 **该脚本按已删除的本地登录 + 本地存盘流程编写，现已不适用**；现行契约里无宿主不写盘、刷新不恢复，
-本地验收以 `verify-shell.cjs` 的 37 条为准。
+本地验收以 `verify-shell.cjs` 的 39 条为准。
 
 | 功能契约 | 单测 `assets/combat/__tests__/movement.test.ts` | 浏览器 `scripts/playthrough.mjs` |
 |:--|:--|:--|
 | 悬停不动 | `hovering the pointer never moves the player` | `hovering the pointer does not move the player` |
+| **悬停敌人 → 光标变剑 + 脚下白环**（与点击同一命中函数） | `the skeleton under the free cursor is reported, nothing else is` + `hover is suppressed while the pointer is on the HUD minimap` + `hover never moves the player or orders an attack` | `the enemy under the free cursor is reported for the sword cursor` + `verify-shell.cjs`：`a hovered enemy turns the page cursor into a sword` / `the cursor goes back to the platform default` |
+| **点移动中的敌人**（释放点结算 + 46px 躯干容错） | `a click that just misses the body box still targets that skeleton` | 点敌人步骤（`enemyPoint` 取躯干中心）+ 46px 容错由上面的单测覆盖 |
+| **身体不重叠**（玩家↔怪物、怪物↔怪物） | `the player cannot walk through a monster` + `two monsters never share one footprint` + `separation never pushes a body into a wall` | — |
+| **攻击没有扇形指示区** | —（`Player.attackAim` 已删，`tsc` 保证无残留引用） | `left click on an enemy ...` 的截图（画面只有挥剑动作 + 粒子） |
 | 点地面只移动、不挥砍 | `a click on the ground moves there, stops, and never attacks` | `a click on the ground moves but never attacks` |
 | 点地面靠近敌人也不攻击 | `a ground click near, but not on, an enemy never attacks` | — |
 | 四象限方向 / 任意视口 | `clicking any quadrant walks the matching direction` | `click-to-move maps to all four quadrants on non-1280x720 viewports` + `playthrough-resize.mjs` |
@@ -303,12 +319,12 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 背包 5×8、仓库 16×10、长剑 2×3、10 装备槽、占格碰撞/越界、跨容器拖放、穿脱、类型校验 | `assets/meta/__tests__/inventory.test.ts`（16 条） | `scripts/verify-meta-ui.cjs`（13 条真实拖放断言） |
 | 表结构 / 生成物 SHA-256 / 权重梯 / 引用完整性 | `assets/resource/__tests__/tables.test.ts`（5 条）+ `export_tables.py --check` | `scripts/loot-report.mjs`（31000 次/池，偏差 >1% 即失败） |
 | 权重掉落、固定种子可复现、多怪部署、战利品记录 | `assets/combat/__tests__/loot.test.ts`（14 条） | — |
-| 两份状态搬入 / 整份搬回 / 阵亡与中途退出整份丢弃 | `assets/meta/__tests__/run-settlement.test.ts`（10 条） | `scripts/verify-shell.cjs`（37 条，含出征广播、战斗态切换、阵亡 10 槽清空与平台 lifecycle） |
+| 两份状态搬入 / 整份搬回 / 阵亡与中途退出整份丢弃 | `assets/meta/__tests__/run-settlement.test.ts`（10 条） | `scripts/verify-shell.cjs`（39 条，含出征广播、战斗态切换、阵亡 10 槽清空与平台 lifecycle） |
 | 初始状态 / reload 可玩 | `empty-project.test.ts`（2 条工程契约） | `spawn: ...` + `reload preserves a playable frame` |
 | 平台 lifecycle：pause/resume 真实停战斗、状态可翻转、消息送达 Worker | — | `scripts/verify-shell.cjs`：`platform lifecycle adapter flips paused and stays registered` + `pause/resume are forwarded to the Engine Worker over the run channel` |
 | 平台身份 / KV 存档：无登录、单 key 版本化 blob、损坏兜底、平台桥切换、纯 JSON 写入（**均为纯逻辑验证，无宿主不落盘；刷新恢复 / 账号隔离只在发布到平台后验**） | `assets/meta/__tests__/account.test.ts`（11 条：envelope / 校验 / 迁移兜底 / 写队列） | `scripts/verify-shell.cjs`（8 条，`store.*`；含「无宿主不写盘」断言） |
 
-| **大地图 / 相机 / A* / 碰撞 / 只读小地图** | `assets/combat/__tests__/world.test.ts`（11 条） | `scripts/playthrough.mjs`（37 steps）+ `scripts/verify-shell.cjs`（`deploy` 只发 seed + loadout） |
+| **大地图 / 相机 / A* / 碰撞 / 只读小地图** | `assets/combat/__tests__/world.test.ts`（11 条） | `scripts/playthrough.mjs`（38 steps）+ `scripts/verify-shell.cjs`（`deploy` 只发 seed + loadout） |
 | **怪物按地图实体生成，运行时无数量字段** | `loot.test.ts`：`deployRun copies the WHOLE loadout ... without any count field` | `verify-shell.cjs`：`deploy sends only seed + the whole loadout; the monster-count UI is gone` |
 | **局内拾取武器真实同步到角色面板装备栏** | `weapons.test.ts`：`equipping loot emits one character-panel event per slot, cleared on reset` | `verify-shell.cjs`：`in-run loot is mirrored into the character panel weapon slot` + `cleared keeps worn loot equipped and banks the bag loot once` |
 | **阵亡清空全部 10 个装备槽（含留局外的护甲首饰）** | `run-settlement.test.ts`：`gameOver clears every worn item, not just the two weapon slots` | `verify-shell.cjs`：`gameOver wipes ALL ten equipment slots`（`snap().worn === 0`） |

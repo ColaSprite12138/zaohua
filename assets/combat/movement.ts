@@ -38,8 +38,14 @@ export function classifyPointer(s: GameState, dt: number, input: StepInput): voi
     }
     if (input.pointerUp) {
       if (!s.press.hold) {
-        const drop = dropAtPoint(s, s.press.x, s.press.y);
-        const enemy = drop ? null : hitTestEnemy(s, s.press.x, s.press.y);
+        // Resolve the short click where the button was RELEASED: a chasing
+        // skeleton keeps moving between press and release, and the release
+        // point is the last place the player actually aimed at. Falls back to
+        // the press point when the snapshot carries no position.
+        const cx = input.mouse?.x ?? s.press.x;
+        const cy = input.mouse?.y ?? s.press.y;
+        const drop = dropAtPoint(s, cx, cy);
+        const enemy = drop ? null : hitTestEnemy(s, cx, cy);
         clearAttackOrder(s);
         // A short click ON a drop is the ONLY thing that orders a pickup;
         // walking past a drop never collects it.
@@ -50,7 +56,7 @@ export function classifyPointer(s: GameState, dt: number, input: StepInput): voi
           const sk = s.skeletons[enemy];
           if (sk) setTarget(s, sk.x, sk.y);
         } else {
-          setTarget(s, s.press.x, s.press.y);
+          setTarget(s, cx, cy);
         }
         s.moveMode = 'point';
       }
@@ -86,8 +92,7 @@ function canStand(w: World, x: number, y: number): boolean {
 }
 
 /** Axis-separated movement so a wall slides the body instead of freezing it. */
-function moveWithCollision(s: GameState, dx: number, dy: number): void {
-  const p = s.player;
+function moveWithCollision(s: GameState, dx: number, dy: number): void {  const p = s.player;
   const nx = p.x + dx;
   const ny = p.y + dy;
   if (canStand(s.world, nx, ny)) {
@@ -130,4 +135,75 @@ export function walk(s: GameState, dt: number): void {
   for (const mark of p.trail) mark.life -= dt;
   p.trail = p.trail.filter((mark) => mark.life > 0);
   if (p.dodge > 0 && Math.random() < 0.5) p.trail.push({ x: p.x, y: p.y, life: 0.32 });
+}
+
+/**
+ * Body footprints for BODY vs BODY separation only. Walls keep using the 10px
+ * probe in `canStand`; these are the standing footprints two characters may
+ * not share.
+ */
+export const PLAYER_FOOT_RADIUS = 12;
+export const MONSTER_FOOT_RADIUS = 10;
+/** Two passes settle a crowd: the second pass cleans up the first one's pushes. */
+const SEPARATION_PASSES = 2;
+
+interface Body {
+  x: number;
+  y: number;
+}
+
+/** Offsetting a body is itself collision-checked, so nobody is pushed into a wall. */
+function nudge(s: GameState, body: Body, dx: number, dy: number): boolean {
+  const nx = body.x + dx;
+  const ny = body.y + dy;
+  if (!canStand(s.world, nx, ny)) return false;
+  body.x = nx;
+  body.y = ny;
+  return true;
+}
+
+/** Shove two overlapping bodies apart, half the overlap each. */
+function separate(s: GameState, a: Body, b: Body, minDist: number): void {
+  let dx = b.x - a.x;
+  let dy = b.y - a.y;
+  let d = Math.hypot(dx, dy);
+  if (d >= minDist) return;
+  if (d < 1e-4) {
+    // Exactly fused: pick a stable axis so the two do not oscillate forever.
+    dx = 1;
+    dy = 0;
+    d = 1;
+  }
+  const ux = dx / d;
+  const uy = dy / d;
+  let remaining = minDist - d;
+  const half = remaining / 2;
+  if (nudge(s, b, ux * half, uy * half)) remaining -= half;
+  const take = Math.min(half, remaining);
+  if (take > 0 && nudge(s, a, -ux * take, -uy * take)) remaining -= take;
+  // A body pinned by a wall hands its whole share to the other one.
+  if (remaining > 0.01 && !nudge(s, b, ux * remaining, uy * remaining)) {
+    nudge(s, a, -ux * remaining, -uy * remaining);
+  }
+}
+
+/**
+ * Bodies never interpenetrate: player vs monster, monster vs monster.
+ *
+ * Runs AFTER both sides have moved and after swing knockback, as a soft
+ * push-out. A hard "stop at contact" rule would let a monster freeze the
+ * player against a wall instead of sliding past, so both sides give way.
+ */
+export function resolveBodyOverlap(s: GameState): void {
+  for (let pass = 0; pass < SEPARATION_PASSES; pass += 1) {
+    const live = s.skeletons.filter((sk) => sk.alive);
+    for (const sk of live) {
+      separate(s, s.player, sk, PLAYER_FOOT_RADIUS + MONSTER_FOOT_RADIUS);
+    }
+    for (let i = 0; i < live.length; i += 1) {
+      for (let j = i + 1; j < live.length; j += 1) {
+        separate(s, live[i]!, live[j]!, MONSTER_FOOT_RADIUS * 2);
+      }
+    }
+  }
 }

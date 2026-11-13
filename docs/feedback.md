@@ -590,3 +590,13 @@
   `run-settlement.test.ts`（10 条）与 `weapons.test.ts`（10 条）。
 - 明确未做（用户本轮边界）：攻击 spec 分派 / 弓手互射、8 个非武器槽属性与被动技能表、
   天赋接入、局外养成角色属性、本地存盘、平台 KV 结构变更。
+
+### 2026-11-13 — Engine Worker（source realm）没有任何设置鼠标光标的接口
+
+- Scope: Engine / SDK
+- Reproduction: 想在「鼠标悬停到敌人身上时光标换成剑」，在 `assets/game/game.pack.ts`（`forge.json#roots.engine` 指向的 Pack）里读 `gameHost`
+- Expected: `gameHost`（或 input 服务）提供一个设置光标 / 访问页面 canvas 元素的能力；俯视角点击类游戏区分「可攻击目标」与「地面」几乎都要它
+- Actual: `gameHost` 只暴露 `setPointerLockAllowed` / `drawingBufferSize` / `gameProjection` / `uiRoot`；source realm 无 `document`、`gameHost.canvas` 为 `undefined`、`uiRoot` 在 source-only realm 被省略，因此**无法设置 CSS `cursor`**，也拿不到 `<canvas>` 元素
+- Evidence: `@forgeax/engine/node_modules/@forgeax/engine-app/dist/game-context.d.ts` 的 GameHost 接口注释（"Source-only realms omit it."）；本工程改用 Worker 发消息、主窗口设置样式
+- Status: workaround
+- Workaround: 光标归 presentation realm 管。Engine Worker 只在悬停目标变化时经既有的 `BroadcastChannel('forgeax-arena-run')` 发 `{ type:'hoverEnemy', index }`，主窗口 `meta-ui/shell-bridge.js` 设 `#app.style.cursor`（内联 SVG 长剑 data-URI，热点在剑尖），悬停消失 / 退出战斗时复位。逐帧发消息不必要，也不需要新增引擎能力
