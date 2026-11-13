@@ -106,6 +106,13 @@ export interface Drop {
   name?: string;
   quality?: string;
   monsterId?: string;
+  /**
+   * Result of `layoutDrops()` for the CURRENT frame. `undefined` means "not
+   * laid out yet" (a drop created this frame, or a unit-test fixture), which
+   * falls back to the single-item anchor. `null` means "deliberately hidden by
+   * the fan-out cap" -- such a drop has no plate and cannot be clicked by name.
+   */
+  label?: DropLabel | null;
 }
 
 /**
@@ -120,23 +127,76 @@ export const DROP_MODEL_RADIUS = 12;
 export const DROP_MODEL_TOP = -26;
 export const DROP_LABEL_H = 20;
 export const DROP_LABEL_GAP = 8;
+/**
+ * Overlapping loot fans out into ONE vertical column per pile (the Diablo
+ * "loot explosion" read): at most this many plates, best quality on top. The
+ * rest stay on the ground unlabelled and surface as the upper ones are taken.
+ */
+export const DROP_LABEL_MAX = 5;
+/** Vertical spacing of fanned-out plates: plate height + 4px breathing room. */
+export const DROP_LABEL_STEP = DROP_LABEL_H + 4;
+/**
+ * Two plates "overlap" when their boxes would collide within this slack. Piles
+ * are built from this, not from a fixed radius: a label only fans out when the
+ * labels it would otherwise cover, which is exactly what the player sees.
+ */
+export const DROP_PILE_GAP = 6;
+
+/** 白 < 绿 < 蓝 < 紫 < 橙; unknown qualities sort below 白. */
+export function dropQualityRank(quality?: string): number {
+  switch (quality) {
+    case '白': return 1;
+    case '绿': return 2;
+    case '蓝': return 3;
+    case '紫': return 4;
+    case '橙': return 5;
+    default: return 0;
+  }
+}
+
+/** A laid-out plate: box + where it sits in the fan-out column. */
+export interface DropLabel {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** 0 = top of the column (highest quality shown). */
+  index: number;
+  /** How many plates this column shows. */
+  count: number;
+  /** How many drops of this pile the cap suppressed. */
+  hidden: number;
+}
 
 /** Display name of a drop; unlabelled debug drops still read as a sword. */
 export function dropLabelName(drop: Drop): string {
   return drop.name !== undefined && drop.name.length > 0 ? drop.name : '长剑';
 }
 
+/** Plate width estimated from the name (CJK glyphs are ~1em at 12px). */
+function labelWidth(name: string): number {
+  return Math.max(44, Array.from(name).length * 13 + 20);
+}
+
+/**
+ * The plate box a drop would get on its own. The column keeps this as its
+ * bottom entry, so a single drop (or the last of a pile) looks exactly like it
+ * always did.
+ */
+export function dropLabelAnchor(drop: Drop): { x: number; y: number; w: number; h: number } {
+  const w = labelWidth(dropLabelName(drop));
+  const bottom = drop.y + DROP_MODEL_TOP - DROP_LABEL_GAP;
+  return { x: drop.x - w / 2, y: bottom - DROP_LABEL_H, w, h: DROP_LABEL_H };
+}
+
 /**
  * The plate's WORLD-space box. `attack.ts` uses it for hit testing and
  * `paint.ts` for drawing, so the visible highlight and the clickable area can
- * never disagree. Width is estimated from the name (CJK glyphs are ~1em at
- * 12px) because the Engine Worker has no text-measuring layout authority here.
+ * never disagree. Returns null when the fan-out cap hides this drop.
  */
-export function dropLabelRect(drop: Drop): { x: number; y: number; w: number; h: number } {
-  const name = dropLabelName(drop);
-  const w = Math.max(44, Array.from(name).length * 13 + 20);
-  const bottom = drop.y + DROP_MODEL_TOP - DROP_LABEL_GAP;
-  return { x: drop.x - w / 2, y: bottom - DROP_LABEL_H, w, h: DROP_LABEL_H };
+export function dropLabelRect(drop: Drop): DropLabel | null {
+  if (drop.label !== undefined) return drop.label;
+  return { ...dropLabelAnchor(drop), index: 0, count: 1, hidden: 0 };
 }
 
 /** One weighted loot roll, recorded for the run report and settlement. */

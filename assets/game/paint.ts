@@ -437,26 +437,37 @@ function drawDrop(g: Painter, drop: Drop, hovered: boolean): void {
 
 /**
  * Name plates are drawn AFTER every body, so a monster standing on the loot
- * can never hide the name the player is meant to click. This is presentation
- * only -- `dropAtPoint()` uses the very same box for hit testing.
+ * can never hide the name the player is meant to click. Overlapping loot is
+ * fanned out by `layoutDrops()` into one vertical, quality-ranked column: only
+ * the bottom plate keeps the connector notch (it points at the pile), and the
+ * top plate carries a muted "+N" for whatever the cap hid.
+ *
+ * Presentation only -- `dropAtPoint()` hit-tests the very same boxes.
  */
 function drawDropLabels(g: Painter, s: GameState): void {
   for (const drop of s.drops) {
     const rect = dropLabelRect(drop);
+    if (rect === null) continue;
     const active = s.hoverDrop === drop.uid;
     const color = qualityColor(drop.quality);
     const cx = rect.x + rect.w / 2;
 
     g.save();
-    // Connector notch, so the plate visibly belongs to the item under it.
-    g.globalAlpha = active ? 0.95 : 0.6;
-    g.fillStyle = active ? '#ffffff' : 'rgba(160,182,200,0.9)';
-    g.beginPath();
-    g.moveTo(cx - 3, rect.y + rect.h);
-    g.lineTo(cx + 3, rect.y + rect.h);
-    g.lineTo(cx, rect.y + rect.h + 4);
-    g.closePath();
-    g.fill();
+    if (rect.index === 0 && rect.hidden > 0) {
+      // Overflow marker: a muted count, never a click target.
+      text(g, `+${rect.hidden} 件`, cx, rect.y - 11, 10, 'rgba(168,190,208,0.8)', 'center', '700');
+    }
+    // The column is a list: only its bottom entry is anchored to the pile.
+    if (rect.index === rect.count - 1) {
+      g.globalAlpha = active ? 0.95 : 0.6;
+      g.fillStyle = active ? '#ffffff' : 'rgba(160,182,200,0.9)';
+      g.beginPath();
+      g.moveTo(cx - 3, rect.y + rect.h);
+      g.lineTo(cx + 3, rect.y + rect.h);
+      g.lineTo(cx, rect.y + rect.h + 4);
+      g.closePath();
+      g.fill();
+    }
 
     g.globalAlpha = active ? 1 : 0.9;
     if (active) {

@@ -18,10 +18,10 @@ import { say } from './effects.ts';
 import { makeRunInventory } from './run-inventory.ts';
 import type { RunLoadout } from '../meta/inventory.ts';
 import {
-  activeWeapon, createState, dropLabelRect, reset, setArena, syncWeaponSlots,
-  type GameState, type StepInput,
+  activeWeapon, createState, dropLabelName, dropLabelRect, reset, setArena,
+  syncWeaponSlots, type GameState, type StepInput,
 } from './state.ts';
-import { checkCleared, switchWeaponSlot, updateDrops } from './weapons.ts';
+import { checkCleared, layoutDrops, switchWeaponSlot, updateDrops } from './weapons.ts';
 import { cameraFor, worldToScreen, type ArenaMap } from './world.ts';
 
 function tickTimers(s: GameState, dt: number): void {
@@ -68,6 +68,9 @@ export function step(
   // swing knockback, so a hit never leaves two bodies fused.
   resolveBodyOverlap(s);
   updateDrops(s, dt);
+  // Piles fan out AFTER collection resolved, so every frame paints (and every
+  // click tests) the same quality-ranked column.
+  layoutDrops(s);
   checkCleared(s);
   tickParticles(s, dt);
   // Hover feedback LAST: it must describe the frame that is about to be
@@ -136,15 +139,11 @@ export function projection(s: GameState) {
   const cam = s.camera;
   const scr = (x: number, y: number) => worldToScreen(cam, x, y);
   const dropScreen = first ? scr(first.x, first.y) : null;
-  // Centre of the first drop's NAME PLATE. Acceptance scripts click the plate
-  // (not the item) so the "loot is an explicit, labelled click" contract is
-  // what actually gets exercised.
-  const labelScreen = first
-    ? (() => {
-      const r = dropLabelRect(first);
-      return scr(r.x + r.w / 2, r.y + r.h / 2);
-    })()
-    : null;
+  // Centre of the first VISIBLE name plate. A drop hidden by the fan-out cap
+  // has no plate, so the acceptance script must click one that exists.
+  const labelled = s.drops.find((drop) => dropLabelRect(drop) !== null);
+  const labelRect = labelled ? dropLabelRect(labelled) : null;
+  const labelScreen = labelRect ? scr(labelRect.x + labelRect.w / 2, labelRect.y + labelRect.h / 2) : null;
   const playerScreen = scr(s.player.x, s.player.y);
   const targetScreen = scr(s.target.x, s.target.y);
   return {
@@ -166,6 +165,26 @@ export function projection(s: GameState) {
     drops: s.drops.map((drop) => drop.kind),
     dropAt: dropScreen ? { x: dropScreen.x / VIEW_W, y: dropScreen.y / VIEW_H } : null,
     dropLabel: labelScreen ? { x: labelScreen.x / VIEW_W, y: labelScreen.y / VIEW_H } : null,
+    /**
+     * Every plate, including the fan-out bookkeeping: `x/y/w/h` are the box a
+     * click must land in, `index` is the row (0 = top = best quality),
+     * `hidden` counts what the cap suppressed. Null box = no plate at all.
+     */
+    dropPlates: s.drops.map((drop) => {
+      const r = dropLabelRect(drop);
+      return {
+        uid: drop.uid,
+        name: dropLabelName(drop),
+        quality: drop.quality ?? null,
+        x: r ? r.x / VIEW_W : null,
+        y: r ? r.y / VIEW_H : null,
+        w: r ? r.w / VIEW_W : 0,
+        h: r ? r.h / VIEW_H : 0,
+        index: r ? r.index : -1,
+        count: r ? r.count : 0,
+        hidden: r ? r.hidden : 0,
+      };
+    }),
     // Legacy field names kept for the 35-step playthrough: they report the
     // visual 'longsword' CATEGORY. The authored ids live in `weaponDefIds`.
     equippedWeapon: activeWeapon(s) !== null ? 'longsword' : null,
@@ -222,9 +241,10 @@ export type {
   Drop, GameState, MoveMode, Particle, Player, Skeleton, StepInput,
 } from './state.ts';
 export {
-  CLICK_DRAG_PIXELS, DROP_LABEL_GAP, DROP_LABEL_H, DROP_MODEL_RADIUS,
-  DROP_MODEL_TOP, dropLabelName, dropLabelRect, MELEE_RANGE_ARMED,
-  MELEE_RANGE_BARE,
+  CLICK_DRAG_PIXELS, DROP_LABEL_GAP, DROP_LABEL_H, DROP_LABEL_MAX,
+  DROP_LABEL_STEP, DROP_MODEL_RADIUS, DROP_MODEL_TOP, DROP_PILE_GAP,
+  dropLabelAnchor, dropLabelName, dropLabelRect, dropQualityRank,
+  MELEE_RANGE_ARMED, MELEE_RANGE_BARE,
 } from './state.ts';
 export type { ArenaMap } from './world.ts';
 export type { CombatModifiers } from './modifiers.ts';

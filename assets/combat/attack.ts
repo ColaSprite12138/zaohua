@@ -76,7 +76,9 @@ export function dropAtPoint(s: GameState, x: number, y: number): Drop | null {
   let modelBest = Infinity;
   for (const drop of s.drops) {
     const rect = dropLabelRect(drop);
-    if (x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h) {
+    if (rect !== null
+      && x >= rect.x && x <= rect.x + rect.w
+      && y >= rect.y && y <= rect.y + rect.h) {
       // Overlapping plates: the one whose centre is nearest wins.
       const d = Math.hypot(x - drop.x, y - (rect.y + rect.h / 2));
       if (d < plateBest) {
@@ -85,6 +87,8 @@ export function dropAtPoint(s: GameState, x: number, y: number): Drop | null {
       }
       continue;
     }
+    // No plate (hidden by the fan-out cap) still leaves the tiny model itself
+    // clickable, so a capped drop is never unreachable.
     const d = Math.hypot(x - drop.x, y - drop.y);
     if (d <= DROP_MODEL_RADIUS && d < modelBest) {
       modelBest = d;

@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { hitTestEnemy } from '../attack.ts';
 import {
   createState,
+  DROP_LABEL_MAX,
+  DROP_LABEL_STEP,
+  dropLabelAnchor,
   dropLabelRect,
   step,
   type GameState,
@@ -231,7 +234,7 @@ describe('ground loot: tiny model + clickable name plate', () => {
     s.drops.push({
       uid: 'plate-hover', x: sk.x, y: sk.y, kind: 'longsword', t: 0, name: '霜之哀伤',
     });
-    const rect = dropLabelRect(s.drops[0]!);
+    const rect = dropLabelRect(s.drops[0]!)!;
 
     step(s, 1 / 60, input({ mouse: { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2 } }));
     expect(s.hoverDrop).toBe('plate-hover');
@@ -255,7 +258,7 @@ describe('ground loot: tiny model + clickable name plate', () => {
     s.drops.push({
       uid: 'plate-click', x: dropX, y: dropY, kind: 'longsword', t: 0, name: '霜之哀伤',
     });
-    const rect = dropLabelRect(s.drops[0]!);
+    const rect = dropLabelRect(s.drops[0]!)!;
 
     click(s, rect.x + rect.w / 2, rect.y + rect.h / 2);
     expect(s.attackOrder).toBe(false);
@@ -279,6 +282,71 @@ describe('ground loot: tiny model + clickable name plate', () => {
     expect(s.attacks).toBe(0);
     expect(s.moveMode).toBe('point');
     expect(s.target.x).toBe(dropX + 40);
+  });
+});
+
+describe('overlapping loot fans out into one quality-ranked column', () => {
+  /** A drop whose plate is 46px wide (two CJK glyphs). */
+  const loot = (uid: string, quality: string, x: number, y: number) => ({
+    uid, x, y, kind: 'longsword' as const, t: 0, name: '巨剑', quality,
+  });
+
+  it('stacks plates vertically, best quality on top, capped at DROP_LABEL_MAX', () => {
+    const s = createState();
+    // Six drops in one pile: 白 绿 蓝 紫 橙 + one more 白 that the cap must hide.
+    const tiers = ['白', '绿', '蓝', '紫', '橙', '白'];
+    tiers.forEach((quality, i) => s.drops.push(loot(`q${i}`, quality, 700, 300)));
+    step(s, 1 / 60, input({ mouse: { x: 100, y: 100 } }));
+
+    const plates = s.drops
+      .map((drop) => ({ uid: drop.uid, rect: dropLabelRect(drop) }))
+      .filter((entry) => entry.rect !== null)
+      // Top of the column first.
+      .sort((a, b) => a.rect!.y - b.rect!.y);
+    // 橙 紫 蓝 绿 白 -- the sixth (a second 白, later in the pile) is capped.
+    expect(plates.map((p) => p.uid)).toEqual(['q4', 'q3', 'q2', 'q1', 'q0']);
+    expect(plates).toHaveLength(DROP_LABEL_MAX);
+
+    // One vertical column, fixed spacing, no two plates share a row.
+    for (let i = 1; i < plates.length; i += 1) {
+      expect(plates[i]!.rect!.y - plates[i - 1]!.rect!.y).toBe(DROP_LABEL_STEP);
+    }
+    // The bottom plate sits exactly where a lone drop's plate would be.
+    const anchor = dropLabelAnchor(s.drops[0]!);
+    expect(plates.at(-1)!.rect!.y).toBe(anchor.y);
+    expect(plates[0]!.rect!.y).toBeLessThan(anchor.y);
+    expect(plates[0]!.rect!.hidden).toBe(1);
+    // The capped drop has no plate at all.
+    expect(dropLabelRect(s.drops[5]!)).toBe(null);
+  });
+
+  it('a click on a lower plate picks that item, not the top one', () => {
+    const s = createState();
+    s.drops.push(loot('low', '白', 700, 300));
+    s.drops.push(loot('high', '橙', 700, 300));
+    step(s, 1 / 60, input({ mouse: { x: 100, y: 100 } }));
+
+    const low = dropLabelRect(s.drops[0]!)!;
+    expect(low.index).toBe(1);
+    click(s, low.x + low.w / 2, low.y + low.h / 2);
+    expect(s.pickupTarget).toBe('low');
+    expect(s.attackOrder).toBe(false);
+    expect(s.attacks).toBe(0);
+  });
+
+  it('a capped drop is still reachable through its own tiny model', () => {
+    const s = createState();
+    const tiers = ['白', '绿', '蓝', '紫', '橙', '白'];
+    // The capped one stands 40px aside: inside the pile, outside every plate.
+    tiers.forEach((quality, i) => s.drops.push(
+      loot(`q${i}`, quality, i === 5 ? 740 : 700, 300),
+    ));
+    step(s, 1 / 60, input({ mouse: { x: 100, y: 100 } }));
+    expect(dropLabelRect(s.drops[5]!)).toBe(null);
+
+    click(s, 740, 300);
+    expect(s.pickupTarget).toBe('q5');
+    expect(s.attacks).toBe(0);
   });
 });
 

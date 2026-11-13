@@ -1,7 +1,7 @@
 # HANDOFF — 2.5D 骷髅竞技场
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-14 全套验收通过**（154 条单测 / 独立页 13 条 / 单页 39 条 / playthrough 40 steps / resize 4 steps；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、通关整份搬回、阵亡或中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效）。**steps 会浮动**：15 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 39–40 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-14 全套验收通过**（157 条单测 / 独立页 13 条 / 单页 39 条 / playthrough 40 steps / resize 4 steps；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、通关整份搬回、阵亡或中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效）。**steps 会浮动**：15 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 39–40 间变化，`verify-all.sh` 下限固定 35。
 > 这份文件记录**跨模块红线、保护清单、验收基线与回滚方案**；**模块功能契约的正本在
 > `assets/<模块>/CONTEXT.md`**（2026-11-14 拆分，见下节「模块契约在哪」）。
 > 新会话先读本文件与「模块契约在哪」，再按改动模块读对应 `CONTEXT.md`。
@@ -16,7 +16,7 @@
 | 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad |
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **154**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **157**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
 | 怎么还原 | `git checkout HEAD -- <path>`；整包兜底见「可回滚基线」 |
@@ -114,7 +114,7 @@
 
 ```bash
 ./node_modules/.bin/forgeax project check --json
-./node_modules/.bin/forgeax project test --json          # 154/154（下限 83）
+./node_modules/.bin/forgeax project test --json          # 157/157（下限 83）
 node scripts/build-meta-ui.mjs --check                  # 生成物与源码同步
 python scripts/export_tables.py --check                  # xlsx 与 generated/*.ts 同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000   # 真实 rollLoot 跑批
@@ -134,7 +134,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 39/39
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **154** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-14：movement 23→26，+3 条「掉落物小模型 / 名字牌命中」） |
+| `test` | **157** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-14：movement 23→29，+3 条「掉落物小模型 / 名字牌命中」+3 条「重叠掉落竖直展开」） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` 四张表与 `generated/*.ts` 一致，且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
@@ -152,7 +152,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 39/39
 
 下表把**各模块 `CONTEXT.md`「功能契约（正文）」**逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 154 条＝combat 84（loot 14 + movement **26** + attack-spec 10 +
+删断言不会让这张表悄悄失效。单测 157 条＝combat 87（loot 14 + movement **29** + attack-spec 10 +
 projectiles 10 + weapons **10** + **world 11** + modifiers 3）+ 局内 `run-inventory` 8、
 meta 40（inventory 16 + platform-KV account 11 + run-settlement **10** + meta 3）、battle 4、talent 3、
 resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不随新增断言抬高）。
@@ -167,6 +167,7 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 悬停不动 | `hovering the pointer never moves the player` | `hovering the pointer does not move the player` |
 | **悬停敌人 → 光标变剑 + 脚下白环**（与点击同一命中函数） | `the skeleton under the free cursor is reported, nothing else is` + `hover is suppressed while the pointer is on the HUD minimap` + `hover never moves the player or orders an attack` | `the enemy under the free cursor is reported for the sword cursor` + `verify-shell.cjs`：`a hovered enemy turns the page cursor into a sword` / `the cursor goes back to the platform default` |
 | **悬停掉落物名字牌 → 不是剑光标**（名牌压过同位置的怪） | `hovering a drop name plate reports the drop and suppresses the sword` | `loot is picked up by clicking its highlighted name plate`（悬停断言 `hoverDrop !== null && hoverEnemy === null`） |
+| **重叠掉落竖直展开**（每堆 ≤5 张、品质高在上、行距 24、溢出 `+N`） | `stacks plates vertically, best quality on top, capped at DROP_LABEL_MAX` + `a click on a lower plate picks that item, not the top one` + `a capped drop is still reachable through its own tiny model` | 临时探针截图（一次击杀克隆 6 件）人工确认渲染；浏览器验收无固定「一堆」场景 |
 | **点击时长不改变动作**（只看有没有拖动，不看按住多久） | `click duration must not change the action`（慢按不动仍攻击 / 地面仍是移动 / 拖动才跟随） | `a slow stationary click on an enemy still attacks`（真实 450ms 慢点击） |
 | **点移动中的敌人**（释放点结算 + 46px 躯干容错） | `a click that just misses the body box still targets that skeleton` | 点敌人步骤（`enemyPoint` 取躯干中心）+ 46px 容错由上面的单测覆盖 |
 | **身体不重叠**（玩家↔怪物、怪物↔怪物） | `the player cannot walk through a monster` + `two monsters never share one footprint` + `separation never pushes a body into a wall` | — |
@@ -211,6 +212,7 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 4174 改了 build 不生效 | 曾指向 `.forgeax/player/<digest>/` 打包快照；重启 preview 让它服务 `dist` |
 | 「优化」成 `127.0.0.1` 后 4174 永远探测不到 | preview 只监听 IPv6 `[::1]:4174`：`curl 127.0.0.1` = 000，`curl -6 localhost` = 200；**URL 必须保持 `localhost`** |
 | 点敌人后读不到 `attackOrder` | `justReleased` 释放沿要等引擎下一帧，验收脚本点完需 `advance` 一帧 |
+| 多件掉落只显示一张牌 / 牌子互相叠在一起 | `layoutDrops()` 每帧重算：按**牌面框重叠**分堆（并查集），每堆 ≤`DROP_LABEL_MAX=5` 张、品质高在上；`Drop.label` 是唯一几何权威，别在 paint 里另算 |
 | 长剑捡不到、角色停在 132 px 外挥砍 | 掉落点旁有活骷髅，点击被判成「点敌人」；掉落物有名字牌优先级（点牌子才是拾取） |
 | 怪物站在掉落物上却怎么点都只捡东西 | 旧规则「距掉落中心 ≤26px 一律算掉落」吃掉了整个躯干；现在只有**名字牌矩形 + 12px 小模型**算掉落，点胸口仍是攻击。可点区域必须和画出来的东西一致 |
 | 走过掉落物却没自动装备 | **这是新规则不是 bug**：拾取必须短按点中掉落物，走过去不会自动捡（`pickupTarget` 为 null）。`updateDrops()` 还要求走到 `<50px` 才结算 |

@@ -156,6 +156,8 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
    玩家走到掉落物本体、到达 `<50px` 才拾取。**走过掉落物不会自动捡**。
    掉落物本身画成很小的模型，名字牌浮在它上方、画在所有身体之后：怪物站在掉落上时，
    **指名字是拾取、指身体是攻击**，不会再出现「整只怪都点不动」。
+   多件掉落**牌面互相重叠**时竖着展开成一列（每堆最多 5 张，品质 `白<绿<蓝<紫<橙` 高在上，
+   溢出的画成灰色 `+N 件`，只能点小模型）；捡走一件后整列合拢并补位。
 2. **存活敌人**（`|dx| ≤ 30` 且 `dy ∈ [-70, +12]`）→ 锁定该敌人，压入一条攻击指令。
 3. **地面** → 设定固定落点，走到后停下，同时清空 `pickupTarget`。
 
@@ -176,9 +178,11 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 高亮环与「目标」标记，以及顶部「待命 / 前往落点 / 长按跟随中 / 锁定目标·接近中」状态标签。
 掉落物的名字牌按品质上色（白/绿/蓝/紫/橙），悬停时白框高亮、地面亮起小圆环；此时
 `hoverEnemy` 为 `null`，页面光标是**移动指针而不是长剑**（与点击行为一致）。
+多件掉落的牌面互相重叠时，`layoutDrops()` 把它们排成**一列竖排**：每堆最多 5 张、品质高在上、
+列底贴着掉落物（单件位置不变），溢出部分在列顶显示灰色 `+N 件`；捡走一件后自动合拢。
 `game.state` read projection 暴露 `moveMode`、`followingPointer`、`target`、`attackOrder`、
-`attackTarget`、`skeletons`（每只的坐标/血量/存活）、`hoverEnemy`、`hoverDrop`、`dropLabel`，
-供验收脚本直接断言。
+`attackTarget`、`skeletons`（每只的坐标/血量/存活）、`hoverEnemy`、`hoverDrop`、`dropLabel`、
+`dropPlates`（每张牌的位置、行号与被隐藏数量），供验收脚本直接断言。
 
 ## 打开游戏
 

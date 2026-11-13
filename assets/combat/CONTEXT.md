@@ -33,25 +33,37 @@
 | 单击地面 | 设落点走过去停下，`attacks` 不增加 |
 | 单击敌人 | 锁定该敌人 + 压入一条攻击指令；距离不够先接近，**进距离才挥砍一次**，只扣这一只 |
 | 长按左键（拖动） | 落点实时跟随光标；松开按最后落点走完停下；**全程不攻击** |
-| 单击掉落物 | **显式拾取指令**：点中**名字牌矩形**（或距小模型中心 ≤12px）→ 走过去、到达 `<50px` 才拾取（走过不拾取）；优先空武器槽 → 局内背包占 2×3 格 → 都不行则留在地上 |
+| 单击掉落物 | **显式拾取指令**：点中**名字牌矩形**（展开后的牌面，或距小模型中心 ≤12px）→ 走过去、到达 `<50px` 才拾取（走过不拾取）；优先空武器槽 → 局内背包占 2×3 格 → 都不行则留在地上 |
 | **1 / 2** | 切换激活武器槽；只有激活槽参与攻击，空槽＝徒手（22 伤害 / 140 范围）；有武器取 `weapon.xlsx` 中值，无表行回落 46 / 170 |
 | 空格 / R | 闪避（无敌 + 冷却 + 残影）/ 重开 |
 
 单击判定**只看位移，不看时长**：屏幕空间（`mouse − camera`）位移 `< 12` 逻辑像素即算单击，
 在**释放沿**结算、结算点取**按下那一刻的世界点**（`press.wx/wy`）；位移 `> 12` 才算长按跟随。
-分流优先级：**掉落物名字牌 / 小模型（`dropLabelRect()` 矩形 或 ≤`DROP_MODEL_RADIUS`=12px）→ 存活敌人身体盒（`abs(dx) ≤ 30`、`y ∈ [-70,+12]`，盒外 46px 躯干容错）→ 地面**。
+分流优先级：**掉落物名字牌 / 小模型（布局后的 `dropLabelRect()` 矩形 或 ≤`DROP_MODEL_RADIUS`=12px）→ 存活敌人身体盒（`abs(dx) ≤ 30`、`y ∈ [-70,+12]`，盒外 46px 躯干容错）→ 地面**。
 点中名字牌时落点取**掉落物本体坐标**（牌面浮在物品上方，不能把落点设到空中）。
 
 **掉落物只在自己的名牌内优先**：旧规则是「距掉落中心 ≤26px 一律算掉落」，怪物站在掉落上时
 整个身体都点不动、只会去捡东西。现在小模型半径只有 12px、可点区域主要是名字牌，
 怪物躯干仍是攻击目标 —— 玩家指向名字才捡、指向身体就砍。
 
+### 掉落物名字牌：重叠时竖直展开（2026-11-14 追加）
+
+| 项 | 契约 |
+|:--|:--|
+| 堆叠判定 | **牌面框重叠**（`weapons.ts::platesCollide()`，宽/高各留 `DROP_PILE_GAP=6` 余量）即同堆；用并查集传递合并（A 压 B、B 压 C ⇒ 三件同列），不是固定半径 |
+| 竖直展开 | 每堆一列竖排：行距 `DROP_LABEL_STEP = DROP_LABEL_H + 4 = 24`，同列水平居中对齐；`DROP_LABEL_MAX=5` 张 |
+| 排序 | 品质 `白 < 绿 < 蓝 < 紫 < 橙`（`dropQualityRank()`）**高在上**；同品质保持掉落顺序 |
+| 锚点 | 以**该堆品质最高**那件的默认牌位（`dropLabelAnchor()`）为列底 ⇒ 单件/无重叠时位置与旧版完全一致 |
+| 溢出 | 第 6 件起 `drop.label = null`：不画牌、不能按名字点，**小模型 12px 仍可点**；列顶画灰色 `+N 件`。捡走上面一件后自动合拢并补位 |
+| 唯一几何权威 | 布局结果写在 `Drop.label`，`paint.ts` 与 `dropAtPoint()` **都读它**；`dropLabelRect()` 在未布局（本帧新建 / 单测夹具）时回落到默认牌位 |
+| 投影 | `projection().dropPlates` 给出全部牌面（归一化 `x/y/w/h` + `index/count/hidden`，`null` 框=未展开），`dropLabel` 是**首个可见牌**的中心 |
+
 ### 指针反馈与身体碰撞
 
 | 项 | 契约 |
 |:--|:--|
 | 唯一命中权威 | `attack.ts::hitTestEnemy()` **同时**供点击与悬停使用；`attack.ts::dropAtPoint()` 同理（名字牌 + 小模型），`GameState.hoverEnemy` / `hoverDrop` 帧末计算并进 `projection()`，不会出现「光标变剑但点不动」 |
-| 掉落物悬停 | 掉落物 = **12×35px 小模型 + 上方名字牌**（`state.ts::dropLabelRect()`，宽按名字字数估算、高 20、底边 `y-34`）。名字牌画在**所有身体之后**，怪物压在上面也看得见；悬停时牌面白框 + 白字 + 光环，`hoverEnemy` 必须为 `null`（光标是移动指针，不是剑） |
+| 掉落物悬停 | 掉落物 = **12×35px 小模型 + 上方名字牌**（默认牌位由 `state.ts::dropLabelAnchor()` 给出；重叠时按上表竖直展开）。名字牌画在**所有身体之后**，怪物压在上面也看得见；悬停时牌面白框 + 白字 + 光环，`hoverEnemy` 必须为 `null`（光标是移动指针，不是剑） |
 | 光标实现 | Engine Worker 没有 `document` / canvas，**改不了 CSS**：只在 `hoverEnemy` 变化时发 `{type:'hoverEnemy', index}`，主窗口 `meta-ui/shell-bridge.js` 设 `#app.style.cursor`（内联 SVG 长剑，热点剑尖 `3 3`），退出战斗 / 阵亡复位 |
 | 指针粘性 | 输入快照**只在有指针事件的帧**带 `position`；`game.pack.ts` 记住最后位置，缺了就复用，否则「按下帧没有位置」会让整次点击丢失（点了没反应） |
 | 攻击弧 | **已删除**扇形指示区与只服务它的 `Player.attackAim`；攻击反馈只有挥剑动作 + 命中粒子 |
@@ -67,7 +79,8 @@
 - 战利品记录：`lootLog`（每次掉落明细）、`carriedItems`（已拾取的 authored id）、`runSeed`；
   **没有按 uid 的结算清单**（通关整份搬回、失败整份丢弃，见 `assets/meta/CONTEXT.md`）。
 - `projection()` 暴露 `weaponSlots`（视觉类别）/ `weaponDefIds`（真实 defId）/ `activeWeaponSlot` /
-  `runInventory` 快照 / `hoverEnemy` / **`hoverDrop`（名字牌下的 drop uid）/ `dropLabel`（首个掉落物名字牌中心，屏幕归一化）**；
+  `runInventory` 快照 / `hoverEnemy` / **`hoverDrop`（名字牌下的 drop uid）/ `dropLabel`（首个可见牌中心）/
+  `dropPlates`（全部牌面 + `index/count/hidden`，屏幕归一化）**；
   `equippedWeapon` **保留旧字段名**，语义＝激活槽是否有武器。
 - `moveMode` 三态：`idle` / `point` / `follow`；`target` / `followingPointer` / `attackOrder` /
   `attackTarget` / `skeletons`（坐标 / 血量 / 存活）都在投影里，供验收脚本直接断言。
@@ -121,6 +134,14 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 16. **相机是唯一权威**：`step()` 末尾 `cameraFor()` 更新 `s.camera`；输入、渲染、小地图都读它，
     别在别处另算一份相机。
 17. **小地图只读**：`MINIMAP` 矩形内的指针由 `game.pack.ts` 丢弃，combat 层不得为小地图加输入分支。
+
+18. **牌面布局是唯一几何权威**：`layoutDrops()` 写 `Drop.label`，`paint.ts` 与
+    `attack.ts::dropAtPoint()` 都只读这个结果；禁止在绘制层另算一套位置或缩放，
+    否则「看到的名字」和「点得到的名字」会分叉。
+
+19. **展开上限与溢出规则**：每堆最多 `DROP_LABEL_MAX=5` 张牌，按品质高→低从上往下；
+    溢出的掉落物 `label = null`（不画、不可按名点），但**小模型 12px 必须仍可点**，
+    保证任何掉落物都不会因为排版而变得不可拾取。
 
 ## 目录与依赖方向（单向，禁止反向 import）
 
@@ -179,7 +200,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 92 条（loot 14 / movement 26 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 95 条（loot 14 / movement 29 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3）
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json
