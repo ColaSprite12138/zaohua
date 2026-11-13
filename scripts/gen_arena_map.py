@@ -2,7 +2,7 @@
 """Generate the Xianxia courtyard arena (arena.ldtk) from the asset-library atlas.
 
     python scripts/gen_arena_map.py            # rewrite assets/resource/maps/arena.ldtk
-    python scripts/gen_arena_map.py --check    # only report whether it is stale
+    python scripts/gen_arena_map.py --check    # validate the current .ldtk (LDtk-openable?)
 
 Why a generator: the map is 128x96 tiles (4096x3072 px) with a few thousand
 IntGrid cells and ~50 props. Authoring it by hand in LDtk is fine ONCE it
@@ -13,6 +13,11 @@ multiples of 8).
 The output .ldtk stays the human-authored source afterwards: open it in LDtk,
 edit, save. Re-running this script overwrites those edits, so only run it when
 you actually want the generated layout back.
+
+`--check` therefore does NOT compare against the generator output (a file edited
+in LDtk would always differ). It asserts the invariants LDtk needs to load the
+file at all - the ones that used to make the editor die with
+"Cannot read properties of null (reading 'externalLevels')".
 
 Layers written:
   Terrain  (IntGrid)  0 floor / 1 wall / 2 paved / 3 void   - collision authority
@@ -201,8 +206,9 @@ def build():
 
     prop_layer_uid = 101
     next_uid = max(next_uid, prop_layer_uid + 1)
-    base_layer = dict(defs['layers'][0])
-    prop_layer = dict(base_layer)
+    # 以 Entities 图层定义为模板（不是 defs['layers'][0]：重排后第 0 个可能是 Terrain）。
+    entities_layer_def = next(l for l in defs['layers'] if l['identifier'] == 'Entities')
+    prop_layer = dict(entities_layer_def)
     prop_layer.update({
         '__type': 'Entities',
         'identifier': 'Props',
@@ -214,6 +220,11 @@ def build():
         'tilesetDefUid': None,
     })
     defs['layers'] = defs['layers'] + [prop_layer]
+    # LDtk 的 defs.layers 是「由下往上」排列，layerInstances 必须同序；
+    # 否则编辑器一打开就 tidy 重排，保存后文件大改。这里直接按绘制顺序写好。
+    layer_order = {'Terrain': 0, 'Entities': 1, 'Props': 2}
+    defs['layers'].sort(key=lambda l: layer_order.get(l['identifier'], 99))
+
 
     entity_uids = {}
     for index, kind in enumerate(('wall_run', 'censer', 'terrace')):
@@ -246,7 +257,8 @@ def build():
             'showName': False,
             'tilesetId': tileset_uid,
             'tileRenderMode': 'FitInside',
-            'tileRect': {'x': rect_px['x'], 'y': rect_px['y'], 'w': rect_px['w'], 'h': rect_px['h']},
+            'tileRect': {'tilesetUid': tileset_uid, 'x': rect_px['x'], 'y': rect_px['y'],
+                         'w': rect_px['w'], 'h': rect_px['h']},
             'uiTileRect': None,
             'nineSliceBorders': [],
             'maxCount': -1,
@@ -301,12 +313,21 @@ def build():
 
     spawn_uid = next(e['uid'] for e in defs['entities'] if e['identifier'] == 'PlayerSpawn')
     monster_uid = next(e['uid'] for e in defs['entities'] if e['identifier'] == 'Monster')
+    # 字段实例必须带真实的 defUid，且值只认 realEditorValues 的 {id, params} 形式；
+    # __value 只是导出给人看的，LDtk 编辑器读的是 realEditorValues。
+    monster_field_uids = {
+        fd['identifier']: fd['uid']
+        for fd in next(e for e in defs['entities'] if e['identifier'] == 'Monster')['fieldDefs']
+    }
+
     def monster_field(mid, wave):
         return [
-            {'__identifier': 'monsterId', '__type': 'String', '__value': mid,
-             'defUid': None, 'realEditorValues': []},
-            {'__identifier': 'wave', '__type': 'Int', '__value': wave,
-             'defUid': None, 'realEditorValues': []},
+            {'__identifier': 'monsterId', '__type': 'String', '__value': mid, '__tile': None,
+             'defUid': monster_field_uids['monsterId'],
+             'realEditorValues': [{'id': 'V_String', 'params': [mid]}]},
+            {'__identifier': 'wave', '__type': 'Int', '__value': wave, '__tile': None,
+             'defUid': monster_field_uids['wave'],
+             'realEditorValues': [{'id': 'V_Int', 'params': [wave]}]},
         ]
 
     spawns = [entity('PlayerSpawn', spawn_uid, spawn[0], spawn[1], GRID, GRID,
@@ -328,38 +349,141 @@ def build():
             tile={'tilesetUid': tileset_uid, 'x': rect_px['x'], 'y': rect_px['y'],
                   'w': rect_px['w'], 'h': rect_px['h']},
         ))
-    props_inst = dict(base_layer)
-    props_inst.update({
-        '__type': 'Entities',
+    # 图层实例必须是「实例」，不能把图层定义的键（uiColor / autoRuleGroups …）混进来：
+    # LDtk 反序列化后按 def 指针读，混进来的 uid 会覆盖 layerDefUid 造成错层。
+    level_uid = level['uid']
+    props_inst = {
         '__identifier': 'Props',
-        'layerDefUid': prop_layer_uid,
+        '__type': 'Entities',
         '__cWid': COLS,
         '__cHei': ROWS,
         '__gridSize': GRID,
+        '__opacity': 1,
+        '__pxTotalOffsetX': 0,
+        '__pxTotalOffsetY': 0,
         '__tilesetDefUid': None,
         '__tilesetRelPath': None,
+        'iid': str(uuid.uuid5(uuid.NAMESPACE_URL, 'arena/layer/Props')),
+        'levelId': level_uid,
+        'layerDefUid': prop_layer_uid,
+        'pxOffsetX': 0,
+        'pxOffsetY': 0,
+        'visible': True,
+        'optionalRules': [],
         'intGridCsv': [],
         'autoLayerTiles': [],
+        'seed': 0,
+        'overrideTilesetUid': None,
         'gridTiles': [],
         'entityInstances': prop_instances,
-    })
+    }
 
-    level['layerInstances'] = [props_inst, entities_inst, terrain_inst]
+    # 与 defs.layers 同序（由下往上）：Terrain -> Entities -> Props。
+    level['layerInstances'] = [terrain_inst, entities_inst, props_inst]
     return project, len(props), len(monsters)
+
+
+def validate(project):
+    """LDtk 能打开这个文件所需的不变量。返回问题列表（空表示通过）。
+
+    这些不是风格问题，是「LDtk 反序列化阶段就会 throw」的硬约束：
+      - layerInstances 必须与 defs.layers 同序同 uid（否则 tidy 重排 + 编辑器错层）
+      - 图层实例必须有 iid
+      - IntGrid 值数量 = __cWid * __cHei
+      - 实体/字段实例的 defUid 必须指向真实定义（NULL 会让 LDtk 读 fi.def.type 时崩）
+      - 实体的 tileRect 必须自带 tilesetUid（JsonTools.readTileRect 会直接 throw）
+      - 图集文件必须存在
+    """
+    problems = []
+    defs = project.get('defs') or {}
+    layer_defs = defs.get('layers') or []
+    tilesets = {t['uid']: t for t in defs.get('tilesets') or []}
+    entity_defs = {e['uid']: e for e in defs.get('entities') or []}
+    levels = project.get('levels') or []
+
+    if len(levels) != 1:
+        problems.append('levels 数量应为 1，实际 %d' % len(levels))
+    if not levels:
+        return problems
+
+    level = levels[0]
+    for edef in entity_defs.values():
+        rect = edef.get('tileRect')
+        if rect is not None and rect.get('tilesetUid') not in tilesets:
+            problems.append('实体定义 %s 的 tileRect 没有合法 tilesetUid（LDtk 会拒绝打开）'
+                            % edef.get('identifier'))
+
+    for tileset in tilesets.values():
+        path = os.path.join(os.path.dirname(SOURCE), tileset['relPath'])
+        if not os.path.isfile(path):
+            problems.append('图集文件不存在：%s' % path)
+
+    instances = level.get('layerInstances') or []
+    if len(instances) != len(layer_defs):
+        problems.append('layerInstances 数量 %d 与 defs.layers 数量 %d 不一致'
+                        % (len(instances), len(layer_defs)))
+    for index, layer_def in enumerate(layer_defs):
+        if index >= len(instances):
+            break
+        inst = instances[index]
+        if inst.get('layerDefUid') != layer_def['uid']:
+            problems.append('layerInstances[%d] 的 layerDefUid=%r，应为 %r（顺序必须与 defs.layers 一致）'
+                            % (index, inst.get('layerDefUid'), layer_def['uid']))
+        if not inst.get('iid'):
+            problems.append('layerInstances[%d]（%s）缺 iid'
+                            % (index, inst.get('__identifier')))
+        if layer_def.get('type') == 'IntGrid':
+            want = int(inst.get('__cWid') or 0) * int(inst.get('__cHei') or 0)
+            got = len(inst.get('intGridCsv') or [])
+            if want and got != want:
+                problems.append('%s 的 intGridCsv 有 %d 个值，应为 %d'
+                                % (layer_def['identifier'], got, want))
+        for ei in inst.get('entityInstances') or []:
+            edef = entity_defs.get(ei.get('defUid'))
+            if edef is None:
+                problems.append('实体 %s 的 defUid=%r 在 defs.entities 中不存在'
+                                % (ei.get('__identifier'), ei.get('defUid')))
+                continue
+            field_uids = {fd['uid'] for fd in edef.get('fieldDefs') or []}
+            for fi in ei.get('fieldInstances') or []:
+                if fi.get('defUid') not in field_uids:
+                    problems.append('实体 %s 的字段 %s 的 defUid=%r 不是该实体的字段定义'
+                                    % (ei.get('__identifier'), fi.get('__identifier'),
+                                       fi.get('defUid')))
+                elif not fi.get('realEditorValues') and fi.get('__value') not in (None, ''):
+                    problems.append('实体 %s 的字段 %s 有 __value 但 realEditorValues 为空，'
+                                    'LDtk 里会显示成空值'
+                                    % (ei.get('__identifier'), fi.get('__identifier')))
+            tile = ei.get('__tile')
+            if tile is not None and tile.get('tilesetUid') not in tilesets:
+                problems.append('实体 %s 的 __tile 指向不存在的图集 %r'
+                                % (ei.get('__identifier'), tile.get('tilesetUid')))
+
+    return problems
 
 
 def main():
     check = '--check' in sys.argv
-    project, prop_count, monster_count = build()
-    text = json.dumps(project, indent=1, ensure_ascii=False) + '\n'
     if check:
-        current = open(SOURCE, 'r', encoding='utf-8').read()
-        if current != text:
-            print('[FAIL] arena.ldtk 与 gen_arena_map.py 不一致，跑 python scripts/gen_arena_map.py')
+        with open(SOURCE, 'r', encoding='utf-8') as fh:
+            current = json.load(fh)
+        problems = validate(current)
+        for problem in problems:
+            print('[FAIL] %s' % problem)
+        if problems:
+            print('[FAIL] arena.ldtk 结构自检未通过（%d 项），LDtk 可能打不开' % len(problems))
             sys.exit(1)
-        print('[ OK ] arena.ldtk 与生成器一致')
+        print('[ OK ] arena.ldtk 结构自检通过（LDtk 可打开）')
         return
-    with open(SOURCE, 'w', encoding='utf-8') as fh:
+
+    project, prop_count, monster_count = build()
+    problems = validate(project)
+    if problems:
+        for problem in problems:
+            print('[FAIL] %s' % problem)
+        sys.exit(1)
+    text = json.dumps(project, indent=1, ensure_ascii=False) + '\n'
+    with open(SOURCE, 'w', encoding='utf-8', newline='\n') as fh:
         fh.write(text)
     print(f'[ OK ] arena.ldtk {COLS}x{ROWS} 格（{COLS * GRID}x{ROWS * GRID}px），'
           f'{prop_count} 个 props，{monster_count} 只怪')

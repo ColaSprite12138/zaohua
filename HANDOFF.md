@@ -256,6 +256,7 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 北墙顶端被裁掉一截 | 院墙模块高 96px（3 格），必须立在 row ≥ 2 上；北边界因此做 3 格厚 |
 | `gen_arena_map.py` 重跑后 Terrain 图层没了 | 脚本原先按 `layerInstances` 下标取图，重跑后顺序变了；必须按 `__identifier` 找图层，且 uid 固定（100/101/102-104）保证幂等 |
 | 掉落物在地上「消失」 | 掉落物的横向压缩 `squash` 被压到 ≈0（转到侧边）+ 排序 key 偏后，被尸体盖住；`squash` 下限 0.55，掉落物排序 key `y+0.5` |
+| LDtk 报 `Cannot read properties of null (reading 'externalLevels')` | 这句是**假消息**：`ProjectLoader` 把 `Project.fromJson` 的异常吞了（`p` 变 null）再读 `p.externalLevels`。真因在生成器：① `tileRect` 缺 `tilesetUid`（`JsonTools.readTileRect` 直接 throw，编辑器报 "TileRect contains an invalid value"）；② 字段实例 `defUid: null` / `realEditorValues: []`（值全空）；③ `layerInstances` 与 `defs.layers` 不同序且缺 `iid`。现在 `python scripts/gen_arena_map.py --check` 会逐条报出来 |
 
 ## 可回滚基线（两层）
 

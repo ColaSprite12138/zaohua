@@ -66,7 +66,7 @@ python scripts/export_tables.py --check
 
 | 路径 | 谁改 | 说明 |
 |:--|:--|:--|
-| `maps/arena.ldtk` | **人工**（LDtk 1.5.3） | 唯一地图权威源；`Terrain` IntGrid 层 + `Entities` 实体层，无 tileset |
+| `maps/arena.ldtk` | **人工**（LDtk 1.5.3） | 唯一地图权威源；`Terrain`(IntGrid) + `Entities`(出生点/怪) + `Props`(装饰，走 `tilesets/xianxia.png` 图集)；`defs.layers` 与 `layerInstances` 同序（由下往上 Terrain→Entities→Props） |
 | `maps/arena.generated.ts` | `scripts/import_map.py` | 生成物，**禁止手改**；文件头记录源 SHA-256 |
 | `scripts/make_sample_map.py` | 仅重建示例基线 | 不是构建链一环；地图被人工编辑后不要重跑 |
 | `maps/arena-test.ts` | **人工**（仅测试夹具） | 40×22 格 = 1280×704 全可走、2 只怪；只供自动验收 / 单测，**不是 LDtk 源、不入 `import_map.py` 链** |
@@ -78,6 +78,11 @@ python scripts/export_tables.py --check
 - 转换：`python scripts/import_map.py` 生成、`--check` 防漂移。校验：LDtk 1.5.x 版本、
   `externalLevels=false`、单关卡、尺寸 / 值域、`PlayerSpawn` 唯一、实体落点可走、
   从出生点连通可达、`monsterId` 引用完整性。
+- **LDtk 编辑器能否打开**是另一组硬约束（2026-11-14 补）：`defs.layers` 与 `layerInstances`
+  必须同序同 uid、图层实例必须有 `iid`、实体定义的 `tileRect` 必须自带 `tilesetUid`
+  （缺了 LDtk 直接 throw）、字段实例必须带真实 `defUid` 且值写在 `realEditorValues`
+  （`__value` 只是导出用）。`python scripts/gen_arena_map.py --check` 现在校验这组不变量，
+  **不再**与生成器输出逐字节比对 —— 在 LDtk 里改完保存后文件必然与生成器不同，那是正常状态。
 - **生成物刻意放 `maps/` 而非 `generated/`**：`export_tables.py` 会删除 `generated/`
   里没有同名 `.xlsx` 的孤儿文件，放进去会被清掉并让 `--check` 失败。
 - 消费方（2026-11-13 起已接入运行时）：`assets/resource/__tests__/map.test.ts`（结构、SHA-256、
