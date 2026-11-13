@@ -35,8 +35,9 @@ const wallMap = {
 describe('LDtk world runtime', () => {
   it('reads IntGrid values and treats walls, void and out-of-bounds as blocking', () => {
     const w = makeWorld(arena);
-    expect(w.cols).toBe(64);
-    expect(w.rows).toBe(48);
+    // 2026-11-14：正式地图换成 128x96 的仙侠院落（4096x3072px）。
+    expect(w.cols).toBe(128);
+    expect(w.rows).toBe(96);
     expect(walkable(w, arena.spawn.x, arena.spawn.y)).toBe(true);
     expect(blocks(w, -10, -10)).toBe(true);
     expect(inBounds(w, -1, 0)).toBe(false);
@@ -60,8 +61,9 @@ describe('LDtk world runtime', () => {
 
   it('camera centres on the player and clamps to the world edges', () => {
     const w = makeWorld(arena);
-    expect(cameraFor(w, arena.spawn.x, arena.spawn.y)).toEqual({ x: 0, y: 424 });
-    expect(cameraFor(w, 1900, 1400)).toEqual({
+    // 出生点 (64,84) → 2064,2704；相机居中后被 clamp 在地图内。
+    expect(cameraFor(w, arena.spawn.x, arena.spawn.y)).toEqual({ x: 1424, y: 2344 });
+    expect(cameraFor(w, 3900, 3000)).toEqual({
       x: arena.pxWid - 1280,
       y: arena.pxHei - 720,
     });
@@ -126,7 +128,7 @@ describe('acceptance fixture vs playable arena', () => {
     setArena(s, arena);
     expect(s.map.id).toBe(arena.id);
     expect(s.skeletons).toHaveLength(7);
-    expect(s.camera).toEqual({ x: 0, y: 424 });
+    expect(s.camera).toEqual({ x: 1424, y: 2344 });
     expect(spawnFromMap(arena).map((sk) => sk.monsterId))
       .toEqual(arena.monsters.map((m) => m.monsterId));
   });

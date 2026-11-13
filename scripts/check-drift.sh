@@ -13,6 +13,14 @@ PROTECTED=(
   assets/game/game.pack.ts
   assets/game/paint.ts
   assets/game/voxel.ts
+  assets/game/atlas.ts
+  assets/resource/maps/arena.ldtk
+  assets/resource/maps/arena.generated.ts
+  assets/resource/maps/tileset.generated.ts
+  assets/resource/maps/tilesets/xianxia.png
+  scripts/bake-voxel-atlas.mjs
+  scripts/gen_arena_map.py
+  scripts/import_map.py
   docs/art-style.md
   assets/__tests__/movement.test.ts
   scripts/playthrough.mjs

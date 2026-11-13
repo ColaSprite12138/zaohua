@@ -107,7 +107,51 @@ paint()
 - **墙必须进深度排序**（`y + grid`），否则站在墙后的角色会画在墙上。
 - 新增任何「站在地面上的东西」都进 `items`，用它的落地 `y` 排序，不要单独插一层。
 
-## 6. 验收
+## 6. 素材库管线（造化 EA Depot → 图集 → LDtk → 运行时）
+
+程序化体素之外，还有一条**外部素材**通道，三个产物都是生成物、都要提交、都由 `verify.sh` 逐字节校验：
+
+```
+.assetlib/extracted/*/lib/EFxx/*.ts   （素材库源码包：DATA.boxes + DATA.materials）
+        │  scripts/bake-voxel-atlas.mjs
+        ├─→ assets/resource/maps/tilesets/xianxia.png    LDtk 打开用的图集
+        ├─→ assets/resource/maps/tilesets/xianxia.json   格子清单（名字/矩形/锚点/占地）
+        └─→ assets/resource/maps/tileset.generated.ts    同一张 PNG 的 base64（Worker 用）
+
+scripts/gen_arena_map.py → assets/resource/maps/arena.ldtk
+        │  （之后 arena.ldtk 是人工权威源，在 LDtk 编辑器里改）
+        │  scripts/import_map.py
+        └─→ assets/resource/maps/arena.generated.ts
+```
+
+**尺度换算（改之前必须对齐）**：素材是 32 盒/米，游戏是 32px/米 → **1 盒 = 1px**；
+我们的体素格是 4px → **4 盒 = 1 体素**（降采样，不是放大）；深度 `z` 每格下移 2px。
+
+**两类素材走两条光栅化路线**（`bake-voxel-atlas.mjs` 里的 `kind`）：
+
+| kind | 做法 | 用于 |
+|:--|:--|:--|
+| `prop` | 斜俯视：一格画「顶面亮条 + 正面 + 右下暗边」，高度向上生长 | 院墙段、香炉这类**立面可见**的矮件 |
+| `deck` | 俯视取样（每格取覆盖它的最高盒）+ 12px 前立面 | 平台、地面这类**俯视才看得全**的大件；用斜投影会把 10m 进深拉成 160px 的竖向堆叠 |
+| `ground` | 俯视裁 32×32 瓦片，4 个变体 | 地砖 |
+
+**LDtk 里怎么摆**（`arena.ldtk` 的三个图层）：
+
+| 图层 | 类型 | 作用 |
+|:--|:--|:--|
+| `Terrain` | IntGrid | 唯一的碰撞权威：0 地面 / 1 墙 / 2 铺装 / 3 虚空 |
+| `Entities` | Entities | `PlayerSpawn` + `Monster`，`import_map.py` 只认这两种 |
+| `Props` | Entities | `Prop_wall_run` / `Prop_censer` / `Prop_terrace`，每种一个实体定义、`tileRect` 直接引图集，编辑器里所见即游戏里所画 |
+
+**地面不是 Tile 图层**：12288 条 `gridTiles` 会让 JSON 涨到几 MB。地面变体由
+`paint.ts::floorTileName()` 按 (col,row) 的低频哈希决定——4×4 格（128px）一个斑块，
+主体浅石、约 18% 斑块混苔藓/夯土。逐格哈希会拼成花被子，别改回去。
+
+**新增一件素材库资产**：① 下载到 `.assetlib/extracted/`；② 在 `bake-voxel-atlas.mjs`
+的 `SOURCES` 里加一行（`ef` / `kind` / `name` / `footprint`）；③ `node scripts/bake-voxel-atlas.mjs`；
+④ 在 `gen_arena_map.py` 里安排落位（或在 LDtk 里手动摆）；⑤ `verify.sh` 全绿后提交。
+
+## 7. 验收
 
 美术改动属于引擎层（`assets/game/*`），`bash scripts/verify.sh` 会自动升级为全量：
 
@@ -123,6 +167,12 @@ bash scripts/verify.sh                 # 全量：单测 + 双视口 playthrough
 - `15-longsword-drop` / `16-drop-name-plate-hover`：掉落物剑气（铁剑灰、金剑的金色）+ 光晕 + 名牌
 - `21-armed-melee`：手持长剑的挥砍角度
 - `24-viewport-1280x600`：HUD 在 1280×600 下不重叠、不裁切
+
+外部素材相关的额外检查（`verify.sh` 的 `art` 段）：
+
+- `node scripts/bake-voxel-atlas.mjs --check`：图集 PNG / JSON / 内嵌 TS 是否与素材一致
+- `python scripts/gen_arena_map.py --check`：`arena.ldtk` 是否被手改后与生成器分叉
+- `python scripts/import_map.py --check`：`arena.generated.ts` 是否与 `arena.ldtk` 同步
 
 判定标准：把截图放大 3~4 倍（`ffmpeg -vf "crop=...,scale=...:flags=neighbor"`）后，
 **看不到任何斜边锯齿、渐变带或圆角**，每个物体都能数清方块。

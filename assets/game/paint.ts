@@ -19,6 +19,14 @@ import {
   type Skeleton,
 } from './simulation.ts';
 import {
+  atlasReady,
+  drawAtlasProp,
+  drawAtlasTile,
+  drawAtlasWallTop,
+  loadAtlas,
+  propFootprint,
+} from './atlas.ts';
+import {
   CORPSE,
   KNIGHT,
   SKELETON,
@@ -90,6 +98,22 @@ function shadow(g: Painter, x: number, y: number, rx: number, ry: number, alpha 
 /* ----------------------------------------------------------------- terrain */
 
 /**
+ * 地面变体：由格子坐标决定，永远同一个格子同一个变体（不会逐帧闪）。铺装路（2）
+ * 固定用浅石那一块，读起来像一条步道。
+ */
+function floorTileName(tile: number, c: number, r: number): string {
+  // 低频斑块：先按 4x4 格（128px）决定"这一片是什么地面"，再在斑块内部按格微调。
+  // 直接用逐格哈希会得到一堆孤立的 32px 色块，看起来像花被子。
+  const patch = (((c >> 2) * 73856093) ^ ((r >> 2) * 19349663)) >>> 0;
+  const cell = ((c * 83492791) ^ (r * 2654435761)) >>> 0;
+  const roll = (patch % 1000) / 1000;
+  if (tile === 2) return roll < 0.92 ? 'floor_0' : 'floor_1';
+  if (roll < 0.82) return 'floor_0';
+  if (roll < 0.92) return (cell & 15) === 0 ? 'floor_3' : 'floor_0';
+  return (cell & 7) === 0 ? 'floor_3' : 'floor_2';
+}
+
+/**
  * Ground is drawn in WORLD space: paint() applies one camera translate, so every
  * entity below keeps using its world coordinates unchanged. `arena.ldtk`'s
  * IntGrid is the only ground; blocked tiles (1) become raised blocks drawn in
@@ -111,8 +135,15 @@ function drawGround(g: Painter, s: GameState): void {
       if (tile === 1) continue;
       const x = c * grid;
       const y = r * grid;
+      if (tile === 3) {
+        g.fillStyle = '#050a12';
+        g.fillRect(x, y, grid, grid);
+        continue;
+      }
+      // 素材库图集优先；没解码好（或测试夹具没地图）就退回程序化体素地砖。
+      if (atlasReady() && drawAtlasTile(g, floorTileName(tile, c, r), x, y)) continue;
       drawGroundTile(g, tile, x, y);
-      if (tile !== 3) drawGroundDetail(g, x, y, c, r);
+      drawGroundDetail(g, x, y, c, r);
     }
   }
 }
@@ -559,6 +590,7 @@ function hud(g: Painter, s: GameState): void {
 /** One complete frame: world-space scene first, screen-space HUD on top. */
 export function paint(g: Painter, s: GameState): void {
   prepareScene(g);
+  loadAtlas();
   g.clearRect(0, 0, VIEW_W, VIEW_H);
   g.save();
   g.translate(-Math.round(s.camera.x), -Math.round(s.camera.y));
@@ -582,8 +614,15 @@ export function paint(g: Painter, s: GameState): void {
       if ((w.tiles[r * w.cols + c] ?? 1) !== 1) continue;
       const x = c * grid;
       const y = r * grid;
-      items.push({ y: y + grid + 0.5, draw: () => drawWallBlock(g, x, y) });
+      items.push({ y: y + grid + 0.5, draw: () => drawWallBlock(g, x, y, drawAtlasWallTop) });
     }
+  }
+  // 装饰层（院墙段 / 香炉 / 高台）：深度 key 用占地底边，和角色共用一个排序。
+  for (const prop of s.map.props ?? []) {
+    const footprint = propFootprint(prop.kind);
+    const px = (prop.col + footprint.w / 2) * grid;
+    const py = (prop.row + footprint.h) * grid;
+    items.push({ y: py, draw: () => { drawAtlasProp(g, prop.kind, px, py); } });
   }
   for (const sk of s.skeletons) items.push({ y: sk.y, draw: () => drawSkeleton(g, sk) });
   for (const drop of s.drops) {

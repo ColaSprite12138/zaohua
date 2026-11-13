@@ -1,7 +1,7 @@
 # HANDOFF — 2.5D 骷髅竞技场
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-14 全套验收通过**（157 条单测 / 独立页 13 条 / 单页 39 条 / playthrough 38 steps / resize 4 steps；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、通关整份搬回、阵亡或中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效；**画面已全量体素化，风格见 `docs/art-style.md`**）。**steps 会浮动**：15 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 38–40 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-14 全套验收通过**（157 条单测 / 独立页 13 条 / 单页 39 条 / playthrough 38 steps / resize 4 steps；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、通关整份搬回、阵亡或中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效；**画面已全量体素化，正式地图是 128×96 的仙侠院落，风格与素材管线见 `docs/art-style.md`**）。**steps 会浮动**：15 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 38–40 间变化，`verify-all.sh` 下限固定 35。
 > 这份文件记录**跨模块红线、保护清单、验收基线与回滚方案**；**模块功能契约的正本在
 > `assets/<模块>/CONTEXT.md`**（2026-11-14 拆分，见下节「模块契约在哪」）。
 > 新会话先读本文件与「模块契约在哪」，再按改动模块读对应 `CONTEXT.md`。
@@ -15,6 +15,7 @@
 |:--|:--|
 | 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad。**画风是体素/立体积素（Voxel）**：所有实体/地形/反馈都由 `assets/game/voxel.ts` 的方块模型烘焙成精灵后绘制，规格见 `docs/art-style.md` |
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html` |
+| 地图 | 正式地图 `128×96` 格 @32px = **4096×3072** 世界像素（仙侠院落：北侧高台、东西厢房、院墙残段 + 香炉）。三个图层：`Terrain`(IntGrid=碰撞权威) / `Entities`(出生点+7 只怪) / `Props`(纯装饰，贴素材库图集)。生成链：`bake-voxel-atlas.mjs` → 图集；`gen_arena_map.py` → `arena.ldtk`（之后人工在 LDtk 里改）；`import_map.py` → `arena.generated.ts` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
 | 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **157**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
@@ -93,7 +94,9 @@
 
 15. **体素美术红线（2026-11-14）**：画面只允许由 `assets/game/voxel.ts` 产出的方块构成。① **一个方块 = 一格屏幕高度**（`unit·unit` 像素），顶面高光是格内的 2px 亮条，不要再叠一层「顶面 + 正面」，否则角色高度翻倍、头盔会吞掉脸；② 模型 `y=0` 是地面、`x=0` 是身体中线、**`z` 只允许 0**（一格厚的立牌，体积感靠三面着色）；③ 禁 `createLinearGradient` / `createRadialGradient` / `shadowBlur` / `ctx.arc|ellipse` 描边 / 真圆角，反馈环用 `drawPixelRing`、光晕用 `drawPixelGlow`、阴影用 `drawShadow`；④ **站在地面上的东西必须进 `paint.ts` 的 `items` 按落地 `y` 排序**（墙块 key = `y+grid`，掉落物 `y+0.5`），单独插一层会让墙后被遮挡的角色盖到墙上；⑤ 新增模型只在 `voxel.ts` 加工厂函数 + 登记 `MODELS`，不要在 `paint.ts` 里手摆矩形；⑥ 精灵按「模型 + flash 变体」烘焙缓存，禁止每帧重画方块。
 
-`scripts/check-drift.sh` 会把上面 1–15 涉及的文件单独列出来，接手时先看它。
+16. **素材库资产管线红线（2026-11-14）**：图集与地图都是**生成物**，禁止手改。① `tilesets/xianxia.png` / `xianxia.json` / `maps/tileset.generated.ts` 只能由 `node scripts/bake-voxel-atlas.mjs` 生成，`--check` 逐字节校验；② `arena.ldtk` 由 `python scripts/gen_arena_map.py` **首次**生成，之后是人工权威源（在 LDtk 里改），重跑生成器会覆盖手工编辑；③ `arena.generated.ts` 只能由 `python scripts/import_map.py` 生成；④ 素材尺度是 32 盒/米、我们 1 盒 = 1px、4 盒 = 1 体素，换尺度必须先改 `docs/art-style.md`；⑤ **地面不是 Tile 图层**（12288 条 gridTiles 会让 JSON 涨到几 MB），变体由 `paint.ts::floorTileName()` 的低频哈希决定，别改成逐格哈希（会花被子）；⑥ `Props` 只装饰、不碰撞，深度排序 key = `(row + footprintH) * grid`，和角色共用一个 items 列表。
+
+`scripts/check-drift.sh` 会把上面 1–16 涉及的文件单独列出来，接手时先看它。
 
 ## 改完必跑（任何一项不绿 = 不许交付）
 
@@ -111,6 +114,8 @@
 `verify.sh` 按模块附加：命中 `meta` 跑 `build-meta-ui.mjs --check`、`verify-meta-ui.cjs`（13 条真实拖放）
 与 `inject-shell.mjs --check` + `verify-shell.cjs`（39 条单页断言）；命中 `resource` 跑
 `export_tables.py --check`；命中 `combat` 跑 31000 次/池掉落跑批。
+素材管线另有一步 `art`：`bake-voxel-atlas.mjs --check` + `gen_arena_map.py --check` +
+`import_map.py --check`，三者任一过期即失败（防止"编辑器里看到的"和"游戏里跑到的"分叉）。
 `verify-all.sh` 把壳层注入 + 单页验收放在**全流程最后一步**：`build` / `play` / `package`
 **都会重建 `dist/`**，只在 build 后注入会被后面的 `package` 冲掉，4174 又变回无壳层页面。
 
@@ -246,6 +251,10 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 站在墙后仍被画在墙上面 | 墙块没进 `paint.ts` 的 `items` 深度排序；地形层只画地板，墙块按 `y+grid` 进排序 |
 | 换画风后整屏发糊 / 斜边有锯齿 | `imageSmoothingEnabled` 被判 true，或坐标/缩放不是整数；每帧首行 `prepareScene()`，精灵用整数 `drawImage` |
 | 空手/装备时剑的颜色反了 | `voxel.ts::sword(golden)` 的参数语义要和 `SWORD_STEEL` / `SWORD_GOLD` 的调用值对齐（曾把 `sword(true)` 赋给铁剑，导致空手也拿金剑） |
+| 素材库道具在游戏里被拉成长条 / 一片糊 | 把 10m 进深的平台当地面斜投影了；大件必须走 `kind:'deck'`（俯视取样 + 12px 前立面），只有立面可见的矮件才用 `prop` |
+| 地面像一块花被子 | `floorTileName()` 用了逐格哈希；必须 4×4 格（128px）一个斑块、主体浅石、约 18% 混苔藓/夯土 |
+| 北墙顶端被裁掉一截 | 院墙模块高 96px（3 格），必须立在 row ≥ 2 上；北边界因此做 3 格厚 |
+| `gen_arena_map.py` 重跑后 Terrain 图层没了 | 脚本原先按 `layerInstances` 下标取图，重跑后顺序变了；必须按 `__identifier` 找图层，且 uid 固定（100/101/102-104）保证幂等 |
 | 掉落物在地上「消失」 | 掉落物的横向压缩 `squash` 被压到 ≈0（转到侧边）+ 排序 key 偏后，被尸体盖住；`squash` 下限 0.55，掉落物排序 key `y+0.5` |
 
 ## 可回滚基线（两层）

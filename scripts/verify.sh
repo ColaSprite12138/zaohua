@@ -91,7 +91,7 @@ else
         add_module meta
         shell_check=1 ;;
       assets/talent/*)   add_module talent ;;
-      assets/resource/*|assets/resource/maps/*|scripts/export_tables.py|scripts/import_map.py|scripts/make_sample_map.py)
+      assets/resource/*|assets/resource/maps/*|scripts/export_tables.py|scripts/import_map.py|scripts/make_sample_map.py|scripts/gen_arena_map.py|scripts/bake-voxel-atlas.mjs)
         add_module resource
         tables_check=1 ;;
       scripts/loot-report.mjs)

@@ -438,13 +438,20 @@ export const WALL_LIFT = 12;
  * front face below it. Drawn inside the depth-sorted pass, so a body standing
  * behind the wall is correctly covered by it.
  */
-export function drawWallBlock(g: Painter, x: number, y: number): void {
-  const top = tileTexture(1);
+export function drawWallBlock(
+  g: Painter,
+  x: number,
+  y: number,
+  /** 素材库图集的顶面瓦片；返回 true 表示已画好，跳过程序化石纹。 */
+  drawTop?: (g: Painter, x: number, y: number) => boolean,
+): void {
   const X = Math.round(x);
   const Y = Math.round(y);
   g.imageSmoothingEnabled = false;
   // Top face: the footprint, lifted by the wall's height.
-  g.drawImage(top, X, Y - WALL_LIFT);
+  if (drawTop === undefined || !drawTop(g, X, Y - WALL_LIFT)) {
+    g.drawImage(tileTexture(1), X, Y - WALL_LIFT);
+  }
   // Front face: the exposed strip between the lifted top and the tile bottom.
   g.fillStyle = '#33424e';
   g.fillRect(X, Y + 32 - WALL_LIFT, 32, WALL_LIFT);

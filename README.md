@@ -44,7 +44,8 @@ Worker 发 `pickup { uid, itemId, name }` → 主窗口 `shell-bridge.js` 调 `M
 
 | 项 | 说明 |
 |:--|:--|
-| 正式地图 | `assets/resource/maps/arena.ldtk` → `arena.generated.ts`，64×48 格 @32px = **2048×1536** 世界像素；`Terrain` IntGrid 决定可走格，`Entities` 决定出生点与 7 只怪 |
+| 正式地图 | `assets/resource/maps/arena.ldtk` → `arena.generated.ts`，128×96 格 @32px = **4096×3072** 世界像素（仙侠院落：北侧高台、东西厢房、院墙残段）；`Terrain` IntGrid 决定可走格，`Entities` 决定出生点与 7 只怪，`Props` 是纯装饰层（院墙段/香炉/高台，贴 `tilesets/xianxia.png`） |
+| 地图生成链 | `gen_arena_map.py`（首次布局）→ `arena.ldtk`（人工在 LDtk 里改的权威源）→ `import_map.py` → `arena.generated.ts`；`bake-voxel-atlas.mjs` → `tilesets/xianxia.png` + `tileset.generated.ts`。产物都提交，`verify.sh` 会逐字节校验是否过期 |
 | 逻辑 | `assets/combat/world.ts`：`makeWorld()` / `walkable()` / `blocks()` / `nearestWalkable()` / `cameraFor()` / `screenToWorld()` / `worldToScreen()` / `findPath()`（8 邻域 A*，禁止对角穿角）/ `lineOfSight()` |
 | 相机 | 居中跟随玩家、clamp 到世界边界；`step()` 末尾更新，是输入与渲染唯一权威。`paint.ts` 用一次 `translate(-cam.x,-cam.y)` 画世界，HUD 与小地图在屏幕空间 |
 | 碰撞 / 寻路 | 玩家点击落点先 `nearestWalkable()` 吸附再走 A* 路径；玩家与怪物移动都做分轴滑动碰撞，墙 / 深渊挡走也挡视线 |

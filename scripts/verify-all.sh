@@ -119,6 +119,17 @@ node --experimental-strip-types scripts/loot-report.mjs --samples 31000 >> "$SUM
   || die "掉落跑批偏差超 1% 或漏项"
 log "[ OK ] meta-ui / tables / loot :: 页面与数据表验收通过"
 
+# 2026-11-14 素材库管线：图集（PNG + 内嵌 TS）与 LDtk 地图都是生成物，
+# 必须与生成器逐字节一致，否则"编辑器里看到的"和"游戏里跑到的"会分叉。
+log "[RUN ] art :: voxel atlas + LDtk arena are in sync with their generators"
+node scripts/bake-voxel-atlas.mjs --check >> "$SUMMARY" 2>&1 \
+  || die "图集产物过期：node scripts/bake-voxel-atlas.mjs"
+python scripts/gen_arena_map.py --check >> "$SUMMARY" 2>&1 \
+  || die "arena.ldtk 与 gen_arena_map.py 不一致：python scripts/gen_arena_map.py"
+python scripts/import_map.py --check >> "$SUMMARY" 2>&1 \
+  || die "maps/arena.generated.ts 与 arena.ldtk 不同步：python scripts/import_map.py"
+log "[ OK ] art :: atlas / arena.ldtk / arena.generated.ts 同步"
+
 log "[RUN ] typecheck"
 if ! "$TSC" --noEmit > "$OUT/tsc.out" 2> "$OUT/tsc.err"; then
   tail -n 20 "$OUT/tsc.out" "$OUT/tsc.err" 2>/dev/null

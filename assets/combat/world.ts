@@ -27,6 +27,15 @@ export interface ArenaMap {
     readonly x: number;
     readonly y: number;
   };
+  /**
+   * 装饰层：从 LDtk 的 Props 图层导出（院墙段 / 香炉 / 高台）。纯视觉，不参与碰撞。
+   * 只有 LDtk 地图带这个字段；`arena-test.ts` 夹具没有，绘制层必须容忍 undefined。
+   */
+  readonly props?: readonly {
+    readonly kind: string;
+    readonly col: number;
+    readonly row: number;
+  }[];
   readonly monsters: readonly {
     readonly monsterId: string;
     readonly col: number;
