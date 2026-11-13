@@ -1,8 +1,14 @@
-/** Canvas 2D painter for the 2.5D scene. Drawn into a CanvasTexture (Engine pixels). */
+/**
+ * Voxel painter for the 2.5D scene. Drawn into a CanvasTexture (Engine pixels).
+ *
+ * Style contract (see `docs/art-style.md`): every entity is a baked voxel model
+ * from `voxel.ts`, every UI plate is a hard rectangle, and nothing is drawn with
+ * a gradient, a rounded corner or a soft ellipse. Feedback rings and shadows are
+ * dithered 2px blocks so they belong to the same grid as the models.
+ */
 
 import {
   activeWeapon,
-  DROP_MODEL_TOP,
   dropLabelName,
   dropLabelRect,
   MINIMAP,
@@ -12,23 +18,51 @@ import {
   type GameState,
   type Skeleton,
 } from './simulation.ts';
+import {
+  CORPSE,
+  KNIGHT,
+  SKELETON,
+  SWORD_GOLD,
+  SWORD_STEEL,
+  drawGroundDetail,
+  drawGroundTile,
+  drawPixelGlow,
+  drawPixelRing,
+  drawShadow,
+  drawVoxel,
+  drawWallBlock,
+  modelHeight,
+  prepareScene,
+} from './voxel.ts';
 
 export type Painter = CanvasRenderingContext2D;
 
 const FONT = 'system-ui, "Segoe UI", "Microsoft YaHei", sans-serif';
 
+/**
+ * Panels are hard-edged with a 2px corner chamfer: the pixel-art answer to a
+ * rounded card. `r` is kept in the signature so layout call sites stay put, but
+ * it can never exceed the chamfer.
+ */
 function roundRect(g: Painter, x: number, y: number, w: number, h: number, r: number): void {
-  const radius = Math.min(r, w / 2, h / 2);
+  const c = Math.min(3, Math.max(0, Math.round(r / 4)));
+  const X = Math.round(x);
+  const Y = Math.round(y);
+  const W = Math.round(w);
+  const H = Math.round(h);
   g.beginPath();
-  g.moveTo(x + radius, y);
-  g.lineTo(x + w - radius, y);
-  g.quadraticCurveTo(x + w, y, x + w, y + radius);
-  g.lineTo(x + w, y + h - radius);
-  g.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
-  g.lineTo(x + radius, y + h);
-  g.quadraticCurveTo(x, y + h, x, y + h - radius);
-  g.lineTo(x, y + radius);
-  g.quadraticCurveTo(x, y, x + radius, y);
+  if (c === 0) {
+    g.rect(X, Y, W, H);
+    return;
+  }
+  g.moveTo(X + c, Y);
+  g.lineTo(X + W - c, Y);
+  g.lineTo(X + W, Y + c);
+  g.lineTo(X + W, Y + H - c);
+  g.lineTo(X + W - c, Y + H);
+  g.lineTo(X + c, Y + H);
+  g.lineTo(X, Y + H - c);
+  g.lineTo(X, Y + c);
   g.closePath();
 }
 
@@ -50,26 +84,22 @@ function text(
 }
 
 function shadow(g: Painter, x: number, y: number, rx: number, ry: number, alpha = 0.36): void {
-  g.save();
-  g.globalAlpha = alpha;
-  g.fillStyle = '#04090d';
-  g.beginPath();
-  g.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
-  g.fill();
-  g.restore();
+  drawShadow(g, x, y, rx, ry, alpha);
 }
 
+/* ----------------------------------------------------------------- terrain */
+
 /**
- * Terrain is drawn in WORLD space: paint() applies one camera translate, so
- * every entity below can keep using its world coordinates unchanged.
- * The old one-screen backdrop (sky / ridges / towers / motes) and the
- * procedural arena ring are gone; arena.ldtk's IntGrid is the only ground.
+ * Ground is drawn in WORLD space: paint() applies one camera translate, so every
+ * entity below keeps using its world coordinates unchanged. `arena.ldtk`'s
+ * IntGrid is the only ground; blocked tiles (1) become raised blocks drawn in
+ * the depth pass so they can properly cover a body standing behind them.
  */
-function drawTerrain(g: Painter, s: GameState): void {
+function drawGround(g: Painter, s: GameState): void {
   const w = s.world;
   const cam = s.camera;
   const grid = w.grid;
-  g.fillStyle = '#080e1c';
+  g.fillStyle = '#050a12';
   g.fillRect(cam.x, cam.y, VIEW_W, VIEW_H);
   const c0 = Math.max(0, Math.floor(cam.x / grid));
   const c1 = Math.min(w.cols - 1, Math.floor((cam.x + VIEW_W) / grid));
@@ -78,23 +108,11 @@ function drawTerrain(g: Painter, s: GameState): void {
   for (let r = r0; r <= r1; r += 1) {
     for (let c = c0; c <= c1; c += 1) {
       const tile = w.tiles[r * w.cols + c] ?? 1;
+      if (tile === 1) continue;
       const x = c * grid;
       const y = r * grid;
-      if (tile === 1) {
-        g.fillStyle = '#3b4a55';
-        g.fillRect(x, y, grid, grid);
-        g.fillStyle = '#4d6170';
-        g.fillRect(x, y, grid, 4);
-      } else if (tile === 3) {
-        g.fillStyle = '#050b13';
-        g.fillRect(x, y, grid, grid);
-      } else {
-        g.fillStyle = tile === 2 ? '#2b4650' : '#20333d';
-        g.fillRect(x, y, grid, grid);
-      }
-      g.strokeStyle = 'rgba(126,196,204,0.055)';
-      g.lineWidth = 1;
-      g.strokeRect(x + 0.5, y + 0.5, grid - 1, grid - 1);
+      drawGroundTile(g, tile, x, y);
+      if (tile !== 3) drawGroundDetail(g, x, y, c, r);
     }
   }
 }
@@ -107,11 +125,11 @@ function drawTerrain(g: Painter, s: GameState): void {
 function drawMinimap(g: Painter, s: GameState): void {
   const { x, y, w, h } = MINIMAP;
   g.save();
-  g.fillStyle = 'rgba(8,16,24,0.86)';
+  g.fillStyle = 'rgba(8,16,24,0.9)';
   roundRect(g, x, y, w, h, 12);
   g.fill();
-  g.strokeStyle = 'rgba(150,180,205,0.4)';
-  g.lineWidth = 1.5;
+  g.strokeStyle = 'rgba(150,180,205,0.45)';
+  g.lineWidth = 2;
   roundRect(g, x, y, w, h, 12);
   g.stroke();
   text(g, '地图 · 只读', x + 12, y + 15, 11, '#a9c4d6', 'left', '600');
@@ -138,56 +156,26 @@ function drawMinimap(g: Painter, s: GameState): void {
   g.lineWidth = 1;
   g.strokeRect(ox + s.camera.x * sx, oy + s.camera.y * sy, VIEW_W * sx, VIEW_H * sy);
 
-  const dot = (wx: number, wy: number, color: string, radius: number): void => {
+  const dot = (wx: number, wy: number, color: string, size: number): void => {
     g.fillStyle = color;
-    g.beginPath();
-    g.arc(ox + wx * sx, oy + wy * sy, radius, 0, Math.PI * 2);
-    g.fill();
+    g.fillRect(Math.round(ox + wx * sx - size / 2), Math.round(oy + wy * sy - size / 2), size, size);
   };
-  for (const sk of s.skeletons) if (sk.alive) dot(sk.x, sk.y, '#ff6b6b', 2);
-  for (const drop of s.drops) dot(drop.x, drop.y, '#ffd166', 2);
-  dot(s.player.x, s.player.y, '#67e8f9', 3.2);
+  for (const sk of s.skeletons) if (sk.alive) dot(sk.x, sk.y, '#ff6b6b', 4);
+  for (const drop of s.drops) dot(drop.x, drop.y, '#ffd166', 4);
+  dot(s.player.x, s.player.y, '#67e8f9', 5);
   g.restore();
 }
 
-function drawSword(
-  g: Painter,
-  x: number,
-  y: number,
-  angle: number,
-  length: number,
-  golden: boolean,
-): void {
+/* ---------------------------------------------------------------- entities */
+
+/** The equipped blade: a voxel sword swung around the player's hand. */
+function drawBlade(g: Painter, x: number, y: number, angle: number, armed: boolean, golden: boolean): void {
   g.save();
   g.translate(x, y);
   g.rotate(angle);
-  const blade = golden ? '#ffe9a8' : '#cfe0ef';
-  const edge = golden ? '#ffb703' : '#89a8c4';
-  g.fillStyle = 'rgba(0,0,0,0.25)';
-  g.fillRect(-3, -length + 4, 6, length - 8);
-  const grad = g.createLinearGradient(-5, 0, 5, 0);
-  grad.addColorStop(0, edge);
-  grad.addColorStop(0.5, blade);
-  grad.addColorStop(1, edge);
-  g.fillStyle = grad;
-  g.beginPath();
-  g.moveTo(-5, -length + 12);
-  g.lineTo(0, -length);
-  g.lineTo(5, -length + 12);
-  g.lineTo(4, -8);
-  g.lineTo(-4, -8);
-  g.closePath();
-  g.fill();
-  g.fillStyle = golden ? '#b7791f' : '#4a5b6b';
-  roundRect(g, -16, -9, 32, 7, 3);
-  g.fill();
-  g.fillStyle = golden ? '#7c4a12' : '#37424d';
-  roundRect(g, -3.5, -2, 7, 20, 3);
-  g.fill();
-  g.fillStyle = golden ? '#ffd166' : '#9fb6c9';
-  g.beginPath();
-  g.arc(0, 20, 4, 0, Math.PI * 2);
-  g.fill();
+  drawVoxel(g, golden ? SWORD_GOLD : SWORD_STEEL, 0, 0, {
+    scale: armed ? 1.15 : 0.78,
+  });
   g.restore();
 }
 
@@ -197,168 +185,60 @@ function drawPlayer(g: Painter, s: GameState): void {
   // so comparing against 'longsword' made an equipped weapon still draw as
   // bare hands (short grey sword). Any weapon in the active slot is armed.
   const armed = activeWeapon(s) !== null;
-  const bob = Math.sin(s.t * 9) * (Math.hypot(p.vx, p.vy) > 20 ? 2.5 : 1);
+  const moving = Math.hypot(p.vx, p.vy) > 20;
+  // Pixel bob: a whole-pixel step, never a sub-pixel slide.
+  const bob = moving ? (Math.sin(s.t * 10) > 0 ? 1 : 0) : 0;
 
   for (const mark of p.trail) {
     g.save();
     g.globalAlpha = Math.max(0, mark.life / 0.42) * 0.3;
     g.fillStyle = '#67e8f9';
-    g.beginPath();
-    g.ellipse(mark.x, mark.y - 22, 18, 30, 0, 0, Math.PI * 2);
-    g.fill();
+    const size = 6;
+    g.fillRect(Math.round(mark.x) - size, Math.round(mark.y) - 30, size * 2, size * 5);
     g.restore();
   }
 
   shadow(g, p.x, p.y + 2, 24, 9, 0.45);
 
   if (p.invuln > 0 && p.dodge > 0) {
-    g.strokeStyle = 'rgba(103,232,249,0.85)';
-    g.lineWidth = 3;
-    g.beginPath();
-    g.ellipse(p.x, p.y - 24, 30, 42, 0, 0, Math.PI * 2);
-    g.stroke();
+    drawPixelRing(g, p.x, p.y + 2, 26, 11, '#67e8f9', { alpha: 0.85, lineWidth: 2 });
   }
 
-  g.save();
-  g.translate(p.x, p.y - bob);
-  const hurt = p.hurt > 0;
-  const cape = hurt ? '#ff8a8a' : '#2f6fd0';
-  const armor = hurt ? '#ffd2d2' : '#4aa3ff';
+  drawVoxel(g, KNIGHT, p.x, p.y - bob, { flash: p.hurt > 0 });
 
-  // Cloak / body with a lit left edge.
-  g.fillStyle = cape;
-  g.beginPath();
-  g.moveTo(-19, -12);
-  g.quadraticCurveTo(-24, -42, 0, -48);
-  g.quadraticCurveTo(24, -42, 19, -12);
-  g.lineTo(15, -2);
-  g.lineTo(-15, -2);
-  g.closePath();
-  g.fill();
-  const body = g.createLinearGradient(-18, 0, 18, 0);
-  body.addColorStop(0, armor);
-  body.addColorStop(1, hurt ? '#ff9d9d' : '#1e5fae');
-  g.fillStyle = body;
-  roundRect(g, -14, -42, 28, 38, 10);
-  g.fill();
-  g.fillStyle = 'rgba(255,255,255,0.28)';
-  roundRect(g, -11, -39, 6, 30, 3);
-  g.fill();
-
-  // Head + helm.
-  g.fillStyle = '#f3d2b3';
-  g.beginPath();
-  g.arc(0, -51, 11, 0, Math.PI * 2);
-  g.fill();
-  g.fillStyle = hurt ? '#ffb0b0' : '#8fc4ff';
-  g.beginPath();
-  g.arc(0, -55, 12, Math.PI, Math.PI * 2);
-  g.lineTo(12, -50);
-  g.lineTo(-12, -50);
-  g.closePath();
-  g.fill();
-  g.fillStyle = '#0d2036';
-  const faceDx = Math.cos(p.face) * 4;
-  g.fillRect(-6 + faceDx, -50, 3, 3);
-  g.fillRect(3 + faceDx, -50, 3, 3);
-
-  // Weapon arm.
+  // Weapon arm. The hand sits on the pauldron line; the blade pivots there.
   const swing = p.attackFx > 0 ? Math.sin((1 - p.attackFx / 0.26) * Math.PI) : 0;
   const aim = p.face;
-  g.save();
-  g.translate(Math.cos(aim) * 14, -28 + Math.sin(aim) * 5);
-  drawSword(g, 0, 0, aim + Math.PI / 2 - swing * 1.5, armed ? 52 : 28, armed);
-  g.restore();
-  g.restore();
+  drawBlade(
+    g,
+    p.x + Math.cos(aim) * 14,
+    p.y - 26 - bob + Math.sin(aim) * 5,
+    aim + Math.PI / 2 - swing * 1.5,
+    armed,
+    armed,
+  );
 }
 
 function drawSkeleton(g: Painter, sk: Skeleton): void {
   if (!sk.alive) {
-    g.save();
-    g.globalAlpha = 0.5;
-    shadow(g, sk.x, sk.y, 26, 9, 0.3);
-    g.fillStyle = '#b9b6a8';
-    for (const [ox, oy, w, h, a] of [[-16, -6, 22, 5, 0.3], [4, -4, 18, 4, -0.4], [-4, -13, 14, 12, 0.2]] as const) {
-      g.save();
-      g.translate(sk.x + ox, sk.y + oy);
-      g.rotate(a);
-      g.fillRect(-w / 2, -h / 2, w, h);
-      g.restore();
-    }
-    g.restore();
+    drawShadow(g, sk.x, sk.y, 24, 9, 0.28);
+    drawVoxel(g, CORPSE, sk.x, sk.y + 2, { alpha: 0.55 });
     return;
   }
 
-  const bob = Math.sin(sk.bob) * 2;
+  const bob = Math.sin(sk.bob) > 0 ? 1 : 0;
   shadow(g, sk.x, sk.y + 2, 21, 8, 0.42);
-  g.save();
-  g.translate(sk.x, sk.y - bob);
-  const flash = sk.hit > 0;
-  const bone = flash ? '#fff6f0' : '#ded9c8';
-  const dark = flash ? '#ffc9c9' : '#8c8878';
+  drawVoxel(g, SKELETON, sk.x, sk.y - bob, { flash: sk.hit > 0 });
 
-  // Ribcage and spine.
-  g.strokeStyle = dark;
-  g.lineWidth = 3;
-  g.beginPath();
-  g.moveTo(0, -38);
-  g.lineTo(0, -16);
-  g.stroke();
-  g.strokeStyle = bone;
-  g.lineWidth = 3.2;
-  for (let i = 0; i < 3; i += 1) {
-    const y = -34 + i * 6;
-    g.beginPath();
-    g.ellipse(0, y, 11 - i, 3.2, 0, 0, Math.PI * 2);
-    g.stroke();
-  }
-  // Legs.
-  g.strokeStyle = bone;
-  g.lineWidth = 4;
-  g.beginPath();
-  g.moveTo(-5, -17);
-  g.lineTo(-9, -2);
-  g.moveTo(5, -17);
-  g.lineTo(9, -2);
-  g.stroke();
-  // Arms reaching forward.
-  g.lineWidth = 3.4;
-  g.beginPath();
-  g.moveTo(-10, -33);
-  g.lineTo(-21, -22);
-  g.lineTo(-16, -12);
-  g.moveTo(10, -33);
-  g.lineTo(21, -22);
-  g.lineTo(16, -12);
-  g.stroke();
-  // Skull.
-  g.fillStyle = bone;
-  g.beginPath();
-  g.arc(0, -46, 11, 0, Math.PI * 2);
-  g.fill();
-  g.fillRect(-7, -41, 14, 7);
-  g.fillStyle = flash ? '#ff8a8a' : '#2b3038';
-  g.beginPath();
-  g.arc(-4, -47, 2.8, 0, Math.PI * 2);
-  g.arc(4, -47, 2.8, 0, Math.PI * 2);
-  g.fill();
-  g.fillStyle = '#ff5a5a';
-  g.beginPath();
-  g.arc(-4, -47, 1.3, 0, Math.PI * 2);
-  g.arc(4, -47, 1.3, 0, Math.PI * 2);
-  g.fill();
-  g.fillStyle = dark;
-  g.fillRect(-1, -41, 2, 3);
-  g.restore();
-
-  // Health bar above the head.
-  const w = 46;
-  g.fillStyle = 'rgba(6,12,18,0.8)';
-  roundRect(g, sk.x - w / 2 - 2, sk.y - 72, w + 4, 8, 4);
-  g.fill();
+  // Health bar above the head: hard blocks, no rounded pill.
+  const w = 44;
+  const top = Math.round(sk.y) - modelHeight(SKELETON) - 10;
+  g.fillStyle = 'rgba(6,12,18,0.85)';
+  g.fillRect(Math.round(sk.x) - w / 2 - 2, top, w + 4, 8);
   g.fillStyle = '#ff6b6b';
-  roundRect(g, sk.x - w / 2, sk.y - 70, w * Math.max(0, sk.hp / sk.maxHp), 4, 2);
-  g.fill();
+  g.fillRect(Math.round(sk.x) - w / 2, top + 2, (w * Math.max(0, sk.hp / sk.maxHp)), 4);
+  g.fillStyle = 'rgba(255,255,255,0.18)';
+  g.fillRect(Math.round(sk.x) - w / 2, top + 2, (w * Math.max(0, sk.hp / sk.maxHp)), 2);
 }
 
 /**
@@ -380,58 +260,29 @@ function qualityColor(quality?: string): string {
     : '#ffd166';
 }
 
-/**
- * Tiny ground model: a ~12x35px sword. It is deliberately much smaller than
- * the old 46px blade + 68px plate so it no longer covers the monster standing
- * on it; the clickable identity of a drop is its NAME PLATE above.
- */
-function drawDropModel(g: Painter, x: number, y: number): void {
-  g.save();
-  g.translate(x, y);
-  g.rotate(-0.42);
-  g.fillStyle = '#f6e2a8';
-  g.beginPath();
-  g.moveTo(-2.4, -22);
-  g.lineTo(0, -28);
-  g.lineTo(2.4, -22);
-  g.lineTo(2, -8);
-  g.lineTo(-2, -8);
-  g.closePath();
-  g.fill();
-  g.fillStyle = '#c9922f';
-  g.fillRect(-6, -8, 12, 3);
-  g.fillStyle = '#8a5a2b';
-  g.fillRect(-1.6, -5, 3.2, 9);
-  g.fillStyle = '#e0b25a';
-  g.beginPath();
-  g.arc(0, 5, 2, 0, Math.PI * 2);
-  g.fill();
-  g.restore();
+/** Whiter qualities drop a steel blade; rare ones drop a gilded one. */
+function rarityIsHigh(quality?: string): boolean {
+  return quality === '紫' || quality === '橙';
 }
 
 function drawDrop(g: Painter, drop: Drop, hovered: boolean): void {
-  const float = Math.sin(drop.t * 3) * 3;
+  // Quantise the float to whole pixels: a voxel item hovers in 1px steps.
+  const float = Math.round(Math.sin(drop.t * 3) * 3);
   const color = qualityColor(drop.quality);
-  shadow(g, drop.x, drop.y + 2, hovered ? 13 : 9, hovered ? 5 : 3.5, 0.32);
-  // Soft aura instead of the old 120px halo block: visible on dark ground,
-  // small enough that it does not read as an object.
-  const cy = drop.y + DROP_MODEL_TOP / 2 + float;
-  const halo = g.createRadialGradient(drop.x, cy, 2, drop.x, cy, hovered ? 34 : 26);
-  halo.addColorStop(0, hovered ? 'rgba(255,255,255,0.42)' : 'rgba(255,209,102,0.34)');
-  halo.addColorStop(1, 'rgba(255,209,102,0)');
-  g.fillStyle = halo;
-  g.fillRect(drop.x - 36, cy - 36, 72, 72);
-  drawDropModel(g, drop.x, drop.y + 2 + float);
+  shadow(g, drop.x, drop.y + 2, hovered ? 13 : 10, hovered ? 5 : 4, 0.34);
+  // Blocky aura instead of a radial gradient: same read, same grid.
+  drawPixelGlow(g, drop.x, drop.y - 8 + float, hovered ? 26 : 20, hovered ? 22 : 17, color,
+    hovered ? 0.34 : 0.22);
+
+  // Slow turn, never edge-on: the item has to stay readable while it hovers.
+  const spin = Math.cos(drop.t * 1.3);
+  drawVoxel(g, rarityIsHigh(drop.quality) ? SWORD_GOLD : SWORD_STEEL, drop.x, drop.y + 4 + float, {
+    rotation: -0.42,
+    squash: Math.max(0.55, Math.abs(spin)),
+    scale: 1.05,
+  });
   if (hovered) {
-    // Ground ring under the model: confirms "this one is the pickup target".
-    g.save();
-    g.strokeStyle = color;
-    g.globalAlpha = 0.85;
-    g.lineWidth = 1.6;
-    g.beginPath();
-    g.ellipse(drop.x, drop.y + 2, 17, 7, 0, 0, Math.PI * 2);
-    g.stroke();
-    g.restore();
+    drawPixelRing(g, drop.x, drop.y + 2, 17, 7, color, { alpha: 0.85, lineWidth: 2 });
   }
 }
 
@@ -461,23 +312,14 @@ function drawDropLabels(g: Painter, s: GameState): void {
     if (rect.index === rect.count - 1) {
       g.globalAlpha = active ? 0.95 : 0.6;
       g.fillStyle = active ? '#ffffff' : 'rgba(160,182,200,0.9)';
-      g.beginPath();
-      g.moveTo(cx - 3, rect.y + rect.h);
-      g.lineTo(cx + 3, rect.y + rect.h);
-      g.lineTo(cx, rect.y + rect.h + 4);
-      g.closePath();
-      g.fill();
+      g.fillRect(Math.round(cx) - 3, Math.round(rect.y + rect.h), 6, 3);
+      g.fillRect(Math.round(cx) - 1, Math.round(rect.y + rect.h) + 3, 2, 2);
     }
 
     g.globalAlpha = active ? 1 : 0.9;
-    if (active) {
-      g.shadowColor = color;
-      g.shadowBlur = 12;
-    }
-    g.fillStyle = active ? 'rgba(26,38,50,0.97)' : 'rgba(8,16,24,0.82)';
+    g.fillStyle = active ? 'rgba(26,38,50,0.97)' : 'rgba(8,16,24,0.86)';
     roundRect(g, rect.x, rect.y, rect.w, rect.h, rect.h / 2);
     g.fill();
-    g.shadowBlur = 0;
     g.strokeStyle = active ? '#ffffff' : color;
     g.lineWidth = active ? 2 : 1;
     roundRect(g, rect.x, rect.y, rect.w, rect.h, rect.h / 2);
@@ -493,9 +335,8 @@ function drawParticles(g: Painter, s: GameState): void {
     g.save();
     g.globalAlpha = Math.max(0, Math.min(1, part.life / part.max));
     g.fillStyle = part.color;
-    g.beginPath();
-    g.arc(part.x, part.y, part.size, 0, Math.PI * 2);
-    g.fill();
+    const size = Math.max(2, Math.round(part.size));
+    g.fillRect(Math.round(part.x) - size, Math.round(part.y) - size, size * 2, size * 2);
     g.restore();
   }
 }
@@ -506,36 +347,31 @@ function drawMoveTarget(g: Painter, s: GameState): void {
   const follow = s.moveMode === 'follow';
   const color = follow ? '#ffd166' : '#67e8f9';
   const pulse = 0.5 + 0.5 * Math.sin(s.t * 8);
-  const r = (follow ? 16 : 13) + pulse * 3;
+  const r = Math.round((follow ? 16 : 13) + pulse * 3);
   const { x, y } = s.target;
 
   g.save();
-  // Dashed guide from the player to the active waypoint.
+  // Dashed guide from the player to the active waypoint -- stepped, not smooth.
   g.globalAlpha = 0.4;
-  g.strokeStyle = color;
-  g.lineWidth = 1.5;
-  g.setLineDash([6, 8]);
-  g.beginPath();
-  g.moveTo(s.player.x, s.player.y);
-  g.lineTo(x, y);
-  g.stroke();
-  g.setLineDash([]);
+  g.fillStyle = color;
+  const dx = x - s.player.x;
+  const dy = y - s.player.y;
+  const dist = Math.hypot(dx, dy);
+  const steps = Math.max(1, Math.floor(dist / 14));
+  for (let i = 0; i < steps; i += 2) {
+    const t = i / steps;
+    g.fillRect(
+      Math.round(s.player.x + dx * t) - 1,
+      Math.round(s.player.y + dy * t) - 1,
+      3, 3,
+    );
+  }
 
-  g.globalAlpha = 0.35;
-  g.beginPath();
-  g.ellipse(x, y, r + 10, (r + 10) * 0.5, 0, 0, Math.PI * 2);
-  g.stroke();
-  g.globalAlpha = follow ? 0.95 : 0.8;
-  g.lineWidth = 2;
-  g.beginPath();
-  g.ellipse(x, y, r, r * 0.5, 0, 0, Math.PI * 2);
-  g.stroke();
-  g.beginPath();
-  g.moveTo(x - 5, y);
-  g.lineTo(x + 5, y);
-  g.moveTo(x, y - 3);
-  g.lineTo(x, y + 3);
-  g.stroke();
+  drawPixelRing(g, x, y, r + 8, (r + 8) * 0.5, color, { alpha: 0.35, lineWidth: 2 });
+  drawPixelRing(g, x, y, r, r * 0.5, color, { alpha: follow ? 0.95 : 0.8, lineWidth: 2 });
+  g.fillStyle = color;
+  g.fillRect(Math.round(x) - 4, Math.round(y) - 1, 9, 2);
+  g.fillRect(Math.round(x) - 1, Math.round(y) - 4, 2, 9);
   g.globalAlpha = 0.85;
   text(g, follow ? '跟随' : '目的地', x, y - r * 0.5 - 16, 11, color, 'center', '700');
   g.restore();
@@ -547,21 +383,9 @@ function drawTargetLock(g: Painter, s: GameState): void {
   const sk = s.skeletons[s.targetEnemy];
   if (sk === undefined || !sk.alive) return;
   const pulse = 0.5 + 0.5 * Math.sin(s.t * 9);
-  g.save();
-  g.globalAlpha = 0.85;
-  g.strokeStyle = '#ff6b6b';
-  g.lineWidth = 2.5;
-  g.beginPath();
-  g.ellipse(sk.x, sk.y + 2, 28 + pulse * 3, 11 + pulse, 0, 0, Math.PI * 2);
-  g.stroke();
-  g.globalAlpha = 0.5;
-  g.lineWidth = 1.5;
-  g.beginPath();
-  g.ellipse(sk.x, sk.y + 2, 36 + pulse * 4, 15 + pulse * 1.5, 0, 0, Math.PI * 2);
-  g.stroke();
-  g.globalAlpha = 0.9;
-  text(g, '目标', sk.x, sk.y - 84, 11, '#ff9b9b', 'center', '700');
-  g.restore();
+  drawPixelRing(g, sk.x, sk.y + 2, 28 + pulse * 3, 11 + pulse, '#ff6b6b', { alpha: 0.85, lineWidth: 3 });
+  drawPixelRing(g, sk.x, sk.y + 2, 36 + pulse * 4, 15 + pulse * 1.5, '#ff6b6b', { alpha: 0.5, lineWidth: 2 });
+  text(g, '目标', sk.x, sk.y - modelHeight(SKELETON) - 22, 11, '#ff9b9b', 'center', '700');
 }
 
 /**
@@ -577,33 +401,37 @@ function drawHoverMark(g: Painter, s: GameState): void {
   // A locked target already owns the red ring + 「目标」 label; do not double up.
   if (s.attackOrder && s.targetEnemy === s.hoverEnemy) return;
   const pulse = 0.5 + 0.5 * Math.sin(s.t * 7);
-  g.save();
-  g.beginPath();
-  g.ellipse(sk.x, sk.y + 2, 23 + pulse * 2, 9 + pulse, 0, 0, Math.PI * 2);
-  g.globalAlpha = 0.16;
-  g.fillStyle = '#eaf8ff';
-  g.fill();
-  g.globalAlpha = 0.55 + pulse * 0.3;
-  g.strokeStyle = '#eaf8ff';
-  g.lineWidth = 2;
-  g.stroke();
-  g.restore();
+  drawPixelGlow(g, sk.x, sk.y + 2, 26 + pulse * 2, 12 + pulse, '#eaf8ff', 0.14);
+  drawPixelRing(g, sk.x, sk.y + 2, 23 + pulse * 2, 9 + pulse, '#eaf8ff', {
+    alpha: 0.55 + pulse * 0.3,
+    lineWidth: 2,
+  });
 }
+
+/* --------------------------------------------------------------------- hud */
 
 function hud(g: Painter, s: GameState): void {
   // Top-left: title + health.
-  g.fillStyle = 'rgba(8,16,24,0.66)';
+  g.fillStyle = 'rgba(8,16,24,0.78)';
   roundRect(g, 24, 20, 300, 82, 14);
   g.fill();
-  text(g, '2.5D 动作模板 · 骷髅试炼', 40, 43, 17, '#e8f4ff', 'left', '700');
+  g.strokeStyle = 'rgba(120,170,200,0.32)';
+  g.lineWidth = 2;
+  roundRect(g, 24, 20, 300, 82, 14);
+  g.stroke();
+  text(g, '2.5D 像素试炼 · 骷髅', 40, 43, 17, '#e8f4ff', 'left', '700');
   g.fillStyle = 'rgba(255,255,255,0.12)';
   roundRect(g, 40, 64, 268, 12, 6);
   g.fill();
   const hpRatio = s.hp / s.maxHp;
   const hpColor = hpRatio > 0.5 ? '#4ade80' : hpRatio > 0.25 ? '#fbbf24' : '#ff6b6b';
   g.fillStyle = hpColor;
-  roundRect(g, 40, 64, Math.max(0, 268 * hpRatio), 12, 6);
-  g.fill();
+  // Segmented bar: 20 blocks, so HP reads in whole "voxels".
+  const segs = 20;
+  const filled = Math.max(0, Math.ceil(hpRatio * segs));
+  for (let i = 0; i < filled; i += 1) {
+    g.fillRect(40 + i * 13.4, 64, 11, 12);
+  }
   text(g, `${Math.round(s.hp)} / ${s.maxHp}`, 174, 70, 11, '#08131c', 'center', '800');
   text(g, 'HP', 40, 90, 11, '#8fa9bb', 'left', '600');
 
@@ -612,11 +440,11 @@ function hud(g: Painter, s: GameState): void {
   // Bottom-centre: two weapon slots. Only the active one drives melee.
   const slotX = VIEW_W / 2 - 148;
   const slotY = VIEW_H - 92;
-  g.fillStyle = 'rgba(8,16,24,0.78)';
+  g.fillStyle = 'rgba(8,16,24,0.82)';
   roundRect(g, slotX, slotY, 296, 72, 14);
   g.fill();
   g.strokeStyle = 'rgba(150,180,205,0.4)';
-  g.lineWidth = 1.5;
+  g.lineWidth = 2;
   roundRect(g, slotX, slotY, 296, 72, 14);
   g.stroke();
   for (let i = 0; i < 2; i += 1) {
@@ -629,11 +457,18 @@ function hud(g: Painter, s: GameState): void {
     roundRect(g, bx, slotY + 9, 68, 54, 9);
     g.fill();
     g.strokeStyle = active ? '#ffd166' : 'rgba(150,180,205,0.35)';
-    g.lineWidth = active ? 2.2 : 1;
+    g.lineWidth = active ? 2 : 1;
     roundRect(g, bx, slotY + 9, 68, 54, 9);
     g.stroke();
-    if (weapon) drawSword(g, bx + 34, slotY + 46, -0.35, 32, true);
-    else text(g, '—', bx + 34, slotY + 42, 21, '#6f8798', 'center', '600');
+    if (weapon) {
+      g.save();
+      g.translate(bx + 34, slotY + 52);
+      g.rotate(-0.35);
+      drawVoxel(g, SWORD_GOLD, 0, 0, { scale: 0.8 });
+      g.restore();
+    } else {
+      text(g, '—', bx + 34, slotY + 42, 21, '#6f8798', 'center', '600');
+    }
     text(g, String(i + 1), bx + 9, slotY + 24, 11, active ? '#ffd166' : '#6f8798', 'left', '700');
   }
   text(g, '武器槽', slotX + 160, slotY + 24, 12, '#8fa9bb', 'left', '600');
@@ -642,7 +477,7 @@ function hud(g: Painter, s: GameState): void {
   text(g, '按 1 / 2 切换', VIEW_W / 2 + 140, slotY + 48, 11, '#8fa9bb', 'right', '600');
 
   // Bottom-right: controls.
-  g.fillStyle = 'rgba(8,16,24,0.60)';
+  g.fillStyle = 'rgba(8,16,24,0.66)';
   roundRect(g, VIEW_W - 286, VIEW_H - 92, 262, 72, 12);
   g.fill();
   text(g, '单击地面  移动    长按  跟随光标', VIEW_W - 270, VIEW_H - 70, 12, '#c6dcea');
@@ -664,13 +499,13 @@ function hud(g: Painter, s: GameState): void {
       : s.moveMode === 'point'
         ? '#67e8f9'
         : '#8fa9bb';
-  g.fillStyle = 'rgba(8,16,24,0.66)';
+  g.fillStyle = 'rgba(8,16,24,0.72)';
   roundRect(g, VIEW_W / 2 - 92, 22, 184, 30, 15);
   g.fill();
   text(g, mode, VIEW_W / 2, 37, 12, modeColor, 'center', '700');
 
   // Bottom-left: cooldown meters.
-  g.fillStyle = 'rgba(8,16,24,0.60)';
+  g.fillStyle = 'rgba(8,16,24,0.66)';
   roundRect(g, 24, VIEW_H - 92, 210, 72, 12);
   g.fill();
   text(g, '攻击 / 闪避 冷却', 40, VIEW_H - 72, 11, '#8fa9bb');
@@ -683,8 +518,9 @@ function hud(g: Painter, s: GameState): void {
     roundRect(g, x, y, 178, 8, 4);
     g.fill();
     g.fillStyle = color;
-    roundRect(g, x, y, Math.max(0, 178 * Math.min(1, ratio)), 8, 4);
-    g.fill();
+    const cells = 22;
+    const on = Math.max(0, Math.ceil(Math.min(1, ratio) * cells));
+    for (let i = 0; i < on; i += 1) g.fillRect(x + i * 8.1, y, 7, 8);
   }
 
   // Centre toast.
@@ -692,11 +528,11 @@ function hud(g: Painter, s: GameState): void {
     g.save();
     g.globalAlpha = Math.min(1, s.toast.life * 1.6);
     const width = Math.max(260, s.toast.text.length * 17 + 60);
-    g.fillStyle = 'rgba(10,20,30,0.88)';
+    g.fillStyle = 'rgba(10,20,30,0.92)';
     roundRect(g, VIEW_W / 2 - width / 2, 124, width, 44, 12);
     g.fill();
-    g.strokeStyle = 'rgba(255,209,102,0.45)';
-    g.lineWidth = 1;
+    g.strokeStyle = 'rgba(255,209,102,0.5)';
+    g.lineWidth = 2;
     roundRect(g, VIEW_W / 2 - width / 2, 124, width, 44, 12);
     g.stroke();
     text(g, s.toast.text, VIEW_W / 2, 146, 15, '#ffd166', 'center', '700');
@@ -705,13 +541,13 @@ function hud(g: Painter, s: GameState): void {
 
   // End-state overlay.
   if (s.gameOver || s.cleared) {
-    g.fillStyle = 'rgba(4,10,16,0.55)';
+    g.fillStyle = 'rgba(4,10,16,0.6)';
     g.fillRect(0, 0, VIEW_W, VIEW_H);
-    g.fillStyle = 'rgba(10,20,32,0.94)';
+    g.fillStyle = 'rgba(10,20,32,0.96)';
     roundRect(g, VIEW_W / 2 - 230, VIEW_H / 2 - 96, 460, 192, 18);
     g.fill();
     g.strokeStyle = s.cleared ? '#ffd166' : '#ff6b6b';
-    g.lineWidth = 2;
+    g.lineWidth = 3;
     roundRect(g, VIEW_W / 2 - 230, VIEW_H / 2 - 96, 460, 192, 18);
     g.stroke();
     text(g, s.cleared ? '试炼完成' : '挑战失败', VIEW_W / 2, VIEW_H / 2 - 46, 34, s.cleared ? '#ffd166' : '#ff9b9b', 'center', '800');
@@ -722,19 +558,38 @@ function hud(g: Painter, s: GameState): void {
 
 /** One complete frame: world-space scene first, screen-space HUD on top. */
 export function paint(g: Painter, s: GameState): void {
+  prepareScene(g);
   g.clearRect(0, 0, VIEW_W, VIEW_H);
   g.save();
-  g.translate(-s.camera.x, -s.camera.y);
-  drawTerrain(g, s);
+  g.translate(-Math.round(s.camera.x), -Math.round(s.camera.y));
+  drawGround(g, s);
   drawMoveTarget(g, s);
   drawTargetLock(g, s);
   drawHoverMark(g, s);
 
-  // Depth sort: everything on the ground plane shares one y order.
+  // Depth sort: everything standing on the ground shares one y order. Raised
+  // wall blocks join the same list, so they cover the bodies behind them.
   const items: { y: number; draw: () => void }[] = [];
+  const w = s.world;
+  const cam = s.camera;
+  const grid = w.grid;
+  const c0 = Math.max(0, Math.floor(cam.x / grid));
+  const c1 = Math.min(w.cols - 1, Math.floor((cam.x + VIEW_W) / grid));
+  const r0 = Math.max(0, Math.floor(cam.y / grid));
+  const r1 = Math.min(w.rows - 1, Math.floor((cam.y + VIEW_H) / grid));
+  for (let r = r0; r <= r1; r += 1) {
+    for (let c = c0; c <= c1; c += 1) {
+      if ((w.tiles[r * w.cols + c] ?? 1) !== 1) continue;
+      const x = c * grid;
+      const y = r * grid;
+      items.push({ y: y + grid + 0.5, draw: () => drawWallBlock(g, x, y) });
+    }
+  }
   for (const sk of s.skeletons) items.push({ y: sk.y, draw: () => drawSkeleton(g, sk) });
   for (const drop of s.drops) {
-    items.push({ y: drop.y - 1, draw: () => drawDrop(g, drop, s.hoverDrop === drop.uid) });
+    // A drop sits in FRONT of a corpse at the same spot, but behind a body
+    // standing south of it -- the same rule as any other ground object.
+    items.push({ y: drop.y + 0.5, draw: () => drawDrop(g, drop, s.hoverDrop === drop.uid) });
   }
   items.push({ y: s.player.y, draw: () => drawPlayer(g, s) });
   items.sort((a, b) => a.y - b.y);
