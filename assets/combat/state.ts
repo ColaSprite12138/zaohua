@@ -160,11 +160,19 @@ export interface GameState {
   hoverEnemy: number | null;
   attackOrder: boolean;
   /**
-   * The button currently down. `hold` flips only when the pointer has actually
-   * travelled past `CLICK_DRAG_PIXELS`, so a slow but stationary human click
-   * still resolves as a click (attack / pickup / move) on release.
+   * The button currently down. `vx/vy` are the press point in VIEW space (used
+   * to tell a click from a drag, camera-independent); `wx/wy` are the same
+   * point in world space, kept only as a fallback when a release arrives
+   * without a pointer position. `hold` flips only when the pointer has
+   * actually travelled past `CLICK_DRAG_PIXELS` on screen.
    */
-  press: { x: number; y: number; hold: boolean } | null;
+  press: {
+    vx: number;
+    vy: number;
+    wx: number;
+    wy: number;
+    hold: boolean;
+  } | null;
   skeletons: Skeleton[];
   drops: Drop[];
   /**

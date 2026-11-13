@@ -6,6 +6,9 @@ import {
   type GameState,
   type StepInput,
 } from '../simulation.ts';
+import { VIEW_H, VIEW_W } from '../../shared/constants.ts';
+import { cameraFor, nearestWalkable } from '../world.ts';
+import { arena } from '../../resource/maps/arena.generated.ts';
 
 const input = (over: Partial<StepInput> = {}): StepInput => ({
   mouse: undefined,
@@ -351,3 +354,64 @@ describe('click duration must not change the action', () => {
     expect(s.attackOrder).toBe(false);
   });
 });
+
+describe('a moving camera must not change what a click means', () => {
+  /**
+   * The bug this guards: `press` used to be stored in WORLD space, so while the
+   * player walked (camera scrolling) a perfectly still cursor kept changing its
+   * world position. After ~12 px of camera travel the "did the pointer move?"
+   * test fired, the click became a follow, and clicking an enemy issued a move.
+   */
+  it('a still cursor stays a click while the camera scrolls beneath it', () => {
+    const s = createState({ map: arena });
+    // Map centre: the camera only leaves (0,0) once the player is far enough
+    // from the world edge, and that is exactly the case being guarded here.
+    const spot = nearestWalkable(s.world, s.map.pxWid / 2, s.map.pxHei / 2);
+    s.player.x = spot.x;
+    s.player.y = spot.y;
+    s.camera = cameraFor(s.world, s.player.x, s.player.y);
+    expect(s.camera.x).toBeGreaterThan(0);
+
+    // Exactly what the engine feeds the simulation: the world point under the
+    // cursor, recomputed every frame from the CURRENT camera.
+    const view = { x: VIEW_W * 0.72, y: VIEW_H * 0.4 };
+    const at = () => ({ x: s.camera.x + view.x, y: s.camera.y + view.y });
+
+    step(s, 1 / 60, input({ mouse: at(), pointerDown: true, pointerHeld: true }));
+    const camStart = s.camera.x;
+
+    // Walk right: the camera follows, so the world point under the cursor moves
+    // by tens of pixels even though the pointer never moved on screen.
+    for (let i = 0; i < 12; i += 1) {
+      s.player.x += 4;
+      step(s, 1 / 60, input({ mouse: at(), pointerHeld: true }));
+    }
+    expect(Math.abs(s.camera.x - camStart)).toBeGreaterThan(12);
+    expect(s.press?.hold).toBe(false);
+    expect(s.moveMode).toBe('idle');
+
+    step(s, 1 / 60, input({ mouse: at(), pointerUp: true }));
+    expect(s.attackOrder).toBe(false);
+    expect(s.moveMode).toBe('point');
+    // The waypoint is the ground the player aimed at WHEN PRESSING. It must NOT
+    // be the world point that has since scrolled under the cursor: that one has
+    // drifted by the whole camera delta and would send the character off course.
+    expect(Math.abs(s.target.x - (s.camera.x + view.x))).toBeGreaterThan(20);
+  });
+
+  it('a real drag still becomes a follow while the camera scrolls', () => {
+    const s = createState({ map: arena });
+    const spot = nearestWalkable(s.world, s.map.pxWid / 2, s.map.pxHei / 2);
+    s.player.x = spot.x;
+    s.player.y = spot.y;
+    s.camera = cameraFor(s.world, s.player.x, s.player.y);
+
+    const view = { x: VIEW_W * 0.5, y: VIEW_H * 0.5 };
+    const at = (dx = 0) => ({ x: s.camera.x + view.x + dx, y: s.camera.y + view.y });
+    step(s, 1 / 60, input({ mouse: at(), pointerDown: true, pointerHeld: true }));
+    s.player.x += 4;
+    step(s, 1 / 60, input({ mouse: at(40), pointerHeld: true }));
+    expect(s.moveMode).toBe('follow');
+  });
+});
+

@@ -147,10 +147,10 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 
 `game.pack.ts` 把 `snapshot.mouse.justPressed(0)` / `button(0)` / `justReleased(0)` 分别喂给
 `StepInput.pointerDown` / `pointerHeld` / `pointerUp`。按下时只记录位置：**短按且几乎不
-拖动**（位移 < 12 逻辑像素，**与按住多久无关**）在**释放沿**结算为一次单击；拖动超过 12 像素则判定为
+拖动**（**屏幕空间**位移 < 12 逻辑像素，与按住多久无关）在**释放沿**结算为一次单击；拖动超过 12 像素则判定为
 长按，只做光标跟随，不产生任何攻击指令。
 
-单击按位置分流，优先级依次为：
+单击按**按下时的位置**分流（镜头滚动时不会瞄到漂移后的点），优先级依次为：
 
 1. **掉落物**（点击点距掉落中心 ≤ 26 px）→ 写 `pickupTarget = drop.uid`，玩家走过去、
    到达 `<50px` 才拾取；优先级最高是为了让压在骷髅脚下的长剑仍能被点中。**走过掉落物不会自动捡**。
@@ -226,7 +226,7 @@ IPv6 `[::1]` 回环与内置预览面板的已知问题见 `docs/feedback.md` �
 独立单测（combat 代码改动才额外跑浏览器 playthrough），并始终跑一次全局 `tsc`。
 命中 `shared/` / 引擎层 / 构建配置、或显式 `--all` 时自动转全量。
 **发版前 / 跨模块改动跑全量**：`bash scripts/verify-all.sh`，输出在 `artifacts/verify/summary.txt`；
-它强制单测 ≥ 83 条（当前 **149**）、`playthrough` ≥ 35 步（实际 39–40 步，`advance` 子步随帧时序浮动）、`resize` ≥ 4 步，并跑独立页面与 4174 单页浏览器验收
+它强制单测 ≥ 83 条（当前 **151**）、`playthrough` ≥ 35 步（实际 39–40 步，`advance` 子步随帧时序浮动）、`resize` ≥ 4 步，并跑独立页面与 4174 单页浏览器验收
 —— **删断言让测试变绿会直接失败**。注入 + 单页验收是全流程最后一步（build/play/package 都会重建 dist）。
 
 ```bash

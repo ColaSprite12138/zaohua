@@ -1,7 +1,7 @@
 # HANDOFF — 2.5D 骷髅竞技场
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-13 全套验收通过**（149 条单测 / 独立页 13 条 / 单页 39 条 / playthrough 40 steps / resize 4 steps；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、通关整份搬回、阵亡或中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效）。**steps 会浮动**：15 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 39–40 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-13 全套验收通过**（151 条单测 / 独立页 13 条 / 单页 39 条 / playthrough 40 steps / resize 4 steps；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、通关整份搬回、阵亡或中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效）。**steps 会浮动**：15 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 39–40 间变化，`verify-all.sh` 下限固定 35。
 > 这份文件记录**当前已实现的功能与不可回退的约束**。新会话先读它，再动手。
 > 改了功能 → 必须同步改本文件，追加 `docs/feedback.md`，**做完即提交并推送到 `origin/main`**。
 > 工作区级总索引：`D:\tools\zaohua\AGENTS.md`（工作区地图、跨工程硬约束、备份边界）；本文件是工程级交接。
@@ -13,7 +13,7 @@
 | 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad |
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **149**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **151**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
 | 怎么还原 | `git checkout HEAD -- <path>`；整包兜底见「可回滚基线」 |
@@ -53,7 +53,9 @@
 | 目标反馈 | 悬停在敌人身上时，**鼠标光标变长剑**、该骷髅脚下出现白色脉冲环；指针移到小地图上时 `StepInput.pointerOnHud` 抑制悬停。悬停**不产生任何指令**（不移动、不攻击） |
 | 唯一命中权威 | 光标变剑与点击攻击共用同一个 `attack.ts::hitTestEnemy()`，所以不会出现「光标变剑但点了没反应」。`GameState.hoverEnemy` 是帧末算出的敌人下标，`projection()` 也报 `hoverEnemy` |
 | 命中容错 | 身体盒仍是 `abs(dx) ≤ 30`、`y ∈ [-70, +12]`；盒外再给**躯干 46px 半径容错**（追击中的骷髅一直在动，严格贴贴图点不中）。**盒内命中永远优先于容错命中**，多个候选取躯干离指针最近的 |
-| 短按结算点 | 在**释放沿用释放点**（`StepInput.mouse`）结算掉落 / 敌人 / 地面，不再用按下点；快照没有位置时回落到按下点。移动中的目标因此好点得多 |
+| 短按结算点 | 用**按下那一刻的世界点**（`press.wx/wy`）结算掉落 / 敌人 / 地面。**不能用释放帧的世界点**：走路时镜头在滚，同一屏幕点下的世界坐标以约 0.2 px/ms 漂移（实测 250ms 漂 54px），用释放点会瞄到怪物已经滑走的位置，于是「点怪变成走路」 |
+| 位移判定在**屏幕空间** | `drag = hypot(当前 view − 按下 view)`，其中 `view = StepInput.mouse − state.camera`（战斗层自己算，引擎仍只给世界坐标）。用世界坐标判位移是错的：镜头一动，纹丝不动的光标也会被认为拖了几十像素 → 单击被判成长按跟随 |
+| 指针位置粘性 | 输入快照**只在有指针事件的帧**带 `position`；`game.pack.ts` 记住最后一次位置，帧里没有就复用，否则「按下帧没有位置」会让整次点击丢失（表现就是点了没反应） |
 | 光标实现 | Engine Worker 没有 `document`、`gameHost.canvas` 也是 `undefined`，**改不了 CSS**。Worker 只在 `hoverEnemy` 变化时经 `BroadcastChannel('forgeax-arena-run')` 发 `{ type:'hoverEnemy', index }`，主窗口 `meta-ui/shell-bridge.js` 设 `#app` 的 `style.cursor`（内联 SVG 长剑 data-URI，热点在剑尖 `3 3`）；退出战斗 / 阵亡 / 悬停消失时复位为 `''` |
 | 攻击弧 | **已删除** `paint.ts` 的扇形攻击指示区，以及只服务于它的 `Player.attackAim` 字段。攻击的可见反馈只剩挥剑动作 + 命中粒子 |
 | 身体碰撞 | `movement.ts::resolveBodyOverlap()`：**玩家↔怪物、怪物↔怪物不得重叠**。在双方都移动完、挥砍击退之后跑，2 遍软推开（各让一半），被墙卡住的一方把自己的份额让给对方；**推挤位移本身也过 `canStand()`**，不会被挤进墙里。足迹半径：玩家 12 / 怪物 10（墙仍用 `canStand` 的 10px 探针，两者独立） |
@@ -181,7 +183,8 @@ Engine Worker 持**局内** `InventoryState`（`GameState.runInventory`，`bag /
 
 关键取舍（都是用户明确拍板或实测修正过的，别"顺手优化"）：
 
-- 单击判定 = **只看位移**（按下到释放 < 12 逻辑像素），**与按住多久无关**，在**释放沿**结算；
+- 单击判定 = **只看位移**（屏幕空间按下到释放 < 12 逻辑像素），**与按住多久无关**，在**释放沿**结算；
+  结算点取**按下时的世界点**（镜头滚动时释放点已经飘走）。
   位移超过 12 逻辑像素才算长按跟随。2026-11-13 之前按时长判（> 0.35 s 即长按），
   导致人手一次认真点击变成走路 —— 见 `docs/feedback.md` 当天条目。
 - 点击分类优先级：**掉落物 → 存活敌人身体框 → 地面**。掉落物优先是为了让压在骷髅脚下的长剑能被点中；
@@ -266,7 +269,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 29/29
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **149** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-13 续四/续五：movement 11→21，+7 条悬停反馈 / 命中容错 / 身体碰撞、+3 条「点击时长不得改变动作」） |
+| `test` | **151** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-13 续四/续五：movement 11→23，+7 条悬停反馈 / 命中容错 / 身体碰撞、+3 条「点击时长不得改变动作」） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` 四张表与 `generated/*.ts` 一致，且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
@@ -284,7 +287,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 29/29
 
 下表把「当前功能契约」逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 149 条＝combat 79（loot 14 + movement **21** + attack-spec 10 +
+删断言不会让这张表悄悄失效。单测 151 条＝combat 81（loot 14 + movement **23** + attack-spec 10 +
 projectiles 10 + weapons **10** + **world 11** + modifiers 3）+ 局内 `run-inventory` 8、
 meta 40（inventory 16 + platform-KV account 11 + run-settlement **10** + meta 3）、battle 4、talent 3、
 resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不随新增断言抬高）。

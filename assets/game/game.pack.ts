@@ -80,6 +80,12 @@ export const game: Plugin = {
     // playable LDtk arena is selected by `deploy` below.
     const state = createState({ map: testArena });
 
+    // Last pointer position seen in the input snapshot. The snapshot carries a
+    // position only on frames where the browser delivered a pointer event; a
+    // frame that reports justPressed/justReleased WITHOUT one would otherwise
+    // drop the click entirely (no press to resolve, no hover to report).
+    let lastPointer: { x: number; y: number } | null = null;
+
     // Last hover index announced to the presentation realm. The pointer style
     // itself lives in the page (an Engine Worker has no `document` and no
     // canvas), so a change is the only thing worth broadcasting.
@@ -262,7 +268,10 @@ export const game: Plugin = {
             const snapshot = world.getResource<InputSnapshot>(INPUT_SNAPSHOT_RESOURCE_KEY);
             const raw = world.getResource(Time).delta;
             const dt = Math.min(Math.max(raw, 0), 0.05);
-            const pointer = snapshot?.mouse?.position;
+            const reported = snapshot?.mouse?.position;
+            if (reported) lastPointer = { x: reported.x, y: reported.y };
+            // Sticky: reuse the last known position on frames that omit it.
+            const pointer = lastPointer ?? undefined;
             // InputSnapshot.mouse.position is in canvas *physical* pixels: the
             // browser backend scales client coords by canvas.width / rect.width.
             // This Engine realm is a Worker: it has neither `document` nor

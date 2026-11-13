@@ -24,12 +24,30 @@ import { walkable, type World } from './world.ts';
 
 export function classifyPointer(s: GameState, input: StepInput): void {
   if (s.player.dodge > 0) return;
-  if (input.pointerDown && input.mouse) {
-    s.press = { x: input.mouse.x, y: input.mouse.y, hold: false };
+  // View space = world minus camera. Deriving it HERE (instead of trusting an
+  // extra screen-space input) keeps the engine contract at "world coordinates
+  // only" and makes the "did the pointer move?" test camera-independent: while
+  // the player walks the camera scrolls, so a perfectly still cursor changes
+  // its WORLD position every frame, and a world-space drag test would call
+  // every such click a drag (= a move order instead of an attack).
+  const view = input.mouse
+    ? { x: input.mouse.x - s.camera.x, y: input.mouse.y - s.camera.y }
+    : undefined;
+  if (input.pointerDown && view) {
+    s.press = {
+      vx: view.x,
+      vy: view.y,
+      wx: input.mouse?.x ?? s.camera.x + view.x,
+      wy: input.mouse?.y ?? s.camera.y + view.y,
+      hold: false,
+    };
   }
   if (s.press) {
-    if (input.mouse) {
-      const drag = Math.hypot(input.mouse.x - s.press.x, input.mouse.y - s.press.y);
+    if (view) {
+      // Distance in VIEW space, never world space: a walking player scrolls the
+      // camera, which moved a stationary cursor's world point far enough to be
+      // misread as a drag (and every such click became a move order).
+      const drag = Math.hypot(view.x - s.press.vx, view.y - s.press.vy);
       // Only an actual drag promotes a press to "follow"; staying still keeps
       // it a click so the release can attack the enemy under the cursor.
       if (drag > CLICK_DRAG_PIXELS) s.press.hold = true;
@@ -45,12 +63,14 @@ export function classifyPointer(s: GameState, input: StepInput): void {
     }
     if (input.pointerUp) {
       if (!s.press.hold) {
-        // Resolve the short click where the button was RELEASED: a chasing
-        // skeleton keeps moving between press and release, and the release
-        // point is the last place the player actually aimed at. Falls back to
-        // the press point when the snapshot carries no position.
-        const cx = input.mouse?.x ?? s.press.x;
-        const cy = input.mouse?.y ?? s.press.y;
+        // Resolve the click at the WORLD point captured when the button went
+        // down -- that is the place/skeleton the player aimed at. Using the
+        // release frame's world point is wrong as soon as the camera scrolls:
+        // while walking, the world under a still cursor drifts ~0.2 px/ms
+        // (54 px over a 250 ms press here), so the release point lands well
+        // past the target and the click reads as a plain ground move.
+        const cx = s.press.wx;
+        const cy = s.press.wy;
         const drop = dropAtPoint(s, cx, cy);
         const enemy = drop ? null : hitTestEnemy(s, cx, cy);
         clearAttackOrder(s);
