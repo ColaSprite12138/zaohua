@@ -167,6 +167,19 @@ const SELFTEST = `
       tick();
     });
   };
+  // Same idea, small bound: a missed optional predicate must not eat the whole
+  // virtual-time budget (a full waitFor miss costs 5 s of simulated clock).
+  var waitShort = function (pred) {
+    return new Promise(function (resolve) {
+      var n = 0;
+      var tick = function () {
+        if (pred()) return resolve(true);
+        if (++n > 40) return resolve(false);
+        setTimeout(tick, 10);
+      };
+      tick();
+    });
+  };
   var inBattle = function () { return document.getElementById('fx-shell').classList.contains('fx-in-battle'); };
   var logText = function () { return document.getElementById('fx-log').textContent; };
 
@@ -265,9 +278,13 @@ const SELFTEST = `
 
       // Clicking a weapon slot goes through commit() -> host.runCommand().
       document.querySelectorAll('.equip-slot')[1].click();
-      await waitFor(function () { return out.commands.length >= 1; });
+      // Wait for the command AND its effect together: they arrive as two
+      // separate queued tasks, and reading the command before the snapshot
+      // (or vice versa) made this assertion flaky under load.
+      await waitFor(function () {
+        return out.commands.length >= 1 && H.getState().activeWeaponSlot === 1;
+      });
       out.run.uiCommand = out.commands[0] || null;
-      await waitFor(function () { return H.getState().activeWeaponSlot === 1; });
       out.run.snapshotAfterCommand = H.getState().activeWeaponSlot === 1;
       out.run.panelIsReadOnlyCopy = H.getState() !== H.state;
 
@@ -294,7 +311,7 @@ const SELFTEST = `
       //      owns the CSS cursor (a Worker has no document / canvas) ----
       var canvas = document.getElementById('app');
       chan.postMessage({ type: 'hoverEnemy', index: 0 });
-      await waitFor(function () { return /svg/.test(canvas.style.cursor); });
+      await waitShort(function () { return /svg/.test(canvas.style.cursor); });
       var cursorCss = canvas.style.cursor;
       out.cursor = {
         // No regex here: this whole block is a template literal, and escaping
@@ -305,7 +322,7 @@ const SELFTEST = `
         css: cursorCss.slice(0, 48),
       };
       chan.postMessage({ type: 'hoverEnemy', index: null });
-      await waitFor(function () { return canvas.style.cursor === ''; });
+      await waitShort(function () { return canvas.style.cursor === ''; });
       out.cursor.reset = canvas.style.cursor === '';
 
       // Cleared: the WHOLE Worker state (brought-in + loot) comes home whole.
@@ -375,7 +392,7 @@ ${SELFTEST}
 const profile = path.join(outDir, 'shell-chrome-' + process.pid);
 const run = spawnSync(chrome, [
   '--headless=new', '--disable-gpu', '--no-sandbox',
-  '--allow-file-access-from-files', '--virtual-time-budget=10000',
+  '--allow-file-access-from-files', '--virtual-time-budget=15000',
   '--user-data-dir=' + profile,
   '--dump-dom', 'file:///' + testPage.replace(/\\/g, '/'),
 ], { encoding: 'utf8', maxBuffer: 24 * 1024 * 1024, timeout: 90000 });

@@ -155,3 +155,17 @@
   （`\\(` 才输出 `\(`）。写错时整个脚本**解析失败**，页面只会一直显示 `PENDING`，
   完全没有报错——排查时先把页面里最后一个 `<script>` 抠出来 `node --check`。
   同类判断优先用 `indexOf`，别在两层字符串里写正则。
+
+## 2026-11-13（续五）— 点击判定不能看时长
+
+- 症状：悬停时鼠标已经是长剑光标，点下去人物却只是走过去。原因是单击判定用了
+  `elapsed >= CLICK_HOLD_SECONDS(0.35s)`，**人手一次认真点击常常超过 350ms**，
+  被判成「长按跟随」；光标承诺攻击、点击执行移动，两者直接矛盾。
+- 定论：**单击 = 没有拖动**，与按住多久无关。`hold` 只在指针位移超过
+  `CLICK_DRAG_PIXELS(12)` 时置位；`press.elapsed` 与 `CLICK_HOLD_SECONDS` 已删除。
+  长按跟随仍然存在，但必须真的拖着走（这也正是跟随唯一有意义的用法）。
+- 教训：**任何"时长"阈值都要按人手最慢的点击来定**，动作游戏的点击按 400–600ms 估；
+  更好的办法是根本不看时长，改用「有没有发生位移」这种意图明确的信号。
+- 护栏：`movement.test.ts::click duration must not change the action`（慢按不动的
+  press 仍然攻击 / 地面仍是移动）、`playthrough.mjs`「a slow stationary click on an enemy
+  still attacks」（真实 450ms 慢点击）。

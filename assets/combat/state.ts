@@ -59,7 +59,6 @@ export function syncWeaponSlots(s: GameState): void {
   s.activeWeaponSlot = s.runInventory.activeWeaponSlot;
 }
 
-export const CLICK_HOLD_SECONDS = 0.35;
 export const CLICK_DRAG_PIXELS = 12;
 export const MELEE_RANGE_BARE = 140;
 export const MELEE_RANGE_ARMED = 170;
@@ -160,7 +159,12 @@ export interface GameState {
    */
   hoverEnemy: number | null;
   attackOrder: boolean;
-  press: { x: number; y: number; elapsed: number; hold: boolean } | null;
+  /**
+   * The button currently down. `hold` flips only when the pointer has actually
+   * travelled past `CLICK_DRAG_PIXELS`, so a slow but stationary human click
+   * still resolves as a click (attack / pickup / move) on release.
+   */
+  press: { x: number; y: number; hold: boolean } | null;
   skeletons: Skeleton[];
   drops: Drop[];
   /**

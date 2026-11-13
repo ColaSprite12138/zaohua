@@ -59,7 +59,7 @@ export function step(
   if (input.switchWeapon !== undefined && input.switchWeapon !== null) {
     switchWeaponSlot(s, input.switchWeapon);
   }
-  classifyPointer(s, dt, input);
+  classifyPointer(s, input);
   applyDodge(s, input.dodge);
   walk(s, dt);
   resolveAttackOrder(s, modifiers);
@@ -201,10 +201,7 @@ export { activeWeapon, createState, reset, setArena, syncWeaponSlots };
 export type {
   Drop, GameState, MoveMode, Particle, Player, Skeleton, StepInput,
 } from './state.ts';
-export {
-  CLICK_DRAG_PIXELS, CLICK_HOLD_SECONDS,
-  MELEE_RANGE_ARMED, MELEE_RANGE_BARE,
-} from './state.ts';
+export { CLICK_DRAG_PIXELS, MELEE_RANGE_ARMED, MELEE_RANGE_BARE } from './state.ts';
 export type { ArenaMap } from './world.ts';
 export type { CombatModifiers } from './modifiers.ts';
 export { NO_MODIFIERS } from './modifiers.ts';

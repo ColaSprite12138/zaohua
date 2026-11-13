@@ -29,11 +29,13 @@ function click(s: GameState, x: number, y: number): void {
   step(s, 1 / 60, input({ mouse, pointerUp: true }));
 }
 
-/** Press and keep holding long enough to be classified as a hold. */
+/**
+ * Press and DRAG: following is a distance decision now, so a hold that never
+ * moves the pointer stays a click (and would attack on release).
+ */
 function hold(s: GameState, x: number, y: number, seconds = 0.4): void {
-  const mouse = { x, y };
-  step(s, 1 / 60, input({ mouse, pointerDown: true, pointerHeld: true }));
-  frames(s, Math.round(seconds * 60), { mouse, pointerHeld: true });
+  step(s, 1 / 60, input({ mouse: { x, y }, pointerDown: true, pointerHeld: true }));
+  frames(s, Math.round(seconds * 60), { mouse: { x: x + 40, y }, pointerHeld: true });
 }
 
 function release(s: GameState, x: number, y: number): void {
@@ -301,5 +303,51 @@ describe('body vs body collision', () => {
     expect(s.player.y).toBeGreaterThanOrEqual(0);
     expect(s.player.x).toBeLessThanOrEqual(cols * grid);
     expect(s.player.y).toBeLessThanOrEqual(rows * grid);
+  });
+});
+
+describe('click duration must not change the action', () => {
+  it('a slow but stationary press still attacks the enemy under the cursor', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    // Stand close enough that the skeleton holds still (it only chases beyond 40px).
+    s.player.x = sk.x - 30;
+    s.player.y = sk.y;
+    const m = { x: sk.x, y: sk.y - 30 };
+
+    step(s, 1 / 60, input({ mouse: m, pointerDown: true, pointerHeld: true }));
+    // A deliberate click can easily take 600 ms; the pointer never moves.
+    frames(s, 36, { mouse: m, pointerHeld: true });
+    expect(s.attacks).toBe(0); // nothing happens while the button is merely down
+    expect(s.moveMode).toBe('idle'); // a stationary press is not a follow
+
+    step(s, 1 / 60, input({ mouse: m, pointerUp: true }));
+    expect(s.attacks).toBe(1); // the release still attacks
+  });
+
+  it('a slow but stationary press on the ground is a plain move order', () => {
+    const s = createState();
+    const dest = { x: 700, y: 400 };
+    step(s, 1 / 60, input({ mouse: dest, pointerDown: true, pointerHeld: true }));
+    frames(s, 36, { mouse: dest, pointerHeld: true });
+    expect(s.moveMode).toBe('idle');
+    step(s, 1 / 60, input({ mouse: dest, pointerUp: true }));
+    expect(s.moveMode).toBe('point');
+    expect(s.target.x).toBe(dest.x);
+    expect(s.attacks).toBe(0);
+  });
+
+  it('dragging while the button is down follows the cursor and never attacks', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    s.player.x = sk.x - 30;
+    s.player.y = sk.y;
+    const start = { x: sk.x, y: sk.y - 30 };
+    step(s, 1 / 60, input({ mouse: start, pointerDown: true, pointerHeld: true }));
+    frames(s, 12, { mouse: { x: start.x + 40, y: start.y }, pointerHeld: true });
+    expect(s.moveMode).toBe('follow');
+    step(s, 1 / 60, input({ mouse: { x: start.x + 40, y: start.y }, pointerUp: true }));
+    expect(s.attacks).toBe(0);
+    expect(s.attackOrder).toBe(false);
   });
 });

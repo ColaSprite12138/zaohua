@@ -159,6 +159,9 @@ export default async function playthrough(play) {
     await play.page.mouse.move(ax, ay);
     await play.page.mouse.down();
     await play.wait(120);
+    // Following is a DISTANCE decision: the pointer must actually travel.
+    await play.page.mouse.move(ax + 60, ay);
+    await play.wait(60);
     await play.advance(0.5);
     const holding = await play.state('game.state');
     assert.equal(holding.moveMode, 'follow', 'a held button switches to cursor following');
@@ -206,6 +209,39 @@ export default async function playthrough(play) {
     );
     assert.equal(afterRelease.attacks, 0, 'a hold never becomes an attack');
     await play.screenshot('hold-released');
+  });
+
+  await play.step('a slow stationary click on an enemy still attacks', async () => {
+    // Regression guard: classification used to be time-based, so any click
+    // slower than 350 ms became a follow (= pure movement) even though the
+    // sword cursor promised an attack.
+    await play.keyboard.press('KeyR');
+    await play.wait(120);
+    const s0 = await play.state('game.state');
+    const index = s0.skeletons.findIndex((sk) => sk.alive);
+    assert.ok(index >= 0, 'a living enemy exists');
+    const size = play.page.viewportSize();
+    const [x, y] = [
+      s0.skeletons[index].x * size.width,
+      (s0.skeletons[index].y - BODY_OFFSET_Y) * size.height,
+    ];
+
+    await play.page.mouse.move(x, y);
+    await play.wait(120);
+    const hovered = await play.state('game.state');
+    assert.equal(hovered.hoverEnemy, index, 'the sword cursor is over that enemy');
+    assert.equal(hovered.attackOrder, false);
+
+    await play.page.mouse.down();
+    await play.wait(450); // deliberate, human-slow press; no pointer movement
+    await play.page.mouse.up();
+    await play.wait(150);
+    await play.advance(0.05);
+    const after = await play.state('game.state');
+    assert.equal(after.attackOrder, true, 'a slow click must still queue the attack');
+    assert.equal(after.attackTarget, index, 'the clicked enemy is locked');
+    assert.equal(after.followingPointer, false, 'a stationary press never follows');
+    await play.screenshot('slow-click-attack');
   });
 
   await play.step('clicking a distant enemy approaches, then swings once in range', async () => {

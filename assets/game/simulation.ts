@@ -25,7 +25,6 @@ export {
   activeWeapon,
   syncWeaponSlots,
   NO_MODIFIERS,
-  CLICK_HOLD_SECONDS,
   CLICK_DRAG_PIXELS,
   MELEE_RANGE_BARE,
   MELEE_RANGE_ARMED,

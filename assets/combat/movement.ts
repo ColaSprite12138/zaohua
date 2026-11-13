@@ -2,9 +2,15 @@
  * Player movement and input classification.
  *
  * Contract: hovering never moves; a short click on the ground sets a waypoint;
- * a short click on an enemy queues one attack; a long press (or drag) is the
+ * a short click on an enemy queues one attack; a DRAG (hold + move) is the
  * ONLY source of live cursor following and NEVER attacks. A dodge owns the
  * waypoint for its whole duration so a held cursor cannot cancel the burst.
+ *
+ * "Short" is decided by DISTANCE, not by duration: a press that never travels
+ * more than `CLICK_DRAG_PIXELS` is a click however slowly the human releases.
+ * Classifying by time alone made any deliberate click slower than 350 ms turn
+ * into a follow (i.e. pure movement), even though the sword cursor promised an
+ * attack -- see the 2026-11-13 entry in docs/feedback.md.
  */
 
 import { burst, setTarget } from './effects.ts';
@@ -12,20 +18,21 @@ import {
   clearAttackOrder, dropAtPoint, hitTestEnemy,
 } from './attack.ts';
 import {
-  CLICK_DRAG_PIXELS, CLICK_HOLD_SECONDS, type GameState, type StepInput,
+  CLICK_DRAG_PIXELS, type GameState, type StepInput,
 } from './state.ts';
 import { walkable, type World } from './world.ts';
 
-export function classifyPointer(s: GameState, dt: number, input: StepInput): void {
+export function classifyPointer(s: GameState, input: StepInput): void {
   if (s.player.dodge > 0) return;
   if (input.pointerDown && input.mouse) {
-    s.press = { x: input.mouse.x, y: input.mouse.y, elapsed: 0, hold: false };
+    s.press = { x: input.mouse.x, y: input.mouse.y, hold: false };
   }
   if (s.press) {
-    s.press.elapsed += dt;
     if (input.mouse) {
       const drag = Math.hypot(input.mouse.x - s.press.x, input.mouse.y - s.press.y);
-      if (s.press.elapsed >= CLICK_HOLD_SECONDS || drag > CLICK_DRAG_PIXELS) s.press.hold = true;
+      // Only an actual drag promotes a press to "follow"; staying still keeps
+      // it a click so the release can attack the enemy under the cursor.
+      if (drag > CLICK_DRAG_PIXELS) s.press.hold = true;
     }
     if (input.pointerHeld && s.press.hold) {
       clearAttackOrder(s);
