@@ -6,13 +6,15 @@
 > （暗黑/Grim Dawn 的战斗手感 + 塔科夫的风险规则）。
 >
 > **设计正本：`docs/design/game-design.md`** —— 42 条已定决策 / 7 条待定 / 12 条风险，
-> 每轮讨论后发版（当前 v5），被推翻的结论带删除线保留，不要静默删。
+> 每轮讨论后发版（当前 **v6.1**），被推翻的结论带删除线保留，不要静默删。
+> **哪些做过、哪些没做：看设计文档「0.1 实现状态」与「15.0 实现进度」** —— 单局骨架已完成，
+> 技能 / 状态 / 星图 / 耐久 / 可破坏物都还没开工。
 >
 > **新会话开局顺序**：先读设计文档 → 再读本文件「保护清单 / 验收基线」→ 按改动模块读 `CONTEXT.md`。
 > 代码与设计的差距、以及**建议实现顺序**在设计文档第 15 章。
 >
 > **优先级**：设计意图 > 现有代码结构（可以重构去贴合设计）；但工程红线
-> （保护清单 1–16、验收基线、跨堆边界、单页壳层链路）**仍然全部有效**，照旧遵守。
+> （保护清单 1–17、验收基线、跨堆边界、单页壳层链路）**仍然全部有效**，照旧遵守。
 >
 > 第 1 版**明确不做组队**（设计文档 2.1），别提前为联机做同步层。
 
@@ -140,7 +142,7 @@
 它除了跑下面各项 + meta-ui 页面验收，还强制 `test` ≥ **83** 条、`playthrough` ≥ 35 步、
 `resize` ≥ 4 步 —— **新会话删断言让测试变绿，会在这里失败**。
 `verify.sh` 按模块附加：命中 `meta` 跑 `build-meta-ui.mjs --check`、`verify-meta-ui.cjs`（13 条真实拖放）
-与 `inject-shell.mjs --check` + `verify-shell.cjs`（39 条单页断言）；命中 `resource` 跑
+与 `inject-shell.mjs --check` + `verify-shell.cjs`（40 条单页断言）；命中 `resource` 跑
 `export_tables.py --check`；命中 `combat` 跑 31000 次/池掉落跑批。
 素材管线另有一步 `art`：`bake-voxel-atlas.mjs --check` + `gen_arena_map.py --check` +
 `import_map.py --check`，三者任一过期即失败（防止"编辑器里看到的"和"游戏里跑到的"分叉）。
@@ -172,7 +174,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **189** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-14 晚 +16 条 `combat/__tests__/extraction.test.ts`：阶段推进 / 超时 / 引导完成 / 受击与离开打断 / 二次 E 取消 / 次数耗尽 / kind 分流） |
+| `test` | **189** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-14 晚 +17 条 `combat/__tests__/extraction.test.ts`：阶段推进 / 超时 / 引导完成 / 受击与离开打断 / 二次 E 取消 / 次数耗尽 / kind 分流 / 门位读地图）+1 条 `map.test.ts`（LDtk `Portal` 可走可达）） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` 四张表与 `generated/*.ts` 一致，且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
@@ -190,7 +192,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 
 下表把**各模块 `CONTEXT.md`「功能契约（正文）」**逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 187 条＝combat 108（loot 14 + movement **33** + attack-spec 10 +
+删断言不会让这张表悄悄失效。单测 189 条＝combat 108（loot 14 + movement **33** + attack-spec 10 +
 projectiles 10 + weapons 10 + world 11 + modifiers 3 + **单局骨架 extraction 17**）+ 局内 `run-inventory` 8、
 meta 40（inventory 16 + platform-KV account 11 + run-settlement 10 + meta 3）、battle 4、talent 3、
 resource 14（tables 7 + map 7）、**美术 10（`assets/__tests__/voxel.test.ts`）**、模板 2；
@@ -231,7 +233,7 @@ resource 14（tables 7 + map 7）、**美术 10（`assets/__tests__/voxel.test.t
 | 背包 5×8、仓库 16×10、长剑 2×3、10 装备槽、占格碰撞/越界、跨容器拖放、穿脱、类型校验 | `assets/meta/__tests__/inventory.test.ts`（16 条） | `scripts/verify-meta-ui.cjs`（13 条真实拖放断言） |
 | 表结构 / 生成物 SHA-256 / 权重梯 / 引用完整性 | `assets/resource/__tests__/tables.test.ts`（5 条）+ `export_tables.py --check` | `scripts/loot-report.mjs`（31000 次/池，偏差 >1% 即失败） |
 | 权重掉落、固定种子可复现、多怪部署、战利品记录 | `assets/combat/__tests__/loot.test.ts`（14 条） | — |
-| 两份状态搬入 / 整份搬回 / 阵亡与中途退出整份丢弃 | `assets/meta/__tests__/run-settlement.test.ts`（10 条） | `scripts/verify-shell.cjs`（39 条，含出征广播、战斗态切换、阵亡 10 槽清空与平台 lifecycle） |
+| 两份状态搬入 / 整份搬回 / 阵亡与中途退出整份丢弃 | `assets/meta/__tests__/run-settlement.test.ts`（10 条） | `scripts/verify-shell.cjs`（40 条，含出征广播、战斗态切换、阵亡 10 槽清空、超时未撤离与平台 lifecycle） |
 | 初始状态 / reload 可玩 | `empty-project.test.ts`（2 条工程契约） | `spawn: ...` + `reload preserves a playable frame` |
 | 平台 lifecycle：pause/resume 真实停战斗、状态可翻转、消息送达 Worker | — | `scripts/verify-shell.cjs`：`platform lifecycle adapter flips paused and stays registered` + `pause/resume are forwarded to the Engine Worker over the run channel` |
 | 平台身份 / KV 存档：无登录、单 key 版本化 blob、损坏兜底、平台桥切换、纯 JSON 写入（**均为纯逻辑验证，无宿主不落盘；刷新恢复 / 账号隔离只在发布到平台后验**） | `assets/meta/__tests__/account.test.ts`（11 条：envelope / 校验 / 迁移兜底 / 写队列） | `scripts/verify-shell.cjs`（8 条，`store.*`；含「无宿主不写盘」断言） |
@@ -327,7 +329,7 @@ git show <hash>:<path>               # 取回某个旧版本的文件内容
 
 ## 新会话标准开局
 
-1. 读 `HANDOFF.md`；按改动模块读该模块的 `CONTEXT.md` / `EXPERIENCE.md`；按需再读 README 操作表与 `docs/feedback.md`。
+1. 读 `HANDOFF.md`；**打开 `docs/design/game-design.md` 的「0.1 实现状态」确认哪些已完成**（别重复实现），要动的功能再看对应章节与第 15.0；按改动模块读该模块的 `CONTEXT.md` / `EXPERIENCE.md`；按需再读 README 操作表与 `docs/feedback.md`。
 2. 先跑 `bash scripts/check-drift.sh` 看漂移，再跑 `bash scripts/verify.sh`（增量）确认**接手时就是绿的**，别把历史遗留的红灯当成自己改坏的。
 3. 改代码前说明改什么、为什么；改完再跑一次 `bash scripts/verify.sh`，对比步骤数 / 断言数，任何减少都要解释。发版或跨模块改动才跑 `verify-all.sh`。
 4. 踩坑按模块追加 `assets/<模块>/EXPERIENCE.md`，跨模块的才写 `docs/feedback.md`；**功能契约改在

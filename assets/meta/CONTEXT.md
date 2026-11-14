@@ -80,11 +80,11 @@
 | 阶段 | 行为 |
 |:--|:--|
 | 局外 | 配装 / 拖放；三把长剑起步在仓库。顶栏只有「出征 / 返回局外 / 背包」，**没有怪物数量输入** |
-| 出征 | `M.takeIntoRun(lobby)` 复制 `bag + equipped` 成 `RunLoadout` 并**清空局外这两处**（`stash` 不动）→ 发 `deploy { seed, loadout }`（**没有任何数量字段**）→ Worker `setArena(state, arena)` 切正式 LDtk 图并 `makeRunInventory(loadout)`；主窗口 `host.enterRun(loadout)` 把角色面板切成只读快照；战斗态隐藏 meta 面板且 `#fx-shell` 指针透明 |
+| 出征 | `M.takeIntoRun(lobby)` 复制 `bag + equipped` 成 `RunLoadout` 并**清空局外这两处**（`stash` 不动）→ 发 `deploy { seed, loadout, kind:'pvpve' }`（**没有任何数量字段**；`kind` 见 `combat/extraction.ts`）→ Worker `setArena(state, arena)` 切正式 LDtk 图并 `makeRunInventory(loadout)`；主窗口 `host.enterRun(loadout)` 把角色面板切成只读快照；战斗态隐藏 meta 面板且 `#fx-shell` 指针透明 |
 | 战斗拾取 | 显式点击掉落物 → 走近才拾取；`combat/run-inventory.ts::collectDrop()` 在 **Worker 堆内**优先写 `equipped` 空武器槽，其次 `addToBag()` 占真实 2×3 格，背包满则留在地上。Worker 每帧比签名，变化才发 `runState` |
 | 局内换装 | 仓库面板隐藏且拖放被拦截；拖放与 1/2 一律走 `runCommand { action: place / equip / unequip / active }`，Worker 校验后回 `runState`；**局内快照永不写平台 KV** |
-| 通关 | `result { outcome:'cleared', loadout }` 带**整份局内状态**，主窗口 `M.bringBack(lobby, loadout)` 整份覆盖回局外；不找格子、不新建实例、不统计 overflow |
-| 阵亡 | `result { outcome:'gameOver', loadout: null }`；主窗口不写回任何东西。局外在出征时已清空 ⇒ **带入物品与本局战利品全部丢失**，`stash` 保留 |
+| 撤离 / 通关 | `result { outcome:'extracted' \| 'cleared', loadout }` 带**整份局内状态**，主窗口 `M.bringBack(lobby, loadout)` 整份覆盖回局外；不找格子、不新建实例、不统计 overflow。`extracted` = 从传送门走掉（正式玩法），`cleared` = 主线清场；**两者都算成功**，壳层文案不同（`撤离成功` / `通关`） |
+| 阵亡 / 超时 | `result { outcome:'gameOver', loadout: null }`，`reason:'dead'` 或 `'timedOut'`；主窗口不写回任何东西。局外在出征时已清空 ⇒ **带入物品与本局战利品全部丢失**，`stash` 保留。900 秒没撤离与被打死同罚，但日志文案不同（`阵亡` / `超时未撤离`） |
 | 中途退出 / 刷新 / 关预览 | 发 `abort`，Worker 丢弃局内状态，**按阵亡处理**；无宿主不写盘，刷新恢复不了局内物品 |
 
 `RunLoadout = { bag, equipped, activeWeaponSlot }` 是**唯一**跨堆载荷：没有 `borrowed`、
@@ -171,7 +171,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
   `lock` / `unlock` 分支保留但**没有生产者**，`paused` 是唯一的冻结来源。
 - **局内背包不冻结**：B / I 打开的浮层不发 pause，怪物继续追击；这里新增的 pause
   只来自造化平台宿主的生命周期指令，两者语义不同。
-- **护栏**：`verify-shell.cjs` 的 2 条平台断言（39 条总数）验证 adapter 状态翻转与
+- **护栏**：`verify-shell.cjs` 的 2 条平台断言（40 条总数）验证 adapter 状态翻转与
   `pause`/`resume` 频道消息确实送达模拟 Worker；改这块必须保持这两条为绿。
 
 ## 旧骨架
@@ -208,7 +208,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 node scripts/build-meta-ui.mjs --check                     # 三个生成物（inventory / account / voxel）与源码同步
 node scripts/verify-meta-ui.cjs                            # 独立页面 14 条（13 条真实拖放 + 1 条「格子画的是模型不是字形」像素断言）
 node scripts/inject-shell.mjs --check                      # dist 注入块与源同步
-node scripts/verify-shell.cjs                              # 4174 单页 39 条（无宿主不写盘/平台身份/KV 存档/局内背包/局内拾取镜像/出征/通关/阵亡清 10 槽/返回/lifecycle）
+node scripts/verify-shell.cjs                              # 4174 单页 40 条（无宿主不写盘/平台身份/KV 存档/局内背包/局内拾取镜像/出征/撤离与通关/阵亡清 10 槽/超时/返回/lifecycle）
 ```
 
 `scripts/build-meta-ui.mjs` 把 `inventory.ts` / `account.ts` / `game/voxel.ts` 用 `ts.transpileModule`
