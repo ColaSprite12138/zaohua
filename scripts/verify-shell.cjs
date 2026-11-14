@@ -370,6 +370,17 @@ const SELFTEST = `
       });
       snap('aborted');
 
+      // Fourth run: the 900 s clock ran out without an extraction. Same loss
+      // rule as death, but the log must say WHY (超时), not "阵亡".
+      document.getElementById('fx-deploy').click();
+      await waitFor(function () { return inBattle() && /出征中/.test(logText()); });
+      sendResult({
+        outcome: 'gameOver', reason: 'timedOut', loadout: null,
+        lootLog: [{ name: '长剑', quality: '白' }], kills: 1,
+      });
+      await waitFor(function () { return !inBattle() && /超时未撤离/.test(logText()); });
+      snap('timedOut');
+
       // ---- platform lifecycle: real pause/resume over the run channel ----
       var adapter = H.platformAdapter;
       out.platform = { hasAdapter: !!adapter, before: adapter ? adapter.getState().paused : null };
@@ -483,10 +494,11 @@ const checks = [
     result.sharedState === true, result.sharedState],
   ['a weapon can be equipped before deploy',
     result.equipped === true && S.beforeDeploy.weapon0 === 'longsword', S.beforeDeploy],
-  ['deploy sends only seed + the whole loadout; the monster-count UI is gone',
+  ['deploy sends seed + kind + the whole loadout; the monster-count UI is gone',
     result.noMonsterInput === true
-      && Object.keys(d).sort().join(',') === 'loadout,seed'
-      && typeof d.seed === 'number', d],
+      && Object.keys(d).sort().join(',') === 'kind,loadout,seed'
+      && typeof d.seed === 'number'
+      && d.kind === 'pvpve', d],
   ['the loadout carries the brought-in weapon and all ten slots',
     result.deployLoadout === true, result.deployLoadout],
   ['deploy EMPTIES the lobby bag + equipment, stash untouched',
@@ -515,6 +527,9 @@ const checks = [
       && S.gameOver.weapon0 === null && S.gameOver.isRun === false, S.gameOver],
   ['gameOver keeps the stash and reports the loss',
     S.gameOver.lobbyStash === 3 && /阵亡/.test(S.gameOver.log), S.gameOver],
+  ['running out of time without extracting loses the run and says so',
+    S.timedOut.isRun === false && S.timedOut.bag === 0 && S.timedOut.worn === 0
+      && /超时未撤离/.test(S.timedOut.log), S.timedOut],
   ['a mid-run return sends abort and discards the whole run',
     result.abortMessages.length === 1 && S.aborted.lobbyBag === 0
       && S.aborted.lobbyWorn === 0 && S.aborted.lobbyStash === 3

@@ -42,6 +42,16 @@ export {
   MONSTER_SWING_TIME,
   PLAYER_SWING_TIME,
   STRIDE_PIXELS,
+  RUN_SECONDS,
+  PHASE_FIGHT_AT,
+  PHASE_EXTRACT_AT,
+  PORTAL_GUIDE_SECONDS,
+  PORTAL_STAGE_COUNT,
+  PORTAL_RADIUS,
+  PORTAL_USES,
+  PORTAL_COUNT,
+  phaseAt,
+  runFinished,
 } from '../combat/simulation.ts';
 export type { RunLoadout } from '../meta/inventory.ts';
 export {
@@ -56,6 +66,9 @@ export type {
   MoveMode,
   Particle,
   Player,
+  Portal,
+  RunKind,
+  RunPhase,
   Skeleton,
   StepInput,
   Deployment,

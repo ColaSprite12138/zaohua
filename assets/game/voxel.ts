@@ -250,6 +250,26 @@ function corpse(): VoxelModel {
 }
 
 /**
+ * 传送门：**只有石框**（基座 + 两根柱子 + 顶拱，18×15 块 = 72×60px），
+ * 门洞里不封体素 —— 光幕由绘制层用像素抖动光填。
+ *
+ * 为什么不在模型里封一块门洞：一整片体素每格都自带「顶面亮条 + 右下暗边」，
+ * 14×11 拼起来会变成一条条横纹，远看像百叶窗而不是门。
+ */
+function portalFrame(): VoxelModel {
+  const b = new Builder('portal-frame', 4);
+  b.box(-9, 0, 0, 18, 1, 1, C.plate);
+  b.box(-9, 1, 0, 2, 12, 1, C.iron);
+  b.box(7, 1, 0, 2, 12, 1, C.iron);
+  b.box(-9, 12, 0, 2, 1, 1, C.steel);
+  b.box(7, 12, 0, 2, 1, 1, C.steel);
+  b.box(-9, 13, 0, 18, 2, 1, C.steel);
+  return b.model();
+}
+
+export const PORTAL_FRAME = portalFrame();
+
+/**
  * A weapon arm: authored UPWARD from the shoulder joint, so `drawVoxel`'s
  * rotation spins it around a real shoulder. Two blocks wide = a gauntleted arm
  * that a fist can wrap the grip with; the last block IS the fist.
@@ -480,6 +500,7 @@ export const MODELS: Record<string, VoxelModel> = {
   swordGold: itemModel('blade:gold'),
   greatsword: itemModel('greatsword:steel'),
   bow: itemModel('bow:steel'),
+  portalClosed: PORTAL_FRAME,
 };
 
 /* ------------------------------------------------------------------ baking */

@@ -17,6 +17,7 @@
 技能交互、怪物设计、武器设计、玩家技能设计、数值的**运行时部分**。
 天赋在战斗内的**效果执行**也归本模块（`modifiers.ts`）：`talent/` 只产出稳定的 `effectIds`，由 combat 解释。
 击杀掉落也归本模块：`loot.ts` 消费 `resource/generated/*.ts` 的「怪物→掉落池→权重」表，产出带 authored `itemId` 的 `Drop`。
+**单局骨架**（900 秒计时 / 三段阶段 / 传送门引导与撤离 / 关卡类型分流）也归本模块：`extraction.ts` + `state.ts`。
 
 ## 不负责
 
@@ -89,7 +90,8 @@
 - **没有得分**：`GameState` 没有 `score`，击杀 / 拾取都不加分；HUD 右上角是**只读小地图**，结算板显示 `击杀 / 拾取`。
 - **局内 `InventoryState` 在 Worker 堆内**（`GameState.runInventory`：`bag` + 10 槽，`stash` 恒空）。
   拾取由 `weapons.ts::updateDrops()` → `run-inventory.ts::collectDrop()` 完成，成功后 `syncWeaponSlots()`。
-- `reset()` **保留 `runInventory`**（本局重开不丢带入装备），只重建怪物 / 掉落 / 计时器 / 投影计数；
+- `reset()` **保留 `runInventory`**（本局重开不丢带入装备），只重建怪物 / 掉落 / 计时器 /
+  投影计数 / **传送门**（`createPortals(s.world)`，开启次数是「本局」资源，重开一局就恢复）；
   `setArena(s, map)` 切图并按新图重建本局。
 - 战利品记录：`lootLog`（每次掉落明细）、`carriedItems`（已拾取的 authored id）、`runSeed`；
   **没有按 uid 的结算清单**（通关整份搬回、失败整份丢弃，见 `assets/meta/CONTEXT.md`）。
@@ -100,8 +102,29 @@
 - `moveMode` 三态：`idle` / `point` / `follow`；`target` / `followingPointer` / `attackOrder` /
   `attackTarget` / `skeletons`（坐标 / 血量 / 存活）都在投影里，供验收脚本直接断言。
 
-### 掉落（数据表驱动）
+### 单局骨架：计时 / 阶段 / 传送门撤离（2026-11-14 新增，设计文档第 10 章）
 
+代码：`combat/extraction.ts`（规则）+ `combat/state.ts`（类型 / 常量 / `createPortals`）。
+
+| 项 | 契约 |
+|:--|:--|
+| 计时 | `RUN_SECONDS = 900`；`runSeconds` 每帧只由 `updateRunClock()` 递减；归零 → `timedOut = true`、`phase = 'ended'`、本局整份丢失 |
+| 阶段 | `phaseAt(runSeconds)`：已过 0–240 探索 / 240–660 交战 / ≥660 撤离。**只做节奏提示，不门禁任何操作**（门从开局就能用：早撤更安全、晚走收益更高） |
+| 关卡类型 | `RunKind = 'story' \| 'dungeon' \| 'pvpve'`，唯一入口是 `deployRun({ kind })`，缺省 `story`（自动验收夹具） |
+| 结束判定 | `story`：清怪 → `cleared`（目标达成，**仍可撤离**）；`dungeon` / `pvpve`：`checkCleared` 直接 return，**必须撤离**才带走战利品 |
+| 门生成 | `createPortals(world)`：沿地图中心椭圆环带（半径 34%）均布 `PORTAL_COUNT=5` 个点 → `nearestWalkable` 吸附；与已有点距离 < 2 格则沿角度错开重采（8 次），仍冲突就接受重叠（**宁可重叠也不能没有出口**） |
+| 门状态 | `armed`（可用）/ `spent`（次数耗尽，画成灰门、不再响应）；`uses` 初始 `PORTAL_USES=3`，每次开启 -1，`opened` 记已送走人数 |
+| 引导 | 站在 `PORTAL_RADIUS=64` 圈内按 **E**（justPressed）开始；`PORTAL_GUIDE_SECONDS=8`，分成 `PORTAL_STAGE_COUNT=3` 段（每段一次光效 + toast） |
+| 打断 | 受击（`player.hurt > 0`）/ 闪避 / 离开半径 / **再按一次 E 主动取消** → 只把 `progress` 清 0，**不给硬直、不扣血、不移动** |
+| 引导中 | `pinPlayer()`：清落点 / 攻击指令、`vx/vy = 0`；`step()` 用 `s.channel !== null` 关掉 `classifyPointer` / `walk` / `resolveAttackOrder`，所以「站桩」是真的站桩 |
+| 撤离 | 进度满 → `uses-1`、`opened+1`、`extracted = true`、`phase = 'ended'`；引擎发 `outcome: 'extracted'`，整份 `runInventory` 搬回局外 |
+| 超时 | 引擎发 `outcome: 'gameOver'` + `reason: 'timedOut'`，壳层文案写「超时未撤离」而不是「阵亡」 |
+| 投影 | `runKind` / `runSeconds` / `phase` / `extracted` / `timedOut` / `channel` / `portals[{ id,x,y,progress,uses,state,inRange }]`（坐标屏幕归一化，playthrough 直接点门） |
+
+**为什么门不写进 LDtk**：门位是**运行时几何**（椭圆环带 + `nearestWalkable`），不受地图生成链影响；
+`gen_arena_map.py` / `import_map.py` 一行都不用改。以后要在 LDtk 里精确摆门，再换数据源即可，规则不变。
+
+### 掉落（数据表驱动）
 怪物 `monsterId` → `monster.xlsx` 的池 → `loot_pool.xlsx` 权重 `10/8/6/4/2/1` →
 `item.xlsx` + `weapon.xlsx` 按 `id` join 的 13 行属性。`loot.ts::rollLoot()` 是**唯一**抽取入口，
 Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）。
@@ -158,6 +181,18 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
     溢出的掉落物 `label = null`（不画、不可按名点），但**小模型 12px 必须仍可点**，
     保证任何掉落物都不会因为排版而变得不可拾取。
 
+20. **时间只有一个推进者**：`runSeconds` 只在 `updateRunClock()` 里减；已结束的一局
+    （`runFinished`：撤离 / 超时 / 阵亡 / 清场）不再烧时间。别在别处写 `runSeconds`。
+21. **撤离只认传送门**：`extracted` 只能由 `extraction.ts::extractThrough()` 写。
+    禁止把 `cleared` 当撤离、也禁止用「怪全死」直接发成功结算（那是 story 的 `cleared`）。
+22. **打断只清进度**：受击 / 闪避 / 离开 / 二次 E 只把 `portal.progress` 归零，
+    **不得**加硬直、扣血、位移或冷却 —— 这是 v4 明确去掉的 3 秒惩罚。
+23. **门位必须确定性**：`createPortals()` 不读随机数、不依赖 LDtk；同一张图 `reset()` 后门位不变。
+24. **非 story 不得自动完成**：`checkCleared()` 的 `runKind !== 'story' → return` 是搜打撤的前提；
+    删掉这个 gate，杀光最后一怪就结算，「撤不撤」的取舍整个消失。
+25. **引导中玩家被钉住**：`s.channel !== null` 时 `step()` 必须跳过 `classifyPointer` / `walk` /
+    `resolveAttackOrder`，否则「站桩 8 秒」不成立（玩家能一边引导一边走位就失去风险）。
+
 ## 目录与依赖方向（单向，禁止反向 import）
 
 ```
@@ -186,7 +221,9 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 `nextDropUid()`（`state.ts`）/
 `deployRun(s, config?: Deployment)` / `setArena(s, map)` / `spawnFromMap(map)` / `makeRng(seed)` / `rollLoot(monsterId, rng)` /
 `itemRow(id)` / `weaponRow(id)` / `authoredItem(id)`（**item + weapon 的唯一 join 点**）/
-`AuthoredItemView` / `monsterRow(id)` / `poolEntries(poolId)` / `theoreticalDistribution(poolId)`。
+`AuthoredItemView` / `monsterRow(id)` / `poolEntries(poolId)` / `theoreticalDistribution(poolId)` /
+`updateRunClock(s, dt)` / `updateExtraction(s, dt, channelPressed)` / `phaseAt(runSeconds)` / `runFinished(s)` /
+`createPortals(world, count?)`。
 引擎层从 `assets/game/simulation.ts` 门面 import；新代码应直接 import 本模块。
 
 ## 攻击规格与资源预留（架构层，2026-11-12 新增，**尚未接入运行时**）
@@ -215,7 +252,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 99 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 115 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3 / extraction 16）
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json

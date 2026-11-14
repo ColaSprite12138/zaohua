@@ -16,10 +16,11 @@ import { NO_MODIFIERS, type CombatModifiers } from './modifiers.ts';
 import { makeRng } from './loot.ts';
 import { say } from './effects.ts';
 import { makeRunInventory } from './run-inventory.ts';
+import { updateExtraction, updateRunClock } from './extraction.ts';
 import type { RunLoadout } from '../meta/inventory.ts';
 import {
   activeWeapon, createState, dropLabelName, dropLabelRect, reset, setArena,
-  syncWeaponSlots, type GameState, type StepInput,
+  syncWeaponSlots, type GameState, type RunKind, type StepInput,
 } from './state.ts';
 import { checkCleared, layoutDrops, switchWeaponSlot, updateDrops } from './weapons.ts';
 import { cameraFor, worldToScreen, type ArenaMap } from './world.ts';
@@ -46,7 +47,8 @@ export function step(
     reset(s);
     return;
   }
-  if (s.gameOver) {
+  // 已结算的一局完全冻结：撤离 / 超时和阵亡一样，不再走时间、不再挨打。
+  if (s.gameOver || s.extracted || s.timedOut) {
     // Nothing below can be clicked any more: drop the sword cursor / hover ring.
     s.hoverEnemy = null;
     return;
@@ -54,15 +56,20 @@ export function step(
 
   s.t += dt;
   tickTimers(s, dt);
+  // 单局骨架：倒计时 / 阶段推进。本帧之后的所有系统读的都是这一份时间。
+  updateRunClock(s, dt);
+  // 引导传送门时玩家被钉在门口：点击移动与攻击指令都不生效（updateExtraction
+  // 负责开始、打断与结算；这里只负责「这一帧能不能动」）。
+  const channeling = s.channel !== null;
 
   // 1 / 2 only changes which slot is in use; it never moves items or attacks.
   if (input.switchWeapon !== undefined && input.switchWeapon !== null) {
     switchWeaponSlot(s, input.switchWeapon);
   }
-  classifyPointer(s, input);
+  if (!channeling) classifyPointer(s, input);
   applyDodge(s, input.dodge);
-  walk(s, dt);
-  resolveAttackOrder(s, modifiers);
+  if (!channeling) walk(s, dt);
+  if (!channeling) resolveAttackOrder(s, modifiers);
   updateSkeletons(s, dt);
   // Nobody may stand inside anybody. Runs after both sides moved AND after
   // swing knockback, so a hit never leaves two bodies fused.
@@ -72,6 +79,8 @@ export function step(
   // click tests) the same quality-ranked column.
   layoutDrops(s);
   checkCleared(s);
+  // 撤离放在受击之后：同一帧挨打就立刻打断引导，不能靠「先抽完进度」蒙过去。
+  updateExtraction(s, dt, input.extractChannel === true);
   tickParticles(s, dt);
   // Hover feedback LAST: it must describe the frame that is about to be
   // painted, using the very same hit test a click would use. Loot's name plate
@@ -104,6 +113,11 @@ export function step(
 export interface Deployment {
   readonly seed?: number;
   readonly loadout?: RunLoadout;
+  /**
+   * 关卡类型。缺省 `story`：自动验收夹具与旧链路都是「清怪即通关」。
+   * 正式出征（壳层）发 `pvpve` —— 必须从传送门撤离才算带走战利品。
+   */
+  readonly kind?: RunKind;
 }
 
 const EMPTY_LOADOUT: RunLoadout = {
@@ -115,14 +129,16 @@ const EMPTY_LOADOUT: RunLoadout = {
 export function deployRun(s: GameState, config: Deployment = {}): void {
   s.runSeed = config.seed ?? s.runSeed;
   s.rng = makeRng(s.runSeed);
+  s.runKind = config.kind ?? 'story';
   s.runInventory = makeRunInventory(config.loadout ?? EMPTY_LOADOUT);
   reset(s);
   const armed = s.weaponSlots.filter((w) => w !== null).length;
   const carried = s.runInventory.bag.length
     + s.runInventory.equipped.filter((it) => it !== null).length;
+  const mode = s.runKind === 'pvpve' ? '搜打撤' : s.runKind === 'dungeon' ? '副本' : '主线';
   say(s, armed > 0
-    ? `出征 · 带入 ${carried} 件物品（${armed} 件武器）`
-    : `出征 · 徒手，带入 ${carried} 件物品`);
+    ? `${mode} · 带入 ${carried} 件物品（${armed} 件武器）· 找传送门撤离`
+    : `${mode} · 徒手，带入 ${carried} 件物品 · 找传送门撤离`);
 }
 
 /**
@@ -233,6 +249,26 @@ export function projection(s: GameState) {
     worldPlayer: { x: s.player.x, y: s.player.y },
     map: { id: s.map.id, w: s.map.pxWid, h: s.map.pxHei },
     pathLength: s.path.length,
+    // 单局骨架（搜打撤）：剩余时间 / 阶段 / 传送门。坐标同样屏幕归一化，
+    // 所以 playthrough 可以直接点门的屏幕位置走过去。
+    runKind: s.runKind,
+    runSeconds: s.runSeconds,
+    phase: s.phase,
+    extracted: s.extracted,
+    timedOut: s.timedOut,
+    channel: s.channel,
+    portals: s.portals.map((portal) => {
+      const v = scr(portal.x, portal.y);
+      return {
+        id: portal.id,
+        x: v.x / VIEW_W,
+        y: v.y / VIEW_H,
+        progress: portal.progress,
+        uses: portal.uses,
+        state: portal.state,
+        inRange: portal.inRange,
+      };
+    }),
   };
 }
 
@@ -246,7 +282,12 @@ export {
   dropLabelAnchor, dropLabelName, dropLabelRect, dropQualityRank,
   MELEE_RANGE_ARMED, MELEE_RANGE_BARE,
   MONSTER_SWING_TIME, PLAYER_SWING_TIME, STRIDE_PIXELS,
+  PHASE_EXTRACT_AT, PHASE_FIGHT_AT, PORTAL_COUNT, PORTAL_GUIDE_SECONDS,
+  PORTAL_RADIUS, PORTAL_STAGE_COUNT, PORTAL_USES, RUN_SECONDS,
+  createPortals,
 } from './state.ts';
+export type { Portal, RunKind, RunPhase } from './state.ts';
+export { phaseAt, runFinished } from './extraction.ts';
 export type { ArenaMap } from './world.ts';
 export type { CombatModifiers } from './modifiers.ts';
 export { NO_MODIFIERS } from './modifiers.ts';

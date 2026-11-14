@@ -46,7 +46,10 @@ export const RUN_CHANNEL = 'forgeax-arena-run';
 // `type` (not `interface`) so it satisfies the JSON-shaped GameProjectionValue
 // index signature required by registerRead.
 export type RunResult = {
-  outcome: 'cleared' | 'gameOver';
+  /** `extracted` = 从传送门撤离；`cleared` = 主线清场；`gameOver` = 阵亡 / 超时。 */
+  outcome: 'cleared' | 'extracted' | 'gameOver';
+  /** 失败原因：阵亡 or 900 秒没撤离。壳层用它区分文案。 */
+  reason?: 'dead' | 'timedOut';
   lootLog: { monsterId: string; itemId: string; name: string; quality: string }[];
   kills: number;
   /** The WHOLE run inventory; present only on a clear, null on a loss. */
@@ -207,17 +210,20 @@ export const game: Plugin = {
     };
 
     const settleIfFinished = (): void => {
-      if (resultSent || (!state.cleared && !state.gameOver)) return;
+      if (resultSent) return;
+      // 三种结束方式：主线清场（cleared）/ 撤离（extracted）/ 阵亡或超时（gameOver）。
+      if (!state.cleared && !state.extracted && !state.timedOut && !state.gameOver) return;
       resultSent = true;
-      const lost = state.gameOver;
+      const lost = state.gameOver || state.timedOut;
       lastResult = {
-        outcome: lost ? 'gameOver' : 'cleared',
+        outcome: lost ? 'gameOver' : state.extracted ? 'extracted' : 'cleared',
+        ...(lost ? { reason: state.timedOut ? 'timedOut' as const : 'dead' as const } : {}),
         lootLog: state.lootLog.map((r) => ({
           monsterId: r.monsterId, itemId: r.itemId, name: r.name, quality: r.quality,
         })),
         kills: state.kills,
-        // A clear brings the WHOLE run home; a loss discards it. There is no
-        // per-uid reconciliation, no findFirstFit banking, no overflow.
+        // A clear / extraction brings the WHOLE run home; a loss discards it.
+        // There is no per-uid reconciliation, no findFirstFit banking, no overflow.
         loadout: lost ? null : snapshotRun(state.runInventory),
       };
       channel?.postMessage({ type: 'result', result: lastResult });
@@ -314,6 +320,8 @@ export const game: Plugin = {
                   ? 0
                   : (snapshot?.keyboard?.justPressedCode('Digit2') ?? false) ? 1 : null,
                 dodge: snapshot?.keyboard?.justPressedCode('Space') ?? false,
+                // E = 起手 / 取消传送门引导（搜打撤的「撤」）。
+                extractChannel: snapshot?.keyboard?.justPressedCode('KeyE') ?? false,
                 restart,
                 // Hover feedback must not light up while the pointer sits on
                 // the read-only minimap: that rectangle is not world space.

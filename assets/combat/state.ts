@@ -15,7 +15,7 @@ import { testArena } from '../resource/maps/arena-test.ts';
 import { createInventoryState, type InventoryState } from '../meta/inventory.ts';
 import { makeRng } from './loot.ts';
 import {
-  cameraFor, makeWorld, type ArenaMap, type Vec, type World,
+  cameraFor, makeWorld, nearestWalkable, type ArenaMap, type Vec, type World,
 } from './world.ts';
 
 export interface StepInput {
@@ -28,6 +28,11 @@ export interface StepInput {
   /** Digit1 / Digit2 select which of the two weapon slots is in use. */
   readonly switchWeapon?: 0 | 1 | null;
   readonly restart: boolean;
+  /**
+   * E（justPressed）：起手 / 取消传送门引导。按住不算 —— 引导是一次主动决定，
+   * 再按一次 E 退出，否则「引导中禁止移动」会把玩家困在门口。
+   */
+  readonly extractChannel?: boolean;
   /**
    * True while the pointer sits on a HUD panel (the read-only minimap). Hover
    * feedback is pure presentation, so it must not light up under the pointer
@@ -76,6 +81,98 @@ export const PLAYER_SWING_TIME = 0.26;
 
 /** idle = no order; point = walking to a waypoint; follow = live cursor tracking. */
 export type MoveMode = 'idle' | 'point' | 'follow';
+
+/* ------------------------------------------------- 单局骨架（搜打撤，设计文档 10） */
+
+/**
+ * 关卡类型。三类共用同一套地图与战斗，差别只在「什么算结束、死了掉什么」：
+ *
+ * - `story`  主线：清怪即完成，失败不掉装备（剧情优先，不惩罚）
+ * - `dungeon` 副本：必须撤离才算带走；死亡掉落留在原地（捡回一次待做）
+ * - `pvpve`  搜打撤：必须撤离；死亡全部掉落
+ *
+ * 自动验收夹具默认 `story`，所以「清怪 → 通关」的旧链路一条都没变。
+ */
+export type RunKind = 'story' | 'dungeon' | 'pvpve';
+
+/** explore 0–4 分 / fight 4–11 分 / extract 11–15 分；ended = 已结算。 */
+export type RunPhase = 'explore' | 'fight' | 'extract' | 'ended';
+
+/** 一局 15 分钟（设计文档 10.1）。 */
+export const RUN_SECONDS = 900;
+/** 4:00 进入交战阶段、11:00 进入撤离阶段（设计文档 10.2）。 */
+export const PHASE_FIGHT_AT = 240;
+export const PHASE_EXTRACT_AT = 660;
+/**
+ * 引导 8–12 秒，取区间下限 8 秒：搜打撤里「撤」要利索，站桩越久越像罚站。
+ * 分 3 段给音效/光效（设计文档 10.6）。
+ */
+export const PORTAL_GUIDE_SECONDS = 8;
+export const PORTAL_STAGE_COUNT = 3;
+/** 站在这个半径内才允许引导（世界像素，约 2 格）。 */
+export const PORTAL_RADIUS = 64;
+/** 每扇门可开启次数：每次只走 1 人，单人撤离即结束（为多人留口）。 */
+export const PORTAL_USES = 3;
+/** 门数量 > 同场人数：单人 5 扇。 */
+export const PORTAL_COUNT = 5;
+
+/**
+ * 一扇传送门。`progress` 只在玩家主动引导时增长，受击 / 离开 / 闪避只把它
+ * 清零 —— **不给硬直**（设计文档 10.6 v4 修正：清空进度本身就是惩罚）。
+ */
+export interface Portal {
+  readonly id: number;
+  x: number;
+  y: number;
+  /** 0..1 当前引导进度；`1` 的同一帧即开启并送走玩家。 */
+  progress: number;
+  /** 剩余开启次数；耗尽 = 永久关闭。 */
+  uses: number;
+  /** 已从这里撤离的人数。 */
+  opened: number;
+  state: 'armed' | 'spent';
+  /** 本帧玩家是否站在门圈内（纯表现，不参与判定）。 */
+  inRange: boolean;
+}
+
+/**
+ * 传送门沿地图中心的椭圆环带均匀布点，再吸附到最近可走格。用固定几何而不是
+ * LDtk 实体，是为了不让地图生成链（gen_arena_map / import_map）跟着改一版。
+ * 吸附后距离过近的点沿角度错开重采，保证 5 扇门不会挤成一堆。
+ */
+export function createPortals(w: World, count = PORTAL_COUNT): Portal[] {
+  const { pxWid, pxHei } = w.map;
+  const cx = pxWid / 2;
+  const cy = pxHei / 2;
+  const rx = Math.max(w.grid * 2, pxWid * 0.34);
+  const ry = Math.max(w.grid * 2, pxHei * 0.34);
+  const spots: { x: number; y: number }[] = [];
+  for (let i = 0; i < count; i += 1) {
+    let picked: { x: number; y: number } | null = null;
+    for (let attempt = 0; attempt < 8 && picked === null; attempt += 1) {
+      const a = -Math.PI / 2 + (Math.PI * 2 * (i + attempt * 0.19)) / count;
+      const spot = nearestWalkable(w, cx + Math.cos(a) * rx, cy + Math.sin(a) * ry);
+      const clear = spots.every((q) => Math.hypot(q.x - spot.x, q.y - spot.y) >= w.grid * 2);
+      if (clear) picked = spot;
+    }
+    // 八次都挤在一起也要留一扇门：宁可重叠，也不能让本局没有出口。
+    const fallbackAngle = -Math.PI / 2 + (Math.PI * 2 * i) / count;
+    const spot = picked ?? nearestWalkable(
+      w, cx + Math.cos(fallbackAngle) * rx, cy + Math.sin(fallbackAngle) * ry,
+    );
+    spots.push(spot);
+  }
+  return spots.map((spot, index) => ({
+    id: index,
+    x: spot.x,
+    y: spot.y,
+    progress: 0,
+    uses: PORTAL_USES,
+    opened: 0,
+    state: 'armed' as const,
+    inRange: false,
+  }));
+}
 
 export interface Particle {
   x: number;
@@ -331,6 +428,20 @@ export interface GameState {
   carriedItems: string[];
   /** Drop uid the player clicked; null = no pickup order. */
   pickupTarget: string | null;
+  /* ---------------------------------------------------- 单局骨架（搜打撤） */
+  /** 关卡类型；只影响「什么算结束 / 死了掉什么」，不改变战斗。 */
+  runKind: RunKind;
+  /** 本局剩余秒数，900 → 0。归零 = 超时未撤离，全部丢失。 */
+  runSeconds: number;
+  phase: RunPhase;
+  /** 本图的全部传送门（固定几何，`reset()` 重建）。 */
+  portals: Portal[];
+  /** 正在引导的传送门 id；null = 没在引导。 */
+  channel: number | null;
+  /** 已从传送门撤离：本局成功，整份带回。 */
+  extracted: boolean;
+  /** 时间耗尽没撤离：本局失败，整份丢失。 */
+  timedOut: boolean;
 }
 
 export interface RunConfig {
@@ -380,6 +491,13 @@ export function createState(config: RunConfig = {}): GameState {
     lootLog: [],
     carriedItems: [],
     pickupTarget: null,
+    runKind: 'story',
+    runSeconds: RUN_SECONDS,
+    phase: 'explore',
+    portals: [],
+    channel: null,
+    extracted: false,
+    timedOut: false,
   };
   reset(state);
   return state;
@@ -434,6 +552,13 @@ export function reset(s: GameState): void {
   s.carriedItems.length = 0;
   s.pickupTarget = null;
   s.toast = { text: '单击地面移动 · 单击掉落物拾取 · 单击敌人攻击 · 长按跟随光标 · 空格闪避', life: 4.2 };
+  // 单局骨架：计时归零、门重建（次数是「本局」资源，重开一局就恢复）。
+  s.runSeconds = RUN_SECONDS;
+  s.phase = 'explore';
+  s.portals = createPortals(s.world);
+  s.channel = null;
+  s.extracted = false;
+  s.timedOut = false;
   s.moveMode = 'idle';
   s.targetEnemy = null;
   s.hoverEnemy = null;

@@ -153,10 +153,15 @@ export function layoutDrops(s: GameState): void {
   }
 }
 
+/**
+ * 主线（`story`）才「清怪即完成」。副本与搜打撤必须从传送门撤离 —— 否则杀掉
+ * 最后一只怪就自动结算，玩家没有「撤不撤」这个决定，风险规则整个不成立。
+ */
 export function checkCleared(s: GameState): void {
+  if (s.runKind !== 'story') return;
   const hasWeapon = s.weaponSlots.some((w) => w !== null);
   if (!s.cleared && hasWeapon && s.skeletons.every((sk) => !sk.alive)) {
     s.cleared = true;
-    say(s, '试炼完成 · 按 R 再来一次');
+    say(s, '目标达成 · 走向传送门撤离（R 重开）');
   }
 }

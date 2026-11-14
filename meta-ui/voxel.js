@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/game/voxel.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 772f125ef9dfce3bac76f0dc05d29f0c12d89fcc1bc0208c8d35d652876f816e
+ * Source SHA-256: 73d96ad3c5a99e36faa40d121ca273e5e6230a149c4e060171238dad8fb2d297
  */
 (function (root) {
 "use strict";
@@ -37,7 +37,7 @@ var exports = module.exports;
  *    of the meta UI (which reuses this very file, see `scripts/build-meta-ui`).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.WALL_LIFT = exports.MODELS = exports.ACCENTS = exports.SKELETON_ARM = exports.KNIGHT_ARM = exports.ARM_REACH = exports.SHOULDER_X = exports.SHOULDER_Y = exports.CORPSE = exports.SKELETON = exports.KNIGHT = void 0;
+exports.WALL_LIFT = exports.MODELS = exports.ACCENTS = exports.SKELETON_ARM = exports.KNIGHT_ARM = exports.ARM_REACH = exports.SHOULDER_X = exports.SHOULDER_Y = exports.CORPSE = exports.SKELETON = exports.KNIGHT = exports.PORTAL_FRAME = void 0;
 exports.itemModel = itemModel;
 exports.modelBounds = modelBounds;
 exports.drawVoxel = drawVoxel;
@@ -208,6 +208,24 @@ function corpse() {
     b.box(2, 1, 0, 1, 1, 1, C.socket);
     return b.model();
 }
+/**
+ * 传送门：**只有石框**（基座 + 两根柱子 + 顶拱，18×15 块 = 72×60px），
+ * 门洞里不封体素 —— 光幕由绘制层用像素抖动光填。
+ *
+ * 为什么不在模型里封一块门洞：一整片体素每格都自带「顶面亮条 + 右下暗边」，
+ * 14×11 拼起来会变成一条条横纹，远看像百叶窗而不是门。
+ */
+function portalFrame() {
+    const b = new Builder('portal-frame', 4);
+    b.box(-9, 0, 0, 18, 1, 1, C.plate);
+    b.box(-9, 1, 0, 2, 12, 1, C.iron);
+    b.box(7, 1, 0, 2, 12, 1, C.iron);
+    b.box(-9, 12, 0, 2, 1, 1, C.steel);
+    b.box(7, 12, 0, 2, 1, 1, C.steel);
+    b.box(-9, 13, 0, 18, 2, 1, C.steel);
+    return b.model();
+}
+exports.PORTAL_FRAME = portalFrame();
 /**
  * A weapon arm: authored UPWARD from the shoulder joint, so `drawVoxel`'s
  * rotation spins it around a real shoulder. Two blocks wide = a gauntleted arm
@@ -410,6 +428,7 @@ exports.MODELS = {
     swordGold: itemModel('blade:gold'),
     greatsword: itemModel('greatsword:steel'),
     bow: itemModel('bow:steel'),
+    portalClosed: exports.PORTAL_FRAME,
 };
 const OUTLINE = '#050a12';
 const spriteCache = new Map();

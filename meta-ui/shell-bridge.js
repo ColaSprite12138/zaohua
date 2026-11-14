@@ -209,9 +209,10 @@
     showBattle(true);
     if (channel) channel.postMessage({
       type: 'deploy',
-      deployment: { seed: SEED, loadout: loadout },
+      // kind = pvpve：正式出征是搜打撤 —— 杀光怪不算结束，必须从传送门撤离。
+      deployment: { seed: SEED, loadout: loadout, kind: 'pvpve' },
     });
-    log('出征 · 带入 ' + countItems(loadout) + ' 件物品；通关带回，阵亡或中途退出全部丢失');
+    log('出征 · 带入 ' + countItems(loadout) + ' 件物品；从传送门撤离才带回，阵亡或超时全部丢失');
   });
 
   $('fx-back').addEventListener('click', function () {
@@ -261,10 +262,14 @@
       return r.name + '(' + r.quality + ')';
     });
     if (!cleared) {
-      log('阵亡 · 本局带入物品与战利品全部丢失（击杀 ' + result.kills + '）', true);
+      var lostText = result.reason === 'timedOut'
+        ? '超时未撤离 · 本局带入物品与战利品全部丢失（击杀 ' + result.kills + '）'
+        : '阵亡 · 本局带入物品与战利品全部丢失（击杀 ' + result.kills + '）';
+      log(lostText, true);
       return;
     }
-    var text = '通关 · 带回 ' + brought + ' 件物品（击杀 ' + result.kills + '）';
+    var head = result.outcome === 'extracted' ? '撤离成功 · 带回 ' : '通关 · 带回 ';
+    var text = head + brought + ' 件物品（击杀 ' + result.kills + '）';
     if (lootNames.length) text += ' · 掉落：' + lootNames.join('、');
     log(text);
   }

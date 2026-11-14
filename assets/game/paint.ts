@@ -19,10 +19,14 @@ import {
   MINIMAP,
   MONSTER_SWING_TIME,
   PLAYER_SWING_TIME,
+  PORTAL_GUIDE_SECONDS,
+  PORTAL_RADIUS,
+  PORTAL_STAGE_COUNT,
   VIEW_H,
   VIEW_W,
   type Drop,
   type GameState,
+  type Portal,
   type Skeleton,
 } from './simulation.ts';
 import { itemArtKey, itemDef } from '../meta/inventory.ts';
@@ -39,6 +43,7 @@ import {
   CORPSE,
   KNIGHT,
   KNIGHT_ARM,
+  PORTAL_FRAME,
   SHOULDER_X,
   SHOULDER_Y,
   SKELETON,
@@ -528,6 +533,48 @@ function qualityColor(quality?: string): string {
     : '#ffd166';
 }
 
+/**
+ * 传送门。地面光环 + 石门 + 门顶的三段进度。
+ *
+ * 亮起来就是「正在被引导」：门洞光幕换 `PORTAL_OPEN`，头顶三段条一段段填满。
+ * 这不是装饰 —— 玩家要能在被怪追的时候一眼读出还剩多久。
+ */
+function drawPortal(g: Painter, portal: Portal): void {
+  if (portal.state === 'spent') {
+    // 次数耗尽的死门：没有光，只剩一座灰掉的石框。
+    drawVoxel(g, PORTAL_FRAME, portal.x, portal.y, { alpha: 0.45 });
+    return;
+  }
+  const channeling = portal.progress > 0;
+  const ringColor = portal.inRange ? '#ffd166' : '#67e8f9';
+  drawPixelRing(g, portal.x, portal.y, PORTAL_RADIUS * 0.6, PORTAL_RADIUS * 0.28, ringColor, {
+    alpha: portal.inRange ? 0.85 : 0.32,
+    fill: portal.inRange ? 0.28 : 0,
+  });
+  // 门洞里的能量场：两层像素抖动光（外层淡、内层亮）。引导越满越亮，
+  // 但封顶在 0.62，免得把石框和进度条压没了。
+  const energy = channeling ? 0.62 : 0.24;
+  drawPixelGlow(g, portal.x, portal.y - 28, 30, 26, '#67e8f9', energy * 0.55);
+  drawPixelGlow(g, portal.x, portal.y - 28, 17, 16, '#a7f3ff', energy);
+  drawVoxel(g, PORTAL_FRAME, portal.x, portal.y);
+
+  if (!channeling) return;
+  const w = 66;
+  const h = 8;
+  const x = portal.x - w / 2;
+  const y = portal.y - 78;
+  g.fillStyle = 'rgba(8,16,24,0.88)';
+  g.fillRect(x - 2, y - 2, w + 4, h + 4);
+  const seg = w / PORTAL_STAGE_COUNT;
+  const filled = portal.progress * w;
+  for (let i = 0; i < PORTAL_STAGE_COUNT; i += 1) {
+    const sw = Math.max(0, Math.min(seg - 2, filled - i * seg));
+    // 填满一段就点亮一段：三段 = 音效 / 光效的三个节点。
+    g.fillStyle = sw >= seg - 2 ? '#67e8f9' : '#2b6d80';
+    g.fillRect(Math.round(x + i * seg + 1), y, Math.max(2, Math.round(sw)), h);
+  }
+}
+
 function drawDrop(g: Painter, drop: Drop, hovered: boolean): void {
   // Quantise the float to whole pixels: a voxel item hovers in 1px steps.
   const float = Math.round(Math.sin(drop.t * 3) * 3);
@@ -760,6 +807,31 @@ function hud(g: Painter, s: GameState): void {
   text(g, '单击敌人  近战（进入距离后挥砍）', VIEW_W - 270, VIEW_H - 50, 12, '#c6dcea');
   text(g, '空格  闪避          R  重新开始', VIEW_W - 270, VIEW_H - 30, 12, '#8fa9bb');
 
+  // 本局剩余时间 + 阶段：搜打撤的「撤」是从这里读的。
+  const phaseText = s.extracted
+    ? '已撤离'
+    : s.timedOut
+      ? '超时'
+      : s.phase === 'explore' ? '探索'
+        : s.phase === 'fight' ? '交战'
+          : s.phase === 'extract' ? '撤离' : '结算';
+  const phaseColor = s.timedOut
+    ? '#ff6b6b'
+    : s.phase === 'extract' ? '#ffd166' : s.phase === 'fight' ? '#ffb454' : '#67e8f9';
+  const secs = Math.max(0, Math.ceil(s.runSeconds));
+  const clock = `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
+  const clockW = 176;
+  const clockX = VIEW_W / 2 - 92 - clockW - 8;
+  g.fillStyle = 'rgba(8,16,24,0.78)';
+  roundRect(g, clockX, 22, clockW, 30, 15);
+  g.fill();
+  g.strokeStyle = 'rgba(120,170,200,0.28)';
+  g.lineWidth = 1;
+  roundRect(g, clockX, 22, clockW, 30, 15);
+  g.stroke();
+  text(g, phaseText, clockX + 14, 37, 12, phaseColor, 'left', '700');
+  text(g, clock, clockX + clockW - 14, 37, 15, secs <= 60 ? '#ff9b9b' : '#e8f4ff', 'right', '800');
+
   // Current intent: hover / move / hold / locked attack are distinguishable.
   const mode = s.attackOrder
     ? '锁定目标 · 接近中'
@@ -799,6 +871,41 @@ function hud(g: Painter, s: GameState): void {
     for (let i = 0; i < on; i += 1) g.fillRect(x + i * 8.1, y, 7, 8);
   }
 
+  // 传送门：站在圈里提示按 E；引导中显示三段进度（与门顶那条是同一份数据）。
+  const reach = s.portals.find((p) => p.inRange) ?? null;
+  const channelPortal = s.channel === null
+    ? null
+    : s.portals.find((p) => p.id === s.channel) ?? null;
+  if (channelPortal !== null) {
+    const w = 340;
+    const x = VIEW_W / 2 - w / 2;
+    const y = VIEW_H - 142;
+    g.fillStyle = 'rgba(8,16,24,0.9)';
+    roundRect(g, x, y, w, 48, 10);
+    g.fill();
+    g.strokeStyle = 'rgba(103,232,249,0.55)';
+    g.lineWidth = 2;
+    roundRect(g, x, y, w, 48, 10);
+    g.stroke();
+    const stage = Math.min(
+      PORTAL_STAGE_COUNT,
+      Math.floor(channelPortal.progress * PORTAL_STAGE_COUNT) + 1,
+    );
+    text(g, `引导传送门 ${stage} / ${PORTAL_STAGE_COUNT} · 保持不动`, VIEW_W / 2, y + 19, 12, '#67e8f9', 'center', '700');
+    const bw = w - 32;
+    const seg = bw / PORTAL_STAGE_COUNT;
+    const filled = channelPortal.progress * bw;
+    for (let i = 0; i < PORTAL_STAGE_COUNT; i += 1) {
+      const sw = Math.max(0, Math.min(seg - 3, filled - i * seg));
+      g.fillStyle = 'rgba(255,255,255,0.10)';
+      g.fillRect(Math.round(x + 16 + i * seg), y + 30, Math.round(seg - 3), 8);
+      g.fillStyle = sw >= seg - 3 ? '#67e8f9' : '#2b6d80';
+      g.fillRect(Math.round(x + 16 + i * seg), y + 30, Math.max(2, Math.round(sw)), 8);
+    }
+  } else if (reach !== null && !s.gameOver && !s.extracted && !s.timedOut) {
+    text(g, `按 E 引导传送门 · ${PORTAL_GUIDE_SECONDS} 秒 · 受击或离开会清空进度`, VIEW_W / 2, VIEW_H - 124, 13, '#ffd166', 'center', '700');
+  }
+
   // Centre toast.
   if (s.toast) {
     g.save();
@@ -815,20 +922,33 @@ function hud(g: Painter, s: GameState): void {
     g.restore();
   }
 
-  // End-state overlay.
-  if (s.gameOver || s.cleared) {
+  // End-state overlay. 撤离 / 超时 / 阵亡 才盖全屏；主线清场（`cleared`）只是
+  // 「目标达成」，玩家还要走向传送门回城，所以只留一条常驻提示。
+  if (s.gameOver || s.extracted || s.timedOut) {
+    const win = s.extracted;
     g.fillStyle = 'rgba(4,10,16,0.6)';
     g.fillRect(0, 0, VIEW_W, VIEW_H);
     g.fillStyle = 'rgba(10,20,32,0.96)';
     roundRect(g, VIEW_W / 2 - 230, VIEW_H / 2 - 96, 460, 192, 18);
     g.fill();
-    g.strokeStyle = s.cleared ? '#ffd166' : '#ff6b6b';
+    g.strokeStyle = win ? '#ffd166' : '#ff6b6b';
     g.lineWidth = 3;
     roundRect(g, VIEW_W / 2 - 230, VIEW_H / 2 - 96, 460, 192, 18);
     g.stroke();
-    text(g, s.cleared ? '试炼完成' : '挑战失败', VIEW_W / 2, VIEW_H / 2 - 46, 34, s.cleared ? '#ffd166' : '#ff9b9b', 'center', '800');
-    text(g, `击杀 ${s.kills}   ·   拾取 ${s.carriedItems.length}`, VIEW_W / 2, VIEW_H / 2, 17, '#dbe9f5', 'center', '600');
-    text(g, '按 R 重新开始', VIEW_W / 2, VIEW_H / 2 + 46, 15, '#8fa9bb', 'center', '600');
+    const title = s.extracted
+      ? '撤离成功'
+      : s.timedOut ? '时间耗尽 · 未撤离' : '挑战失败';
+    text(g, title, VIEW_W / 2, VIEW_H / 2 - 56, 32, win ? '#ffd166' : '#ff9b9b', 'center', '800');
+    text(g, `击杀 ${s.kills}   ·   拾取 ${s.carriedItems.length}`, VIEW_W / 2, VIEW_H / 2 - 18, 17, '#dbe9f5', 'center', '600');
+    text(
+      g,
+      win ? '战利品已带回' : '本局带入与战利品全部丢失',
+      VIEW_W / 2, VIEW_H / 2 + 14, 14, win ? '#8fe3a8' : '#ff9b9b', 'center', '600',
+    );
+    text(g, '按 R 重新开始', VIEW_W / 2, VIEW_H / 2 + 50, 15, '#8fa9bb', 'center', '600');
+  } else if (s.cleared) {
+    // 清场后仍然要撤离：给一条常驻提示，而不是把画面盖住。
+    text(g, '目标达成 · 走向传送门撤离', VIEW_W / 2, 70, 12, '#ffd166', 'center', '700');
   }
 }
 
@@ -870,6 +990,10 @@ export function paint(g: Painter, s: GameState): void {
     items.push({ y: py, draw: () => { drawAtlasProp(g, prop.kind, px, py); } });
   }
   for (const sk of s.skeletons) items.push({ y: sk.y, draw: () => drawSkeleton(g, sk) });
+  // 传送门是「站在地上的建筑」：和角色共用一套深度排序，玩家走到门后会被门挡住。
+  for (const portal of s.portals) {
+    items.push({ y: portal.y, draw: () => drawPortal(g, portal) });
+  }
   for (const drop of s.drops) {
     // A drop sits in FRONT of a corpse at the same spot, but behind a body
     // standing south of it -- the same rule as any other ground object.

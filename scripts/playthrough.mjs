@@ -390,6 +390,54 @@ export default async function playthrough(play) {
     await play.screenshot('armed-melee');
   });
 
+  await play.step('clearing the arena marks the story objective complete', async () => {
+    // Kill whatever is left: the story objective is "clear the room", not a
+    // fixed body count. (The fixture runs `kind: 'story'`; a real deploy sends
+    // `pvpve`, where clearing never auto-settles.)
+    for (let i = 0; i < 8; i += 1) {
+      const s = await play.state('game.state');
+      const live = livingEnemy(s);
+      if (!live) break;
+      await clickEnemy(live);
+      await play.advance(1.1);
+    }
+    const s = await play.state('game.state');
+    assert.equal(s.skeletonsAlive, 0, 'every skeleton is down');
+    assert.equal(s.runKind, 'story', 'the acceptance fixture is a story run');
+    assert.equal(s.cleared, true, 'a story run completes once the arena is clear');
+    await play.screenshot('story-cleared');
+  });
+
+  await play.step('the portal is the only way out: guide it and extract', async () => {
+    const before = await play.state('game.state');
+    // Nearest portal in SCREEN-normalised space (the projection's own units).
+    const near = (s) => s.portals.reduce((best, p) => (
+      Math.hypot(p.x - s.player.x, p.y - s.player.y)
+        < Math.hypot(best.x - s.player.x, best.y - s.player.y) ? p : best
+    ), s.portals[0]);
+    const target = near(before);
+    await play.mouse.click([target.x, target.y]);
+    // Walk until the ring accepts a channel; bounded so a stuck walk fails loudly.
+    for (let i = 0; i < 8; i += 1) {
+      const s = await play.state('game.state');
+      if (s.portals.some((p) => p.inRange)) break;
+      await play.advance(0.5);
+    }
+    await play.keyboard.press('KeyE');
+    await play.advance(0.3);
+    const mid = await play.state('game.state');
+    assert.notEqual(mid.channel, null, 'E starts the portal channel');
+    assert.ok(mid.portals.some((p) => p.progress > 0), 'the guide progress is visible');
+    await play.screenshot('portal-channelling');
+    // 8s guide + margin. The arena is already clear, so nothing interrupts it.
+    await play.advance(8.5);
+    const s = await play.state('game.state');
+    assert.equal(s.extracted, true, 'a full guide extracts the run');
+    assert.equal(s.phase, 'ended', 'extraction ends the run');
+    assert.ok(s.portals.some((p) => p.uses < 3), 'opening a portal spends one use');
+    await play.screenshot('extracted');
+  });
+
   await play.step('reload preserves a playable frame', async () => {
     await play.reload();
     const s = await play.state('game.state');

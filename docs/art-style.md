@@ -190,7 +190,10 @@ bash scripts/verify.sh                 # 全量：单测 + 双视口 playthrough
 - `03-hover-enemy` / `13-enemy-locked`：方块环是否锐利、不糊
 - `15-longsword-drop` / `16-drop-name-plate-hover`：掉落物模型与名牌品质色一致（绿巨剑就是绿剑）+ 光晕
 - `21-armed-melee`：剑柄在拳头上、手臂沿肩关节挥出、有残影
-- `24-viewport-1280x600`：HUD 在 1280×600 下不重叠、不裁切
+- `22-story-cleared` / `23-portal-channelling` / `24-extracted`：传送门是**石框 + 门洞能量场**
+  （`PORTAL_FRAME` + `drawPixelGlow`），引导时门洞变亮、门顶三段进度条；**不允许**把门洞封成
+  一整片体素 —— 每格自带的顶面亮条 + 暗边会把它切成百叶窗
+- `25-viewport-1280x600`（或 `27-viewport-1280x600`）：HUD 在 1280×600 下不重叠、不裁切
 
 局外格子（`meta-ui/index.html` 或注入后的 `dist/index.html`）：仓库/背包/装备槽里必须是**模型**，
 出现字形文字（⚔ / ➶）说明 `voxel.js` 没加载或 `ItemDef.art` 没算出来。

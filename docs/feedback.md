@@ -688,3 +688,23 @@
   写进脚本。若真故障（命令永不产生），6 次重试后仍然红。
 - 教训：这个脚本里**任何新增等待都要按虚拟时间预算算账**，别用长 `waitFor` 做重试。
 - Evidence: 连跑 8 次 39/39；`verify-all.sh` ALL GREEN。
+
+### 2026-11-14（续）— 单局骨架落地：传送门画成「百叶窗」+ 壳层 deploy 载荷断言
+
+- Scope: `assets/game/voxel.ts`（美术）、`assets/game/paint.ts`、`scripts/verify-shell.cjs`（验收）
+- 现象 1：第一版传送门把门洞用 14 根 1 格宽的竖条体素封起来，截图里 5 扇门全是**黑色百叶窗**，
+  完全读不出「石门 / 传送门」；改成 14×11 一整块也一样是横纹。
+- 根因：`bake()` 对**每一格**都画「2px 顶面亮条 + 正面 + 1px 右下暗边」。门洞这种大面积同色区域
+  被逐格切成一圈圈明暗带，格数越多越像栅栏；而门洞面积大、颜色冷，暗带堆叠后整体发黑。
+- 最终做法：**门框与门洞分离** —— 模型只做石框（基座 + 两柱 + 顶拱 `PORTAL_FRAME`），门洞留空，
+  光幕由绘制层 `drawPixelGlow`（像素抖动光）填，引导时提亮。既保住「画面只由体素方块构成」，
+  又不会把大色块切碎。
+- 现象 2：壳层出征消息加了 `kind: 'pvpve'` 后，`verify-shell.cjs` 的
+  `deploy sends only seed + the whole loadout` 立刻失败（它断言 `Object.keys(d) === 'loadout,seed'`）。
+- 处理：把断言改成 `'kind,loadout,seed'` 并**加严**（同时要求 `d.kind === 'pvpve'`），步骤名改成
+  `seed + kind + the whole loadout`。这不是放宽：原来要守的是「不许出现怪物数量字段」，现在仍守，
+  只是契约多了一个合法键。
+- 教训：给跨堆协议加字段时，先 grep `verify-shell.cjs` 的 `Object.keys` 类断言；**改断言要同步加严**，
+  否则下次没人知道它为什么被改。
+- Evidence: `verify-all.sh` ALL GREEN（187 单测 / playthrough 44 steps / single-page 40/40）；
+  截图 `22-story-cleared` / `23-portal-channelling` / `24-extracted`。
