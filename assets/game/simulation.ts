@@ -39,6 +39,9 @@ export {
   dropQualityRank,
   MELEE_RANGE_BARE,
   MELEE_RANGE_ARMED,
+  MONSTER_SWING_TIME,
+  PLAYER_SWING_TIME,
+  STRIDE_PIXELS,
 } from '../combat/simulation.ts';
 export type { RunLoadout } from '../meta/inventory.ts';
 export {

@@ -49,6 +49,17 @@
 - `ITEM_DEFS` 内置 `longsword` 作为默认占位；`registerItemDefs(rows)` 把表里的 13 行
   （`10001`-`20006` + `30001` 弹药）注册进目录，**不覆盖已有 id**，物品属性不得在别处散落。
 
+### 物品模型（2026-11-14：格子优先画模型，文字降级）
+
+| 项 | 契约 |
+|:--|:--|
+| `ItemDef.art` | voxel 模型键 `"形状:配色"`（如 `greatsword:gold`）。形状由 `itemArtShape(defId, equip)` 决定：`1xxxx`→巨剑 / `2xxxx`→弓 / `3xxxx`→箭 / `longsword`→长剑，其余按 `EquipKind` 映射（戒指 / 项链 / 护手 / 头盔 / 胸甲 / 裤子 / 靴子）|
+| 配色 | `itemArtKey(defId, quality)` 用品质 → `steel/green/blue/purple/orange/gold`（`白/绿/蓝/紫/橙/暗金`），未知品质回落 `steel`。**同一个模型不同配色**，不给每种品质单独建模 |
+| 模型来源 | `assets/game/voxel.ts::itemModel(key)`（同一份文件也供游戏内的手持 / 掉落 / HUD 使用）。本模块**只算键**，不 import 引擎代码，保持零 import |
+| 渲染 | `meta-ui/voxel.js`（由 `build-meta-ui.mjs` 从 `voxel.ts` 转出，全局 `MetaVoxel`）把模型画进每个格子的 `<canvas>`，`modelBounds()` 的 `ax/ay` 用来精确居中 |
+| `ItemDef.glyph` | **降级用**：宿主没加载 `voxel.js` 时页面才回落到文字字形；正常情况下格子里不得出现字形文字 |
+| 名称 | 格子底部保留一行小字名称（品质色），模型是主体；不再显示 `2×3` 尺寸文字 |
+
 ## 单页流程与搜打撤契约（2026-11-11）
 
 | 项 | 权威 |
@@ -194,14 +205,16 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 
 ```bash
 ./node_modules/.bin/vitest run assets/meta/__tests__      # 40 条（inventory 16 + account 11 + run-settlement 10 + meta 3）
-node scripts/build-meta-ui.mjs --check                     # 两个生成物与源码同步
-node scripts/verify-meta-ui.cjs                            # 独立页面 13 条真实拖放断言
+node scripts/build-meta-ui.mjs --check                     # 三个生成物（inventory / account / voxel）与源码同步
+node scripts/verify-meta-ui.cjs                            # 独立页面 14 条（13 条真实拖放 + 1 条「格子画的是模型不是字形」像素断言）
 node scripts/inject-shell.mjs --check                      # dist 注入块与源同步
 node scripts/verify-shell.cjs                              # 4174 单页 39 条（无宿主不写盘/平台身份/KV 存档/局内背包/局内拾取镜像/出征/通关/阵亡清 10 槽/返回/lifecycle）
 ```
 
-`scripts/build-meta-ui.mjs` 把 `inventory.ts` / `account.ts` 用 `ts.transpileModule` 转成普通脚本写入
-`meta-ui/inventory.js` / `meta-ui/account.js`（已提交，保证双击 `file://` 可开，无 ESM / 无 CORS / 无打包器）。
+`scripts/build-meta-ui.mjs` 把 `inventory.ts` / `account.ts` / `game/voxel.ts` 用 `ts.transpileModule`
+转成普通脚本写入 `meta-ui/inventory.js` / `meta-ui/account.js` / `meta-ui/voxel.js`
+（已提交，保证双击 `file://` 可开，无 ESM / 无 CORS / 无打包器）。`voxel.ts` 因此必须保持**零 import**：
+它一旦引入引擎依赖，独立页面与注入壳层就都编译不出来。
 改了 `.ts` 必须重跑；`verify.sh meta` 会自动拦住漂移。
 
 ## 待办（用户后续决定，本轮未做）

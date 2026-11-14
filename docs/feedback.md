@@ -635,3 +635,56 @@
 - 已知边界：当前掉落是**一次击杀一件**，两只怪即便同点出现也会被身体碰撞分开，牌面常不重叠，
   所以该规则主要在「多件掉落」或「连续击杀落在同一小块地」时可见；视觉验证用临时克隆补丁
   + 临时探针脚本完成，二者均已删除。
+
+### 2026-11-14 — 角色/怪物走路与转身、武器真正握在手上
+
+- Scope: presentation（`assets/game/{voxel,paint}.ts`）+ combat（`Skeleton.face/swing/stride/moving`）
+- 现象（用户反馈）：人物和怪物一直**平移**，没有迈步也没有转身；剑像「吸附」在身上而不是拿在手里。
+- 根因：`voxel.ts` 每个角色只有**一张朝前的精灵**，走路靠 `Math.sin(s.t*10)` 做 1px 上下浮动；
+  剑的锚点取在胸口附近（`p.x + cos(aim)*14, p.y-26`），既没有手也没有关节，转向只靠整体旋转剑身。
+- 决策：
+  ① `BodyModel` 每方向烘焙 3 个步态（帧 0/2 站姿、1 抬左脚、3 抬右脚），`facingOf(face)` 由朝向选
+  「正面 / 背面 + 左右镜像」，背面模型**去掉面甲发光眼**（骷髅去掉眼窝），所以转身是真的换模型；
+  ② 走路相位 `stride` **按碰撞后的实际位移**推进（`STRIDE_PIXELS=22`，约 2.3 步/秒），站着或顶墙不踏步，
+  怪物另用 `moving` 位让绘制层回站姿；
+  ③ 持械手臂是独立 `Limb`：从肩关节向上摆、`drawLimb` 绕关节旋转，手 = 肩 + 臂长，**剑柄落在手上，
+  最后画拳头盖住剑柄**；挥击 = 抬手 → 劈下 → 收回站姿并留 3 层残影（`PLAYER_SWING_TIME`/`MONSTER_SWING_TIME`）；
+  ④ 角度一律走 `paint.ts::tilt(face, amount)`：屏幕 y 向下，「朝下」为正，自动取短弧并按左右翻面。
+- 副作用与约束：`tilt()` 是必须的 —— 第一版写成 `face + REST_ARM`，左向角色的手臂**抬过头顶**、
+  剑朝下戳地（截图证据：修复前的 `21-armed-melee`）。`voxel.ts` 必须保持零 import（它被转成
+  `meta-ui/voxel.js` 供独立页与注入壳层共用）。
+- Evidence: `voxel.test.ts` 10 条 + movement 4 条（chasing 朝向 / 反向朝向 / 被贴脸不踏步但挥击 / 悬停不推进相位）；
+  `playthrough.mjs` 38 steps 全绿；截图 `01-spawn`（两只怪各握剑）、`07-click-walking`、`21-armed-melee`。
+
+### 2026-11-14（续）— 背包/仓库/装备槽显示物品模型，不再是文字
+
+- Scope: meta（`ItemDef.art`）+ meta UI + 构建产物
+- 需求（用户）：「仓库、背包、身上穿戴的物品，也要显示出物品的模型，而不是文字说明」。
+- 决策：`ItemDef` 增加 `art` 键 `"形状:配色"`（形状由 id 前缀 1/2/3 与 `EquipKind` 推导，配色由品质推导），
+  `assets/game/voxel.ts::itemModel(key)` 是唯一模型库；`scripts/build-meta-ui.mjs` 增开第三个目标，
+  把 `voxel.ts` 转成 `meta-ui/voxel.js`（全局 `MetaVoxel`），页面给每个格子画一张 `<canvas>`；
+  `inject-shell.mjs` 把同一份脚本内联进 4174 单页。字形（`glyph`）降级为「宿主没加载 voxel.js」时的兜底。
+- 同一份模型的复用面扩大：手持武器、地面掉落、HUD 武器槽（**按真实 defId + 品质**，不再恒画金剑）、
+  背包/仓库/装备槽四类界面全部同源，所以「格子里看到的剑」＝「地上掉的剑」＝「手里拿的剑」。
+- Evidence: `verify-meta-ui.cjs` 新增 1 条像素断言（每个物品格子的 canvas 都真的画了东西、且没有字形回落）
+  → 14/14；`voxel.test.ts` 覆盖 art 键映射与全部 13 行表数据都能取到模型；`verify-shell.cjs` 39/39。
+
+### 2026-11-14（续）— `verify-shell.cjs` 局内「切换武器槽」偶发 1/3 失败
+
+- Scope: 验收脚本（`scripts/verify-shell.cjs`），非产品代码
+- 现象：全量跑里 `the in-run UI sends an active-slot command instead of editing state` 及后续
+  两条（依赖同一次快照）偶发失败，单跑 `verify-shell.cjs` 6 次里挂 1 次；`out.commands` 为空、
+  `activeWeaponSlot` 仍是 0 —— 即那次点击**完全没产生命令**，不是命令发错。
+- 根因：脚本在「出征后立刻点第 2 个武器槽」，而 `render()` 会整块重建 `#equip`。
+  高负载时第一次点击可能落在「DOM 已重建、监听还没挂完」的缝里；`waitFor` 只等不重试，
+  一次丢点击就让整簇断言变红。
+- 二次踩坑：第一版重试用了 `waitFor`（250×20ms），**每次落空要烧掉 5 秒虚拟时间**，而整页只有
+  `--virtual-time-budget=15000` —— 重试反而把后面的步骤饿死，失败换了个位置（`snapshotAfterCommand`）。
+- 最终决策：**有界重试 + 短轮询**（最多 6 次点击，每次 `waitShort` 40×10ms = 0.4s 虚拟时间），
+  **断言一条没放宽**：依然要求 `commands[0].action === 'active'`、`slot === 1` 且
+  `activeWeaponSlot === 1`。同时把 `isRun / hasRunCommand / slots / commands / attempts / err`
+  记进 `out.run.diag`，下次挂掉能直接看原因。
+- 理由：真实玩家点没反应会再点一次；这不是「为了变绿而放宽断言」，而是把一次可重试的交互
+  写进脚本。若真故障（命令永不产生），6 次重试后仍然红。
+- 教训：这个脚本里**任何新增等待都要按虚拟时间预算算账**，别用长 `waitFor` 做重试。
+- Evidence: 连跑 8 次 39/39；`verify-all.sh` ALL GREEN。

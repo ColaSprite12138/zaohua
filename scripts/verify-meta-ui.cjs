@@ -93,6 +93,29 @@ const SELFTEST = `
 
     out.gridCells = { bag: cells('bag'), stash: cells('stash') };
     out.equipSlots = document.querySelectorAll('.equip-slot').length;
+    // Items must be drawn as VOXEL MODELS, not as text: every item node has a
+    // canvas, all of them actually painted pixels, and none fell back to glyphs.
+    out.art = (() => {
+      const canvases = [...document.querySelectorAll(
+        '#wrap-stash canvas.art, #wrap-bag canvas.art, .equip-slot canvas.art',
+      )];
+      let painted = 0;
+      for (const c of canvases) {
+        const g = c.getContext('2d');
+        if (!g || c.width < 8 || c.height < 8) continue;
+        const data = g.getImageData(0, 0, c.width, c.height).data;
+        let opaque = 0;
+        for (let i = 3; i < data.length; i += 4) {
+          if (data[i] > 0) { opaque += 1; if (opaque > 60) break; }
+        }
+        if (opaque > 60) painted += 1;
+      }
+      return {
+        canvases: canvases.length,
+        painted: painted,
+        glyphs: document.querySelectorAll('.item .glyph, .equip-slot .glyph').length,
+      };
+    })();
     snap('initial');
 
     // stash -> bag (0,0): a 2x3 longsword fits a 5x8 bag.
@@ -133,12 +156,18 @@ const SELFTEST = `
 `;
 
 const source = fs.readFileSync(pagePath, 'utf8');
-const absScript = 'file:///' + path.join(root, 'meta-ui/inventory.js').replace(/\\/g, '/');
-let html = source.replace(
-  '<script src="./inventory.js"></script>',
-  '<script src="' + absScript + '"></script>',
-);
-if (html === source) throw new Error('meta-ui/index.html no longer references ./inventory.js');
+// Every classic <script src> the page needs must resolve from the TEMPORARY
+// copy in artifacts/verify/, so pin both generated scripts to absolute paths.
+const absOf = (f) => 'file:///' + path.join(root, 'meta-ui', f).replace(/\\/g, '/');
+let html = source;
+for (const [tag, file] of [
+  ['./voxel.js', 'voxel.js'],
+  ['./inventory.js', 'inventory.js'],
+]) {
+  const next = html.replace('<script src="' + tag + '"></script>', '<script src="' + absOf(file) + '"></script>');
+  if (next === html) throw new Error('meta-ui/index.html no longer references ' + tag);
+  html = next;
+}
 html = html.replace('</body>', SELFTEST + '</body>');
 fs.writeFileSync(testPage, html, 'utf8');
 
@@ -181,6 +210,9 @@ const checks = [
   ['bag renders 5x8 = 40 cells', result.gridCells.bag === 40, result.gridCells.bag],
   ['stash renders 16x10 = 160 cells', result.gridCells.stash === 160, result.gridCells.stash],
   ['ten equipment slots', result.equipSlots === 10, result.equipSlots],
+  ['every stash item is drawn as a painted voxel model, not a glyph',
+    result.art.canvases >= 3 && result.art.painted === result.art.canvases
+      && result.art.glyphs === 0, result.art],
   ['starts with 3 swords in the stash and no loose tray', S.initial.stash === 3 && S.initial.bag === 0 && S.initial.tray === 0, S.initial],
   ['drag stash -> bag places one 2x3 item', S.dropIntoBag.bag === 1 && S.dropIntoBag.stash === 2, S.dropIntoBag],
   ['overlapping drop rejected without state change', S.overlapRejected.bag === 1 && S.overlapRejected.stash === 2 && /放不下/.test(S.overlapRejected.status), S.overlapRejected],

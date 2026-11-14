@@ -245,6 +245,7 @@ export {
   DROP_LABEL_STEP, DROP_MODEL_RADIUS, DROP_MODEL_TOP, DROP_PILE_GAP,
   dropLabelAnchor, dropLabelName, dropLabelRect, dropQualityRank,
   MELEE_RANGE_ARMED, MELEE_RANGE_BARE,
+  MONSTER_SWING_TIME, PLAYER_SWING_TIME, STRIDE_PIXELS,
 } from './state.ts';
 export type { ArenaMap } from './world.ts';
 export type { CombatModifiers } from './modifiers.ts';

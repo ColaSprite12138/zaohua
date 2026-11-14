@@ -51,6 +51,7 @@
   }
   .equip-slot.dragover { border-color: var(--cyan); background: var(--cell-hover); }
   .equip-slot.filled { color: var(--text); border-style: solid; }
+  .equip-slot canvas.art { display: block; image-rendering: pixelated; }
   .grid-wrap { position: relative; width: max-content; }
   .grid {
     position: relative; display: grid; gap: 0; padding: 0;
@@ -69,8 +70,9 @@
     user-select: none; overflow: hidden; z-index: 2;
   }
   .item:active { cursor: grabbing; }
+  .item canvas.art { display: block; image-rendering: pixelated; }
   .item .glyph { font-size: 20px; line-height: 1.1; }
-  .item .name { font-size: 11px; font-weight: 700; }
+  .item .name { font-size: 10px; font-weight: 700; line-height: 1.2; padding: 0 2px; }
   .item .size { font-size: 9px; opacity: .8; }
   .item.dragging { opacity: .35; }
   .preview {
@@ -132,11 +134,16 @@
 
   </div>
 
+<script src="./voxel.js"></script>
 <script src="./inventory.js"></script>
 <script>
 (function () {
   'use strict';
   const M = window.MetaInventory;
+  // The voxel model library (same file the game draws from). Every cell shows
+  // the ACTUAL item model, coloured by quality -- the text glyph is only a
+  // fallback for a host that forgot to load voxel.js.
+  const V = window.MetaVoxel ?? null;
   const CELL = { bag: 46, stash: 34 };
   // Optional host hook: the 4174 single-page shell injects this page and needs
   // to SHARE the very same InventoryState object (memory, not a copy). When
@@ -188,6 +195,42 @@
     node.classList.add('dragging');
   }
 
+  /**
+   * Draw one item model into a canvas, centred and integer-scaled. This is the
+   * SAME baker the game uses (`drawVoxel`), so a 紫巨剑 in the bag looks exactly
+   * like the same blade on the ground -- down to its per-block shading.
+   */
+  function paintArt(canvas, artKey, w, h) {
+    const g = canvas.getContext('2d');
+    if (!g || !V) return false;
+    canvas.width = Math.max(1, Math.round(w));
+    canvas.height = Math.max(1, Math.round(h));
+    g.clearRect(0, 0, canvas.width, canvas.height);
+    g.imageSmoothingEnabled = false;
+    let model;
+    let box;
+    try {
+      model = V.itemModel(artKey);
+      box = V.modelBounds(model);
+    } catch (err) {
+      return false;
+    }
+    const scale = Math.min((canvas.width - 6) / box.w, (canvas.height - 6) / box.h);
+    const ax = canvas.width / 2 + (box.ax - box.w / 2) * scale;
+    const ay = canvas.height / 2 + (box.ay - box.h / 2) * scale;
+    V.drawVoxel(g, model, ax, ay, { scale: scale });
+    return true;
+  }
+
+  function makeArtNode(def, w, h) {
+    const canvas = document.createElement('canvas');
+    canvas.className = 'art';
+    canvas.style.width = Math.round(w) + 'px';
+    canvas.style.height = Math.round(h) + 'px';
+    const ok = paintArt(canvas, def.art, w, h);
+    return ok ? canvas : null;
+  }
+
   function makeItemNode(item, w, h, size) {
     const def = M.itemDef(item.defId);
     const node = document.createElement('div');
@@ -196,9 +239,20 @@
     node.dataset.uid = item.uid;
     node.style.width = w + 'px';
     node.style.height = h + 'px';
-    node.innerHTML = '<span class="glyph">' + def.glyph + '</span>'
-      + '<span class="name">' + def.name + '</span>'
-      + '<span class="size">' + def.cols + '×' + def.rows + '</span>';
+    const label = h >= 60 ? 14 : 12;
+    const art = makeArtNode(def, w - 6, Math.max(12, h - label - 4));
+    if (art) {
+      node.appendChild(art);
+    } else {
+      const glyph = document.createElement('span');
+      glyph.className = 'glyph';
+      glyph.textContent = def.glyph;
+      node.appendChild(glyph);
+    }
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = def.name;
+    node.appendChild(name);
     node.addEventListener('dragstart', (e) => startDrag(e, node, item, size));
     node.addEventListener('dragend', () => {
       node.classList.remove('dragging');
@@ -247,8 +301,19 @@
 
       if (item) {
         const def = M.itemDef(item.defId);
-        node.innerHTML = '<span class="glyph" style="font-size:20px">' + def.glyph + '</span>'
-          + '<span class="slot-label">' + def.name + '</span>';
+        const art = makeArtNode(def, 68, 52);
+        if (art) {
+          node.appendChild(art);
+        } else {
+          const glyph = document.createElement('span');
+          glyph.className = 'glyph';
+          glyph.textContent = def.glyph;
+          node.appendChild(glyph);
+        }
+        const label = document.createElement('span');
+        label.className = 'slot-label';
+        label.textContent = def.name;
+        node.appendChild(label);
         node.draggable = true;
         node.addEventListener('dragstart', (e) => startDrag(e, node, item, 0));
         node.addEventListener('dragend', () => {

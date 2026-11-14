@@ -551,3 +551,54 @@ describe('a moving camera must not change what a click means', () => {
   });
 });
 
+describe('walk / turn presentation state (read by the painter)', () => {
+  it('a chasing monster faces the player and advances its stride by distance', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    // Put it well outside strike range so it has to walk.
+    sk.x = s.player.x + 220;
+    sk.y = s.player.y;
+    sk.stride = 0;
+    const before = sk.x;
+    for (let i = 0; i < 20; i += 1) step(s, 1 / 60, input());
+    // Closed the gap (or at least tried to): the walk cycle only advances when
+    // ground is actually covered, so a walking monster must have moved.
+    expect(sk.x).toBeLessThan(before);
+    expect(sk.stride).toBeGreaterThan(0);
+    expect(sk.moving).toBe(true);
+    // Heading points from the monster to the player: it turns, it does not
+    // keep facing one fixed direction while sliding sideways.
+    expect(Math.cos(sk.face)).toBeLessThan(-0.95);
+  });
+
+  it('a monster facing the other way reports the opposite heading', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    sk.x = s.player.x - 220;
+    sk.y = s.player.y;
+    for (let i = 0; i < 10; i += 1) step(s, 1 / 60, input());
+    expect(Math.cos(sk.face)).toBeGreaterThan(0.95);
+  });
+
+  it('a pinned monster strides no further and swings instead', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    sk.x = s.player.x + 20;
+    sk.y = s.player.y;
+    sk.attackCd = 0;
+    sk.stride = 4;
+    step(s, 1 / 60, input());
+    // Inside strike range: it stands and hits, so the feet do not move but a
+    // swing shadow is armed for the painter.
+    expect(sk.swing).toBeGreaterThan(0);
+    expect(sk.moving).toBe(false);
+    expect(Math.abs(sk.stride - 4)).toBeLessThan(1);
+  });
+
+  it('the player stride advances only while walking, never while hovering', () => {
+    const s = createState();
+    s.player.stride = 0;
+    frames(s, 60, { mouse: { x: 120, y: 300 } });
+    expect(s.player.stride).toBe(0);
+  });
+});

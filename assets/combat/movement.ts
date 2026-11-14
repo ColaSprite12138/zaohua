@@ -18,7 +18,7 @@ import {
   clearAttackOrder, dropAtPoint, hitTestEnemy,
 } from './attack.ts';
 import {
-  CLICK_DRAG_PIXELS, type GameState, type StepInput,
+  CLICK_DRAG_PIXELS, STRIDE_PIXELS, type GameState, type StepInput,
 } from './state.ts';
 import { walkable, type World } from './world.ts';
 
@@ -134,9 +134,7 @@ function moveWithCollision(s: GameState, dx: number, dy: number): void {  const 
   }
   if (dx !== 0 && canStand(s.world, nx, p.y)) p.x = nx;
   if (dy !== 0 && canStand(s.world, p.x, ny)) p.y = ny;
-}
-
-/**
+}/**
  * Follow the A* waypoints (or the final target once the route is consumed).
  * World coordinates, world bounds and tile collision all live here now; the
  * old one-screen clamp is gone.
@@ -154,7 +152,13 @@ export function walk(s: GameState, dt: number): void {
     p.vx = nx * speed;
     p.vy = ny * speed;
     p.face = Math.atan2(ny, nx);
+    const fromX = p.x;
+    const fromY = p.y;
     moveWithCollision(s, p.vx * dt, p.vy * dt);
+    // The walk cycle is driven by the ground actually covered (not by time and
+    // not by the intended velocity): pushing into a wall must not tread in
+    // place, and a dodge must step twice as fast as a walk.
+    p.stride += Math.hypot(p.x - fromX, p.y - fromY) / STRIDE_PIXELS;
     if (s.path.length > 0 && Math.hypot(goal.x - p.x, goal.y - p.y) < 12) {
       s.path.shift();
     }

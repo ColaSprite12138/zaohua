@@ -62,6 +62,17 @@ export function syncWeaponSlots(s: GameState): void {
 export const CLICK_DRAG_PIXELS = 12;
 export const MELEE_RANGE_BARE = 140;
 export const MELEE_RANGE_ARMED = 170;
+/**
+ * Screen pixels of ground travel per walk-cycle frame. Animation is advanced by
+ * DISTANCE, not by time: a body that walks faster must step faster, and a body
+ * that stands still must never tread in place. 22px lands a walking player at
+ * ~2.3 steps per second -- a stride, not a shuffle.
+ */
+export const STRIDE_PIXELS = 22;
+/** How long a monster's lunge (and the player's swing pose) lasts. */
+export const MONSTER_SWING_TIME = 0.34;
+/** Duration of the player's swing animation; `attackFx` counts it down. */
+export const PLAYER_SWING_TIME = 0.26;
 
 /** idle = no order; point = walking to a waypoint; follow = live cursor tracking. */
 export type MoveMode = 'idle' | 'point' | 'follow';
@@ -86,6 +97,18 @@ export interface Skeleton {
   attackCd: number;
   hit: number;
   bob: number;
+  /**
+   * Screen-space heading toward the player (radians, 0 = +x, +PI/2 = down).
+   * The painter uses it to turn the body (front / back + mirror) instead of
+   * sliding a always-facing-camera sprite across the floor.
+   */
+  face: number;
+  /** Counts down from `SWING_TIME` after a landed blow; drives the lunge. */
+  swing: number;
+  /** Walk-cycle counter advanced only while the body actually moves. */
+  stride: number;
+  /** True while this monster is actually covering ground this frame. */
+  moving: boolean;
   /** Authored monster id from `monster.xlsx`; drives the loot pool. */
   monsterId: string;
   /** Cached A* route to the player, recomputed on a timer. */
@@ -223,6 +246,11 @@ export interface Player {
   vx: number;
   vy: number;
   face: number;
+  /**
+   * Walk-cycle counter, advanced by ground DISTANCE (see `STRIDE_PIXELS`), so
+   * the step rate always matches the speed the body is actually moving.
+   */
+  stride: number;
   invuln: number;
   dodge: number;
   dodgeCd: number;
@@ -321,7 +349,7 @@ export function createState(config: RunConfig = {}): GameState {
     maxHp: 100,
     kills: 0,
     player: {
-      x, y, vx: 0, vy: 0, face: 0,
+      x, y, vx: 0, vy: 0, face: 0, stride: 0,
       invuln: 0, dodge: 0, dodgeCd: 0, attackCd: 0,
       attackFx: 0, hurt: 0, trail: [],
     },
@@ -371,6 +399,10 @@ export function spawnFromMap(map: ArenaMap): Skeleton[] {
     attackCd: 0.8 + (i % 4) * 0.25,
     hit: 0,
     bob: (i % 3) * 1.4,
+    face: Math.PI / 2,
+    swing: 0,
+    stride: i % 4,
+    moving: false,
     monsterId: m.monsterId,
     path: [],
     repath: 0,
@@ -414,6 +446,7 @@ export function reset(s: GameState): void {
   p.vx = 0;
   p.vy = 0;
   p.face = 0;
+  p.stride = 0;
   p.invuln = 0;
   p.dodge = 0;
   p.dodgeCd = 0;

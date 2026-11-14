@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: e1f4a8e378d5b29af76d9e51ec9710e09e43bff81a1958acf8c19b388c5bfaf4
+ * Source SHA-256: 06371bf60a92ea5fc9c56d11b7ba992d0143efa572239e44b60144f92f913afb
  */
 (function (root) {
 "use strict";
@@ -30,6 +30,8 @@ var exports = module.exports;
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.moveItem = exports.WEAPON_SLOT_INDICES = exports.EQUIP_SLOTS = exports.ITEM_DEFS = exports.CONTAINERS = exports.STASH = exports.BAG = void 0;
+exports.itemArtShape = itemArtShape;
+exports.itemArtKey = itemArtKey;
 exports.registerItemDefs = registerItemDefs;
 exports.itemDef = itemDef;
 exports.createInventoryState = createInventoryState;
@@ -70,8 +72,44 @@ exports.ITEM_DEFS = {
         equip: 'weapon',
         color: '#ffd166',
         glyph: '⚔',
+        art: 'blade:steel',
     },
 };
+/** Quality → voxel accent. Unknown qualities fall back to plain steel. */
+const QUALITY_ACCENT = {
+    白: 'steel', 绿: 'green', 蓝: 'blue', 紫: 'purple', 橙: 'orange', 暗金: 'gold',
+};
+/**
+ * Which voxel silhouette an item shows. The authored id owns this when it is
+ * one of the weapon/ammo ranges (1xxxx 巨剑 / 2xxxx 弓 / 3xxxx 箭); otherwise
+ * the equipment kind decides, so future armour rows need no extra wiring.
+ */
+function itemArtShape(defId, equip) {
+    if (defId === 'longsword')
+        return 'blade';
+    switch (defId.charAt(0)) {
+        case '1': return 'greatsword';
+        case '2': return 'bow';
+        case '3': return 'arrow';
+        default: break;
+    }
+    switch (equip) {
+        case 'ring': return 'ring';
+        case 'necklace': return 'amulet';
+        case 'gloves': return 'gloves';
+        case 'helmet': return 'helmet';
+        case 'chest': return 'chest';
+        case 'pants': return 'pants';
+        case 'boots': return 'boots';
+        default: return 'greatsword';
+    }
+}
+/** `"shape:accent"` key understood by `voxel.ts::itemModel()`. */
+function itemArtKey(defId, quality, equip) {
+    const shape = itemArtShape(defId, equip ?? null);
+    const accent = QUALITY_ACCENT[quality ?? ''] ?? 'steel';
+    return `${shape}:${accent}`;
+}
 /** Palette by quality, used only for the authored catalog. */
 const QUALITY_COLOR = {
     白: '#dbe9f5', 绿: '#4ade80', 蓝: '#60a5fa',
@@ -88,14 +126,16 @@ function registerItemDefs(rows) {
         const id = String(row.id);
         if (exports.ITEM_DEFS[id] !== undefined)
             continue;
+        const equip = row.equip === undefined ? 'weapon' : row.equip;
         exports.ITEM_DEFS[id] = {
             id,
             name: row.name,
             cols: row.cols ?? 2,
             rows: row.rows ?? 3,
-            equip: row.equip === undefined ? 'weapon' : row.equip,
+            equip,
             color: row.color ?? QUALITY_COLOR[row.quality ?? ''] ?? '#ffd166',
             glyph: row.glyph ?? (id.startsWith('2') ? '➶' : '⚔'),
+            art: itemArtKey(id, row.quality, equip),
         };
         added += 1;
     }

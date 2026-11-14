@@ -57,7 +57,15 @@
 
 ## 4. 新增一个模型
 
-在 `voxel.ts` 里写一个工厂函数，用 `Builder` 摆方块，然后登记到 `MODELS`：
+`voxel.ts` 里有三类模型，先选对类型再写：
+
+| 类型 | 接口 | 用途 |
+|:--|:--|:--|
+| `BodyModel` | `bodyOf(name, blocks, pose)`，每方向 3 个姿势 | 角色 / 怪物。**必须同时有 `front` 与 `back`**，`pose(back, leftLift, rightLift, offLift)` 用抬腿一格做走路帧（帧 0/2 同一站姿，1 抬左脚，3 抬右脚） |
+| `Limb` | `armModel(name, sleeve, fist)`，从肩关节向上摆 | 持械手臂。`drawLimb(g, limb, 肩x, 肩y, 角度)`，角度 0=右、+π/2=下；剑柄落在拳头上 |
+| `VoxelModel` | 普通工厂函数 + `itemModel(key)` | 道具（剑 / 弓 / 箭 / 戒指 …）。键是 `"形状:配色"`，配色按品质取 |
+
+在 `voxel.ts` 里写一个工厂函数，用 `Builder` 摆方块（道具记得登记 `SHAPES`）：
 
 ```ts
 function brazier(): VoxelModel {
@@ -80,15 +88,30 @@ export const BRAZIER = brazier();
 在场景里画它：
 
 ```ts
-drawVoxel(g, BRAZIER, x, y);                     // (x, y) = 脚底 / 落地锚点
-drawVoxel(g, SWORD_GOLD, x, y, { rotation: -0.42, squash: 0.8, scale: 1.05 });
+drawVoxel(g, BRAZIER, x, y);                            // (x, y) = 脚底 / 落地锚点
+drawBody(g, KNIGHT, x, y, { frame, facing, flip });     // 角色：朝向 + 走路帧
+drawLimb(g, KNIGHT_ARM, sx, sy, armAngle);              // 持械手臂（绕肩关节）
+drawVoxel(g, itemModel('greatsword:gold'), x, y, { rotation: -0.42, squash: 0.8 });
 ```
 
 - `rotation` 绕锚点旋转（手持武器、地面掉落物）。
 - `squash` 只用来做「物品在转」的横向压缩，**最小 0.55**，低于它会读不出形状。
 - `flash: true` 用同一模型整体刷成受击高光色，不用单独做受击图。
+- `flip: true` 以锚点为轴水平镜像（角色朝左）。`drawBody` 的 `frame` 是**跑表整数**：
+  只在真的走路时按位移推进，站着不推进 —— 否则会出现「原地踏步」。
 - 精灵在首次绘制时烘焙（每个模型 + flash 变体各一张 `OffscreenCanvas`），之后只
   `drawImage`，不要每帧重画方块。
+
+**手臂 / 武器的角度约定（`paint.ts`）**：屏幕 y 向下，所以「朝下」是 `+π/2`。
+`tilt(face, amount)` 把朝向朝「下」转 `amount`（负数=朝上），并自动按左/右翻面取短弧 ——
+**不要写 `face + 常数`**：左向身体的 `face + k` 会把手臂抬过头顶，武器就跑到肩膀上去了。
+挥击 = 抬手（`tilt(face,-1.45)`）→ 劈下（`tilt(face,+1.3)`）→ 收回站姿，剑的腕角
+`tilt(arm, -1.25→-0.15)` 在挥击中从「扛在肩上」过渡到「手臂延长线」。
+
+**同一份模型服务四处**：手持武器、地面掉落、HUD 武器槽、局外/局内背包格子。
+后两处由 `scripts/build-meta-ui.mjs` 把 `voxel.ts` 转成 `meta-ui/voxel.js`（全局 `MetaVoxel`），
+所以 `voxel.ts` **必须零 import**、不得引用引擎 API。格子里用 `modelBounds()` 的 `ax/ay`
+把模型精确居中；字号/名称只作辅助，不许用文字替代模型。
 
 ## 5. 场景层级（`paint.ts`）
 
@@ -162,11 +185,15 @@ bash scripts/verify.sh                 # 全量：单测 + 双视口 playthrough
 
 必看截图（`artifacts/play/scripts/playthrough/`）：
 
-- `01-spawn`：骑士、两只骷髅、地面纹理
+- `01-spawn`：骑士、两只骷髅、地面纹理；**两只怪是否都握着武器、朝向是否对着玩家**
+- `07-click-walking`：走路帧（一条腿离地、身体 1px 起伏），不是整体平移
 - `03-hover-enemy` / `13-enemy-locked`：方块环是否锐利、不糊
-- `15-longsword-drop` / `16-drop-name-plate-hover`：掉落物剑气（铁剑灰、金剑的金色）+ 光晕 + 名牌
-- `21-armed-melee`：手持长剑的挥砍角度
+- `15-longsword-drop` / `16-drop-name-plate-hover`：掉落物模型与名牌品质色一致（绿巨剑就是绿剑）+ 光晕
+- `21-armed-melee`：剑柄在拳头上、手臂沿肩关节挥出、有残影
 - `24-viewport-1280x600`：HUD 在 1280×600 下不重叠、不裁切
+
+局外格子（`meta-ui/index.html` 或注入后的 `dist/index.html`）：仓库/背包/装备槽里必须是**模型**，
+出现字形文字（⚔ / ➶）说明 `voxel.js` 没加载或 `ItemDef.art` 没算出来。
 
 外部素材相关的额外检查（`verify.sh` 的 `art` 段）：
 

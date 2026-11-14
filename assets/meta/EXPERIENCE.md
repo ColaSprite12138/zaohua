@@ -248,3 +248,20 @@
   `GameProjectionValue`，要展成对象字面量。
 - **证据**：`bash scripts/verify-all.sh` ALL GREEN（139 单测 / typecheck 0 error /
   playthrough 37 steps / resize 4 steps / 独立页 13/13 / 单页 37/37）。
+
+## 2026-11-14（晚）— 格子里的物品模型：键在 inventory，画在 voxel.js
+
+- 需求（用户）：仓库/背包/身上穿戴「要显示物品的模型，而不是文字说明」。
+- 关键判断：`inventory.ts` **只算键**、不碰绘制（它必须保持零 import，才能被 `transpileModule`
+  转成 file:// 可用的经典脚本）。所以 `ItemDef.art = "形状:配色"`，模型在
+  `assets/game/voxel.ts`，由 `build-meta-ui.mjs` 多开一个目标转成 `meta-ui/voxel.js`。
+  一份模型同时服务：手持武器 / 地面掉落 / HUD 武器槽 / 三个格子界面。
+- 形状规则：id 前缀（1 巨剑 / 2 弓 / 3 箭）优先，其余按 `EquipKind` 映射 —— 这样以后加
+  护甲行不用再动 UI；配色只换 accent，不为每种品质建模。
+- 踩坑：`voxel.ts` **一旦加了 import，`meta-ui/voxel.js` 与注入壳层就都编译不出来**
+  （`transpileModule` 不做模块解析）。想给它加依赖就地写常量，别引别的模块。
+- 第二个坑：把 `voxel.ts` 加进 `build-meta-ui.mjs` 之后，`meta-ui/index.html` 多了一个
+  `<script src="./voxel.js">`，而 `verify-meta-ui.cjs` 是把页面复制到 `artifacts/verify/`
+  再跑的 —— 相对路径会失效，必须**两个 script 都改写成绝对 file:// 路径**（已改）。
+- 验收：新增 1 条像素断言（每个物品格子 canvas 都有实际着色像素、且没有字形回落），
+  比「断言 DOM 里有 canvas」强得多 —— canvas 存在但没画东西是这类改动最常见的坏状态。

@@ -69,6 +69,21 @@
 | 攻击弧 | **已删除**扇形指示区与只服务它的 `Player.attackAim`；攻击反馈只有挥剑动作 + 命中粒子 |
 | 身体碰撞 | `movement.ts::resolveBodyOverlap()`：玩家↔怪物、怪物↔怪物不得重叠。移动与击退之后跑 2 遍软推开（各让一半，被墙卡住的一方让份额给对方），推挤位移也过 `canStand()`；脚印半径玩家 12 / 怪物 10（墙仍是 `canStand` 的 10px 探针） |
 
+### 身体动画状态（2026-11-14，供绘制层读取）
+
+绘制层（`assets/game/paint.ts`）**不猜**任何动作：走、转、挥都由本模块写在状态里。
+
+| 字段 / 常量 | 契约 |
+|:--|:--|
+| `Player.stride` / `Skeleton.stride` | 走路相位累加器，**按实际位移**推进（`STRIDE_PIXELS = 22` 像素 = 一帧），站在原地或顶着墙不会原地踏步；绘制层只取 `Math.floor(stride)` |
+| `Skeleton.moving` | 本帧是否真的移动了（`covered > 0.05`）；`false` 时绘制层固定用站立姿势，不会定格在「抬着一条腿」 |
+| `Skeleton.face` | 朝向玩家的屏幕角度（0 = 右，+π/2 = 下）；在攻击距离外也持续更新，所以怪是「转身盯着你」而不是横向平移 |
+| `Skeleton.swing` / `MONSTER_SWING_TIME` | 出手倒计时（0.34s），**命中与否都播**（挥空也要有动作）；绘制层换算成 0→1 的挥击进度 |
+| `PLAYER_SWING_TIME` | 玩家挥击时长（0.26s），`attack.ts` 写 `attackFx`、绘制层读它算挥击进度；**不得再硬编码 0.26** |
+| 朝向 | 没有 4 向角度字段：绘制层由 `face` 推「正面 / 背面 + 左右镜像」（`sin < -0.35` 为背面），这也是点击命中盒（`abs(dx) ≤ 30`、`y ∈ [-70,+12]`）能覆盖全部朝向的原因 |
+
+玩家 `stride` 在 `movement.ts::walk()` 里按「碰撞后的位移」推进；怪物在 `enemies.ts` 里同理。
+
 ### 本局状态与投影
 
 - **没有得分**：`GameState` 没有 `score`，击杀 / 拾取都不加分；HUD 右上角是**只读小地图**，结算板显示 `击杀 / 拾取`。
@@ -200,7 +215,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 95 条（loot 14 / movement 29 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 99 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3）
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json

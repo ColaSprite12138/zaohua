@@ -15,6 +15,7 @@
  *
  * The injected layer reuses the SAME authored sources as the standalone page:
  *   meta-ui/index.html      -> DOM + interaction script (MetaShell hook)
+ *   meta-ui/voxel.js        -> generated voxel art (item models for every cell)
  *   meta-ui/inventory.js    -> generated rules (single source of truth)
  *   meta-ui/account.js      -> generated platform KV save logic
  *   meta-ui/platform-store.js -> platform identity + save bridge (shell only)
@@ -107,8 +108,9 @@ function buildBlock() {
     };
   });
   const sources = [
-    'meta-ui/index.html', 'meta-ui/inventory.js', 'meta-ui/account.js',
-    'meta-ui/platform-store.js', 'meta-ui/shell.css', 'meta-ui/shell-bridge.js',
+    'meta-ui/index.html', 'meta-ui/voxel.js', 'meta-ui/inventory.js',
+    'meta-ui/account.js', 'meta-ui/platform-store.js', 'meta-ui/shell.css',
+    'meta-ui/shell-bridge.js',
     'assets/resource/generated/item.ts',
     'assets/resource/generated/weapon.ts',
   ];
@@ -128,6 +130,7 @@ ${read('meta-ui/shell.css')}
 <div id="fx-shell">
 ${markup}
 </div>
+<script>${read('meta-ui/voxel.js')}</script>
 <script>${read('meta-ui/inventory.js')}</script>
 <script>${read('meta-ui/account.js')}</script>
 <script>${script}</script>

@@ -36,6 +36,14 @@ const targets = [
     output: 'meta-ui/account.js',
     global: 'MetaAccount',
   },
+  {
+    // The voxel model library is import-free by design, so the standalone page
+    // can draw the very same item models the game draws -- one art authority,
+    // no duplicated shapes and no bitmaps to keep in sync.
+    source: 'assets/game/voxel.ts',
+    output: 'meta-ui/voxel.js',
+    global: 'MetaVoxel',
+  },
 ];
 
 function generatedFor(target) {

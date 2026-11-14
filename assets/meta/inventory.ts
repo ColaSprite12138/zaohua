@@ -54,7 +54,17 @@ export interface ItemDef {
   /** Which equipment slot kind accepts this item; null = not equippable. */
   readonly equip: EquipKind | null;
   readonly color: string;
+  /**
+   * Text glyph. Only a FALLBACK now: every surface (bag, stash, equipment
+   * slot, ground drop, HUD slot) draws `art` -- a voxel model -- instead.
+   */
   readonly glyph: string;
+  /**
+   * Voxel art key `"shape:accent"` resolved by `voxel.ts::itemModel()`. Built
+   * from the authored id prefix (1 = 巨剑, 2 = 弓, 3 = 箭) and the quality, so
+   * the same blade model serves a 白 and an 橙 weapon in different colours.
+   */
+  readonly art: string;
 }
 
 /**
@@ -73,8 +83,51 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
     equip: 'weapon',
     color: '#ffd166',
     glyph: '⚔',
+    art: 'blade:steel',
   },
 };
+
+/** Item silhouettes the voxel library can draw (see `voxel.ts::ItemShape`). */
+export type ItemArtShape =
+  | 'blade' | 'greatsword' | 'bow' | 'arrow'
+  | 'ring' | 'amulet' | 'gloves' | 'helmet' | 'chest' | 'pants' | 'boots';
+
+/** Quality → voxel accent. Unknown qualities fall back to plain steel. */
+const QUALITY_ACCENT: Record<string, string> = {
+  白: 'steel', 绿: 'green', 蓝: 'blue', 紫: 'purple', 橙: 'orange', 暗金: 'gold',
+};
+
+/**
+ * Which voxel silhouette an item shows. The authored id owns this when it is
+ * one of the weapon/ammo ranges (1xxxx 巨剑 / 2xxxx 弓 / 3xxxx 箭); otherwise
+ * the equipment kind decides, so future armour rows need no extra wiring.
+ */
+export function itemArtShape(defId: string, equip: EquipKind | null): ItemArtShape {
+  if (defId === 'longsword') return 'blade';
+  switch (defId.charAt(0)) {
+    case '1': return 'greatsword';
+    case '2': return 'bow';
+    case '3': return 'arrow';
+    default: break;
+  }
+  switch (equip) {
+    case 'ring': return 'ring';
+    case 'necklace': return 'amulet';
+    case 'gloves': return 'gloves';
+    case 'helmet': return 'helmet';
+    case 'chest': return 'chest';
+    case 'pants': return 'pants';
+    case 'boots': return 'boots';
+    default: return 'greatsword';
+  }
+}
+
+/** `"shape:accent"` key understood by `voxel.ts::itemModel()`. */
+export function itemArtKey(defId: string, quality?: string, equip?: EquipKind | null): string {
+  const shape = itemArtShape(defId, equip ?? null);
+  const accent = QUALITY_ACCENT[quality ?? ''] ?? 'steel';
+  return `${shape}:${accent}`;
+}
 
 /** Extra fields an authored item row may carry beyond the grid contract. */
 export interface AuthoredItem {
@@ -107,14 +160,16 @@ export function registerItemDefs(rows: readonly AuthoredItem[]): number {
   for (const row of rows) {
     const id = String(row.id);
     if (ITEM_DEFS[id] !== undefined) continue;
+    const equip: EquipKind | null = row.equip === undefined ? 'weapon' : row.equip;
     ITEM_DEFS[id] = {
       id,
       name: row.name,
       cols: row.cols ?? 2,
       rows: row.rows ?? 3,
-      equip: row.equip === undefined ? 'weapon' : row.equip,
+      equip,
       color: row.color ?? QUALITY_COLOR[row.quality ?? ''] ?? '#ffd166',
       glyph: row.glyph ?? (id.startsWith('2') ? '➶' : '⚔'),
+      art: itemArtKey(id, row.quality, equip),
     };
     added += 1;
   }

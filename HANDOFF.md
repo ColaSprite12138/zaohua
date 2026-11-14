@@ -1,7 +1,7 @@
 # HANDOFF — 2.5D 骷髅竞技场
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-14 全套验收通过**（157 条单测 / 独立页 13 条 / 单页 39 条 / playthrough 38 steps / resize 4 steps；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、通关整份搬回、阵亡或中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效；**画面已全量体素化，正式地图是 128×96 的仙侠院落，风格与素材管线见 `docs/art-style.md`**）。**steps 会浮动**：15 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 38–40 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-14 全套验收通过**（171 条单测 / 独立页 14 条 / 单页 39 条 / playthrough 38 steps / resize 4 steps；**角色/怪物已有走路与转身动画（4 帧步态 × 正/背面 × 左右镜像，按位移推进）、武器由手臂绕肩关节握在拳头上并带挥击残影，背包/仓库/装备槽/掉落/HUD 全部用体素模型代替文字**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、通关整份搬回、阵亡或中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效；**画面已全量体素化，正式地图是 128×96 的仙侠院落，风格与素材管线见 `docs/art-style.md`**）。**steps 会浮动**：15 个命名场景不变，报告把 `advance` 子步展开计数，随帧时序在 38–40 间变化，`verify-all.sh` 下限固定 35。
 > 这份文件记录**跨模块红线、保护清单、验收基线与回滚方案**；**模块功能契约的正本在
 > `assets/<模块>/CONTEXT.md`**（2026-11-14 拆分，见下节「模块契约在哪」）。
 > 新会话先读本文件与「模块契约在哪」，再按改动模块读对应 `CONTEXT.md`。
@@ -17,7 +17,7 @@
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html` |
 | 地图 | 正式地图 `128×96` 格 @32px = **4096×3072** 世界像素（仙侠院落：北侧高台、东西厢房、院墙残段 + 香炉）。三个图层：`Terrain`(IntGrid=碰撞权威) / `Entities`(出生点+7 只怪) / `Props`(纯装饰，贴素材库图集)。生成链：`bake-voxel-atlas.mjs` → 图集；`gen_arena_map.py` → `arena.ldtk`（之后人工在 LDtk 里改）；`import_map.py` → `arena.generated.ts` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **157**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **171**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
 | 怎么还原 | `git checkout HEAD -- <path>`；整包兜底见「可回滚基线」 |
@@ -92,7 +92,14 @@
 
 14. **地图运行时红线（2026-11-13）**：`arena.ldtk` / `arena.generated.ts` 是唯一权威地图源，禁止手改生成物；`arena-test.ts` 只服务自动验收，禁止把 `game.pack.ts` 的默认地图改成正式地图（自动验收会被 7 只怪打死）；`deploy` 是两张地图的唯一切换点；`projection()` 的 `player` / `skeletons` / `dropAt` / `target` 必须保持**屏幕归一化**（世界事实另开 `worldPlayer` / `camera` / `map` 字段），否则全部浏览器验收坐标失效；`MINIMAP` 矩形内的指针必须在 `game.pack.ts` 被丢弃（小地图只读）；删旧竞技场绘制时不要顺手删角色 / HUD / 结算板。
 
-15. **体素美术红线（2026-11-14）**：画面只允许由 `assets/game/voxel.ts` 产出的方块构成。① **一个方块 = 一格屏幕高度**（`unit·unit` 像素），顶面高光是格内的 2px 亮条，不要再叠一层「顶面 + 正面」，否则角色高度翻倍、头盔会吞掉脸；② 模型 `y=0` 是地面、`x=0` 是身体中线、**`z` 只允许 0**（一格厚的立牌，体积感靠三面着色）；③ 禁 `createLinearGradient` / `createRadialGradient` / `shadowBlur` / `ctx.arc|ellipse` 描边 / 真圆角，反馈环用 `drawPixelRing`、光晕用 `drawPixelGlow`、阴影用 `drawShadow`；④ **站在地面上的东西必须进 `paint.ts` 的 `items` 按落地 `y` 排序**（墙块 key = `y+grid`，掉落物 `y+0.5`），单独插一层会让墙后被遮挡的角色盖到墙上；⑤ 新增模型只在 `voxel.ts` 加工厂函数 + 登记 `MODELS`，不要在 `paint.ts` 里手摆矩形；⑥ 精灵按「模型 + flash 变体」烘焙缓存，禁止每帧重画方块。
+15. **体素美术红线（2026-11-14）**：画面只允许由 `assets/game/voxel.ts` 产出的方块构成。
+   ⑦ **角色必须有正/背两面**（`BodyModel.poses.front|back`）且走路靠**抬腿一格的 3 个烘焙姿势**，
+   转身由 `face` 推「正面/背面 + 镜像」，**不允许**只画一个朝前的精灵横向平移；
+   ⑧ 走路相位 `stride` **只按实际位移**推进（`STRIDE_PIXELS=22`），站着/顶墙不得原地踏步；
+   ⑨ 手持武器必须经 `Limb`（绕肩关节）+ 拳头盖住剑柄，剑/手臂角度只能用 `paint.ts::tilt()` 换算，
+   **禁止写 `face + 常数`**（左向身体会把手臂抬过头顶）；
+   ⑩ 物品模型一个形状 × 六种品质配色（`itemModel("形状:配色")`），手持/掉落/HUD/背包格子**共用**这一份，
+   禁止为某个界面单独画一套图标；① **一个方块 = 一格屏幕高度**（`unit·unit` 像素），顶面高光是格内的 2px 亮条，不要再叠一层「顶面 + 正面」，否则角色高度翻倍、头盔会吞掉脸；② 模型 `y=0` 是地面、`x=0` 是身体中线、**`z` 只允许 0**（一格厚的立牌，体积感靠三面着色）；③ 禁 `createLinearGradient` / `createRadialGradient` / `shadowBlur` / `ctx.arc|ellipse` 描边 / 真圆角，反馈环用 `drawPixelRing`、光晕用 `drawPixelGlow`、阴影用 `drawShadow`；④ **站在地面上的东西必须进 `paint.ts` 的 `items` 按落地 `y` 排序**（墙块 key = `y+grid`，掉落物 `y+0.5`），单独插一层会让墙后被遮挡的角色盖到墙上；⑤ 新增模型只在 `voxel.ts` 加工厂函数 + 登记 `MODELS`，不要在 `paint.ts` 里手摆矩形；⑥ 精灵按「模型 + flash 变体」烘焙缓存，禁止每帧重画方块。
 
 16. **素材库资产管线红线（2026-11-14）**：图集与地图都是**生成物**，禁止手改。① `tilesets/xianxia.png` / `xianxia.json` / `maps/tileset.generated.ts` 只能由 `node scripts/bake-voxel-atlas.mjs` 生成，`--check` 逐字节校验；② `arena.ldtk` 由 `python scripts/gen_arena_map.py` **首次**生成，之后是人工权威源（在 LDtk 里改），重跑生成器会覆盖手工编辑；③ `arena.generated.ts` 只能由 `python scripts/import_map.py` 生成；④ 素材尺度是 32 盒/米、我们 1 盒 = 1px、4 盒 = 1 体素，换尺度必须先改 `docs/art-style.md`；⑤ **地面不是 Tile 图层**（12288 条 gridTiles 会让 JSON 涨到几 MB），变体由 `paint.ts::floorTileName()` 的低频哈希决定，别改成逐格哈希（会花被子）；⑥ `Props` 只装饰、不碰撞，深度排序 key = `(row + footprintH) * grid`，和角色共用一个 items 列表。
 
@@ -124,7 +131,7 @@
 
 ```bash
 ./node_modules/.bin/forgeax project check --json
-./node_modules/.bin/forgeax project test --json          # 157/157（下限 83）
+./node_modules/.bin/forgeax project test --json          # 171/171（下限 83）
 node scripts/build-meta-ui.mjs --check                  # 生成物与源码同步
 python scripts/export_tables.py --check                  # xlsx 与 generated/*.ts 同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000   # 真实 rollLoot 跑批
@@ -144,11 +151,11 @@ node scripts/verify-shell.cjs                            # 4174 单页 39/39
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **157** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-14：movement 23→29，+3 条「掉落物小模型 / 名字牌命中」+3 条「重叠掉落竖直展开」） |
+| `test` | **171** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-14 晚：+10 条 `assets/__tests__/voxel.test.ts`（步态/朝向/手臂/物品模型/art 键）+4 条 movement「走路相位、怪物朝向与挥击」） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` 四张表与 `generated/*.ts` 一致，且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
-| `meta-ui` | 生成物同步 + 独立页面浏览器验收 13/13 |
+| `meta-ui` | 三个生成物（inventory / account / voxel）同步 + 独立页面浏览器验收 **14/14**（含「格子画的是模型不是字形」像素断言） |
 | `build` | `ok` |
 | `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **39/39**（含 7 条平台身份 / KV 存档、1 条「无宿主不写盘」、2 条平台 lifecycle、局内背包、局内拾取镜像到装备栏、阵亡清空全部 10 槽、2 条光标反馈） |
 | `playthrough` 1600x900 | `passed:true`、39–40 steps（下限 35，advance 子步浮动）、0 errors |
@@ -162,11 +169,12 @@ node scripts/verify-shell.cjs                            # 4174 单页 39/39
 
 下表把**各模块 `CONTEXT.md`「功能契约（正文）」**逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 157 条＝combat 87（loot 14 + movement **29** + attack-spec 10 +
-projectiles 10 + weapons **10** + **world 11** + modifiers 3）+ 局内 `run-inventory` 8、
-meta 40（inventory 16 + platform-KV account 11 + run-settlement **10** + meta 3）、battle 4、talent 3、
-resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不随新增断言抬高）。
-浏览器验收：playthrough 15 个命名场景（展开 39–40 steps，下限 35）、独立页 13 条、4174 单页 39 条
+删断言不会让这张表悄悄失效。单测 171 条＝combat 91（loot 14 + movement **33** + attack-spec 10 +
+projectiles 10 + weapons 10 + world 11 + modifiers 3）+ 局内 `run-inventory` 8、
+meta 40（inventory 16 + platform-KV account 11 + run-settlement 10 + meta 3）、battle 4、talent 3、
+resource 13（tables 7 + map 6）、**美术 10（`assets/__tests__/voxel.test.ts`）**、模板 2；
+全量下限 83 条（下限不随新增断言抬高）。
+浏览器验收：playthrough 15 个命名场景（展开 39–40 steps，下限 35）、独立页 14 条、4174 单页 39 条
 （含 7 条平台身份 / KV 存档 + 1 条「无宿主不写盘」+ 2 条平台 lifecycle + 2 条光标反馈）。
 真实硬件 WebGPU 冒烟（历史一次性脚本）：`node artifacts/smoke-login-bag.mjs` 曾覆盖「强制登录 / 刷新后存档」，
 **该脚本按已删除的本地登录 + 本地存盘流程编写，现已不适用**；现行契约里无宿主不写盘、刷新不恢复，
@@ -251,6 +259,12 @@ resource 13（tables 7 + map 6）、模板 2；全量下限 83 条（下限不�
 | 站在墙后仍被画在墙上面 | 墙块没进 `paint.ts` 的 `items` 深度排序；地形层只画地板，墙块按 `y+grid` 进排序 |
 | 换画风后整屏发糊 / 斜边有锯齿 | `imageSmoothingEnabled` 被判 true，或坐标/缩放不是整数；每帧首行 `prepareScene()`，精灵用整数 `drawImage` |
 | 空手/装备时剑的颜色反了 | `voxel.ts::sword(golden)` 的参数语义要和 `SWORD_STEEL` / `SWORD_GOLD` 的调用值对齐（曾把 `sword(true)` 赋给铁剑，导致空手也拿金剑） |
+| 角色「走路」只会整体平移、转身不转 | 只画了一个朝前的精灵，靠 `Math.sin(t)` 做 1px 上下浮动。必须用 `BodyModel` 的 3 个烘焙步态（抬腿一格）+ `facingOf(face)` 选正/背面与镜像；相位读 `stride`（按位移推进），**不要按时间编帧** |
+| 站着也一直踏步 / 顶着墙腿在抖 | `stride` 按「意图速度」或时间推进了。必须按**碰撞后的实际位移**推进（`movement.ts::walk()` / `enemies.ts` 都算 `covered`）；怪物另用 `moving` 位让绘制层回站姿 |
+| 武器悬在肩膀/胸口，不像被握着 | 剑的锚点放在了躯干中心。现在：肩关节（`SHOULDER_X/Y`）→ `Limb` 绕关节转到手 → 剑柄落在手上 → **最后画拳头盖住剑柄**；剑的腕角用 `tilt(arm, -1.25→-0.15)` |
+| 左向角色的手臂抬过头顶、剑朝下戳地 | 角度写成 `face + 常数`：左向身体要 `face - 常数`。一律用 `paint.ts::tilt(face, amount)`（朝屏幕下方为正、自动取短弧并翻面） |
+| 背包/仓库/装备槽里还是 ⚔ ➶ 文字 | `meta-ui/voxel.js` 没生成/没加载（`build-meta-ui.mjs` 的三个目标之一），或 `ItemDef.art` 没算（`registerItemDefs` 才写 art，别忘了 `node scripts/build-meta-ui.mjs` 与 `inject-shell.mjs`） |
+| `voxel.ts` 改完独立页面/注入壳层直接白屏 | 它必须**零 import**：`meta-ui/voxel.js` 是 `ts.transpileModule` 直接转的单文件脚本，加任何 import 都会编译失败 |
 | 素材库道具在游戏里被拉成长条 / 一片糊 | 把 10m 进深的平台当地面斜投影了；大件必须走 `kind:'deck'`（俯视取样 + 12px 前立面），只有立面可见的矮件才用 `prop` |
 | 地面像一块花被子 | `floorTileName()` 用了逐格哈希；必须 4×4 格（128px）一个斑块、主体浅石、约 18% 混苔藓/夯土 |
 | 北墙顶端被裁掉一截 | 院墙模块高 96px（3 格），必须立在 row ≥ 2 上；北边界因此做 3 格厚 |

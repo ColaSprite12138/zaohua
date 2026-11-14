@@ -5,6 +5,11 @@
  * from `voxel.ts`, every UI plate is a hard rectangle, and nothing is drawn with
  * a gradient, a rounded corner or a soft ellipse. Feedback rings and shadows are
  * dithered 2px blocks so they belong to the same grid as the models.
+ *
+ * Bodies are never slid across the floor as a single billboard: each one picks
+ * a FACING (front / back + mirror) from its heading and a WALK POSE from the
+ * distance it actually covered, and its weapon rides a real arm limb swung
+ * around the shoulder joint. `paint()` reads those facts, it never invents them.
  */
 
 import {
@@ -12,12 +17,15 @@ import {
   dropLabelName,
   dropLabelRect,
   MINIMAP,
+  MONSTER_SWING_TIME,
+  PLAYER_SWING_TIME,
   VIEW_H,
   VIEW_W,
   type Drop,
   type GameState,
   type Skeleton,
 } from './simulation.ts';
+import { itemArtKey, itemDef } from '../meta/inventory.ts';
 import {
   atlasReady,
   drawAtlasProp,
@@ -27,20 +35,30 @@ import {
   propFootprint,
 } from './atlas.ts';
 import {
+  ARM_REACH,
   CORPSE,
   KNIGHT,
+  KNIGHT_ARM,
+  SHOULDER_X,
+  SHOULDER_Y,
   SKELETON,
-  SWORD_GOLD,
-  SWORD_STEEL,
+  SKELETON_ARM,
+  bodyHeight,
+  drawBody,
   drawGroundDetail,
   drawGroundTile,
+  drawLimb,
   drawPixelGlow,
   drawPixelRing,
   drawShadow,
   drawVoxel,
   drawWallBlock,
-  modelHeight,
+  itemModel,
+  modelBounds,
   prepareScene,
+  type Facing,
+  type Limb,
+  type VoxelModel,
 } from './voxel.ts';
 
 export type Painter = CanvasRenderingContext2D;
@@ -199,15 +217,194 @@ function drawMinimap(g: Painter, s: GameState): void {
 
 /* ---------------------------------------------------------------- entities */
 
-/** The equipped blade: a voxel sword swung around the player's hand. */
-function drawBlade(g: Painter, x: number, y: number, angle: number, armed: boolean, golden: boolean): void {
-  g.save();
-  g.translate(x, y);
-  g.rotate(angle);
-  drawVoxel(g, golden ? SWORD_GOLD : SWORD_STEEL, 0, 0, {
-    scale: armed ? 1.15 : 0.78,
-  });
-  g.restore();
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/** Smooth 0..1 ramp. Used for the wind-up / strike curve of a swing. */
+function ease(t: number): number {
+  const c = Math.min(1, Math.max(0, t));
+  return c * c * (3 - 2 * c);
+}
+
+/**
+ * Heading -> which baked body to draw. Facing away from the camera uses the
+ * `back` pose (no visor, no eye sockets), everything else the front pose; the
+ * horizontal mirror comes from the heading's x sign. The 0.35 threshold keeps a
+ * body walking almost straight sideways from flapping between the two poses.
+ */
+function facingOf(face: number): { facing: Facing; flip: boolean } {
+  return {
+    facing: Math.sin(face) < -0.35 ? 'back' : 'front',
+    flip: Math.cos(face) < 0,
+  };
+}
+
+const DOWN = Math.PI / 2;
+
+/** Shortest signed turn from `from` to `to`, then read `t` of the way. */
+function blendAngle(from: number, to: number, t: number): number {
+  return from + Math.atan2(Math.sin(to - from), Math.cos(to - from)) * t;
+}
+
+/**
+ * Idle arm direction: mostly screen-DOWN (that is where a relaxed arm hangs),
+ * leaned a third of the way toward the heading.
+ *
+ * Deliberately NOT `face + k`: that only means "down" while the body faces
+ * right. A body walking straight up would get `face + 0.5` = up-and-right, i.e.
+ * the arm raised instead of hanging.
+ */
+function restArm(face: number): number {
+  return blendAngle(DOWN, face, 0.38);
+}
+
+/**
+ * `face` rotated by `amount` TOWARD screen-down (positive) or away from it
+ * (negative), taking the short way round.
+ *
+ * Used for the swing arc, where "toward the aim then past it" has to mirror on
+ * a left-facing body: "chop down" is `face + k` facing right and `face - k`
+ * facing left.
+ */
+function tilt(face: number, amount: number): number {
+  const a = face + Math.abs(amount);
+  const b = face - Math.abs(amount);
+  const closeness = (x: number): number => Math.abs(Math.atan2(Math.sin(DOWN - x), Math.cos(DOWN - x)));
+  const towardDown = closeness(a) <= closeness(b) ? a : b;
+  return amount >= 0 ? towardDown : 2 * face - towardDown;
+}
+
+/**
+ * Arm angle over one swing (0 = wind-up start, 1 = recovered). The arm rises
+ * behind the shoulder, chops through the aim direction, then settles back onto
+ * the resting angle -- every leg is a shortest-arc blend that ENDS exactly on
+ * the next key pose, so there is no snap when the swing counter hits zero.
+ */
+function swingArmAngle(face: number, u: number): number {
+  const rest = restArm(face);
+  const raised = tilt(face, -1.45);
+  const strike = tilt(face, 1.25);
+  if (u < 0.3) return blendAngle(rest, raised, ease(u / 0.3));
+  const t = (u - 0.3) / 0.7;
+  return t < 0.6
+    ? blendAngle(raised, strike, ease(t / 0.6))
+    : blendAngle(strike, rest, ease((t - 0.6) / 0.4));
+}
+
+interface HandPose {
+  /** Arm direction in screen radians (0 = right, +PI/2 = down). */
+  arm: number;
+  /** Where the fist (and therefore the grip) is. */
+  x: number;
+  y: number;
+  /** How far the strike has progressed; drives the blade's wrist angle. */
+  swing: number;
+}
+
+/**
+ * Where the leading hand is this frame. Everything about a held weapon hangs
+ * off this: the blade's pommel sits IN the fist, and the fist is at the end of
+ * a limb rotated around the shoulder -- that is what makes it read as "held"
+ * instead of "pasted on the chest".
+ */
+function handPose(
+  x: number,
+  y: number,
+  face: number,
+  flip: boolean,
+  swing: number,
+): HandPose {
+  const side = flip ? -1 : 1;
+  const sx = x + side * SHOULDER_X;
+  const sy = y - SHOULDER_Y;
+  const arm = swing > 0 ? swingArmAngle(face, swing) : restArm(face);
+  return {
+    arm,
+    x: sx + Math.cos(arm) * ARM_REACH,
+    y: sy + Math.sin(arm) * ARM_REACH,
+    swing,
+  };
+}
+
+/**
+ * Blade wrist angle: raised in a ready stance at rest (tip up and outward, the
+ * way a heavy blade is carried), then an extension of the arm as the strike
+ * lands. `tilt` keeps the tilt on the correct side for a body facing left, so
+ * the blade is never upside down.
+ */
+function bladeAngleOf(hand: HandPose): number {
+  return tilt(hand.arm, -lerp(1.65, 0.15, Math.min(1, hand.swing * 1.15)));
+}
+
+/** Fit a model inside a HUD plate, preferring its authored size (cap 1.6x). */
+function fitScale(model: VoxelModel, maxW: number, maxH: number): number {
+  const b = modelBounds(model);
+  return Math.min(maxW / b.w, maxH / b.h, 1.6);
+}
+
+/** Resolve an authored item id to its voxel art key, with a sword fallback. */
+function itemArtOf(defId: string | null | undefined, quality?: string): string {
+  if (defId === null || defId === undefined) return 'blade:steel';
+  try {
+    return itemDef(defId).art;
+  } catch {
+    return itemArtKey(defId, quality);
+  }
+}
+
+/** Authored display name; an unregistered id degrades to a neutral label. */
+function weaponLabel(defId: string): string {
+  try {
+    return itemDef(defId).name;
+  } catch {
+    return '武器';
+  }
+}
+
+/**
+ * Draw the weapon arm: motion ghosts, the blade, then the limb on top so the
+ * fist visibly wraps the grip. `x/y` is the feet anchor of the body.
+ */
+function drawWeaponArm(
+  g: Painter,
+  limb: Limb,
+  blade: VoxelModel | null,
+  x: number,
+  y: number,
+  face: number,
+  flip: boolean,
+  swing: number,
+  flash: boolean,
+  scale: number,
+): void {
+  const hand = handPose(x, y, face, flip, swing);
+  const side = flip ? -1 : 1;
+  const sx = x + side * SHOULDER_X;
+  const sy = y - SHOULDER_Y;
+
+  if (blade !== null) {
+    // Arc trail: three earlier positions of the same blade, dimmer each step.
+    // Only during a real swing -- an idle blade must not smear.
+    if (swing > 0.1) {
+      for (let i = 3; i >= 1; i -= 1) {
+        const past = handPose(x, y, face, flip, Math.max(0, swing - i * 0.12));
+        drawVoxel(g, blade, past.x, past.y, {
+          rotation: bladeAngleOf(past) + Math.PI / 2,
+          scale,
+          flip,
+          alpha: 0.1 * (4 - i),
+        });
+      }
+    }
+    drawVoxel(g, blade, hand.x, hand.y, {
+      rotation: bladeAngleOf(hand) + Math.PI / 2,
+      scale,
+      flip,
+    });
+  }
+
+  drawLimb(g, limb, sx, sy, hand.arm, { flash, scale: 1 });
 }
 
 function drawPlayer(g: Painter, s: GameState): void {
@@ -215,10 +412,15 @@ function drawPlayer(g: Painter, s: GameState): void {
   // `weaponSlots` holds authored item ids ("10006"), never the visual category,
   // so comparing against 'longsword' made an equipped weapon still draw as
   // bare hands (short grey sword). Any weapon in the active slot is armed.
-  const armed = activeWeapon(s) !== null;
+  const weaponId = activeWeapon(s);
+  const armed = weaponId !== null;
   const moving = Math.hypot(p.vx, p.vy) > 20;
-  // Pixel bob: a whole-pixel step, never a sub-pixel slide.
-  const bob = moving ? (Math.sin(s.t * 10) > 0 ? 1 : 0) : 0;
+  // Walk pose and pixel bob both come from the DISTANCE walked, so the feet
+  // never slide and a standing body never treads in place.
+  const frame = Math.floor(p.stride);
+  const bob = moving && frame % 2 === 1 ? 1 : 0;
+  const rig = facingOf(p.face);
+  const swing = p.attackFx > 0 ? 1 - p.attackFx / PLAYER_SWING_TIME : 0;
 
   for (const mark of p.trail) {
     g.save();
@@ -235,19 +437,31 @@ function drawPlayer(g: Painter, s: GameState): void {
     drawPixelRing(g, p.x, p.y + 2, 26, 11, '#67e8f9', { alpha: 0.85, lineWidth: 2 });
   }
 
-  drawVoxel(g, KNIGHT, p.x, p.y - bob, { flash: p.hurt > 0 });
+  drawBody(g, KNIGHT, p.x, p.y - bob, {
+    frame: moving ? frame : 0,
+    facing: rig.facing,
+    flip: rig.flip,
+    flash: p.hurt > 0,
+  });
 
-  // Weapon arm. The hand sits on the pauldron line; the blade pivots there.
-  const swing = p.attackFx > 0 ? Math.sin((1 - p.attackFx / 0.26) * Math.PI) : 0;
-  const aim = p.face;
-  drawBlade(
+  // Weapon arm last: it is the near-side layer, so the grip always reads.
+  drawWeaponArm(
     g,
-    p.x + Math.cos(aim) * 14,
-    p.y - 26 - bob + Math.sin(aim) * 5,
-    aim + Math.PI / 2 - swing * 1.5,
-    armed,
-    armed,
+    KNIGHT_ARM,
+    armed ? itemModel(itemArtOf(weaponId)) : null,
+    p.x,
+    p.y - bob,
+    p.face,
+    rig.flip,
+    swing,
+    p.hurt > 0,
+    armed ? 1.1 : 1,
   );
+}
+
+/** 骷髅剑士 carries a bone-grey blade, 骷髅弓手 a bow (see `monster.xlsx`). */
+function skeletonBlade(sk: Skeleton): VoxelModel {
+  return itemModel(sk.monsterId === '200001' ? 'bow:steel' : 'blade:steel');
 }
 
 function drawSkeleton(g: Painter, sk: Skeleton): void {
@@ -257,13 +471,36 @@ function drawSkeleton(g: Painter, sk: Skeleton): void {
     return;
   }
 
-  const bob = Math.sin(sk.bob) > 0 ? 1 : 0;
+  const rig = facingOf(sk.face);
+  const frame = Math.floor(sk.stride);
+  const bob = sk.moving && frame % 2 === 1 ? 1 : 0;
+  // A strike leans the whole body in; the arm does the rest.
+  const swing = sk.swing > 0 ? 1 - sk.swing / MONSTER_SWING_TIME : 0;
+  const lean = swing > 0 ? Math.cos(sk.face) * 4 * Math.sin(swing * Math.PI) : 0;
+
   shadow(g, sk.x, sk.y + 2, 21, 8, 0.42);
-  drawVoxel(g, SKELETON, sk.x, sk.y - bob, { flash: sk.hit > 0 });
+  drawBody(g, SKELETON, sk.x + lean, sk.y - bob, {
+    frame: sk.moving ? frame : 0,
+    facing: rig.facing,
+    flip: rig.flip,
+    flash: sk.hit > 0,
+  });
+  drawWeaponArm(
+    g,
+    SKELETON_ARM,
+    skeletonBlade(sk),
+    sk.x + lean,
+    sk.y - bob,
+    sk.face,
+    rig.flip,
+    swing,
+    sk.hit > 0,
+    0.9,
+  );
 
   // Health bar above the head: hard blocks, no rounded pill.
   const w = 44;
-  const top = Math.round(sk.y) - modelHeight(SKELETON) - 10;
+  const top = Math.round(sk.y) - bodyHeight(SKELETON) - 10;
   g.fillStyle = 'rgba(6,12,18,0.85)';
   g.fillRect(Math.round(sk.x) - w / 2 - 2, top, w + 4, 8);
   g.fillStyle = '#ff6b6b';
@@ -291,11 +528,6 @@ function qualityColor(quality?: string): string {
     : '#ffd166';
 }
 
-/** Whiter qualities drop a steel blade; rare ones drop a gilded one. */
-function rarityIsHigh(quality?: string): boolean {
-  return quality === '紫' || quality === '橙';
-}
-
 function drawDrop(g: Painter, drop: Drop, hovered: boolean): void {
   // Quantise the float to whole pixels: a voxel item hovers in 1px steps.
   const float = Math.round(Math.sin(drop.t * 3) * 3);
@@ -306,11 +538,14 @@ function drawDrop(g: Painter, drop: Drop, hovered: boolean): void {
     hovered ? 0.34 : 0.22);
 
   // Slow turn, never edge-on: the item has to stay readable while it hovers.
+  // The model is the AUTHORED item (gilded blade / bow / arrow ...), not one
+  // hard-coded sword, so the ground object is the thing you are about to pick.
   const spin = Math.cos(drop.t * 1.3);
-  drawVoxel(g, rarityIsHigh(drop.quality) ? SWORD_GOLD : SWORD_STEEL, drop.x, drop.y + 4 + float, {
+  const art = itemArtOf(drop.itemId, drop.quality);
+  drawVoxel(g, itemModel(art), drop.x, drop.y + 4 + float, {
     rotation: -0.42,
     squash: Math.max(0.55, Math.abs(spin)),
-    scale: 1.05,
+    scale: 0.95,
   });
   if (hovered) {
     drawPixelRing(g, drop.x, drop.y + 2, 17, 7, color, { alpha: 0.85, lineWidth: 2 });
@@ -416,7 +651,7 @@ function drawTargetLock(g: Painter, s: GameState): void {
   const pulse = 0.5 + 0.5 * Math.sin(s.t * 9);
   drawPixelRing(g, sk.x, sk.y + 2, 28 + pulse * 3, 11 + pulse, '#ff6b6b', { alpha: 0.85, lineWidth: 3 });
   drawPixelRing(g, sk.x, sk.y + 2, 36 + pulse * 4, 15 + pulse * 1.5, '#ff6b6b', { alpha: 0.5, lineWidth: 2 });
-  text(g, '目标', sk.x, sk.y - modelHeight(SKELETON) - 22, 11, '#ff9b9b', 'center', '700');
+  text(g, '目标', sk.x, sk.y - bodyHeight(SKELETON) - 22, 11, '#ff9b9b', 'center', '700');
 }
 
 /**
@@ -492,11 +727,21 @@ function hud(g: Painter, s: GameState): void {
     roundRect(g, bx, slotY + 9, 68, 54, 9);
     g.stroke();
     if (weapon) {
-      g.save();
-      g.translate(bx + 34, slotY + 52);
-      g.rotate(-0.35);
-      drawVoxel(g, SWORD_GOLD, 0, 0, { scale: 0.8 });
-      g.restore();
+      // The slot shows the ITEM ITSELF (its own shape + quality accent), so the
+      // HUD and the bag can never disagree about what is equipped. Centred the
+      // same way the meta UI centres its cells: on the baked sprite's anchor.
+      const model = itemModel(itemArtOf(weapon));
+      const bounds = modelBounds(model);
+      const scale = fitScale(model, 38, 44);
+      const cx = bx + 34;
+      const cy = slotY + 36;
+      drawVoxel(
+        g,
+        model,
+        cx + (bounds.ax - bounds.w / 2) * scale,
+        cy + (bounds.ay - bounds.h / 2) * scale,
+        { scale },
+      );
     } else {
       text(g, '—', bx + 34, slotY + 42, 21, '#6f8798', 'center', '600');
     }
@@ -504,7 +749,7 @@ function hud(g: Painter, s: GameState): void {
   }
   text(g, '武器槽', slotX + 160, slotY + 24, 12, '#8fa9bb', 'left', '600');
   const used = activeWeapon(s);
-  text(g, used ? '长剑' : '空手', slotX + 160, slotY + 47, 19, used ? '#ffd166' : '#dbe9f5', 'left', '700');
+  text(g, used ? weaponLabel(used) : '空手', slotX + 160, slotY + 47, 19, used ? '#ffd166' : '#dbe9f5', 'left', '700');
   text(g, '按 1 / 2 切换', VIEW_W / 2 + 140, slotY + 48, 11, '#8fa9bb', 'right', '600');
 
   // Bottom-right: controls.

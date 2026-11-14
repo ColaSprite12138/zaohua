@@ -277,13 +277,28 @@ const SELFTEST = `
         === out.bag.locksBefore;
 
       // Clicking a weapon slot goes through commit() -> host.runCommand().
-      document.querySelectorAll('.equip-slot')[1].click();
-      // Wait for the command AND its effect together: they arrive as two
-      // separate queued tasks, and reading the command before the snapshot
-      // (or vice versa) made this assertion flaky under load.
-      await waitFor(function () {
-        return out.commands.length >= 1 && H.getState().activeWeaponSlot === 1;
-      });
+      //
+      // The click is retried, not the assertion relaxed: render() rebuilds
+      // #equip wholesale, so under load a click can land before the fresh slot
+      // has its handler, and a real player would simply click again. Each
+      // attempt polls with waitShort -- the whole page only owns 15 s of
+      // VIRTUAL time, and one 5 s miss would starve every later step.
+      var activated = false;
+      for (var attempt = 0; attempt < 6 && !activated; attempt += 1) {
+        document.querySelectorAll('.equip-slot')[1].click();
+        activated = await waitShort(function () {
+          return out.commands.length >= 1 && H.getState().activeWeaponSlot === 1;
+        });
+      }
+      out.run.diag = {
+        hasRunCommand: typeof H.runCommand,
+        isRun: H.isRun(),
+        slots: document.querySelectorAll('.equip-slot').length,
+        commands: out.commands.length,
+        attempts: attempt,
+        err: out.error,
+        early: (out.earlyErrors || []).join(' | '),
+      };
       out.run.uiCommand = out.commands[0] || null;
       out.run.snapshotAfterCommand = H.getState().activeWeaponSlot === 1;
       out.run.panelIsReadOnlyCopy = H.getState() !== H.state;

@@ -11,8 +11,20 @@
  *
  * Everything is integer-aligned, `imageSmoothingEnabled` is off, and the sprite
  * gets a 1px dark outline, so the result never anti-aliases: it stays voxel /
- * pixel art at 1280x720. Models are authored in `MODELS` below; the rules for
- * adding more live in `docs/art-style.md`.
+ * pixel art at 1280x720. Models are authored below; the rules for adding more
+ * live in `docs/art-style.md`.
+ *
+ * Three families live here:
+ *
+ * 1. `BodyModel` — a character (knight / skeleton) baked once per FACING
+ *    (front / back) and per WALK POSE, so the scene can turn and step without
+ *    ever redrawing blocks. Limbs are separate models (`Limb`) so a held weapon
+ *    can be swung around a real shoulder joint.
+ * 2. `Limb` — an arm authored upward from its shoulder anchor. Rotating it
+ *    around that anchor is how the sword is held and how a swing reads.
+ * 3. Items — one model per (shape, accent) so the same blade art serves the
+ *    hand, the ground drop, the HUD slot and the bag / stash / equipment grid
+ *    of the meta UI (which reuses this very file, see `scripts/build-meta-ui`).
  */
 
 export type Painter = CanvasRenderingContext2D;
@@ -30,6 +42,28 @@ export interface VoxelModel {
   /** Screen pixels per block. Every model in one silhouette class shares it. */
   unit: number;
   voxels: Voxel[];
+}
+
+/** Which side of a body the camera sees: `back` = facing away (walking up). */
+export type Facing = 'front' | 'back';
+
+/**
+ * A character: the same rig baked into three walk poses for each facing.
+ * Pose 0 is the standing / passing pose; 1 lifts the near foot, 2 the far one.
+ */
+export interface BodyModel {
+  readonly name: string;
+  readonly unit: number;
+  /** Height in blocks (sprite height = blocks * unit). */
+  readonly blocks: number;
+  readonly poses: Record<Facing, VoxelModel[]>;
+}
+
+/** A single limb authored UPWARD from its joint, drawn rotated around it. */
+export interface Limb {
+  readonly name: string;
+  readonly unit: number;
+  readonly model: VoxelModel;
 }
 
 /* ------------------------------------------------------------------ colour */
@@ -120,50 +154,88 @@ const C = {
   boneDark: '#9a9584',
   socket: '#ff5a5a',
   grip: '#6b3f0e',
+  wood: '#8a5a2b',
+  leather: '#7a4a26',
+  iron: '#3a4a58',
   steel: '#cfdcea',
   steelHi: '#f4f9ff',
   gold: '#ffcf5c',
   goldHi: '#fff3c4',
   goldDark: '#a86f16',
+  gem: '#67e8f9',
 } as const;
 
+/* ------------------------------------------------------- characters (rigs) */
+
 /**
- * Armoured duelist, 14 blocks tall (56px). One block deep: the volume is
- * carried by the per-block shading, so the sprite keeps 1:1 proportions at any
- * unit size.
+ * One leg column. `lift` = 1 shortens the leg by a block, i.e. the foot comes
+ * off the ground -- that is the whole walk cycle at this scale, and it keeps
+ * every block on the grid (no sub-pixel sliding, no half-block gaps).
  */
-function knight(): VoxelModel {
-  const b = new Builder('knight', 4);
-  b.sym(1, 0, 0, 2, 1, 1, C.boot);
-  b.sym(1, 1, 0, 2, 2, 1, C.armorDark);
+function leg(b: Builder, x: number, width: number, lift: number, upper: string, boot: string): void {
+  b.box(x, lift, 0, width, 1, 1, boot);
+  b.box(x, lift + 1, 0, width, 2 - lift, 1, upper);
+}
+
+/** Armoured duelist, 14 blocks tall (56px), one block deep. */
+function knightPose(
+  back: boolean,
+  leftLift: number,
+  rightLift: number,
+  offLift: number,
+  name: string,
+): VoxelModel {
+  const b = new Builder(name, 4);
+  leg(b, 1, 2, leftLift, C.armorDark, C.boot);
+  leg(b, -2, 2, rightLift, C.armorDark, C.boot);
   b.box(-2, 3, 0, 5, 1, 1, C.plate);
   b.box(-2, 4, 0, 5, 4, 1, C.armor);
   b.box(-1, 5, 0, 3, 2, 1, C.armorHi);
-  b.sym(3, 4, 0, 1, 3, 1, C.armorDark);
-  b.sym(3, 3, 0, 1, 1, 1, C.skin);
-  b.sym(3, 7, 0, 1, 1, 1, C.armorHi);
+  // Off-hand only: the weapon arm is `KNIGHT_ARM`, swung around the shoulder.
+  b.box(-3, 4 + offLift, 0, 1, 3, 1, C.armorDark);
+  b.box(-3, 3 + offLift, 0, 1, 1, 1, C.skin);
+  b.box(-3, 7, 0, 1, 1, 1, C.armorHi);
   b.box(-1, 8, 0, 3, 1, 1, C.skin);
-  b.box(-1, 9, 0, 3, 1, 1, C.plate);
-  b.sym(1, 9, 0, 1, 1, 1, C.glow);
-  b.box(-2, 10, 0, 5, 2, 1, C.armorHi);
+  if (back) {
+    // Seen from behind: no visor, no eye glow -- just the nape and a ridge.
+    b.box(-1, 9, 0, 3, 1, 1, C.armorDark);
+    b.box(-2, 10, 0, 5, 2, 1, C.armorHi);
+    b.box(-1, 10, 0, 1, 2, 1, C.armorDark);
+  } else {
+    b.box(-1, 9, 0, 3, 1, 1, C.plate);
+    b.sym(1, 9, 0, 1, 1, 1, C.glow);
+    b.box(-2, 10, 0, 5, 2, 1, C.armorHi);
+  }
   b.box(0, 12, 0, 1, 2, 1, C.plume);
   return b.model();
 }
 
 /** Skeleton, 11 blocks tall (44px). */
-function skeleton(): VoxelModel {
-  const b = new Builder('skeleton', 4);
-  b.sym(1, 0, 0, 1, 3, 1, C.bone);
+function skeletonPose(
+  back: boolean,
+  leftLift: number,
+  rightLift: number,
+  offLift: number,
+  name: string,
+): VoxelModel {
+  const b = new Builder(name, 4);
+  leg(b, 1, 1, leftLift, C.bone, C.bone);
+  leg(b, -1, 1, rightLift, C.bone, C.bone);
   b.box(-1, 3, 0, 3, 1, 1, C.bone);
   b.box(0, 4, 0, 1, 4, 1, C.boneDark);
   b.box(-2, 4, 0, 5, 1, 1, C.bone);
   b.box(-2, 6, 0, 5, 1, 1, C.bone);
   b.box(-2, 7, 0, 5, 1, 1, C.bone);
-  b.sym(3, 4, 0, 1, 4, 1, C.boneDark);
-  b.sym(3, 3, 0, 1, 1, 1, C.bone);
+  b.box(-3, 4 + offLift, 0, 1, 4, 1, C.boneDark);
+  b.box(-3, 3 + offLift, 0, 1, 1, 1, C.bone);
   b.box(-2, 8, 0, 5, 3, 1, C.bone);
-  b.box(-1, 8, 0, 3, 1, 1, C.boneDark);
-  b.sym(1, 9, 0, 1, 1, 1, C.socket);
+  if (back) {
+    // Back of the skull: one dark plate instead of a jaw and two sockets.
+    b.box(-1, 8, 0, 3, 2, 1, C.boneDark);
+  } else {
+    b.box(-1, 8, 0, 3, 1, 1, C.boneDark);
+    b.sym(1, 9, 0, 1, 1, 1, C.socket);
+  }
   return b.model();
 }
 
@@ -178,35 +250,236 @@ function corpse(): VoxelModel {
 }
 
 /**
- * Blade authored pointing +y from a pommel anchor, so the same model serves the
- * hand (rotated to the aim), the HUD slot and the ground drop. Two blocks wide
- * and six-blocks-long guard: a chunky greatsword, not a rapier.
+ * A weapon arm: authored UPWARD from the shoulder joint, so `drawVoxel`'s
+ * rotation spins it around a real shoulder. Two blocks wide = a gauntleted arm
+ * that a fist can wrap the grip with; the last block IS the fist.
  */
-function sword(golden: boolean): VoxelModel {
-  const b = new Builder(golden ? 'sword-gold' : 'sword', 4);
-  const blade = golden ? C.gold : C.steel;
-  const edge = golden ? C.goldHi : C.steelHi;
-  const guard = golden ? C.goldDark : C.armorDark;
-  b.box(-1, 0, 0, 2, 1, 1, golden ? C.gold : C.boneDark);
-  b.box(-1, 1, 0, 2, 2, 1, C.grip);
-  b.box(-3, 3, 0, 6, 1, 1, guard);
-  b.box(-1, 4, 0, 2, 6, 1, blade);
-  b.box(-1, 10, 0, 2, 2, 1, edge);
+function armModel(name: string, sleeve: string, fist: string): VoxelModel {
+  const b = new Builder(name, 4);
+  b.box(-1, 0, 0, 2, 3, 1, sleeve);
+  b.box(-1, 3, 0, 2, 1, 1, fist);
   return b.model();
 }
 
-export const KNIGHT = knight();
-export const SKELETON = skeleton();
+const POSE_COUNT = 3;
+/** frame % 4 -> baked pose. Classic 4-frame cycle: step, pass, step, pass. */
+const POSE_OF_FRAME = [0, 1, 0, 2] as const;
+
+function bodyOf(
+  name: string,
+  blocks: number,
+  pose: (back: boolean, leftLift: number, rightLift: number, offLift: number, name: string) => VoxelModel,
+): BodyModel {
+  const poses = (back: boolean): VoxelModel[] => {
+    const out: VoxelModel[] = [];
+    for (let i = 0; i < POSE_COUNT; i += 1) {
+      const leftLift = i === 1 ? 1 : 0;
+      const rightLift = i === 2 ? 1 : 0;
+      // Arms counter-swing against the leading leg.
+      const offLift = i === 1 ? 0 : i === 2 ? 1 : 0;
+      out.push(pose(back, leftLift, rightLift, offLift, `${name}.${back ? 'back' : 'front'}.${i}`));
+    }
+    return out;
+  };
+  return { name, unit: 4, blocks, poses: { front: poses(false), back: poses(true) } };
+}
+
+export const KNIGHT: BodyModel = bodyOf('knight', 14, knightPose);
+export const SKELETON: BodyModel = bodyOf('skeleton', 11, skeletonPose);
 export const CORPSE = corpse();
-export const SWORD_STEEL = sword(false);
-export const SWORD_GOLD = sword(true);
+
+/** Shoulder joint, measured from the feet: 28px up (block 7 boundary). */
+export const SHOULDER_Y = 28;
+/** Side offset of the shoulder joint from the body centre line. */
+export const SHOULDER_X = 14;
+/** Distance from the shoulder joint to the middle of the fist. */
+export const ARM_REACH = 14;
+
+export const KNIGHT_ARM: Limb = {
+  name: 'knight-arm',
+  unit: 4,
+  model: armModel('knight-arm', C.armorDark, C.skin),
+};
+export const SKELETON_ARM: Limb = {
+  name: 'skeleton-arm',
+  unit: 4,
+  model: armModel('skeleton-arm', C.boneDark, C.bone),
+};
+
+/* ------------------------------------------------------------------- items */
+
+export type ItemShape =
+  | 'blade' | 'greatsword' | 'bow' | 'arrow'
+  | 'ring' | 'amulet' | 'gloves' | 'helmet' | 'chest' | 'pants' | 'boots';
+
+/** Accent per authored quality, so the same shape reads at five rarities. */
+export const ACCENTS: Record<string, string> = {
+  steel: C.steel,
+  green: '#4ade80',
+  blue: '#60a5fa',
+  purple: '#c084fc',
+  orange: '#fb923c',
+  gold: C.gold,
+};
+
+function bladeShape(name: string, accent: string, great: boolean): VoxelModel {
+  const b = new Builder(name, 4);
+  const hi = shade(accent, 1.5);
+  const guard = shade(accent, 0.55);
+  if (great) {
+    b.box(-1, 0, 0, 2, 1, 1, shade(accent, 0.45));
+    b.box(-1, 1, 0, 2, 2, 1, C.grip);
+    b.box(-3, 3, 0, 6, 1, 1, guard);
+    b.box(-1, 4, 0, 3, 7, 1, accent);
+    b.box(0, 4, 0, 1, 7, 1, hi);
+    b.box(-1, 11, 0, 3, 2, 1, hi);
+    return b.model();
+  }
+  b.box(-1, 0, 0, 2, 1, 1, shade(accent, 0.45));
+  b.box(-1, 1, 0, 2, 2, 1, C.grip);
+  b.box(-3, 3, 0, 6, 1, 1, guard);
+  b.box(-1, 4, 0, 2, 6, 1, accent);
+  b.box(0, 4, 0, 1, 6, 1, hi);
+  b.box(-1, 10, 0, 2, 2, 1, hi);
+  return b.model();
+}
+
+function bowShape(name: string, accent: string): VoxelModel {
+  const b = new Builder(name, 4);
+  const limb = C.wood;
+  const limbHi = shade(C.wood, 1.35);
+  // A side-on bow: the string is one straight column, the stave bows AWAY from
+  // it and the grip is the furthest point -- that contrast is what reads as a
+  // bow instead of a stick with a bar next to it.
+  b.box(0, 1, 0, 1, 10, 1, C.steel);
+  b.box(1, 0, 0, 1, 1, 1, limb);
+  b.box(2, 1, 0, 1, 2, 1, limb);
+  b.box(3, 3, 0, 1, 2, 1, limbHi);
+  b.box(3, 5, 0, 1, 3, 1, shade(accent, 0.8));
+  b.box(3, 8, 0, 1, 1, 1, limbHi);
+  b.box(2, 9, 0, 1, 2, 1, limb);
+  b.box(1, 11, 0, 1, 1, 1, limb);
+  return b.model();
+}
+
+function arrowShape(name: string): VoxelModel {
+  const b = new Builder(name, 4);
+  b.box(0, 0, 0, 1, 6, 1, C.wood);
+  b.box(-1, 0, 0, 1, 2, 1, C.plume);
+  b.box(1, 0, 0, 1, 2, 1, C.plume);
+  b.box(0, 6, 0, 1, 1, 1, C.steel);
+  return b.model();
+}
+
+function ringShape(name: string, accent: string): VoxelModel {
+  const b = new Builder(name, 4);
+  const band = shade(accent, 0.85);
+  b.box(-2, 0, 0, 5, 1, 1, band);
+  b.box(-2, 1, 0, 1, 3, 1, band);
+  b.box(2, 1, 0, 1, 3, 1, band);
+  b.box(-2, 4, 0, 5, 1, 1, band);
+  b.box(-1, 5, 0, 3, 1, 1, shade(accent, 0.85));
+  b.box(0, 5, 0, 1, 1, 1, C.gem);
+  return b.model();
+}
+
+function amuletShape(name: string, accent: string): VoxelModel {
+  const b = new Builder(name, 4);
+  // A V-shaped chain so it reads as something worn, not as a horizontal bar.
+  b.box(-3, 7, 0, 1, 1, 1, C.iron);
+  b.box(3, 7, 0, 1, 1, 1, C.iron);
+  b.box(-2, 6, 0, 1, 1, 1, C.iron);
+  b.box(2, 6, 0, 1, 1, 1, C.iron);
+  b.box(-1, 5, 0, 1, 1, 1, C.iron);
+  b.box(1, 5, 0, 1, 1, 1, C.iron);
+  b.box(0, 4, 0, 1, 1, 1, C.iron);
+  b.box(-1, 1, 0, 3, 3, 1, shade(accent, 0.8));
+  b.box(0, 0, 0, 1, 1, 1, shade(accent, 0.6));
+  b.box(0, 2, 0, 1, 1, 1, C.gem);
+  return b.model();
+}
+
+function glovesShape(name: string, accent: string): VoxelModel {
+  const b = new Builder(name, 4);
+  b.box(-2, 0, 0, 4, 3, 1, shade(accent, 0.7));
+  b.box(-2, 3, 0, 1, 2, 1, shade(accent, 0.7));
+  b.box(-2, 1, 0, 4, 1, 1, accent);
+  return b.model();
+}
+
+function helmetShape(name: string, accent: string): VoxelModel {
+  const b = new Builder(name, 4);
+  b.box(-2, 3, 0, 5, 3, 1, accent);
+  b.box(-2, 0, 0, 5, 1, 1, C.plate);
+  b.box(-2, 1, 0, 5, 2, 1, shade(accent, 0.7));
+  b.box(-1, 1, 0, 3, 1, 1, C.glow);
+  b.box(0, 6, 0, 1, 2, 1, C.plume);
+  return b.model();
+}
+
+function chestShape(name: string, accent: string): VoxelModel {
+  const b = new Builder(name, 4);
+  b.box(-2, 0, 0, 5, 4, 1, accent);
+  b.box(-3, 3, 0, 7, 1, 1, shade(accent, 0.7));
+  b.box(-1, 1, 0, 1, 3, 1, shade(accent, 1.4));
+  b.box(1, 1, 0, 1, 3, 1, shade(accent, 1.4));
+  return b.model();
+}
+
+function pantsShape(name: string, accent: string): VoxelModel {
+  const b = new Builder(name, 4);
+  b.box(-2, 3, 0, 5, 1, 1, shade(accent, 0.7));
+  b.box(-2, 0, 0, 2, 3, 1, accent);
+  b.box(1, 0, 0, 2, 3, 1, accent);
+  b.box(-2, 0, 0, 5, 1, 1, shade(accent, 0.55));
+  return b.model();
+}
+
+function bootsShape(name: string, accent: string): VoxelModel {
+  const b = new Builder(name, 4);
+  b.sym(1, 0, 0, 2, 1, 1, C.boot);
+  b.sym(1, 1, 0, 2, 2, 1, shade(accent, 0.8));
+  b.sym(1, 2, 0, 2, 1, 1, accent);
+  return b.model();
+}
+
+const SHAPES: Record<ItemShape, (name: string, accent: string) => VoxelModel> = {
+  blade: (name, accent) => bladeShape(name, accent, false),
+  greatsword: (name, accent) => bladeShape(name, accent, true),
+  bow: bowShape,
+  arrow: (name) => arrowShape(name),
+  ring: ringShape,
+  amulet: amuletShape,
+  gloves: glovesShape,
+  helmet: helmetShape,
+  chest: chestShape,
+  pants: pantsShape,
+  boots: bootsShape,
+};
+
+const itemCache = new Map<string, VoxelModel>();
+
+/**
+ * Item art by `"shape:accent"` (e.g. `"greatsword:gold"`). Memoised, because
+ * every caller -- hand, drop, HUD slot, bag cell -- asks for the same handful
+ * of keys and each one must bake exactly once.
+ */
+export function itemModel(key: string): VoxelModel {
+  const hit = itemCache.get(key);
+  if (hit !== undefined) return hit;
+  const [shape, accent] = key.split(':') as [string, string | undefined];
+  const factory = SHAPES[shape as ItemShape] ?? SHAPES.blade;
+  const model = factory(`item-${shape}-${accent ?? 'steel'}`, ACCENTS[accent ?? 'steel'] ?? C.steel);
+  itemCache.set(key, model);
+  return model;
+}
 
 export const MODELS: Record<string, VoxelModel> = {
-  knight: KNIGHT,
-  skeleton: SKELETON,
   corpse: CORPSE,
-  sword: SWORD_STEEL,
-  swordGold: SWORD_GOLD,
+  sword: itemModel('blade:steel'),
+  swordGold: itemModel('blade:gold'),
+  greatsword: itemModel('greatsword:steel'),
+  bow: itemModel('bow:steel'),
 };
 
 /* ------------------------------------------------------------------ baking */
@@ -235,11 +508,18 @@ function contextOf(canvas: OffscreenCanvas): OffscreenCanvasRenderingContext2D {
   return ctx;
 }
 
-/**
- * Draw one model into a sprite. `override` swaps every block colour (used for
- * the hit-flash variants), so a flash never needs its own model.
- */
-function bake(m: VoxelModel, override?: string): Sprite {
+interface Extent {
+  minX: number;
+  maxX: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
+  depth: number;
+  w: number;
+  h: number;
+}
+
+function extentOf(m: VoxelModel): Extent {
   const u = m.unit;
   let minX = 0;
   let maxX = 0;
@@ -253,15 +533,31 @@ function bake(m: VoxelModel, override?: string): Sprite {
     minZ = Math.min(minZ, v.z);
     maxZ = Math.max(maxZ, v.z);
   }
-  const pad = 1;
   // Depth is a tiny screen step, not a full block: a deeper layer only peeks
   // out from behind the one in front of it.
   const zStep = Math.max(1, Math.round(u * 0.4));
   const depth = (maxZ - minZ) * zStep;
-  const w = (maxX - minX + 1) * u + pad * 2;
-  const h = (maxY + 1) * u + depth + pad * 2;
+  return {
+    minX, maxX, maxY, minZ, maxZ, depth,
+    w: (maxX - minX + 1) * u + 2,
+    h: (maxY + 1) * u + depth + 2,
+  };
+}
+
+/**
+ * Draw one model into a sprite. `override` swaps every block colour (used for
+ * the hit-flash variants), so a flash never needs its own model.
+ */
+function bake(m: VoxelModel, override?: string): Sprite {
+  const u = m.unit;
+  const ext = extentOf(m);
+  const { minX, maxX, minZ, maxY, depth } = ext;
+  const pad = 1;
+  const w = ext.w;
+  const h = ext.h;
   const ax = pad - minX * u;
   const ay = pad + (maxY + 1) * u + depth;
+  const zStep = Math.max(1, Math.round(u * 0.4));
 
   const body = canvasOf(w, h);
   const g = contextOf(body);
@@ -310,10 +606,27 @@ function spriteOf(m: VoxelModel, flash: boolean): Sprite {
   return sprite;
 }
 
+/**
+ * Geometry of the baked sprite in screen pixels (outline included).
+ * `ax` / `ay` are where the model's x = 0 / ground plane land inside it, so a
+ * caller that needs to CENTRE the model in a UI cell (the meta UI draws every
+ * bag / stash / equipment cell this way) can place the anchor exactly.
+ */
+export function modelBounds(m: VoxelModel): { w: number; h: number; ax: number; ay: number } {
+  const ext = extentOf(m);
+  const pad = 1;
+  return {
+    w: ext.w + 2,
+    h: ext.h + 2,
+    ax: pad - ext.minX * m.unit + 1,
+    ay: pad + (ext.maxY + 1) * m.unit + ext.depth + 1,
+  };
+}
+
 export interface VoxelDrawOptions {
   /** Uniform pixel scale; 1 draws the authored size. */
   scale?: number;
-  /** Radians, around the anchor (feet / pommel). */
+  /** Radians, around the anchor (feet / pommel / shoulder joint). */
   rotation?: number;
   /** Hit flash: the whole model repaints in the flash colour. */
   flash?: boolean;
@@ -322,6 +635,8 @@ export interface VoxelDrawOptions {
    * ground loot. 1 = full width, 0 = edge-on.
    */
   squash?: number;
+  /** Mirror across the anchor: the character faces the other way. */
+  flip?: boolean;
   alpha?: number;
 }
 
@@ -345,6 +660,7 @@ export function drawVoxel(
   g.translate(Math.round(x), Math.round(y));
   if (opts.rotation !== undefined) g.rotate(opts.rotation);
   if (scale !== 1 || squash !== 1) g.scale(scale * squash, scale);
+  if (opts.flip === true) g.scale(-1, 1);
   g.drawImage(sprite.canvas, -sprite.ax, -sprite.ay);
   g.restore();
 }
@@ -353,6 +669,66 @@ export function modelHeight(m: VoxelModel, scale = 1): number {
   let maxY = 0;
   for (const v of m.voxels) maxY = Math.max(maxY, v.y);
   return (maxY + 1) * m.unit * scale;
+}
+
+/** Height of a whole character in screen pixels (walk poses match). */
+export function bodyHeight(body: BodyModel, scale = 1): number {
+  return body.blocks * body.unit * scale;
+}
+
+export interface BodyDrawOptions {
+  /** Walk frame counter; wraps every 4. 0 = standing. */
+  frame?: number;
+  facing?: Facing;
+  /** Mirrored sprite: the body faces screen-left instead of screen-right. */
+  flip?: boolean;
+  flash?: boolean;
+  scale?: number;
+}
+
+/**
+ * Draw a character. `frame` is a free-running counter, not a baked index: the
+ * painter advances it only while the body is actually walking, so a standing
+ * character never moonwalks in place.
+ */
+export function drawBody(
+  g: Painter,
+  body: BodyModel,
+  x: number,
+  y: number,
+  opts: BodyDrawOptions = {},
+): void {
+  const facing: Facing = opts.facing ?? 'front';
+  const frame = Math.abs(Math.trunc(opts.frame ?? 0));
+  const poses = body.poses[facing];
+  const pose = poses[POSE_OF_FRAME[frame % 4] ?? 0] ?? poses[0]!;
+  drawVoxel(g, pose, x, y, {
+    scale: opts.scale,
+    flash: opts.flash,
+    flip: opts.flip,
+  });
+}
+
+/**
+ * Draw a limb (an arm) around its joint: (x, y) is the shoulder, `angle` is the
+ * direction the limb points in screen space (0 = right, +PI/2 = down), and the
+ * model is authored pointing straight up, so the rotation is `angle + PI/2`.
+ */
+export function drawLimb(
+  g: Painter,
+  limb: Limb,
+  x: number,
+  y: number,
+  angle: number,
+  opts: { flash?: boolean; scale?: number; alpha?: number; flip?: boolean } = {},
+): void {
+  drawVoxel(g, limb.model, x, y, {
+    rotation: angle + Math.PI / 2,
+    flash: opts.flash,
+    scale: opts.scale,
+    alpha: opts.alpha,
+    flip: opts.flip,
+  });
 }
 
 /* ----------------------------------------------------------------- terrain */
