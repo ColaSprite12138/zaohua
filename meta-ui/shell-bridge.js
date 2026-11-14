@@ -114,6 +114,8 @@
   host.runCommand = function (command) {
     if (inRun && channel) channel.postMessage({ type: 'runCommand', command: command });
   };
+  // 只读诊断（验收脚本用）：命令通道是否处于「可发送」状态。
+  host.channelState = function () { return { inRun: inRun, hasChannel: !!channel }; };
 
   /* --------------------- platform lifecycle adapter --------------------- */
   // Game Builder's non-Pack runtime entry (assets/runtime/zaohua-platform-init.js)
@@ -152,13 +154,11 @@
     '</svg>';
   // Hotspot at the blade tip, so the point of the sword IS the click point.
   var SWORD_CURSOR = 'url("data:image/svg+xml;utf8,' + encodeURIComponent(SWORD_SVG) + '") 3 3, default';
-  var swordCursor = false;
 
   function applyCursor(sword) {
-    if (sword === swordCursor) return;
-    swordCursor = sword;
-    // Package pages put the engine canvas at #app; a page without it (the
-    // verify harness skeleton) simply keeps the platform default.
+    // 故意不做「状态没变就跳过」的短路：Worker 只在 hover 变化时发消息，一旦
+    // 某条消息和页面重建（#app 被换掉）错位，缓存会让光标永远停在错误状态。
+    // 这条消息频率极低（只在变化时发），每次直接写 style 更可靠。
     var canvas = document.getElementById('app');
     if (!canvas) return;
     canvas.style.cursor = sword ? SWORD_CURSOR : '';

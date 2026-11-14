@@ -708,3 +708,26 @@
   否则下次没人知道它为什么被改。
 - Evidence: `verify-all.sh` ALL GREEN（187 单测 / playthrough 44 steps / single-page 40/40）；
   截图 `22-story-cleared` / `23-portal-channelling` / `24-extracted`。
+
+### 2026-11-14（续）— 传送门进 LDtk + 任务提示只给主线 + verify-shell 偶发单条失败的真因
+
+- Scope: `scripts/gen_arena_map.py`、`scripts/import_map.py`、`assets/combat/state.ts`、`meta-ui/shell-bridge.js`、`scripts/verify-shell.cjs`
+- ① **门位改由地图决定**（用户明确要求：门是地图的一部分，要按地图情况摆）。做法：
+  `gen_arena_map.py` 新增 `Portal` 实体定义（uid 105，固定）+ `layout()` 里的 5 个落点 →
+  `arena.ldtk` 的 `Entities` 层；`import_map.py` 导出 `portals` 并校验「可走 + 从出生点可达 + 至少一扇」。
+  `createPortals()` 只做吸附与去重，**不再给正式地图布点**；`arena-test.ts` 夹具没有 `portals`
+  字段才回退到椭圆环带（自动验收仍能走到门）。
+  重跑生成器前先核对：`git show HEAD:...arena.ldtk` 与新版比 `intGridCsv`、既存实例——
+  本次差异只有 `Portal` def + 5 个实例 + `nextUid`，terrain 与 43 个 props / 7 只怪一字未动。
+- ② **任务指引只属于主线**（用户明确要求）：副本与 PVPVE 不弹「目标达成 / 去传送门撤离」这类指引。
+  现在 `deployRun` 的「找传送门撤离」、`startChannel` 的完整规则说明、门口提示的完整句，都只在
+  `runKind === 'story'` 出现；pvpve/dungeon 只留「按 E 引导」。**小地图上的门点不算提示**，
+  找不到门是设计失败，所以门点对所有模式都画（紫点，进入范围变金）。
+- ③ **verify-shell 偶发「单条断言红」的真因**（困扰了两轮）：`--dump-dom` 在页面**一空闲**就快照，
+  而 BroadcastChannel 的 `runCommand` / `abort` 消息可能**已发出但还没投递**；快照先落，
+  报告里就少一条消息，表现成随机某条断言红（有时是 abort，有时是 active-slot）。
+  修法：`publish()` 之前先让出 **20 × setTimeout(10)** 个事件循环轮次，把在途消息收干净。
+  连跑 6 次 40/40 稳定。**不是放宽断言**：断言与以前完全一样，只是不再和快照抢跑。
+- 附带：`applyCursor` 去掉「状态没变就跳过」的短路（Worker 只在变化时发消息，一条消息与
+  `#app` 重建错位就会让光标永久停在错误状态）；`--virtual-time-budget` 15s → 25s（现在跑四次出征）。
+- Evidence: `verify-all.sh` ALL GREEN（189 单测 / playthrough 44 steps / single-page 40/40）。

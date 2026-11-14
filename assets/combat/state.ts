@@ -136,31 +136,45 @@ export interface Portal {
 }
 
 /**
- * 传送门沿地图中心的椭圆环带均匀布点，再吸附到最近可走格。用固定几何而不是
- * LDtk 实体，是为了不让地图生成链（gen_arena_map / import_map）跟着改一版。
- * 吸附后距离过近的点沿角度错开重采，保证 5 扇门不会挤成一堆。
+ * 传送门的坐标**来自 LDtk**（`ArenaMap.portals`，编辑器里可拖动）：门是地图的一部分，
+ * 摆在哪由地形决定，不由运行时猜。
+ *
+ * 这里只做三件事：吸附到可走格、去掉完全重合的门、给每扇门补状态。
+ * 只有**没有门字段的地图**（自动验收夹具 `arena-test.ts`）才回退到椭圆环带布点，
+ * 保证任何一张图都有出口 —— 回退分支与地图数据无关，纯几何、确定性。
  */
 export function createPortals(w: World, count = PORTAL_COUNT): Portal[] {
-  const { pxWid, pxHei } = w.map;
-  const cx = pxWid / 2;
-  const cy = pxHei / 2;
-  const rx = Math.max(w.grid * 2, pxWid * 0.34);
-  const ry = Math.max(w.grid * 2, pxHei * 0.34);
   const spots: { x: number; y: number }[] = [];
-  for (let i = 0; i < count; i += 1) {
-    let picked: { x: number; y: number } | null = null;
-    for (let attempt = 0; attempt < 8 && picked === null; attempt += 1) {
-      const a = -Math.PI / 2 + (Math.PI * 2 * (i + attempt * 0.19)) / count;
-      const spot = nearestWalkable(w, cx + Math.cos(a) * rx, cy + Math.sin(a) * ry);
-      const clear = spots.every((q) => Math.hypot(q.x - spot.x, q.y - spot.y) >= w.grid * 2);
-      if (clear) picked = spot;
+  const fromMap = w.map.portals;
+  if (fromMap !== undefined) {
+    for (const spot of fromMap) {
+      const at = nearestWalkable(w, spot.x, spot.y);
+      // 只去重「吸附后落在同一点」的门；摆得近是地图作者的意图，不替人挪。
+      if (spots.some((q) => Math.hypot(q.x - at.x, q.y - at.y) < 1)) continue;
+      spots.push(at);
     }
-    // 八次都挤在一起也要留一扇门：宁可重叠，也不能让本局没有出口。
-    const fallbackAngle = -Math.PI / 2 + (Math.PI * 2 * i) / count;
-    const spot = picked ?? nearestWalkable(
-      w, cx + Math.cos(fallbackAngle) * rx, cy + Math.sin(fallbackAngle) * ry,
-    );
-    spots.push(spot);
+  }
+  if (spots.length === 0) {
+    const { pxWid, pxHei } = w.map;
+    const cx = pxWid / 2;
+    const cy = pxHei / 2;
+    const rx = Math.max(w.grid * 2, pxWid * 0.34);
+    const ry = Math.max(w.grid * 2, pxHei * 0.34);
+    for (let i = 0; i < count; i += 1) {
+      let picked: { x: number; y: number } | null = null;
+      for (let attempt = 0; attempt < 8 && picked === null; attempt += 1) {
+        const a = -Math.PI / 2 + (Math.PI * 2 * (i + attempt * 0.19)) / count;
+        const spot = nearestWalkable(w, cx + Math.cos(a) * rx, cy + Math.sin(a) * ry);
+        const clear = spots.every((q) => Math.hypot(q.x - spot.x, q.y - spot.y) >= w.grid * 2);
+        if (clear) picked = spot;
+      }
+      // 八次都挤在一起也要留一扇门：宁可重叠，也不能让本局没有出口。
+      const fallbackAngle = -Math.PI / 2 + (Math.PI * 2 * i) / count;
+      const spot = picked ?? nearestWalkable(
+        w, cx + Math.cos(fallbackAngle) * rx, cy + Math.sin(fallbackAngle) * ry,
+      );
+      spots.push(spot);
+    }
   }
   return spots.map((spot, index) => ({
     id: index,

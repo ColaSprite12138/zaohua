@@ -156,7 +156,19 @@ def layout():
         (84, 46, '100001', 3),
         (64, 70, '200001', 3),
     ]
-    return t, props, spawn, monsters
+
+    # --- extraction portals -------------------------------------------------
+    # 门是**地图的一部分**：位置由地形决定，在 LDtk 里可拖动（需求 2026-11-14）。
+    # 五个点分在环形动线上（两座厢房内 / 北高台前 / 南院 / 中庭东侧），
+    # 都避开怪物与出生点，且周围至少 2 格可走（运行时门圈半径 64px = 2 格）。
+    portals = [
+        (22, 30),    # 西厢房内
+        (105, 34),   # 东厢房内（避开 (105,30) 的怪）
+        (64, 17),    # 北高台台阶前
+        (38, 86),    # 南院西侧
+        (86, 62),    # 中庭东侧
+    ]
+    return t, props, spawn, monsters, portals
 
 
 def build():
@@ -171,7 +183,7 @@ def build():
     level['pxWid'] = COLS * GRID
     level['pxHei'] = ROWS * GRID
 
-    terrain, props, spawn, monsters = layout()
+    terrain, props, spawn, monsters, portals = layout()
 
     # --- defs: tileset + one entity def per prop kind ------------------------
     defs = project['defs']
@@ -182,7 +194,9 @@ def build():
     # 重跑时先清掉上一次生成的内容，保证幂等。
     defs['tilesets'] = [t for t in defs.get('tilesets', []) if t.get('identifier') != 'xianxia']
     defs['layers'] = [l for l in defs['layers'] if l.get('identifier') != 'Props']
-    defs['entities'] = [e for e in defs['entities'] if not str(e.get('identifier', '')).startswith('Prop_')]
+    defs['entities'] = [e for e in defs['entities']
+                        if not str(e.get('identifier', '')).startswith('Prop_')
+                        and e.get('identifier') != 'Portal']
 
     tileset_uid = 100
     next_uid = max(next_uid, tileset_uid + 1)
@@ -271,6 +285,25 @@ def build():
 
     project['nextUid'] = next_uid
 
+    # --- Portal entity def (extraction) -------------------------------------
+    # 复用 Monster 的 def 形状（Rectangle 渲染、pivot 底部中心），只换颜色与字段。
+    # uid 固定 105，保证脚本幂等；重跑时上面已把旧 Portal def 清掉。
+    portal_uid = 105
+    next_uid = max(next_uid, portal_uid + 1)
+    monster_def = next(e for e in defs['entities'] if e['identifier'] == 'Monster')
+    portal_def = dict(monster_def)
+    portal_def.update({
+        'identifier': 'Portal',
+        'uid': portal_uid,
+        'fieldDefs': [],
+        'color': '#67E8F9',
+        'showName': True,
+        'doc': 'Extraction portal. Placed in this layer: the run reads these '
+               'instances directly, so move/add/remove them here.',
+    })
+    defs['entities'].append(portal_def)
+    project['nextUid'] = max(project.get('nextUid') or 0, next_uid)
+
     # --- layer instances ----------------------------------------------------
     # 按 __identifier 取，不按数组下标：本脚本重跑后图层顺序会变，下标会取错层。
     def find_layer(name):
@@ -336,6 +369,10 @@ def build():
         spawns.append(entity('Monster', monster_uid, col, row, GRID, GRID,
                              [col * GRID + GRID // 2, (row + 1) * GRID],
                              monster_field(mid, wave)))
+    # 传送门实例与出生点 / 怪同层：一次遍历就能读到本局的全部「点位」。
+    for col, row in portals:
+        spawns.append(entity('Portal', portal_uid, col, row, GRID, GRID,
+                             [col * GRID + GRID // 2, (row + 1) * GRID]))
     entities_inst.update({'entityInstances': spawns})
 
     prop_instances = []
@@ -380,7 +417,7 @@ def build():
 
     # 与 defs.layers 同序（由下往上）：Terrain -> Entities -> Props。
     level['layerInstances'] = [terrain_inst, entities_inst, props_inst]
-    return project, len(props), len(monsters)
+    return project, len(props), len(monsters), len(portals)
 
 
 def validate(project):
@@ -476,7 +513,7 @@ def main():
         print('[ OK ] arena.ldtk 结构自检通过（LDtk 可打开）')
         return
 
-    project, prop_count, monster_count = build()
+    project, prop_count, monster_count, portal_count = build()
     problems = validate(project)
     if problems:
         for problem in problems:
@@ -486,7 +523,7 @@ def main():
     with open(SOURCE, 'w', encoding='utf-8', newline='\n') as fh:
         fh.write(text)
     print(f'[ OK ] arena.ldtk {COLS}x{ROWS} 格（{COLS * GRID}x{ROWS * GRID}px），'
-          f'{prop_count} 个 props，{monster_count} 只怪')
+          f'{prop_count} 个 props，{monster_count} 只怪，{portal_count} 扇传送门')
 
 
 if __name__ == '__main__':

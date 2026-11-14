@@ -44,6 +44,18 @@ export interface ArenaMap {
     readonly y: number;
     readonly wave: number;
   }[];
+  /**
+   * 撤离传送门：**地图的一部分**，位置由 LDtk 的 Entities 层决定（编辑器里可拖动）。
+   * 只有 LDtk 地图带这个字段；`arena-test.ts` 夹具没有 → `createPortals()` 回退到
+   * 环带布点，所以自动验收仍能在夹具上走到门。
+   */
+  readonly portals?: readonly {
+    readonly id: string;
+    readonly col: number;
+    readonly row: number;
+    readonly x: number;
+    readonly y: number;
+  }[];
 }
 
 export interface World {

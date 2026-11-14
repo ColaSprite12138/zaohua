@@ -112,7 +112,7 @@
 | 阶段 | `phaseAt(runSeconds)`：已过 0–240 探索 / 240–660 交战 / ≥660 撤离。**只做节奏提示，不门禁任何操作**（门从开局就能用：早撤更安全、晚走收益更高） |
 | 关卡类型 | `RunKind = 'story' \| 'dungeon' \| 'pvpve'`，唯一入口是 `deployRun({ kind })`，缺省 `story`（自动验收夹具） |
 | 结束判定 | `story`：清怪 → `cleared`（目标达成，**仍可撤离**）；`dungeon` / `pvpve`：`checkCleared` 直接 return，**必须撤离**才带走战利品 |
-| 门生成 | `createPortals(world)`：沿地图中心椭圆环带（半径 34%）均布 `PORTAL_COUNT=5` 个点 → `nearestWalkable` 吸附；与已有点距离 < 2 格则沿角度错开重采（8 次），仍冲突就接受重叠（**宁可重叠也不能没有出口**） |
+| 门生成 | **地图是权威**：`createPortals(world)` 读 `ArenaMap.portals`（LDtk 的 `Portal` 实体，编辑器里可拖动）→ `nearestWalkable` 吸附 + 去掉完全重合者。**只有没有门字段的地图**（`arena-test.ts` 夹具）才回退到椭圆环带布点（5 个，半径 34%，吸附 + 2 格去重），保证自动验收也能走到门 |
 | 门状态 | `armed`（可用）/ `spent`（次数耗尽，画成灰门、不再响应）；`uses` 初始 `PORTAL_USES=3`，每次开启 -1，`opened` 记已送走人数 |
 | 引导 | 站在 `PORTAL_RADIUS=64` 圈内按 **E**（justPressed）开始；`PORTAL_GUIDE_SECONDS=8`，分成 `PORTAL_STAGE_COUNT=3` 段（每段一次光效 + toast） |
 | 打断 | 受击（`player.hurt > 0`）/ 闪避 / 离开半径 / **再按一次 E 主动取消** → 只把 `progress` 清 0，**不给硬直、不扣血、不移动** |
@@ -187,7 +187,9 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
     禁止把 `cleared` 当撤离、也禁止用「怪全死」直接发成功结算（那是 story 的 `cleared`）。
 22. **打断只清进度**：受击 / 闪避 / 离开 / 二次 E 只把 `portal.progress` 归零，
     **不得**加硬直、扣血、位移或冷却 —— 这是 v4 明确去掉的 3 秒惩罚。
-23. **门位必须确定性**：`createPortals()` 不读随机数、不依赖 LDtk；同一张图 `reset()` 后门位不变。
+23. **门位来自地图**：正式地图的门位只能由 LDtk 的 `Portal` 实体决定（用户 2026-11-14 明确要求）；
+    `createPortals()` 只做吸附与去重，不得自己给正式地图布点。回退分支只服务没有门字段的夹具，
+    且它必须是纯几何（不读随机数），同一张图 `reset()` 后门位不变。
 24. **非 story 不得自动完成**：`checkCleared()` 的 `runKind !== 'story' → return` 是搜打撤的前提；
     删掉这个 gate，杀光最后一怪就结算，「撤不撤」的取舍整个消失。
 25. **引导中玩家被钉住**：`s.channel !== null` 时 `step()` 必须跳过 `classifyPointer` / `walk` /

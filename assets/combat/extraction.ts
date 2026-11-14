@@ -49,8 +49,9 @@ export function updateRunClock(s: GameState, dt: number): void {
   const next = phaseAt(s.runSeconds);
   if (next === s.phase) return;
   s.phase = next;
-  if (next === 'fight') say(s, '交战阶段 · 高价值目标开始刷新');
-  else if (next === 'extract') say(s, '撤离阶段 · 5 分钟后强制结束，尽快找传送门');
+  // 阶段只是节奏事实，不带任务指引 —— 副本 / 搜打撤不弹「该去干什么」。
+  if (next === 'fight') say(s, '进入交战阶段');
+  else if (next === 'extract') say(s, '进入撤离阶段 · 剩余 4 分钟');
 }
 
 /** 最近的一扇可用传送门，且玩家站在它的引导圈内。 */
@@ -82,7 +83,11 @@ function startChannel(s: GameState, portal: Portal): void {
   s.channel = portal.id;
   portal.progress = 0;
   pinPlayer(s);
-  say(s, `引导传送门 · ${PORTAL_GUIDE_SECONDS} 秒 · 受击 / 离开 / 闪避会清空进度`);
+  // 主线给完整说明（第一次玩需要知道规则）；副本 / 搜打撤只确认「开始引导」，
+  // 不重复教学，也不弹「去撤离」这种任务指引。
+  say(s, s.runKind === 'story'
+    ? `引导传送门 · ${PORTAL_GUIDE_SECONDS} 秒 · 受击 / 离开 / 闪避会清空进度`
+    : `引导传送门 · ${PORTAL_GUIDE_SECONDS} 秒`);
 }
 
 function breakChannel(s: GameState, portal: Portal, reason: string): void {

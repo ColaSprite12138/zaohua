@@ -114,6 +114,22 @@ describe('portals (the only way out)', () => {
     }
   });
 
+  it('reads portal positions from the map when the map defines them', () => {
+    const base = createState().map;
+    // 门是地图的一部分（LDtk 的 Portal 实体）：两扇门就只出两扇，不自作主张补到 5。
+    const map = {
+      ...base,
+      portals: [
+        { id: 'portal_10_10', col: 10, row: 10, x: 10 * 32 + 16, y: 10 * 32 + 16 },
+        { id: 'portal_20_12', col: 20, row: 12, x: 20 * 32 + 16, y: 12 * 32 + 16 },
+      ],
+    };
+    const s = createState({ map });
+    expect(s.portals.length).toBe(2);
+    expect(s.portals[0]!.x).toBe(10 * 32 + 16);
+    expect(s.portals[1]!.y).toBe(12 * 32 + 16);
+  });
+
   it('channelling for the full guide time extracts and banks the run', () => {
     const s = quietRun();
     standAtPortal(s);

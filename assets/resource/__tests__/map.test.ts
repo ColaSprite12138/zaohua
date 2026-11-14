@@ -88,6 +88,20 @@ describe('LDtk arena map contract', () => {
     for (const m of arena.monsters) expect(ids.has(m.monsterId)).toBe(true);
   });
 
+  it('portals are authored in the LDtk entity layer, walkable and reachable', async () => {
+    const arena = await loadMap();
+    const seen = walkableFromSpawn(arena);
+    // 门是地图的一部分（编辑器里可拖动），导出必须带上它们的位置。
+    expect(arena.portals.length).toBeGreaterThan(0);
+    expect(new Set(arena.portals.map((p) => p.id)).size).toBe(arena.portals.length);
+    for (const p of arena.portals) {
+      expect(WALKABLE.has(arena.terrain[p.row]![p.col]!)).toBe(true);
+      expect(seen.has(`${p.col},${p.row}`)).toBe(true);
+      expect(p.x).toBe(p.col * arena.gridSize + arena.gridSize / 2);
+      expect(p.y).toBe(p.row * arena.gridSize + arena.gridSize / 2);
+    }
+  });
+
   it('entity pixel coordinates are the centre of their grid cell', async () => {
     const arena = await loadMap();
     const half = arena.gridSize / 2;

@@ -66,7 +66,7 @@ python scripts/export_tables.py --check
 
 | 路径 | 谁改 | 说明 |
 |:--|:--|:--|
-| `maps/arena.ldtk` | **人工**（LDtk 1.5.3） | 唯一地图权威源；`Terrain`(IntGrid) + `Entities`(出生点/怪) + `Props`(装饰，走 `tilesets/xianxia.png` 图集)；`defs.layers` 与 `layerInstances` 同序（由下往上 Terrain→Entities→Props） |
+| `maps/arena.ldtk` | **人工**（LDtk 1.5.3） | 唯一地图权威源；`Terrain`(IntGrid) + `Entities`(出生点 / 怪 / **传送门 Portal**) + `Props`(装饰，走 `tilesets/xianxia.png` 图集)；`defs.layers` 与 `layerInstances` 同序（由下往上 Terrain→Entities→Props） |
 | `maps/arena.generated.ts` | `scripts/import_map.py` | 生成物，**禁止手改**；文件头记录源 SHA-256 |
 | `scripts/make_sample_map.py` | 仅重建示例基线 | 不是构建链一环；地图被人工编辑后不要重跑 |
 | `maps/arena-test.ts` | **人工**（仅测试夹具） | 40×22 格 = 1280×704 全可走、2 只怪；只供自动验收 / 单测，**不是 LDtk 源、不入 `import_map.py` 链** |
@@ -74,10 +74,12 @@ python scripts/export_tables.py --check
 - IntGrid 值：`0` 地面（可走）/ `1` 墙（挡走 + 挡视线）/ `2` 道路（可走）/ `3` 深渊（挡走 + 挡视线）。
   当前「阻挡格一律挡走也挡视线」，尚未区分矮墙等只挡走不挡视线的类型。
 - 实体：`PlayerSpawn` 恰好一个；`Monster` 的 `monsterId` **必须引用** `tables/monster.xlsx` 的 id，
-  数值仍由数值表唯一权威，地图文件不重复写数值。
+  数值仍由数值表唯一权威，地图文件不重复写数值；`Portal` 至少一扇（否则本局没有出口），
+  落点必须可走且从出生点可达。**门的位置由地图决定**（2026-11-14 用户明确要求）：在 LDtk 里拖动
+  `Portal` 实例即可，运行时不再自己布点。
 - 转换：`python scripts/import_map.py` 生成、`--check` 防漂移。校验：LDtk 1.5.x 版本、
   `externalLevels=false`、单关卡、尺寸 / 值域、`PlayerSpawn` 唯一、实体落点可走、
-  从出生点连通可达、`monsterId` 引用完整性。
+  从出生点连通可达、`monsterId` 引用完整性、`Portal` 存在且可达。
 - **LDtk 编辑器能否打开**是另一组硬约束（2026-11-14 补）：`defs.layers` 与 `layerInstances`
   必须同序同 uid、图层实例必须有 `iid`、实体定义的 `tileRect` 必须自带 `tilesetUid`
   （缺了 LDtk 直接 throw）、字段实例必须带真实 `defUid` 且值写在 `realEditorValues`
@@ -87,7 +89,8 @@ python scripts/export_tables.py --check
   里没有同名 `.xlsx` 的孤儿文件，放进去会被清掉并让 `--check` 失败。
 - 消费方（2026-11-13 起已接入运行时）：`assets/resource/__tests__/map.test.ts`（结构、SHA-256、
   落点与引用完整性）；`assets/game/game.pack.ts` 在 `deploy` 时 `setArena(state, arena)` 切到本图；
-  `assets/combat/world.ts` 消费 `terrain` / `spawn` / `monsters` 做碰撞、A*、相机与出怪。
+  `assets/combat/world.ts` 消费 `terrain` / `spawn` / `monsters` 做碰撞、A*、相机与出怪；
+  `assets/combat/state.ts::createPortals()` 消费 `portals` 建撤离门（夹具无该字段 → 环带回退）。
   世界坐标 / 相机 / 小地图 / 碰撞 / 寻路均已接线，详见 `HANDOFF.md`「地图运行时」。
   **怪数没有可注入入口**：运行时已删掉全部 `monsterCount` 字段，要改怪数只能改 LDtk 实体层。
 

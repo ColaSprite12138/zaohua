@@ -216,6 +216,13 @@ function drawMinimap(g: Painter, s: GameState): void {
   };
   for (const sk of s.skeletons) if (sk.alive) dot(sk.x, sk.y, '#ff6b6b', 4);
   for (const drop of s.drops) dot(drop.x, drop.y, '#ffd166', 4);
+  // 传送门：小地图是玩家找门的唯一线索（不再弹任务提示），所以必须画。
+  for (const portal of s.portals) {
+    const color = portal.state === 'spent'
+      ? '#5a7080'
+      : portal.inRange ? '#ffd166' : '#f0abfc';
+    dot(portal.x, portal.y, color, portal.state === 'spent' ? 4 : 6);
+  }
   dot(s.player.x, s.player.y, '#67e8f9', 5);
   g.restore();
 }
@@ -903,7 +910,11 @@ function hud(g: Painter, s: GameState): void {
       g.fillRect(Math.round(x + 16 + i * seg), y + 30, Math.max(2, Math.round(sw)), 8);
     }
   } else if (reach !== null && !s.gameOver && !s.extracted && !s.timedOut) {
-    text(g, `按 E 引导传送门 · ${PORTAL_GUIDE_SECONDS} 秒 · 受击或离开会清空进度`, VIEW_W / 2, VIEW_H - 124, 13, '#ffd166', 'center', '700');
+    // 主线才说完整规则；副本 / 搜打撤只留按键，不弹「去撤离」这类任务指引。
+    const hint = s.runKind === 'story'
+      ? `按 E 引导传送门 · ${PORTAL_GUIDE_SECONDS} 秒 · 受击或离开会清空进度`
+      : '按 E 引导';
+    text(g, hint, VIEW_W / 2, VIEW_H - 124, 13, '#ffd166', 'center', '700');
   }
 
   // Centre toast.

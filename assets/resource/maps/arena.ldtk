@@ -11,7 +11,7 @@
  "iid": "f8ffd018-9163-51a2-a919-700974f30cd3",
  "jsonVersion": "1.5.3",
  "appBuildId": 473702,
- "nextUid": 105,
+ "nextUid": 106,
  "identifierStyle": "Free",
  "worldLayout": "Free",
  "worldGridWidth": 256,
@@ -442,6 +442,41 @@
      "w": 384,
      "h": 352
     },
+    "uiTileRect": null,
+    "nineSliceBorders": [],
+    "maxCount": -1,
+    "limitScope": "PerLevel",
+    "limitBehavior": "MoveLastOne",
+    "pivotX": 0.5,
+    "pivotY": 1,
+    "fieldDefs": []
+   },
+   {
+    "identifier": "Portal",
+    "uid": 105,
+    "tags": [],
+    "exportToToc": true,
+    "allowOutOfBounds": false,
+    "doc": "Extraction portal. Placed in this layer: the run reads these instances directly, so move/add/remove them here.",
+    "width": 32,
+    "height": 32,
+    "resizableX": false,
+    "resizableY": false,
+    "minWidth": null,
+    "maxWidth": null,
+    "minHeight": null,
+    "maxHeight": null,
+    "keepAspectRatio": false,
+    "tileOpacity": 1,
+    "fillOpacity": 0.3,
+    "lineOpacity": 0.44,
+    "hollow": false,
+    "color": "#67E8F9",
+    "renderMode": "Rectangle",
+    "showName": true,
+    "tilesetId": null,
+    "tileRenderMode": "FitInside",
+    "tileRect": null,
     "uiTileRect": null,
     "nineSliceBorders": [],
     "maxCount": -1,
@@ -13224,6 +13259,121 @@
        "px": [
         2064,
         2272
+       ]
+      },
+      {
+       "__grid": [
+        22,
+        30
+       ],
+       "__identifier": "Portal",
+       "__pivot": [
+        0.5,
+        1
+       ],
+       "__smartColor": "#C084FC",
+       "__tags": [],
+       "__tile": null,
+       "defUid": 105,
+       "fieldInstances": [],
+       "height": 32,
+       "width": 32,
+       "iid": "9af07f14-78d7-56c3-8e6f-22fc0412dbff",
+       "px": [
+        720,
+        992
+       ]
+      },
+      {
+       "__grid": [
+        105,
+        34
+       ],
+       "__identifier": "Portal",
+       "__pivot": [
+        0.5,
+        1
+       ],
+       "__smartColor": "#C084FC",
+       "__tags": [],
+       "__tile": null,
+       "defUid": 105,
+       "fieldInstances": [],
+       "height": 32,
+       "width": 32,
+       "iid": "f56645d1-96ab-5a01-a0e1-f4a96f8bc3a9",
+       "px": [
+        3376,
+        1120
+       ]
+      },
+      {
+       "__grid": [
+        64,
+        17
+       ],
+       "__identifier": "Portal",
+       "__pivot": [
+        0.5,
+        1
+       ],
+       "__smartColor": "#C084FC",
+       "__tags": [],
+       "__tile": null,
+       "defUid": 105,
+       "fieldInstances": [],
+       "height": 32,
+       "width": 32,
+       "iid": "507b7acf-d90d-52b5-a0cc-2be3c215aa38",
+       "px": [
+        2064,
+        576
+       ]
+      },
+      {
+       "__grid": [
+        38,
+        86
+       ],
+       "__identifier": "Portal",
+       "__pivot": [
+        0.5,
+        1
+       ],
+       "__smartColor": "#C084FC",
+       "__tags": [],
+       "__tile": null,
+       "defUid": 105,
+       "fieldInstances": [],
+       "height": 32,
+       "width": 32,
+       "iid": "04dc2875-b821-5985-bb2f-a3fbe0de31a8",
+       "px": [
+        1232,
+        2784
+       ]
+      },
+      {
+       "__grid": [
+        86,
+        62
+       ],
+       "__identifier": "Portal",
+       "__pivot": [
+        0.5,
+        1
+       ],
+       "__smartColor": "#C084FC",
+       "__tags": [],
+       "__tile": null,
+       "defUid": 105,
+       "fieldInstances": [],
+       "height": 32,
+       "width": 32,
+       "iid": "b4064bce-cfe4-56ae-896d-f961aa29e131",
+       "px": [
+        2768,
+        2016
        ]
       }
      ],

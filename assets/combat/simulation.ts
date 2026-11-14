@@ -136,9 +136,11 @@ export function deployRun(s: GameState, config: Deployment = {}): void {
   const carried = s.runInventory.bag.length
     + s.runInventory.equipped.filter((it) => it !== null).length;
   const mode = s.runKind === 'pvpve' ? '搜打撤' : s.runKind === 'dungeon' ? '副本' : '主线';
+  // 只有主线给「该干什么」的指引；副本与搜打撤默认玩家知道要撤离，不弹任务提示。
+  const hint = s.runKind === 'story' ? ' · 找传送门撤离' : '';
   say(s, armed > 0
-    ? `${mode} · 带入 ${carried} 件物品（${armed} 件武器）· 找传送门撤离`
-    : `${mode} · 徒手，带入 ${carried} 件物品 · 找传送门撤离`);
+    ? `${mode} · 带入 ${carried} 件物品（${armed} 件武器）${hint}`
+    : `${mode} · 徒手，带入 ${carried} 件物品${hint}`);
 }
 
 /**

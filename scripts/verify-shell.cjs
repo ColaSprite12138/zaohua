@@ -174,7 +174,9 @@ const SELFTEST = `
       var n = 0;
       var tick = function () {
         if (pred()) return resolve(true);
-        if (++n > 40) return resolve(false);
+        // Generous bound: under virtual time the 10 ms ticks are fast-forwarded,
+        // so a BroadcastChannel task can still be in flight after 40 turns.
+        if (++n > 400) return resolve(false);
         setTimeout(tick, 10);
       };
       tick();
@@ -283,9 +285,19 @@ const SELFTEST = `
       // has its handler, and a real player would simply click again. Each
       // attempt polls with waitShort -- the whole page only owns 15 s of
       // VIRTUAL time, and one 5 s miss would starve every later step.
+      //
+      // Wait for the shell to still consider itself in a run first: if a stray
+      // settle() already flipped inRun, runCommand drops the message silently
+      // and the click would fail with no visible cause.
+      await waitShort(function () {
+        return typeof H.channelState !== 'function' || H.channelState().inRun;
+      });
       var activated = false;
-      for (var attempt = 0; attempt < 6 && !activated; attempt += 1) {
-        document.querySelectorAll('.equip-slot')[1].click();
+      for (var attempt = 0; attempt < 8 && !activated; attempt += 1) {
+        // Re-render so the node we click is the one currently on screen.
+        if (typeof H.render === 'function') H.render();
+        var slotNode = document.querySelectorAll('.equip-slot')[1];
+        if (slotNode) slotNode.click();
         activated = await waitShort(function () {
           return out.commands.length >= 1 && H.getState().activeWeaponSlot === 1;
         });
@@ -299,6 +311,17 @@ const SELFTEST = `
         err: out.error,
         early: (out.earlyErrors || []).join(' | '),
       };
+      // Diagnostics only (never asserted): is the runCommand channel itself
+      // alive? Distinguishes "click handler never ran" from "message lost".
+      if (!activated && typeof H.runCommand === 'function') {
+        H.runCommand({ action: 'active', slot: 1 });
+        await waitShort(function () { return out.commands.length >= 1; });
+        out.run.diag.probe = out.commands.length;
+        out.run.diag.slotClass = (document.querySelectorAll('.equip-slot')[1] || {}).className || '';
+        out.run.diag.equipChildren = (document.getElementById('equip') || {}).children
+          ? document.getElementById('equip').children.length : -1;
+        out.run.diag.channel = typeof H.channelState === 'function' ? H.channelState() : null;
+      }
       out.run.uiCommand = out.commands[0] || null;
       out.run.snapshotAfterCommand = H.getState().activeWeaponSlot === 1;
       out.run.panelIsReadOnlyCopy = H.getState() !== H.state;
@@ -324,10 +347,21 @@ const SELFTEST = `
 
       // ---- pointer feedback: the Worker names the hovered enemy, the shell
       //      owns the CSS cursor (a Worker has no document / canvas) ----
-      var canvas = document.getElementById('app');
-      chan.postMessage({ type: 'hoverEnemy', index: 0 });
-      await waitShort(function () { return /svg/.test(canvas.style.cursor); });
-      var cursorCss = canvas.style.cursor;
+      var appEl = function () { return document.getElementById('app'); };
+      // Clear first so the flip is unambiguous, then hover with a small bounded
+      // retry: a status message can land before the page has settled, and the
+      // shell must still end up with the sword cursor (assertion unchanged).
+      chan.postMessage({ type: 'hoverEnemy', index: null });
+      await waitShort(function () { var el = appEl(); return !el || el.style.cursor === ''; });
+      for (var hoverTry = 0; hoverTry < 4; hoverTry += 1) {
+        chan.postMessage({ type: 'hoverEnemy', index: 0 });
+        var lit = await waitShort(function () {
+          var el = appEl();
+          return !!el && /svg/.test(el.style.cursor);
+        });
+        if (lit) break;
+      }
+      var cursorCss = (appEl() && appEl().style.cursor) || '';
       out.cursor = {
         // No regex here: this whole block is a template literal, and escaping
         // parens through two layers is a trap. Plain substring checks are exact.
@@ -337,8 +371,8 @@ const SELFTEST = `
         css: cursorCss.slice(0, 48),
       };
       chan.postMessage({ type: 'hoverEnemy', index: null });
-      await waitShort(function () { return canvas.style.cursor === ''; });
-      out.cursor.reset = canvas.style.cursor === '';
+      await waitShort(function () { var el = appEl(); return !!el && el.style.cursor === ''; });
+      out.cursor.reset = ((appEl() && appEl().style.cursor) || '') === '';
 
       // Cleared: the WHOLE Worker state (brought-in + loot) comes home whole.
       sendResult({
@@ -398,6 +432,13 @@ const SELFTEST = `
     } catch (err) {
       out.error = String(err && err.stack || err);
     }
+    // Let in-flight BroadcastChannel messages land before publishing.
+    // --dump-dom snapshots the page as soon as it goes idle, so a message that
+    // was posted but not yet delivered would be missing from the report --
+    // which showed up as random one-assertion failures (abort / runCommand).
+    for (var settleTurn = 0; settleTurn < 20; settleTurn += 1) {
+      await new Promise(function (resolve) { setTimeout(resolve, 10); });
+    }
     publish();
   })();
 })();
@@ -418,7 +459,10 @@ ${SELFTEST}
 const profile = path.join(outDir, 'shell-chrome-' + process.pid);
 const run = spawnSync(chrome, [
   '--headless=new', '--disable-gpu', '--no-sandbox',
-  '--allow-file-access-from-files', '--virtual-time-budget=15000',
+  // 25 s of virtual time: the page now runs four deploys (cleared / gameOver /
+  // abort / timedOut) plus the bag + cursor checks. 15 s left the last steps
+  // racing the budget, which surfaced as random one-assertion failures.
+  '--allow-file-access-from-files', '--virtual-time-budget=25000',
   '--user-data-dir=' + profile,
   '--dump-dom', 'file:///' + testPage.replace(/\\/g, '/'),
 ], { encoding: 'utf8', maxBuffer: 24 * 1024 * 1024, timeout: 90000 });
