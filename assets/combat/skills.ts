@@ -19,6 +19,7 @@ import { damageSkeleton } from './attack.ts';
 import { burst, say } from './effects.ts';
 import { canStand } from './movement.ts';
 import type { CombatModifiers } from './modifiers.ts';
+import { skill as skillTable } from '../resource/generated/skill.ts';
 import { applyElement, spawnZone } from './reactions.ts';
 import { applyStatus, lockedFlags } from './status.ts';
 import {
@@ -74,69 +75,87 @@ export interface SkillDef {
 }
 
 /**
- * 首批七个技能：三条流派轴 + 覆盖 6 种元素的 5 条反应链（设计 8.5）。
+ * 技能的**机制**（这部分是代码，不是数值）：作用形态、元素归属、挂什么状态、用哪个图标。
  *
- * 数值是开发期取值（设计文档 Q4「各流派技能数值与 CD 做功能时再定」）：
- * 参照夹具骷髅 66 HP —— 横扫 38 要两下、冰锥 26 要三下、冲锋 30 要三下，
- * 普攻 46 仍是主要的收尾手段（8.1「普攻为资源 / 收尾 / 过渡」）。
+ * 数值（蓝耗 / CD / 读条 / 伤害 / 射程 / 区域半径与时长）与文案在
+ * `assets/resource/tables/skill.xlsx` —— 改数值改表 + `python scripts/export_tables.py`，
+ * 不需要碰代码。两边按 `id` join，缺一边会在加载时直接抛错（宁可白屏也别线上少一个技能）。
+ */
+interface SkillMechanics {
+  readonly kind: SkillKind;
+  readonly icon: string;
+  readonly element?: ElementId;
+  readonly status?: StatusId;
+  /** 地面区域的元素；半径与时长在表里。 */
+  readonly zoneElement?: ElementId;
+}
+
+/**
+ * 七个技能的机制表：三条流派轴 + 覆盖 6 种元素的 5 条反应链（设计 8.5）。
  *
  * **元素归属是设计决定，不是数值**：
- * - 横扫 / 冲锋是重甲的物理技能 → 横扫挂流血，冲锋撞出**风**（3 条位移技能的
- *   「风」暂时由它承担，等游侠的陷阱 / 后跳那一批再拆开）；
+ * - 横扫 / 冲锋是重甲的物理技能 → 横扫挂流血，冲锋撞出**风**（位移技能的「风」
+ *   暂时由它承担，等游侠的陷阱 / 后跳那一批再拆开）；
  * - 冰锥 = 冰（减速附着）、火墙 = 火（点燃）、毒池 = 毒（中毒）、
  *   水浪 = 水（湿身）、落雷 = 雷（感电）。
  * 六个元素各有一个来源，所以 8.5 的五条反应**全部可在实战中打出来**。
  */
-export const SKILLS: Readonly<Record<string, SkillDef>> = Object.freeze({
-  cleave: Object.freeze({
-    id: 'cleave', name: '横扫', kind: 'sweep',
-    cost: 12, cooldown: 5, castTime: 0, damage: 38, reach: 170, width: 0,
-    hint: '以自身为中心横扫一圈，命中即流血', icon: 'cleave',
-    status: 'bleed',
-  }),
-  charge: Object.freeze({
-    id: 'charge', name: '冲锋', kind: 'dash',
-    cost: 15, cooldown: 9, castTime: 0, damage: 30, reach: 220, width: 44,
-    hint: '向光标方向冲一段并撞伤沿途目标', icon: 'charge',
-    // 冲锋撞出的气流就是「风」：冲进火里会把火吹旺（风 + 火 = 火势蔓延）。
-    element: 'wind',
-  }),
-  ice_shard: Object.freeze({
-    id: 'ice_shard', name: '冰锥', kind: 'bolt',
-    // 读条 0.8 秒：设计 8.4 要求「让对手能反应、能打断」，0.5 秒在俯视角下几乎反应不过来，
-    // 而且它比截图的采集时延还短，读条条根本拍不到 —— 也就没法当验收证据。
-    cost: 16, cooldown: 3.5, castTime: 0.8, damage: 26, reach: 260, width: 34,
-    hint: '读条 0.8 秒，沿光标方向射出冰锥，命中减速', icon: 'ice_shard',
-    element: 'ice',
-    zone: Object.freeze({ element: 'ice' as ElementId, radius: 54, life: 3.2 }),
-  }),
-  fire_wall: Object.freeze({
-    id: 'fire_wall', name: '火墙', kind: 'zone',
-    cost: 18, cooldown: 7, castTime: 0, damage: 12, reach: 260, width: 92,
-    hint: '在光标处铺一片火焰，踩进去就点燃', icon: 'fire_wall',
-    element: 'fire',
-    zone: Object.freeze({ element: 'fire' as ElementId, radius: 92, life: 5 }),
-  }),
-  venom_pool: Object.freeze({
-    id: 'venom_pool', name: '毒池', kind: 'zone',
-    cost: 16, cooldown: 8, castTime: 0, damage: 8, reach: 260, width: 80,
-    hint: '在光标处铺一片毒池，中毒可叠 5 层', icon: 'venom_pool',
-    element: 'poison',
-    zone: Object.freeze({ element: 'poison' as ElementId, radius: 80, life: 6 }),
-  }),
-  water_wave: Object.freeze({
-    id: 'water_wave', name: '水浪', kind: 'cone',
-    cost: 14, cooldown: 5, castTime: 0, damage: 20, reach: 200, width: 0.55,
-    hint: '朝光标方向推出一道水浪，把人浇湿', icon: 'water_wave',
-    element: 'water',
-  }),
-  thunder: Object.freeze({
-    id: 'thunder', name: '落雷', kind: 'strike',
-    cost: 20, cooldown: 8, castTime: 0.5, damage: 34, reach: 300, width: 110,
-    hint: '读条 0.5 秒，在光标处落下一道雷', icon: 'thunder',
-    element: 'shock',
-  }),
+const SKILL_MECHANICS: Readonly<Record<string, SkillMechanics>> = Object.freeze({
+  cleave: Object.freeze({ kind: 'sweep', icon: 'cleave', status: 'bleed' }),
+  // 冲锋撞出的气流就是「风」：冲进火里会把火吹旺（风 + 火 = 火势蔓延）。
+  charge: Object.freeze({ kind: 'dash', icon: 'charge', element: 'wind' }),
+  ice_shard: Object.freeze({ kind: 'bolt', icon: 'ice_shard', element: 'ice', zoneElement: 'ice' }),
+  fire_wall: Object.freeze({ kind: 'zone', icon: 'fire_wall', element: 'fire', zoneElement: 'fire' }),
+  venom_pool: Object.freeze({ kind: 'zone', icon: 'venom_pool', element: 'poison', zoneElement: 'poison' }),
+  water_wave: Object.freeze({ kind: 'cone', icon: 'water_wave', element: 'water' }),
+  thunder: Object.freeze({ kind: 'strike', icon: 'thunder', element: 'shock' }),
 });
+
+/**
+ * 表 → `SkillDef` 的**唯一 join 点**。
+ *
+ * 表里有 `zone_radius > 0` 而机制里没写 `zoneElement`（或反过来）都是接线错误，
+ * 直接抛错：静默丢一片地面区域会让「风 + 火」这类反应永远打不出来。
+ */
+function buildSkills(): Record<string, SkillDef> {
+  const out: Record<string, SkillDef> = {};
+  for (const row of skillTable) {
+    const mech = SKILL_MECHANICS[row.id];
+    if (mech === undefined) {
+      throw new Error(`skill.xlsx 有 id=${row.id}，但 skills.ts 没有对应机制（kind/element/icon）`);
+    }
+    const wantsZone = row.zone_radius > 0;
+    if (wantsZone !== (mech.zoneElement !== undefined)) {
+      throw new Error(`技能 ${row.id} 的区域配置与机制不符：表 zone_radius=${row.zone_radius}，机制 zoneElement=${mech.zoneElement ?? '无'}`);
+    }
+    out[row.id] = Object.freeze({
+      id: row.id,
+      name: row.name,
+      kind: mech.kind,
+      cost: row.cost,
+      cooldown: row.cooldown,
+      castTime: row.cast_time,
+      damage: row.damage,
+      reach: row.reach,
+      width: row.width,
+      hint: row.hint,
+      icon: mech.icon,
+      ...(mech.element !== undefined ? { element: mech.element } : {}),
+      ...(mech.status !== undefined ? { status: mech.status } : {}),
+      ...(mech.zoneElement !== undefined
+        ? { zone: Object.freeze({ element: mech.zoneElement, radius: row.zone_radius, life: row.zone_life }) }
+        : {}),
+    });
+  }
+  for (const id of Object.keys(SKILL_MECHANICS)) {
+    if (out[id] === undefined) {
+      throw new Error(`skills.ts 机制表里有 ${id}，但 skill.xlsx 里没有这一行（数值没地方来）`);
+    }
+  }
+  return out;
+}
+
+export const SKILLS: Readonly<Record<string, SkillDef>> = Object.freeze(buildSkills());
 
 /** 起手被拒绝的原因。`ok` 之外的每一种都**不扣蓝、不进冷却**。 */
 export type CastResult =

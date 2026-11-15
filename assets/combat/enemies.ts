@@ -9,7 +9,9 @@
  * them -- it never guesses motion from a velocity it cannot see.
  */
 
+import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { burst, say } from './effects.ts';
+import { monsterRow } from './loot.ts';
 import {
   MONSTER_SWING_TIME, STRIDE_PIXELS, type GameState,
 } from './state.ts';
@@ -20,14 +22,34 @@ import { findPath, walkable, type World } from './world.ts';
 
 const REPATH_SECONDS = 0.7;
 const BODY_RADIUS = 8;
-/** Below this distance the monster stops and strikes instead of charging. */
-const STRIKE_RANGE = 40;
-/** 直线追击速度（世界像素 / 秒）；减速状态在它上面乘倍率。 */
-const WALK_SPEED = 62;
-/** 出刀间隔（秒）；迟滞状态在它上面乘倍率。 */
-const ATTACK_SECONDS = 1.15;
-/** 每刀伤害（开发期取值）；易伤状态在它上面乘倍率。 */
-const MONSTER_DAMAGE = 6;
+/**
+ * Below this distance the monster stops and strikes instead of charging.
+ * 来自 `tables/combat_rule.xlsx::monster_strike_range`（所有怪共用）。
+ */
+const STRIKE_RANGE = combat_rule[0].monster_strike_range;
+
+/**
+ * 每只怪的手感数值（走速 / 出刀间隔 / 每刀伤害）来自 `tables/monster.xlsx`，
+ * 一列一个字段。表缺行时退回夹具默认值，避免「加了一只没配表的怪 → 它站着不动」
+ * 这种难查的空转（`monsterRow()` 由 `loot.ts` 提供，两处不各读一份表）。
+ */
+const MONSTER_DEFAULTS = { walkSpeed: 62, attackInterval: 1.15, attackDamage: 6 } as const;
+
+interface MonsterCombat {
+  readonly walkSpeed: number;
+  readonly attackInterval: number;
+  readonly attackDamage: number;
+}
+
+function combatOf(monsterId: string): MonsterCombat {
+  const row = monsterRow(monsterId);
+  if (row === undefined) return MONSTER_DEFAULTS;
+  return {
+    walkSpeed: row.walk_speed,
+    attackInterval: row.attack_interval,
+    attackDamage: row.attack_damage,
+  };
+}
 
 function canStand(w: World, x: number, y: number): boolean {
   return walkable(w, x, y)
@@ -61,6 +83,7 @@ export function updateSkeletons(s: GameState, dt: number): void {
     // what makes it read as a creature instead of a sliding billboard.
     if (sd > 0.001) sk.face = Math.atan2(sdy, sdx);
     // 硬控 / 禁锢 / 减速：全部读状态注册表，AI 里不写第二套判定。
+    const stats = combatOf(sk.monsterId);
     const locks = lockedFlags(sk);
     if (locks.noMove) {
       // 动不了（晕眩 / 冻结 / 麻痹 / 禁锢 / 石化 / 睡眠）：不走路、不绕路，
@@ -77,7 +100,7 @@ export function updateSkeletons(s: GameState, dt: number): void {
       const gdy = goal.y - sk.y;
       const gd = Math.hypot(gdx, gdy) || 1;
       // 减速状态直接压在步长上：追不上就是追不上，不去动 A* 或目标点。
-      const stepLength = Math.min(WALK_SPEED * moveMultiplier(sk) * dt, gd);
+      const stepLength = Math.min(stats.walkSpeed * moveMultiplier(sk) * dt, gd);
       const fromX = sk.x;
       const fromY = sk.y;
       const next = advance(s.world, sk.x, sk.y, (gdx / gd) * stepLength, (gdy / gd) * stepLength);
@@ -95,12 +118,12 @@ export function updateSkeletons(s: GameState, dt: number): void {
       sk.moving = false;
       if (sk.attackCd <= 0 && !locks.noAttack) {
         // 迟滞（软控）：出刀间隔被拉长，读的是同一个倍率表。
-        sk.attackCd = ATTACK_SECONDS * attackIntervalMultiplier(sk);
+        sk.attackCd = stats.attackInterval * attackIntervalMultiplier(sk);
         // The lunge plays whether or not it connects: a whiff still reads.
         sk.swing = MONSTER_SWING_TIME;
         if (p.invuln <= 0) {
           // 易伤（软控）同样作用于玩家：受到伤害倍率只有一个入口。
-          s.hp = Math.max(0, s.hp - MONSTER_DAMAGE * damageTakenMultiplier(p));
+          s.hp = Math.max(0, s.hp - stats.attackDamage * damageTakenMultiplier(p));
           p.hurt = 0.35;
           p.invuln = 0.7;
           burst(s, p.x, p.y - 26, '#ff6b6b', 8, 120);

@@ -18,6 +18,7 @@
 import {
   type ElementId, type StatusHost, type StatusId, type StatusInstance,
 } from './state.ts';
+import { status as statusTable } from '../resource/generated/status.ts';
 
 /** 状态大类：硬控 / 软控削弱 / 持续伤害 / 元素附着。 */
 export type StatusCategory = 'hard' | 'soft' | 'dot' | 'element';
@@ -56,117 +57,77 @@ export interface StatusDef {
 }
 
 /**
- * 8.4 的表：6 硬控（晕眩 / 石化 / 睡眠 / 禁锢 + 反应产出的冻结、麻痹）、
- * 6 软控、3 持续伤害、3 元素附着。数值是开发期取值（设计 Q4）。
+ * 状态的**机制**（代码）：视觉色 + 元素归属。数值（时长 / 层数上限 / DOT / 倍率 /
+ * 禁止标志 / 文案）在 `assets/resource/tables/status.xlsx` —— 调平衡改表即可。
  */
-export const STATUS: Readonly<Record<StatusId, StatusDef>> = Object.freeze({
-  /* ------------------------------------------------------------- 硬控 */
-  stun: Object.freeze({
-    id: 'stun', name: '晕眩', category: 'hard', color: '#ffd166',
-    duration: 1.2, maxStacks: 1,
-    noMove: true, noAttack: true, noSkill: true, noDodge: true,
-    hint: '禁止一切操作，时长 ≤1.5 秒（设计 8.4：无解但短）',
-  }),
-  freeze: Object.freeze({
-    id: 'freeze', name: '冻结', category: 'hard', color: '#8be9fd',
-    duration: 1.5, maxStacks: 1,
-    noMove: true, noAttack: true, noSkill: true, noDodge: true,
-    hint: '水 + 冰的反应产物：整只定住，连出手都不行',
-  }),
-  paralyze: Object.freeze({
-    id: 'paralyze', name: '麻痹', category: 'hard', color: '#c084fc',
-    duration: 1.2, maxStacks: 1,
-    noMove: true, noAttack: true, noSkill: true, noDodge: true,
-    hint: '水 + 雷的反应产物：会向附近敌人传导',
-  }),
-  root: Object.freeze({
-    id: 'root', name: '禁锢', category: 'hard', color: '#a86f16',
-    duration: 1.5, maxStacks: 1,
-    // 设计 8.4：禁止移动 / 位移技能 / 闪避，**但可以原地攻击、放非位移技能**。
-    noMove: true, noDodge: true,
-    hint: '钉在原地：不能走、不能位移、不能闪避，但可以原地打',
-  }),
-  petrify: Object.freeze({
-    id: 'petrify', name: '石化', category: 'hard', color: '#9a9584',
-    duration: 2, maxStacks: 1,
-    noMove: true, noAttack: true, noSkill: true, noDodge: true,
-    hint: '颜色褪成灰（绘制层读它），被击碎时受额外伤害',
-  }),
-  sleep: Object.freeze({
-    id: 'sleep', name: '睡眠', category: 'hard', color: '#60a5fa',
-    duration: 3, maxStacks: 1,
-    noMove: true, noAttack: true, noSkill: true, noDodge: true,
-    hint: '受击即醒；睡眠中的首次受伤 +50%',
-  }),
-  /* --------------------------------------------------------- 软控削弱 */
-  slow: Object.freeze({
-    id: 'slow', name: '减速', category: 'soft', color: '#8be9fd',
-    duration: 2.5, maxStacks: 1,
-    moveMul: 0.5, element: 'ice',
-    hint: '移速减半；同时是「冰」的附着（水 + 冰 = 冻结）',
-  }),
-  chill: Object.freeze({
-    id: 'chill', name: '迟滞', category: 'soft', color: '#7dd3fc',
-    duration: 2.5, maxStacks: 1,
-    attackMul: 1.6,
-    hint: '攻速 / 施法变慢：和减速分开，追逃用减速、拼刀用迟滞',
-  }),
-  silence: Object.freeze({
-    id: 'silence', name: '沉默', category: 'soft', color: '#c084fc',
-    duration: 2, maxStacks: 1,
-    noSkill: true,
-    hint: '禁止释放技能（普攻照常）',
-  }),
-  disarm: Object.freeze({
-    id: 'disarm', name: '缴械', category: 'soft', color: '#e8eef5',
-    duration: 2, maxStacks: 1,
-    noAttack: true,
-    hint: '禁止普通攻击（对法系影响天然较小，符合设计意图）',
-  }),
-  vulnerable: Object.freeze({
-    id: 'vulnerable', name: '易伤', category: 'soft', color: '#ff8f6b',
-    duration: 3, maxStacks: 1,
-    damageTakenMul: 1.3,
-    hint: '受到伤害 +30%',
-  }),
-  grievous: Object.freeze({
-    id: 'grievous', name: '重伤', category: 'soft', color: '#ff6b6b',
-    duration: 4, maxStacks: 1,
-    hint: '治疗效果降低（比「点燃 = 完全禁疗」温和的一档）',
-  }),
-  /* --------------------------------------------------------- 持续伤害 */
-  bleed: Object.freeze({
-    id: 'bleed', name: '流血', category: 'dot', color: '#e0453f',
-    duration: 4, maxStacks: 1, dot: 3,
-    hint: '持续掉血，地面留血痕（可被追踪）',
-  }),
-  poison: Object.freeze({
-    id: 'poison', name: '中毒', category: 'dot', color: '#4ade80',
-    duration: 5, maxStacks: 5, dot: 1.6, element: 'poison',
-    hint: '可叠 5 层，每层独立跳伤；也是「毒」的附着（火 + 毒 = 引爆）',
-  }),
-  burn: Object.freeze({
-    id: 'burn', name: '点燃', category: 'dot', color: '#fb923c',
-    duration: 3.5, maxStacks: 1, dot: 4, element: 'fire',
-    hint: '持续掉血且禁止治疗；也是「火」的附着',
-  }),
-  /* --------------------------------------------------------- 元素附着 */
-  wet: Object.freeze({
-    id: 'wet', name: '湿身', category: 'element', color: '#60a5fa',
-    duration: 6, maxStacks: 1, element: 'water',
-    hint: '「水」附着：本身无效果，等冰或雷来配',
-  }),
-  shock: Object.freeze({
-    id: 'shock', name: '感电', category: 'element', color: '#c084fc',
-    duration: 6, maxStacks: 1, element: 'shock',
-    hint: '「雷」附着：本身无效果，等水来配',
-  }),
-  wind: Object.freeze({
-    id: 'wind', name: '风蚀', category: 'element', color: '#a7f3d0',
-    duration: 4, maxStacks: 1, element: 'wind',
-    hint: '「风」附着：配火 / 毒会把地面区域吹大',
-  }),
-});
+const STATUS_MECHANICS: Readonly<Record<StatusId, { color: string; element?: ElementId }>> =
+  Object.freeze({
+    /* 硬控 */
+    stun: { color: '#ffd166' },
+    freeze: { color: '#8be9fd' },
+    paralyze: { color: '#c084fc' },
+    root: { color: '#a86f16' },
+    petrify: { color: '#9a9584' },
+    sleep: { color: '#60a5fa' },
+    /* 软控削弱 */
+    slow: { color: '#8be9fd', element: 'ice' },
+    chill: { color: '#7dd3fc' },
+    silence: { color: '#c084fc' },
+    disarm: { color: '#e8eef5' },
+    vulnerable: { color: '#ff8f6b' },
+    grievous: { color: '#ff6b6b' },
+    /* 持续伤害 */
+    bleed: { color: '#e0453f' },
+    poison: { color: '#4ade80', element: 'poison' },
+    burn: { color: '#fb923c', element: 'fire' },
+    /* 元素附着 */
+    wet: { color: '#60a5fa', element: 'water' },
+    shock: { color: '#c084fc', element: 'shock' },
+    wind: { color: '#a7f3d0', element: 'wind' },
+  });
+
+/**
+ * 表 → `StatusDef` 的**唯一 join 点**。
+ *
+ * 表缺行 / 机制缺项都直接抛错：`applyStatus` 拿到未登记的 id 会崩（有意），
+ * 而「表里有一行没人用」等于一份没上线的 debuff —— 两种都该在启动时就炸。
+ */
+function buildStatus(): Record<StatusId, StatusDef> {
+  const out: Record<string, StatusDef> = {};
+  for (const row of statusTable) {
+    const id = row.id as StatusId;
+    const mech = STATUS_MECHANICS[id];
+    if (mech === undefined) {
+      throw new Error(`status.xlsx 有 id=${row.id}，但 status.ts 没有对应机制（color/element）`);
+    }
+    out[id] = Object.freeze({
+      id,
+      name: row.name,
+      category: row.category as StatusCategory,
+      color: mech.color,
+      duration: row.duration,
+      maxStacks: row.max_stacks,
+      noMove: row.no_move,
+      noAttack: row.no_attack,
+      noSkill: row.no_skill,
+      noDodge: row.no_dodge,
+      moveMul: row.move_mul,
+      attackMul: row.attack_interval_mul,
+      damageTakenMul: row.damage_taken_mul,
+      dot: row.dot > 0 ? row.dot : undefined,
+      element: mech.element,
+      hint: row.hint,
+    });
+  }
+  for (const id of Object.keys(STATUS_MECHANICS)) {
+    if (out[id] === undefined) {
+      throw new Error(`status.ts 机制表里有 ${id}，但 status.xlsx 里没有这一行（数值没地方来）`);
+    }
+  }
+  return out as Record<StatusId, StatusDef>;
+}
+
+export const STATUS: Readonly<Record<StatusId, StatusDef>> = Object.freeze(buildStatus());
 
 /** 每个元素由哪个状态承载（反应结算要按元素找附着）。 */
 export const ELEMENT_STATUS: Readonly<Record<ElementId, StatusId>> = Object.freeze({

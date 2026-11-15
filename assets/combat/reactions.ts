@@ -13,6 +13,7 @@
  *    掉落不滚、`lootLog` 与实际对不上（保护清单 / 不变量 29）。
  */
 
+import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { damageSkeleton } from './attack.ts';
 import { burst, say } from './effects.ts';
 import {
@@ -166,8 +167,9 @@ function runReaction(
       break;
     }
     case 'detonate': {
-      // 每层毒 12 点（开发期取值）：5 层满毒引爆 = 60，正好是「一发大招」的量级。
-      const damage = Math.max(12, poisonStacks * 12);
+      // 每层毒的引爆伤害在 `tables/combat_rule.xlsx`：5 层满毒 ≈ 一发大招的量级。
+      const rule = combat_rule[0];
+      const damage = Math.max(rule.detonate_min, poisonStacks * rule.detonate_per_stack);
       damageSkeleton(s, index, damage, { knockback: 0, color: '#ffd166' });
       break;
     }

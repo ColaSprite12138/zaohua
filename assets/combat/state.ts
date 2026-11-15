@@ -12,11 +12,20 @@
 
 import { VIEW_H, VIEW_W } from '../shared/constants.ts';
 import { testArena } from '../resource/maps/arena-test.ts';
+import { combat_rule } from '../resource/generated/combat_rule.ts';
+import { skill as skillTable } from '../resource/generated/skill.ts';
 import { createInventoryState, type InventoryState } from '../meta/inventory.ts';
 import { makeRng } from './loot.ts';
 import {
   cameraFor, makeWorld, nearestWalkable, type ArenaMap, type Vec, type World,
 } from './world.ts';
+
+/**
+ * 战斗规则常量（走速以外的「手感数值」）**全部来自 `tables/combat_rule.xlsx`**，
+ * 见 `assets/resource/CONTEXT.md`。改数值 = 改表 + `python scripts/export_tables.py`，
+ * 不用改代码。这里只做一次解引用，导出名保持不变，所以所有消费方零改动。
+ */
+const RULE = combat_rule[0];
 
 export interface StepInput {
   /** Pointer in WORLD pixels (already converted from screen by the engine). */
@@ -88,12 +97,12 @@ export const PLAYER_SWING_TIME = 0.26;
 /**
  * 普攻冷却（秒）：挥完一刀到下一刀能出手。HUD 的细条也读它，别在绘制层重新写 0.4。
  */
-export const PLAYER_ATTACK_CD = 0.4;
+export const PLAYER_ATTACK_CD = RULE.player_attack_cd;
 /**
  * 闪避冷却（秒）。闪避是**角色自带的小技能**（设计 8.2：不占 7 格主动技能额度），
  * 但 HUD 上它和技能并排显示（用户 2026-11-15 指定）。
  */
-export const PLAYER_DODGE_CD = 1.25;
+export const PLAYER_DODGE_CD = RULE.player_dodge_cd;
 
 /** idle = no order; point = walking to a waypoint; follow = live cursor tracking. */
 export type MoveMode = 'idle' | 'point' | 'follow';
@@ -123,15 +132,15 @@ export const PRE_EQUIPPED_SKILLS: readonly string[] = Object.freeze([
 ]);
 
 /** 法力上限（设计 8.3：只有生命 + 法力两种资源；**法力不自动恢复**）。 */
-export const PLAYER_MANA_MAX = 100;
+export const PLAYER_MANA_MAX = RULE.player_mana_max;
 
 /**
  * 蓝药：本局固定瓶数（开发期数值，等消耗品系统上线后改成从背包里取）。
  * 药效是「缓慢回复」而不是一口回满 —— 这是 9.2 里「法术躲着回蓝」的那段空窗期。
  */
-export const POTION_COUNT = 3;
-export const POTION_MANA = 60;
-export const POTION_SECONDS = 5;
+export const POTION_COUNT = RULE.potion_count;
+export const POTION_MANA = RULE.potion_mana;
+export const POTION_SECONDS = RULE.potion_seconds;
 
 /**
  * 技能视觉事件（2026-11-15 第二批）：**只写不读**。
@@ -252,13 +261,13 @@ export interface Zone {
 }
 
 /** DOT 结算间隔（秒）：每 0.5 秒一跳，肉眼能读出节奏，也不会每帧写一次血。 */
-export const DOT_TICK_SECONDS = 0.5;
+export const DOT_TICK_SECONDS = RULE.dot_tick_seconds;
 /** 区域续状态的间隔（秒）。 */
-export const ZONE_TICK_SECONDS = 0.4;
+export const ZONE_TICK_SECONDS = RULE.zone_tick_seconds;
 /** 「水 + 雷」麻痹的传导半径（世界像素）。 */
-export const REACTION_CHAIN_RADIUS = 140;
+export const REACTION_CHAIN_RADIUS = RULE.reaction_chain_radius;
 /** 区域半径上限：风蔓延可以长大，但不能吃到整张图。 */
-export const ZONE_RADIUS_MAX = 220;
+export const ZONE_RADIUS_MAX = RULE.zone_radius_max;
 
 /**
  * 位移技能进行中的状态。冲锋**不是瞬移**：它按 `DASH_SPEED` 分帧推进，
@@ -280,7 +289,7 @@ export interface DashState {
 }
 
 /** 位移技能速度（世界像素 / 秒）：220px 的冲锋 ≈ 0.23 秒，读得到过程。 */
-export const DASH_SPEED = 950;
+export const DASH_SPEED = RULE.dash_speed;
 
 export interface SkillSlot {
   /** authored 技能 id；null = 空格。 */

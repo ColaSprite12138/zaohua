@@ -139,7 +139,7 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 | 项 | 契约 |
 |:--|:--|
 | 状态形状 | `Skeleton.statuses` / `Player.statuses`（`StatusInstance[]`：`id/left/total/stacks/dot/next`）。玩家与怪物共用同一套宿主接口 `StatusHost` |
-| 注册表 | `STATUS`：22 条（硬控 6 / 软控 6 / 持续伤害 3 / 元素附着 3 + 见下），每条有 `category` / `color` / `duration` / `maxStacks` / 效果标志与 `hint` |
+| 注册表 | `STATUS`：18 条（硬控 6 / 软控 6 / 持续伤害 3 / 元素附着 3），每条有 `category` / `color` / `duration` / `maxStacks` / 效果标志与 `hint`。**数值来自 `status.xlsx`，视觉色与元素归属在代码里**（2026-11-15 表化） |
 | 效果出口 | 只有 5 个查询：`lockedFlags()`（禁移动 / 普攻 / 技能 / 闪避）、`moveMultiplier()`、`attackIntervalMultiplier()`、`damageTakenMultiplier()`、`healingBlocked()`。`movement.ts` / `attack.ts` / `skills.ts` / `enemies.ts` 全部读它 |
 | 硬控 | `stun` 晕眩 / `freeze` 冻结（水+冰）/ `paralyze` 麻痹（水+雷）/ `root` 禁锢（**禁移动·位移·闪避，仍可原地攻击**）/ `petrify` 石化 / `sleep` 睡眠（受击即醒，首次受伤 ×1.5） |
 | 软控 | `slow` 减速（移速 ×0.5，**同时是「冰」的附着**）/ `chill` 迟滞（出刀间隔 ×1.6）/ `silence` 沉默 / `disarm` 缴械 / `vulnerable` 易伤（受伤 ×1.3）/ `grievous` 重伤（禁疗档，等治疗系统） |
@@ -164,6 +164,29 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 击飞 / 拉拽两种位移还没有来源；点燃的「禁疗」要等治疗与药水系统；DOT 暂**不吃**星图乘区
 （直接伤害吃，DOT 走独立数值轴，等星图批次一起接）；`aura` 类持续区域（毒雾随时间扩散）没做，
 现在的扩散是「风把已有区域吹大」。
+
+### 数值来源：表驱动（2026-11-15，用户要求）
+
+**一句话**：*数值在 Excel，机制在代码，按 `id` join；缺一边启动就抛错。*
+
+| 表 | 覆盖什么 | 代码里留什么 |
+|:--|:--|:--|
+| `tables/skill.xlsx` | 7 个技能的 `cost / cooldown / cast_time / damage / reach / width / zone_radius / zone_life / name / hint` | `SKILL_MECHANICS`：`kind` / `icon` / `element` / `status` / `zoneElement` |
+| `tables/status.xlsx` | 18 条状态的 `duration / max_stacks / dot / move_mul / attack_interval_mul / damage_taken_mul / no_* / name / hint` | `STATUS_MECHANICS`：`color` + `element` |
+| `tables/combat_rule.xlsx`（单行 `id=combat`） | 普攻 CD、闪避 CD、法力上限、蓝药三件套、冲锋速度、怪物攻击距离、DOT/区域 tick、区域半径上限、反应传导半径、撞墙伤害与击退阈值、引爆每层伤害 | — |
+| `tables/monster.xlsx` | 每只怪的 `walk_speed / attack_interval / attack_damage` | — |
+
+| 项 | 契约 |
+|:--|:--|
+| 唯一 join 点 | `skills.ts::buildSkills()` / `status.ts::buildStatus()`。表有行、代码没机制 → 抛错；代码有机制、表没行 → 抛错。**宁可启动就炸**，也不要「少一个技能」或「一个看不见的 debuff」静默上线 |
+| 区域接线 | 表 `zone_radius > 0` ⇔ 代码有 `zoneElement`，否则抛错（少接一边，「风 + 火」这类反应就永远打不出来） |
+| 导出 | 改表后必须 `python scripts/export_tables.py`；`--check` 会拒绝过期生成物 |
+| 护栏 | `__tests__/data-driven.test.ts`（11 条）：每个机制有唯一表行、字段逐一相等、代码导出的常量等于表值 |
+| 改值流程 | 改 xlsx → `export_tables.py` → `bash scripts/verify.sh`。**不需要碰 TS** |
+
+**为什么机制不搬表**：`kind` / `element` / `icon` 是「这个技能怎么实现」，不是「它多强」。
+放表里就要在运行时把字符串映射回 resolver，还得处理拼错（`'sweepp'`）—— 那是把编译期错误
+推成运行期错误。物品表也是同一个分法：`item.xlsx` 放数值，`voxel.ts` 放形状。
 
 ### 本局状态与投影
 
@@ -310,21 +333,24 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 40. **状态只由注册表定义**：新增状态 = 在 `status.ts::STATUS` 加一条 + 在 8.4 的表里加一行，
     不许在技能里临时写 `if (id === 'xxx')`。没有 `STATUS` 条目的 id 会在 `applyStatus` 里直接崩
     （这是有意的：静默忽略会让「看不见的 debuff」上线）。
+41. **数值只有一个来源**：技能 / 状态 / 怪物 / 全局手感的数字**只允许来自 `tables/*.xlsx`**
+    （经 `generated/`）。禁止在 TS 里再抄一份数字 —— `data-driven.test.ts` 会断言导出的常量
+    等于表值，抄了就会红。新增技能 = 表里加一行 + 代码里加一条机制，缺一边启动即抛错。
 
 ## 目录与依赖方向（单向，禁止反向 import）
 
 ```
 shared/constants.ts        ← 所有模块可 import（常量与纯类型，无状态）
 combat/world.ts            ← 只 import shared；纯地图运行时，不持有游戏状态
-combat/state.ts            ← shared + world + resource/maps 数据；类型权威（含 StatusId / ElementId）
-combat/status.ts           ← 只 import state 的类型；状态注册表与纯查询，**不碰 GameState**
+combat/state.ts            ← shared + world + resource/{maps,generated/combat_rule}；类型权威（含 StatusId / ElementId）
+combat/status.ts           ← state 的类型 + resource/generated/status；注册表与纯查询，**不碰 GameState**
 combat/effects.ts          ← state(类型) + shared + world
 combat/modifiers.ts        ← 独立接口，不 import combat
 combat/attack.ts           ← state + effects + modifiers(类型) + status(上状态) + world(撞墙)；`damageSkeleton()` 是唯一伤害入口
 combat/reactions.ts        ← state + status + attack(伤害入口) + effects；元素附着 / 5 条反应 / DOT / 地面区域
 combat/movement.ts         ← state + effects + attack + status(禁移动/减速) + world
 combat/skills.ts           ← state + effects + attack + reactions + status + movement(`canStand`) + modifiers(类型)
-combat/enemies.ts          ← state + effects + status(硬控/减速/迟滞) + world
+combat/enemies.ts          ← state + effects + status(硬控/减速/迟滞) + loot(monsterRow 取手感) + world
 combat/weapons.ts          ← state + effects
 combat/loot.ts             ← resource/generated/*.ts（只消费生成物，不读 xlsx）
 combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯一对外门面
@@ -384,7 +410,8 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 166 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3 / extraction 17 / skills 22 / **status 28**）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 177 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3 / extraction 17 / skills 22 / status 28 / **data-driven 11**）
+python scripts/export_tables.py --check                                # 数值表与生成物是否同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json

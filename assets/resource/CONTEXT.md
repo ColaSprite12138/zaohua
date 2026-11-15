@@ -37,8 +37,19 @@
 |:--|:--|:--|
 | `item.xlsx` | `combat/`、`meta/` | 13 行物品通用信息 `id / name / item_type / stack_size`：12 件武器 + `30001` 弓箭（`item_type=弹药`、堆叠 10） |
 | `weapon.xlsx` | `combat/`、`meta/` | 13 行武器专属信息 `id / quality / weapon_subtype / damage_min / damage_max`；`weapon_subtype` 是攻击方式**唯一权威** |
-| `monster.xlsx` | `combat/`、`battle/`（地图引用校验） | 怪物 id → 掉落池 id（骷髅剑士 → 1，骷髅弓手 → 2）；2026-11-12 由 `monster_loot.xlsx` 改名，生成物为 `monster.ts` / 常量 `monster` |
+| `monster.xlsx` | `combat/`、`battle/`（地图引用校验） | 怪物 id → 掉落池 id（骷髅剑士 → 1，骷髅弓手 → 2）**+ 战斗手感三列 `walk_speed / attack_interval / attack_damage`**（2026-11-15 加，消费方 `combat/enemies.ts::combatOf()`）；2026-11-12 由 `monster_loot.xlsx` 改名，生成物为 `monster.ts` / 常量 `monster` |
 | `loot_pool.xlsx` | `combat/` | 掉落池内各物品的权重（10/8/6/4/2/1） |
+| `skill.xlsx` | `combat/skills.ts` | **7 个主动技能的数值**：`cost / cooldown / cast_time / damage / reach / width / zone_radius / zone_life / name / hint`。机制列（`kind` / `element` / `status` / `icon`）留在代码 |
+| `status.xlsx` | `combat/status.ts` | **18 条状态的数值**：`duration / max_stacks / dot / move_mul / attack_interval_mul / damage_taken_mul / no_move / no_attack / no_skill / no_dodge / name / hint`。视觉色与元素归属留在代码 |
+| `combat_rule.xlsx` | `combat/state.ts`、`combat/enemies.ts`、`combat/attack.ts`、`combat/reactions.ts` | **单行全局手感常量**（`id=combat`）：普攻 CD、闪避 CD、法力上限、蓝药三件套、冲锋速度、怪物攻击距离、DOT / 区域 tick、区域半径上限、反应传导半径、撞墙伤害与击退阈值、引爆每层伤害 |
+
+**数值表化（2026-11-15，用户要求）**：技能 / 状态 / 怪物 / 全局常量原本写死在 TS 里，改一个 CD
+要改代码再 build。现在**数值进表、机制留代码**，两边按 `id` join：
+`skills.ts::buildSkills()` 与 `status.ts::buildStatus()` 是唯一 join 点，缺行或缺机制都**直接抛错**
+（宁可启动就炸，也别线上少一个技能或有一个看不见的 debuff）。
+护栏在 `assets/combat/__tests__/data-driven.test.ts`（11 条）：每个机制有唯一表行、字段逐一相等、
+导出的常量等于表值。改值流程：改 xlsx → `python scripts/export_tables.py` → 跑验收。
+**不要**在 TS 里再抄一份数字（护栏会红）。
 
 **拆表契约（2026-11-12，用户选 A 方案）**：`item.xlsx` 与 `weapon.xlsx` 各为单 Sheet、按 `id`
 严格 1:1 join。`combat/loot.ts::authoredItem()` 是运行时唯一 join 点，

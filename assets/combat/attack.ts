@@ -4,6 +4,7 @@
  * no soft lock onto a different monster.
  */
 
+import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { burst, say, setTarget } from './effects.ts';
 import { rollLoot } from './loot.ts';
 import { weaponDamage } from './run-inventory.ts';
@@ -110,9 +111,9 @@ export function hitTestDrop(s: GameState, x: number, y: number): boolean {
  * 只有「强击退」才可能撞墙眩晕：普攻的 1.0 倍击退只在原地推一下，
  * 每一刀贴墙就晕会让近战变成无限控。
  */
-export const WALL_BOUNCE_KNOCKBACK = 1.2;
-/** 撞墙的额外伤害（开发期取值：约等于普攻的四分之一）。 */
-export const WALL_BOUNCE_DAMAGE = 12;
+export const WALL_BOUNCE_KNOCKBACK = combat_rule[0].wall_bounce_knockback;
+/** 撞墙的额外伤害（约等于普攻的四分之一）；数值在 `tables/combat_rule.xlsx`。 */
+export const WALL_BOUNCE_DAMAGE = combat_rule[0].wall_bounce_damage;
 
 /** 怪物能站在这里吗（和 `enemies.ts` 同一套 8px 探针；这里独立实现避免方向反向）。 */
 function monsterCanStand(w: World, x: number, y: number): boolean {
