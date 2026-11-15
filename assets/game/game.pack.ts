@@ -25,7 +25,7 @@ import {
 import { createPrimitiveMesh } from '@forgeax/engine/geometry';
 
 import {
-  createState, deployRun, projection, reset, setArena, step,
+  createModifiers, createState, deployRun, projection, reset, setArena, step,
   MINIMAP, VIEW_H, VIEW_W, screenToWorld, worldToScreen,
   syncWeaponSlots, applyRunCommand, snapshotRun, makeRunInventory,
   type Deployment, type RunLoadout, type RunCommand,
@@ -53,6 +53,14 @@ export type RunResult = {
   reason?: 'dead' | 'timedOut';
   lootLog: { monsterId: string; itemId: string; name: string; quality: string }[];
   kills: number;
+  /**
+   * 本局获得的经验（设计 6.1：等级只来自击杀经验）。主窗口把它交给
+   * `talent/` 结算升级与星图点；失败的一局**照样给经验** —— 死一次不该
+   * 连成长都没有，那是搜打撤里最劝退的挫败感叠加。
+   */
+  xp: number;
+  /** 本局地图 id：主线首通点数按它去重（同一关只给一次）。 */
+  stage: string;
   /** The WHOLE run inventory; present only on a clear, null on a loss. */
   loadout: RunLoadout | null;
 };
@@ -133,6 +141,8 @@ export const game: Plugin = {
     // `locked`: `unlock` resets to a fresh run, which a resume must never do.
     let paused = false;
     let lastRunSignature = '';
+    // 星图乘区：只在 deploy 时换一次（设计 6.4「局内不能换 build」）。
+    let modifiers = createModifiers([]);
     let channel: BroadcastChannel | null = null;
     if (typeof BroadcastChannel !== 'undefined') {
       channel = new BroadcastChannel(RUN_CHANNEL);
@@ -150,6 +160,7 @@ export const game: Plugin = {
           // The shell has ALREADY emptied its own bag + equipment; `loadout`
           // is the structured-cloned copy this Worker now owns exclusively.
           setArena(state, arena);
+          modifiers = createModifiers(msg.deployment?.stars?.nodes ?? []);
           deployRun(state, msg.deployment ?? {});
           lastResult = null;
           resultSent = false;
@@ -167,6 +178,7 @@ export const game: Plugin = {
           // Returning to the lobby, refreshing or closing the preview is a
           // LOSS: the whole run state is discarded. The lobby is already empty.
           state.runInventory = makeRunInventory(EMPTY_RUN);
+          modifiers = createModifiers([]);
           reset(state);
           lastResult = null;
           resultSent = false;
@@ -252,6 +264,8 @@ export const game: Plugin = {
           monsterId: r.monsterId, itemId: r.itemId, name: r.name, quality: r.quality,
         })),
         kills: state.kills,
+        xp: state.xp,
+        stage: state.map.id,
         // A clear / extraction brings the WHOLE run home; a loss discards it.
         // There is no per-uid reconciliation, no findFirstFit banking, no overflow.
         loadout: lost ? null : snapshotRun(state.runInventory),
@@ -363,7 +377,7 @@ export const game: Plugin = {
                 // Hover feedback must not light up while the pointer sits on
                 // the read-only minimap: that rectangle is not world space.
                 pointerOnHud: onMinimap,
-              });
+              }, modifiers);
               // An in-run restart (R) starts a fresh settlement window.
               if (restart) {
                 lastResult = null;

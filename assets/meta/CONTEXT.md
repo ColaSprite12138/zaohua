@@ -124,11 +124,11 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 | 项 | 权威 |
 |:--|:--|
 | 身份 | `user.current` → `user.getCurrent()`，平台容器按用户命名空间隔离；游戏内无注册 / 密码 / 登录，`meta-ui/auth-ui.js` 已删除，`#fx-auth` 遮罩与「未登录禁止出征」一并取消 |
-| 存储 | **单 key `forgeax.save.v1` + 一个 `{schemaVersion:1, state}` 纯 JSON blob**（整个 `InventoryState`）。平台不解析结构，schema / 版本 / 迁移由 `assets/meta/account.ts` 独占 |
+| 存储 | **单 key `forgeax.save.v1` + 一个纯 JSON blob**：v2 是 `{schemaVersion:2, state, progress}`，`state` = 整个 `InventoryState`，`progress` = 星图进度（等级 / 经验 / 点亮节点 / 首通）。平台不解析结构，schema / 版本 / 迁移由 `assets/meta/account.ts` 独占 |
 | 写路径 | `shell-bridge.js#syncBadge()`（唯一 `onRender` 钩子）每次 `render()` → `MetaStore.persist()` → `writeSave()` → 写队列（串行 + 合并，防止旧写覆盖新写） |
 | 读路径 | ESM 入口 `zaohua-platform-init.js` await `storage.get(SAVE_KEY)` → `MetaShell.mountPlatformStore({ userId, initial, read, write })`；`initial` 是已 await 的值，经典壳层不处理 Promise |
 | 时序 | **经典壳层脚本先于 deferred ESM 模块执行**：`meta-ui/platform-store.js` 暴露 `mountPlatform()` 但**默认休眠**（写队列为 `null`），由 ESM 推下已 await 的 `initial` 后才建立写队列并重建状态；壳层不处理 Promise |
-| 数据容错 | `decodeSave()` 对 null / 非对象 / 版本不符 / 结构损坏一律回退 `createInventoryState(3)`；`encodeSave()` 强制 `JSON.parse(JSON.stringify(...))`，因为宿主预览 `structuredClone` 与平台 `JSON.stringify` 对 Date/Map 行为不同 |
+| 数据容错 | `decodeSave()` 接受 `schemaVersion` 1..`SCHEMA_VERSION`（v1 老存档照常读背包，只是没有星图），对 null / 非对象 / 版本超前 / 结构损坏一律回退 `createInventoryState(3)`；`decodeProgress()` 只认 v2，返回原始值，由 `talent::sanitizeProgress()` 逐条校验（丢未知节点 / 丢前置不成立 / 按预算砍超额 / 等级夹范围）；`encodeSave()` 强制 `JSON.parse(JSON.stringify(...))`，因为宿主预览 `structuredClone` 与平台 `JSON.stringify` 对 Date/Map 行为不同 |
 | 本地（无宿主） | **完全不存盘**：首屏用独立页已初始化的默认 `InventoryState(3)`，`MetaStore.persist()` 直接返回。没有本地 adapter / 镜像 key / `local-dev` 身份 / `simulateRefresh()`；顶栏玩家名 `—`、存档徽标隐藏 |
 | 验证边界 | **本地只验基础玩法**（`verify-shell.cjs` 里 1 条 `noLocalSave` 断言保证无宿主时零写入）+ 平台 KV 纯逻辑单测（envelope / 结构校验 / 版本兜底 / 写队列，用 mock bridge 不落盘）；**存盘本身、账号隔离、跨设备恢复发布到平台后才验** |
 | 引擎同步 | 登录遮罩删除后 Worker 的 `lock` / `unlock` **无生产者**（保留为协议兼容）；平台 pause/resume 走独立 `paused` 冻结位 |
@@ -137,6 +137,18 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 转译成普通脚本 `meta-ui/account.js`。`platform-store.js` 与 `account.js` 只由 `inject-shell.mjs` 注入 4174；
 **独立双击页不引用这两个文件**，保持 `file://` 可开、无服务器、无身份依赖（该页仍是演示页，
 改动不进存档 —— `file://` 与 `localhost:4174` 不同源，这是刻意的取舍）。
+
+### 星图（局外养成，2026-11-15 第四批，设计 6.1–6.4）
+
+| 项 | 权威 |
+|:--|:--|
+| 规则 | `assets/talent/index.ts`（零 import）→ `meta-ui/talent.js`（`build-meta-ui.mjs` 生成）；页面只调用，不复制规则 |
+| 数据 | `tables/starmap.xlsx` / `level.xlsx` / `combat_rule.xlsx` 的生成物由 `inject-shell.mjs` 注入成 `MetaShell.starmap / levels / starRule`；**页面里没有第二份数值** |
+| 面板 | `meta-ui/index.html` 的 `#star-panel`（**在 `#fx-bag-content` 之外**）：节点按表里的 `x/y` 绝对定位、连线用 SVG；显示等级 / 经验条 / 点数余额 / 免费洗点 |
+| 只能在局外 | 战斗态下 `#fx-shell.fx-in-battle > *:not(.fx-bar):not(#fx-bag-content)` 直接隐藏面板；`pickStar()` / 洗点按钮也各自拦一次 `host.isRun()` |
+| 出征 | `deploy.stars = { skills: unlockedSkills(), nodes: effectsOf() }` —— 点亮顺序即技能栏顺序 |
+| 结算 | `grantRunProgress()`：`grantXp(progress, result.xp)` → 升级；成功则 `awardClear(progress, result.stage)` 记主线首通；随后 `host.renderStar()` 并写回存档 |
+| 独立页 | `meta-ui/index.html` 双击打开时**没有注入数据**，面板自动隐藏（`#star-panel[hidden]`），背包演示不受影响 |
 
 ## 战局内背包契约（2026-11-11，用户选择：不冻结 + 立即生效）
 
@@ -191,7 +203,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 `{ outcome, lootItemIds, carriedUids }`。
 
 `account.ts`：`SAVE_KEY` / `SCHEMA_VERSION` / `encodeSave` / `isValidInventoryState` /
-`decodeSave` / `readSave` / `createSaveQueue` / `writeSave`
+`decodeSave` / `decodeProgress` / `readSave` / `createSaveQueue` / `writeSave`
 （+ `SaveEnvelope` / `SaveAdapter` / `SaveQueue` 类型）。全部**同步**、零 import；
 `isValidInventoryState()` 只校验 `bag` / `stash` 数组与 `equipped` 长度（**不校验 `loose`**）。
 
@@ -208,7 +220,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 node scripts/build-meta-ui.mjs --check                     # 三个生成物（inventory / account / voxel）与源码同步
 node scripts/verify-meta-ui.cjs                            # 独立页面 14 条（13 条真实拖放 + 1 条「格子画的是模型不是字形」像素断言）
 node scripts/inject-shell.mjs --check                      # dist 注入块与源同步
-node scripts/verify-shell.cjs                              # 4174 单页 40 条（无宿主不写盘/平台身份/KV 存档/局内背包/局内拾取镜像/出征/撤离与通关/阵亡清 10 槽/超时/返回/lifecycle）
+node scripts/verify-shell.cjs                              # 4174 单页 45 条（含 5 条星图）（无宿主不写盘/平台身份/KV 存档/局内背包/局内拾取镜像/出征/撤离与通关/阵亡清 10 槽/超时/返回/lifecycle）
 ```
 
 `scripts/build-meta-ui.mjs` 把 `inventory.ts` / `account.ts` / `game/voxel.ts` 用 `ts.transpileModule`

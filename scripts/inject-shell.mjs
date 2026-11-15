@@ -107,12 +107,24 @@ function buildBlock() {
       weapon_subtype: w ? w.weapon_subtype : null,
     };
   });
+  // 星图 / 等级：节点坐标、前置、花费、经验曲线全部来自 Excel 生成物，
+  // 由壳层注入给局外页面，`meta-ui/index.html` 里没有第二份数值副本。
+  const levelRows = generatedRows('level.ts', 'level');
+  const starRows = generatedRows('starmap.ts', 'starmap');
+  const ruleRow = generatedRows('combat_rule.ts', 'combat_rule')[0];
+  const starRule = {
+    mainline_star_points: ruleRow.mainline_star_points,
+    explore_star_points: ruleRow.explore_star_points,
+  };
   const sources = [
     'meta-ui/index.html', 'meta-ui/voxel.js', 'meta-ui/inventory.js',
-    'meta-ui/account.js', 'meta-ui/platform-store.js', 'meta-ui/shell.css',
-    'meta-ui/shell-bridge.js',
+    'meta-ui/account.js', 'meta-ui/talent.js', 'meta-ui/platform-store.js',
+    'meta-ui/shell.css', 'meta-ui/shell-bridge.js',
     'assets/resource/generated/item.ts',
     'assets/resource/generated/weapon.ts',
+    'assets/resource/generated/level.ts',
+    'assets/resource/generated/starmap.ts',
+    'assets/resource/generated/combat_rule.ts',
   ];
   const digest = createHash('sha256')
     .update(sources.map((f) => read(f)).join('\n---\n'))
@@ -126,13 +138,19 @@ function buildBlock() {
 ${scopeCss(styles)}
 ${read('meta-ui/shell.css')}
 </style>
-<script>window.MetaShell = { authoredItems: ${JSON.stringify(rows)} };</script>
+<script>window.MetaShell = {
+  authoredItems: ${JSON.stringify(rows)},
+  levels: ${JSON.stringify(levelRows)},
+  starmap: ${JSON.stringify(starRows)},
+  starRule: ${JSON.stringify(starRule)}
+};</script>
 <div id="fx-shell">
 ${markup}
 </div>
 <script>${read('meta-ui/voxel.js')}</script>
 <script>${read('meta-ui/inventory.js')}</script>
 <script>${read('meta-ui/account.js')}</script>
+<script>${read('meta-ui/talent.js')}</script>
 <script>${script}</script>
 <script>${read('meta-ui/platform-store.js')}</script>
 <script>${read('meta-ui/shell-bridge.js')}</script>

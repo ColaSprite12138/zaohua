@@ -37,6 +37,13 @@ const targets = [
     global: 'MetaAccount',
   },
   {
+    // 星图规则（点数 / 路径约束 / 免费洗点 / 升级结算）。零 import，所以局外页面
+    // 与 4174 注入壳层共用同一份逻辑；节点与等级数据由宿主注入（inject-shell）。
+    source: 'assets/talent/index.ts',
+    output: 'meta-ui/talent.js',
+    global: 'MetaTalent',
+  },
+  {
     // The voxel model library is import-free by design, so the standalone page
     // can draw the very same item models the game draws -- one art authority,
     // no duplicated shapes and no bitmaps to keep in sync.

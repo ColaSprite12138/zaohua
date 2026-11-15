@@ -836,3 +836,19 @@
   follows the live cursor" 断言失败（2254ms 就抛），第二次同样代码通过、`scriptMs` 68668（1× 那
   次 69412）、FPS 145（1× 是 144）。不是性能回归，而是 `play.wait(150)` 这类**按墙钟等 150ms 再读
   指针**的步骤，在首帧更慢时可能一帧都没跑到。遇到这种单步失败先重跑一次再改代码。
+
+## 33. 星图 + 等级第一批：三个「结构保证 > UI 拦截」的决定
+
+- **等级和星图绝不下沉到 Engine Worker**。Worker 里只有「本局拿了多少经验」（`s.xp`）和一份
+  `deployment.stars` 快照；升级、点数、点亮节点全在主窗口的 `talent/`。设计 6.4 说「局内不能换
+  build」，用 UI 隐藏面板去实现是不可靠的（Worker 里还有 `runCommand` 这类入口）；**让 Worker
+  根本拿不到规则模块**才是结构性保证。同理 `projection()` 里故意没有 `level` —— 两份等级必然漂移。
+- **`talent/` 必须保持零 import，表由宿主注入**。它要同时服务可双击的独立页（`file://`，无打包器）
+  和 4174 注入壳层，所以 `build-meta-ui.mjs` 只能做单文件转译；一旦它 import `resource/generated/*`
+  就转译不出来。做法与 `authoredItems` 一致：`inject-shell.mjs` 把 `starmap / level / starRule`
+  塞进 `window.MetaShell`，页面再传给 `createStarTree()`。**同一份数值只有一个来源**（xlsx → generated）。
+- **别在 `verify-shell.cjs` 里用「1 级 1 点」的角色点两个节点**。第一版就踩了：1 级只有 1 点，
+  点完星核再点技能必然被预算挡住，断言看起来像功能坏了。做法是先用默认 1 级验证「预算拦得住」，
+  再 `H.setProgress(T.createStarState(3))` 换成 3 级角色验证「技能进技能栏 + 乘区进战局」。
+  顺带发现 `deploy` 载荷断言是**严格键集合**（`kind,loadout,seed`）——加 `stars` 时它会红，
+  这是设计好的护栏：新增跨堆字段必须显式改断言，不能靠 `includes` 蒙过去。

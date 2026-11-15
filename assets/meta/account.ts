@@ -18,12 +18,20 @@
  */
 
 export const SAVE_KEY = 'forgeax.save.v1';
-export const SCHEMA_VERSION = 1;
+
+/**
+ * v2 把「星图进度」和背包一起存进同一个 blob（设计 6.1 / 6.3：等级、经验、
+ * 点数、点亮节点都是跨局进度，掉线不该清零）。v1 存档仍然能读：
+ * `decodeSave()` 接受 1..SCHEMA_VERSION，缺 `progress` 时由调用方回退初始星图。
+ */
+export const SCHEMA_VERSION = 2;
 
 export interface SaveEnvelope {
   schemaVersion: number;
   /** A plain-JSON InventoryState. Opaque here: this module has no meta import. */
   state: unknown;
+  /** v2: plain-JSON star map progress. Absent in a v1 blob. */
+  progress?: unknown;
 }
 
 export interface SaveAdapter {
@@ -45,15 +53,21 @@ export interface SaveQueue {
  * `structuredClone` while the platform/devStub path uses `JSON.stringify`, so
  * Date / Map / class instances would silently change shape between envs.
  */
-export function encodeSave(state: unknown): SaveEnvelope {
-  if (state === undefined) throw new Error('save data must be a pure JSON value');
-  let plain: unknown;
+export function encodeSave(state: unknown, progress?: unknown): SaveEnvelope {
+  const env: SaveEnvelope = { schemaVersion: SCHEMA_VERSION, state: plainJson(state) };
+  // `undefined` keeps the envelope byte-identical to v1 for callers that have
+  // no star map yet (standalone page, unit tests, verify-shell probes).
+  if (progress !== undefined && progress !== null) env.progress = plainJson(progress);
+  return env;
+}
+
+function plainJson(value: unknown): unknown {
+  if (value === undefined) throw new Error('save data must be a pure JSON value');
   try {
-    plain = JSON.parse(JSON.stringify(state)) as unknown;
+    return JSON.parse(JSON.stringify(value)) as unknown;
   } catch {
     throw new Error('save data must be a pure JSON value');
   }
-  return { schemaVersion: SCHEMA_VERSION, state: plain };
 }
 
 export function isValidInventoryState(raw: unknown, slotCount: number): boolean {
@@ -71,8 +85,22 @@ export function decodeSave(
 ): unknown {
   if (!raw || typeof raw !== 'object') return fallback();
   const env = raw as Partial<SaveEnvelope>;
-  if (env.schemaVersion !== SCHEMA_VERSION) return fallback();
+  // v1 -> v2 迁移：老存档只是没有 `progress`，背包必须照常读回来。
+  if (typeof env.schemaVersion !== 'number' || env.schemaVersion < 1
+    || env.schemaVersion > SCHEMA_VERSION) return fallback();
   return isValidInventoryState(env.state, slotCount) ? env.state : fallback();
+}
+
+/**
+ * The v2 star-map payload, or null when the blob is v1 / foreign / missing.
+ * Callers pass it through `talent/index.ts::sanitizeProgress()`; this module
+ * deliberately does not know the star map's shape.
+ */
+export function decodeProgress(raw: unknown): unknown | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const env = raw as Partial<SaveEnvelope>;
+  if (env.schemaVersion !== SCHEMA_VERSION) return null;
+  return env.progress ?? null;
 }
 
 export function readSave(
@@ -120,8 +148,10 @@ export function createSaveQueue(
 }
 
 /** One save point: encode the current state and hand it to the queue. */
-export function writeSave(queue: SaveQueue, state: unknown): SaveEnvelope {
-  const envelope = encodeSave(state);
+export function writeSave(
+  queue: SaveQueue, state: unknown, progress?: unknown,
+): SaveEnvelope {
+  const envelope = encodeSave(state, progress);
   queue.push(envelope);
   return envelope;
 }

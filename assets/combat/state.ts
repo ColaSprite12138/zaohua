@@ -16,6 +16,7 @@ import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { skill as skillTable } from '../resource/generated/skill.ts';
 import { createInventoryState, type InventoryState } from '../meta/inventory.ts';
 import { makeRng } from './loot.ts';
+import type { CombatModifiers } from './modifiers.ts';
 import {
   cameraFor, makeWorld, nearestWalkable, type ArenaMap, type Vec, type World,
 } from './world.ts';
@@ -118,18 +119,19 @@ export type MoveMode = 'idle' | 'point' | 'follow';
  */
 export const SKILL_SLOTS = 7;
 /**
- * 默认带满 7 格（设计 8.2 的 7 格上限）。顺序就是 HUD 上的键位顺序
- * （`SKILL_KEYS` = Q W T F G V C），也正好把 6 种元素全部带进场：
+ * **只在没有星图快照时生效的兜底技能栏**（自动验收夹具、单测、未接入星图的宿主）。
  *
- * Q 横扫（物理·流血）/ W 冲锋（物理·风）/ T 冰锥（冰）/ F 火墙（火）/
- * G 毒池（毒）/ V 水浪（水）/ C 落雷（雷）。
- *
- * 所以 8.5 的五条反应在实战里都打得出来 —— 反应链不是只有单测见过的东西。
- * 星图批次接上后这张表由玩家点出来的技能填充，`createSkillBar()` 签名不变。
+ * 正式出征由壳层把星图点出来的技能经 `deploy.stars.skills` 传进来，
+ * Worker 里 `createSkillBar(ids)` 用玩家的那份；**没点技能就是空手** ——
+ * 设计 6.2「主动技能只来自星图」，所以这张表不能再当玩家的默认配置。
+ * 顺序就是 HUD 键位顺序（`SKILL_KEYS` = Q W T F G V C），也正好覆盖 6 种元素。
  */
 export const PRE_EQUIPPED_SKILLS: readonly string[] = Object.freeze([
   'cleave', 'charge', 'ice_shard', 'fire_wall', 'venom_pool', 'water_wave', 'thunder',
 ]);
+
+/** 玩家基础生命上限（设计 8.3：只有生命 + 法力两种资源）。星图的 `hp_pct` 乘在这里。 */
+export const PLAYER_HP_MAX = 100;
 
 /** 法力上限（设计 8.3：只有生命 + 法力两种资源；**法力不自动恢复**）。 */
 export const PLAYER_MANA_MAX = RULE.player_mana_max;
@@ -311,13 +313,26 @@ export interface CastState {
   readonly aimY: number;
 }
 
-/** 默认技能栏：前几个格子装满 `PRE_EQUIPPED_SKILLS`，其余留空。 */
-export function createSkillBar(): SkillSlot[] {
+/** 默认技能栏：前几个格子装满 `ids`（缺省＝夹具兜底表），其余留空。 */export function createSkillBar(ids: readonly string[] = PRE_EQUIPPED_SKILLS): SkillSlot[] {
   const bar: SkillSlot[] = [];
   for (let i = 0; i < SKILL_SLOTS; i += 1) {
-    bar.push({ id: PRE_EQUIPPED_SKILLS[i] ?? null, cooldown: 0 });
+    bar.push({ id: ids[i] ?? null, cooldown: 0 });
   }
   return bar;
+}
+
+/**
+ * 把星图乘区落到这一局的角色上（出征时调用一次）。
+ *
+ * 生命 / 法力上限都在 deploy 重算，所以**洗点后下一局立刻生效**，局内不会变；
+ * 这也正是设计 6.4「局内不能换 build」的实现方式 —— Worker 只在 deploy 时
+ * 收到一份节点快照，之后没有任何接口能改它。
+ */
+export function applyStarMods(s: GameState, mods: CombatModifiers): void {
+  s.maxHp = Math.round(PLAYER_HP_MAX * mods.maxHpMultiplier());
+  s.hp = s.maxHp;
+  s.maxMana = Math.round(PLAYER_MANA_MAX * mods.maxManaMultiplier());
+  s.mana = s.maxMana;
 }
 
 /* ------------------------------------------------- 单局骨架（搜打撤，设计文档 10） */
@@ -633,6 +648,12 @@ export interface GameState {
   hp: number;
   maxHp: number;
   kills: number;
+  /**
+   * 本局累计经验（设计 6.1：等级只来自击杀经验）。它是**本局**的事实，
+   * 结算时随 `RunResult.xp` 交给主窗口，由 `talent/` 结算升级并写存档；
+   * Worker 不认识「等级」，也不持有跨局进度。
+   */
+  xp: number;
   player: Player;
   target: { x: number; y: number };
   moveMode: MoveMode;
@@ -703,6 +724,11 @@ export interface GameState {
   maxMana: number;
   /** 7 格技能栏；`cooldown > 0` 时按不动。 */
   skillBar: SkillSlot[];
+  /**
+   * 本局带进来的主动技能（星图点亮顺序）。`reset()` 重建技能栏时用它，
+   * 所以「重开一局」不会把玩家的星图配置换回夹具兜底表。
+   */
+  starSkills: readonly string[];
   /** 正在读条的技能；null = 没在读条。 */
   cast: CastState | null;
   /** 本局剩余蓝药瓶数。 */
@@ -744,9 +770,10 @@ export function createState(config: RunConfig = {}): GameState {
   const state: GameState = {
     t: 0,
     attacks: 0,
-    hp: 100,
-    maxHp: 100,
+    hp: PLAYER_HP_MAX,
+    maxHp: PLAYER_HP_MAX,
     kills: 0,
+    xp: 0,
     player: {
       x, y, vx: 0, vy: 0, face: 0, stride: 0,
       invuln: 0, dodge: 0, dodgeCd: 0, attackCd: 0,
@@ -782,6 +809,7 @@ export function createState(config: RunConfig = {}): GameState {
     mana: PLAYER_MANA_MAX,
     maxMana: PLAYER_MANA_MAX,
     skillBar: createSkillBar(),
+    starSkills: PRE_EQUIPPED_SKILLS,
     cast: null,
     potions: POTION_COUNT,
     manaSurge: 0,
@@ -837,6 +865,7 @@ export function reset(s: GameState): void {
   s.attacks = 0;
   s.hp = s.maxHp;
   s.kills = 0;
+  s.xp = 0;
   // A restart replays THIS run: the brought-in equipment and everything picked
   // up so far stay in `runInventory`. Nothing is silently borrowed or returned.
   syncWeaponSlots(s);
@@ -859,7 +888,8 @@ export function reset(s: GameState): void {
   s.manaSurge = 0;
   s.cast = null;
   s.skillFx.length = 0;
-  s.skillBar = createSkillBar();
+  // 技能栏按「本局带进来的星图技能」重建：重开一局不能把玩家的配置换回兜底表。
+  s.skillBar = createSkillBar(s.starSkills);
   // 状态与区域是「本局」资源：重开一局 = 身上干净、地上干净。
   s.zones.length = 0;
   s.reactions.length = 0;

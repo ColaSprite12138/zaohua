@@ -12,7 +12,7 @@ import { tickParticles, tickToast } from './effects.ts';
 import {
   applyDodge, classifyPointer, resolveBodyOverlap, walk,
 } from './movement.ts';
-import { NO_MODIFIERS, type CombatModifiers } from './modifiers.ts';
+import { createModifiers, NO_MODIFIERS, type CombatModifiers } from './modifiers.ts';
 import { makeRng } from './loot.ts';
 import { say } from './effects.ts';
 import { makeRunInventory } from './run-inventory.ts';
@@ -24,7 +24,8 @@ import {
 } from './skills.ts';
 import type { RunLoadout } from '../meta/inventory.ts';
 import {
-  activeWeapon, createState, dropLabelName, dropLabelRect, reset, setArena,
+  activeWeapon, applyStarMods, createState, dropLabelName, dropLabelRect,
+  PRE_EQUIPPED_SKILLS, reset, setArena,
   syncWeaponSlots, type GameState, type RunKind, type StepInput,
 } from './state.ts';
 import { checkCleared, layoutDrops, switchWeaponSlot, updateDrops } from './weapons.ts';
@@ -145,6 +146,16 @@ export interface Deployment {
    * 正式出征（壳层）发 `pvpve` —— 必须从传送门撤离才算带走战利品。
    */
   readonly kind?: RunKind;
+  /**
+   * 星图快照（设计 6.2 / 6.4）：**局内不能改 build**，所以整局只在 deploy
+   * 时收到这一份。`skills` 是点亮的主动技能（点亮顺序＝技能栏顺序），
+   * `nodes` 是点亮的节点 id，由 `modifiers.ts` 解释成乘区。
+   * 缺省 = 夹具兜底（`PRE_EQUIPPED_SKILLS` + 无乘区）。
+   */
+  readonly stars?: {
+    readonly skills?: readonly string[];
+    readonly nodes?: readonly string[];
+  };
 }
 
 const EMPTY_LOADOUT: RunLoadout = {
@@ -157,8 +168,12 @@ export function deployRun(s: GameState, config: Deployment = {}): void {
   s.runSeed = config.seed ?? s.runSeed;
   s.rng = makeRng(s.runSeed);
   s.runKind = config.kind ?? 'story';
-  s.runInventory = makeRunInventory(config.loadout ?? EMPTY_LOADOUT);
+  // 星图技能先落到 state 上，`reset()` 重建技能栏时读它 —— 重开一局也不会
+  // 把玩家的配置换回夹具兜底表。没点技能就是空手（设计 6.2）。
+  s.starSkills = config.stars?.skills ? [...config.stars.skills] : PRE_EQUIPPED_SKILLS;  s.runInventory = makeRunInventory(config.loadout ?? EMPTY_LOADOUT);
   reset(s);
+  // 乘区在 reset 之后落：reset 会把 hp 拉回 maxHp，而 maxHp 这里才被星图改写。
+  applyStarMods(s, createModifiers(config.stars?.nodes ?? []));
   const armed = s.weaponSlots.filter((w) => w !== null).length;
   const carried = s.runInventory.bag.length
     + s.runInventory.equipped.filter((it) => it !== null).length;
@@ -195,6 +210,8 @@ export function projection(s: GameState) {
     hp: s.hp,
     maxHp: s.maxHp,
     kills: s.kills,
+    /** 本局累计经验（结算交给壳层）；升级由 `talent/` 在主窗口结算。 */
+    xp: s.xp,
     attacks: s.attacks,
     skeletonsAlive: s.skeletons.filter((sk) => sk.alive).length,
     skeletons: s.skeletons.map((sk) => {
@@ -367,12 +384,12 @@ export {
   dropLabelAnchor, dropLabelName, dropLabelRect, dropQualityRank,
   MELEE_RANGE_ARMED, MELEE_RANGE_BARE,
   DASH_SPEED, MONSTER_SWING_TIME, PLAYER_ATTACK_CD, PLAYER_DODGE_CD, PLAYER_MANA_MAX,
-  PLAYER_SWING_TIME, POTION_COUNT,
+  PLAYER_HP_MAX, PLAYER_SWING_TIME, POTION_COUNT,
   POTION_MANA, POTION_SECONDS, PRE_EQUIPPED_SKILLS, SKILL_SLOTS, STRIDE_PIXELS,
   PHASE_EXTRACT_AT, PHASE_FIGHT_AT, PORTAL_COUNT, PORTAL_GUIDE_SECONDS,
   PORTAL_RADIUS, PORTAL_STAGE_COUNT, PORTAL_USES, RUN_SECONDS,
   DOT_TICK_SECONDS, ZONE_TICK_SECONDS, REACTION_CHAIN_RADIUS, ZONE_RADIUS_MAX,
-  createPortals, createSkillBar, nextZoneUid,
+  createPortals, createSkillBar, nextZoneUid, applyStarMods,
 } from './state.ts';
 export type {
   CastState, DashState, Portal, ReactionId, ReactionRecord, RunKind, RunPhase,
@@ -396,4 +413,4 @@ export {
 export type { ReactionDef } from './reactions.ts';
 export type { ArenaMap } from './world.ts';
 export type { CombatModifiers } from './modifiers.ts';
-export { NO_MODIFIERS } from './modifiers.ts';
+export { createModifiers, NO_MODIFIERS } from './modifiers.ts';

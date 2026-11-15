@@ -48,6 +48,16 @@ export function monsterRow(id: string) {
 }
 
 /**
+ * 一只怪给多少经验（`monster.xlsx::xp`）。等级只来自击杀经验（设计 6.1），
+ * 所以这是升级经济**唯一**的入水口；表缺行时退回 10，保证「没配表也能升级」。
+ */
+export const MONSTER_XP_DEFAULT = 10;
+
+export function monsterXp(monsterId: string): number {
+  return monsterRow(monsterId)?.xp ?? MONSTER_XP_DEFAULT;
+}
+
+/**
  * The two authored tables are split by concern and MUST be joined by id:
  *   `item.xlsx`   -> identity (`name`), `item_type`, `stack_size`
  *   `weapon.xlsx` -> `quality`, `damage_min/max`, `weapon_subtype`

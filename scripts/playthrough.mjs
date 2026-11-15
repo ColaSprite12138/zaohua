@@ -308,6 +308,8 @@ export default async function playthrough(play) {
     }
     const s = await play.state('game.state');
     assert.ok(killed, `enemy clicks must kill a skeleton (attacks=${s.attacks}, hp=${s.hp}, kills=${s.kills})`);
+    // 设计 6.1：击杀是唯一的经验来源。投影里必须真的涨了（不是只加了计数）。
+    assert.ok(s.xp > 0, `kills must grant xp (xp=${s.xp}, kills=${s.kills})`);
     // Pickups are explicit: walking to the kill spot must NOT collect the drop.
     assert.ok(s.drops.includes('longsword'), 'killing a skeleton leaves a longsword on the ground');
     assert.equal(s.equippedWeapon, null, 'walking past a drop never equips it automatically');

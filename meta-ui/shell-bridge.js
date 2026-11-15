@@ -22,6 +22,7 @@
   var host = window.MetaShell;
   var M = window.MetaInventory;
   var Store = window.MetaStore;
+  var T = window.MetaTalent;
   if (!host || !M) {
     console.error('[shell] MetaShell / MetaInventory missing; bridge not started');
     return;
@@ -41,6 +42,7 @@
   bar.innerHTML =
     '<div class="fx-brand"><b>局外 · 备战</b><span id="fx-phase">阶段：局外配装</span>' +
     '<span id="fx-armed" class="fx-armed"></span>' +
+    '<span id="fx-level" class="fx-level"></span>' +
     '<span class="fx-account">玩家 <b id="fx-account-name">—</b>' +
     '  <span id="fx-save-mode" class="fx-save-mode" style="display:none">平台云存档</span></span></div>' +
     '<div class="fx-controls">' +
@@ -57,6 +59,27 @@
     el.textContent = text;
     el.className = 'fx-log' + (bad ? ' bad' : '');
   };
+  /**
+   * 星图（设计 6.3 / 6.4）：局外唯一权威在 `host.progress`（meta-ui/index.html 持有）。
+   * 出征时只把「点亮了什么」快照给 Worker —— 局内没有改 build 的接口。
+   */
+  var starTree = null;
+  if (T && host.starmap) {
+    try {
+      starTree = T.createStarTree(host.starmap);
+    } catch (err) {
+      console.error('[shell] 星图数据接线错误', err);
+    }
+  }
+  var progress = function () {
+    return host.getProgress ? host.getProgress() : null;
+  };
+  var starDeployment = function () {
+    var p = progress();
+    if (!T || !starTree || !p) return { skills: [], nodes: [] };
+    return { skills: T.unlockedSkills(p, starTree), nodes: T.effectsOf(p) };
+  };
+
   var countItems = function (loadout) {
     if (!loadout) return 0;
     return loadout.bag.length + loadout.equipped.filter(Boolean).length;
@@ -93,6 +116,11 @@
     var s = host.getState();
     var armed = [s.equipped[0], s.equipped[1]].filter(Boolean).length;
     $('fx-armed').textContent = '已装备武器 ' + armed + '/2';
+    var p = progress();
+    if (T && p) {
+      var need = T.xpToNext(host.levels || [], p.level);
+      $('fx-level').textContent = 'Lv.' + p.level + (need > 0 ? ' · ' + p.xp + '/' + need : ' · 满级');
+    }
     var platform = !!(Store && Store.mode() === 'platform');
     $('fx-account-name').textContent = Store ? Store.displayName() : '—';
     var modeEl = $('fx-save-mode');
@@ -201,7 +229,9 @@
     if (channel) channel.postMessage({
       type: 'deploy',
       // kind = pvpve：正式出征是搜打撤 —— 杀光怪不算结束，必须从传送门撤离。
-      deployment: { seed: SEED, loadout: loadout, kind: 'pvpve' },
+      deployment: {
+        seed: SEED, loadout: loadout, kind: 'pvpve', stars: starDeployment(),
+      },
     });
     log('出征 · 带入 ' + countItems(loadout) + ' 件物品；从传送门撤离才带回，阵亡或超时全部丢失');
   });
@@ -231,11 +261,36 @@
     if ((k === 'b' || k === 'i') && inRun && !e.repeat) setRunBag(!bagOpen);
   });
 
+  /**
+   * 把一局的成果折算成跨局进度：经验 -> 等级 -> 星图点，外加主线首通的一次性点数。
+   * 返回一段追加到日志里的说明（空字符串＝这局什么都没涨）。
+   */
+  function grantRunProgress(result, cleared) {
+    var p = progress();
+    if (!T || !p) return '';
+    var notes = [];
+    var xp = typeof result.xp === 'number' ? result.xp : 0;
+    if (xp > 0) {
+      var res = T.grantXp(p, xp, host.levels || []);
+      notes.push('经验 +' + xp);
+      if (res.levelUps > 0) notes.push('升到 Lv.' + res.level);
+    }
+    if (cleared && result.stage && T.awardClear(p, result.stage)) {
+      var bonus = (host.starRule && host.starRule.mainline_star_points) || 0;
+      notes.push('主线首通 · 星图点 +' + bonus);
+    }
+    if (host.renderStar) host.renderStar();
+    return notes.length > 0 ? ' · ' + notes.join(' · ') : '';
+  }
+
   /* ----------------------------- settlement ---------------------------- */
   function settle(result) {
     if (!inRun || !result) return;
     var lobby = host.getLobbyState();
     var cleared = result.outcome !== 'gameOver';
+    // 经验与首通在**局外**结算：任务失败照样给经验（死在半路不该连成长都没），
+    // 星图点只能来自升级 + 主线首通 + 探索事件（设计 6.3）。
+    var progressNote = grantRunProgress(result, cleared);
     var brought = 0;
     if (cleared && result.loadout) {
       // The WHOLE Worker state comes home: no per-uid reconciliation, no
@@ -256,13 +311,13 @@
       var lostText = result.reason === 'timedOut'
         ? '超时未撤离 · 本局带入物品与战利品全部丢失（击杀 ' + result.kills + '）'
         : '阵亡 · 本局带入物品与战利品全部丢失（击杀 ' + result.kills + '）';
-      log(lostText, true);
+      log(lostText + progressNote, true);
       return;
     }
     var head = result.outcome === 'extracted' ? '撤离成功 · 带回 ' : '通关 · 带回 ';
     var text = head + brought + ' 件物品（击杀 ' + result.kills + '）';
     if (lootNames.length) text += ' · 掉落：' + lootNames.join('、');
-    log(text);
+    log(text + progressNote);
   }
 
   // The engine may already be running when this script is injected.

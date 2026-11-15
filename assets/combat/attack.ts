@@ -6,7 +6,7 @@
 
 import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { burst, say, setTarget } from './effects.ts';
-import { rollLoot } from './loot.ts';
+import { monsterXp, rollLoot } from './loot.ts';
 import { weaponDamage } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
 import { applyStatus, clearStatus, damageTakenMultiplier, lockedFlags, statusOf } from './status.ts';
@@ -198,6 +198,9 @@ export function damageSkeleton(
   // 尸体不能带着点燃继续烧：死亡即清空状态（DOT 不再结算）。
   sk.statuses.length = 0;
   s.kills += 1;
+  // 击杀是经验的唯一来源（设计 6.1）。数值在 monster.xlsx 的 `xp` 列，
+  // 结算时整份交给主窗口，由 `talent/` 结算升级 —— Worker 不认识等级。
+  s.xp += monsterXp(sk.monsterId);
   // Weighted roll from the authored loot table. `kind` stays 'longsword'
   // (visual category) so the existing drop art and playthrough assertions
   // remain valid; the authored identity rides in itemId/name/quality.

@@ -19,7 +19,30 @@ describe('platform KV envelope', () => {
     expect(env.schemaVersion).toBe(A.SCHEMA_VERSION);
     expect(env.state).toEqual(state);
     expect(env.state).not.toBe(state);
+    // 没有星图进度的调用方得到与 v1 完全相同的键集合（字节级兼容）。
     expect(Object.keys(env).sort()).toEqual(['schemaVersion', 'state']);
+  });
+
+  it('v2 stores the star map progress next to the inventory, still one blob', () => {
+    const state = createInventoryState(3);
+    const progress = { level: 4, xp: 20, picks: ['star_core'], cleared: [], explored: [] };
+    const env = A.encodeSave(state, progress);
+    expect(Object.keys(env).sort()).toEqual(['progress', 'schemaVersion', 'state']);
+    expect(env.schemaVersion).toBe(2);
+    expect(env.progress).toEqual(progress);
+    expect(env.progress).not.toBe(progress);
+    expect(A.decodeProgress(env)).toEqual(progress);
+    // v1 形态的 blob 没有 progress，解码返回 null 让调用方回退初始星图。
+    expect(A.decodeProgress({ schemaVersion: 1, state })).toBeNull();
+    expect(A.decodeProgress(null)).toBeNull();
+    expect(A.decodeProgress('nope')).toBeNull();
+  });
+
+  it('migrates a v1 save: the inventory still loads, progress starts empty', () => {
+    const state = createInventoryState(3);
+    const v1 = { schemaVersion: 1, state: JSON.parse(JSON.stringify(state)) };
+    expect(A.decodeSave(v1, fallback, slots)).toEqual(state);
+    expect(A.decodeProgress(v1)).toBeNull();
   });
 
   it('forces pure JSON: Date and Map cannot smuggle non-portable values', () => {

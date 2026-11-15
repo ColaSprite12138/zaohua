@@ -83,6 +83,33 @@
   .hint { color: var(--muted); font-size: 11px; margin-top: 8px; max-width: 300px; }
   .legend { margin-top: 14px; color: var(--muted); font-size: 11px; line-height: 1.9; }
   .legend code { color: var(--gold); }
+  /* ---- 星图（设计 6.3）：节点按表里的 x/y 绝对定位，连线用 SVG ---- */
+  .star-panel { margin-top: 18px; }
+  .star-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 2px 0 10px; }
+  .star-level { color: var(--gold); font-weight: 700; font-size: 15px; }
+  .xp-bar {
+    position: relative; width: 220px; height: 8px; border-radius: 999px;
+    background: var(--cell); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden;
+  }
+  .xp-bar i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, #67e8f9, #4ade80); }
+  .star-xp { color: var(--muted); font-size: 12px; }
+  .star-map { position: relative; width: 100%; max-width: 820px; aspect-ratio: 720 / 440; margin: 4px auto 0; }
+  .star-links { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .star-links line { stroke: #294055; stroke-width: 2; }
+  .star-links line.lit { stroke: #ffd166; }
+  .star-node {
+    position: absolute; transform: translate(-50%, -50%);
+    min-width: 78px; padding: 5px 8px; border-radius: 8px; cursor: pointer;
+    background: var(--cell); border: 1px solid var(--line); color: var(--muted);
+    font: inherit; font-size: 11px; text-align: center; line-height: 1.25;
+  }
+  .star-node small { display: block; font-size: 9px; opacity: .8; }
+  .star-node.available { border-color: var(--cyan); color: var(--cyan); }
+  .star-node.lit { border-color: var(--gold); color: var(--gold); background: rgba(255,209,102,.14); }
+  .star-node.kind-skill.lit { border-color: var(--green); color: var(--green); background: rgba(74,222,128,.14); }
+  .star-node.passive { border-style: dashed; }
+  .star-node:disabled { cursor: default; }
+
   kbd {
     background: var(--panel2); border: 1px solid var(--line); border-radius: 4px;
     padding: 1px 6px; font: inherit; color: var(--gold);
@@ -134,8 +161,28 @@
 
   </div>
 
+  <!-- 星图（设计 6.3 / 6.4）：只能在局外改 build。节点的坐标 / 前置 / 花费全部来自
+       `tables/starmap.xlsx`，由 inject-shell.mjs 注入，前端不写死任何数值。 -->
+  <section class="panel star-panel" id="star-panel">
+    <div class="panel-title">
+      <h2>星图 · 流派</h2>
+      <small id="star-balance">星图点 —</small>
+    </div>
+    <div class="star-head">
+      <span class="star-level" id="star-level">Lv.1</span>
+      <div class="xp-bar"><i id="star-xp-fill"></i></div>
+      <span class="star-xp" id="star-xp-text">0 / 0</span>
+      <button id="star-respec" type="button">免费洗点</button>
+    </div>
+    <div class="star-map" id="star-map">
+      <svg class="star-links" id="star-links" viewBox="0 0 720 440" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="hint" id="star-hint">点亮节点 → 出征时带进战局。洗点免费，但只能在局外进行（局内不能换 build）。</div>
+  </section>
+
 <script src="./voxel.js"></script>
 <script src="./inventory.js"></script>
+<script src="./talent.js"></script>
 <script>
 (function () {
   'use strict';
@@ -458,6 +505,138 @@
   host.getLobbyState = () => lobbyState;
   host.M = M;
 
+  /* ------------------------------ 星图 ---------------------------------- */
+  // 规则来自 window.MetaTalent（与战斗共用同一份 TS 源：assets/talent/index.ts）；
+  // 节点 / 等级 / 点数规则由 inject-shell.mjs 从 Excel 生成物注入，
+  // 所以这个文件里没有第二个数值副本。
+  const T = window.MetaTalent ?? null;
+  let starTree = null;
+  let starState = T ? (host.progress ?? T.createStarState()) : null;
+  if (T) host.progress = starState;
+  if (T && host.starmap && host.levels) {
+    try {
+      starTree = T.createStarTree(host.starmap);
+    } catch (err) {
+      console.error('[star] 星图数据接线错误', err);
+    }
+  }
+
+  function starReady() {
+    return !!(T && starTree && host.levels && host.starRule);
+  }
+
+  host.getProgress = () => starState;
+  /** 存档回填（platform-store 读到 v2 blob 时调用）：只换对象，不写盘。 */
+  host.setProgress = (next) => {
+    starState = next || (T ? T.createStarState() : null);
+    host.progress = starState;
+    renderStar();
+  };
+  host.starReady = starReady;
+
+  function starNodeOf(id) {
+    return starTree ? starTree.byId[id] : null;
+  }
+
+  function renderStar() {
+    const panel = $('star-panel');
+    if (!panel) return;
+    // 独立双击页没有宿主注入表数据：藏掉面板，而不是显示一张空图。
+    if (!starReady()) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    const levels = host.levels;
+    const rule = host.starRule;
+    const cap = T.levelCap(levels);
+    const need = T.xpToNext(levels, starState.level);
+    const earned = T.pointsEarned(starState, levels, rule);
+    const left = T.pointsLeft(starState, starTree, levels, rule);
+
+    $('star-level').textContent = 'Lv.' + starState.level + (starState.level >= cap ? ' · 满级' : '');
+    $('star-xp-text').textContent = need > 0 ? starState.xp + ' / ' + need : '已满级';
+    $('star-xp-fill').style.width = (need > 0 ? Math.min(100, (starState.xp / need) * 100) : 100) + '%';
+    $('star-balance').textContent = '星图点 ' + left + ' / 已获得 ' + earned;
+
+    const map = $('star-map');
+    const links = $('star-links');
+    links.innerHTML = '';
+    map.querySelectorAll('.star-node').forEach((n) => n.remove());
+    const NS = 'http://www.w3.org/2000/svg';
+    for (const node of starTree.nodes) {
+      for (const req of node.requires) {
+        const from = starNodeOf(req);
+        if (!from) continue;
+        const line = document.createElementNS(NS, 'line');
+        line.setAttribute('x1', from.x);
+        line.setAttribute('y1', from.y);
+        line.setAttribute('x2', node.x);
+        line.setAttribute('y2', node.y);
+        if (starState.picks.includes(req) && starState.picks.includes(node.id)) {
+          line.setAttribute('class', 'lit');
+        }
+        links.appendChild(line);
+      }
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'star-node kind-' + node.kind
+        + (node.kind === 'passive' ? ' passive' : '')
+        + (starState.picks.includes(node.id) ? ' lit' : '')
+        + (!starState.picks.includes(node.id)
+          && T.canPick(starState, starTree, levels, rule, node.id) ? ' available' : '');
+      btn.dataset.node = node.id;
+      btn.title = node.hint;
+      btn.style.left = (node.x / 720) * 100 + '%';
+      btn.style.top = (node.y / 440) * 100 + '%';
+      btn.innerHTML = '<span>' + node.name + '</span><small>'
+        + (node.kind === 'skill' ? '技能' : node.cost + ' 点') + '</small>';
+      btn.addEventListener('click', () => pickStar(node.id));
+      map.appendChild(btn);
+    }
+  }
+
+  function pickStar(id) {
+    const node = starNodeOf(id);
+    if (!node) return;
+    if (host.isRun && host.isRun()) {
+      say('局内不能改星图：这一局带进去的就是全部，打完再洗点', true);
+      return;
+    }
+    if (starState.picks.includes(id)) {
+      say('已点亮「' + node.name + '」' + (node.kind === 'skill' ? ' · 出征后进技能栏' : ''));
+      return;
+    }
+    if (T.pickNode(starState, starTree, host.levels, host.starRule, id)) {
+      const tail = node.kind === 'skill' ? ' · 出征后进技能栏' : ' · ' + node.hint;
+      say('点亮「' + node.name + '」' + tail);
+      renderStar();
+      if (host.onRender) host.onRender();
+      return;
+    }
+    const missing = node.requires.filter((req) => !starState.picks.includes(req));
+    if (missing.length > 0) {
+      say('需要先点亮：' + missing.map((req) => (starNodeOf(req) || {}).name || req).join(' + '), true);
+      return;
+    }
+    const left = T.pointsLeft(starState, starTree, host.levels, host.starRule);
+    say('星图点不够：还需要 ' + (node.cost - left) + ' 点（升级或主线首通都会给点）', true);
+  }
+
+  $('star-respec').addEventListener('click', () => {
+    if (!starReady()) return;
+    if (host.isRun && host.isRun()) {
+      say('局内不能洗点：星图只能在局外改', true);
+      return;
+    }
+    const refunded = T.respec(starState);
+    say(refunded > 0 ? '免费洗点：退回 ' + refunded + ' 点（等级与首通记录保留）' : '还没有点亮任何节点', refunded === 0);
+    renderStar();
+    if (host.onRender) host.onRender();
+  });
+
+  host.renderStar = renderStar;
+
   $('reset').addEventListener('click', () => {
     if (runMode) return;
     host.setState(M.createInventoryState(3));
@@ -475,6 +654,7 @@
   bindGrid('bag');
   bindGrid('stash');
   render();
+  renderStar();
   say('三把长剑已在仓库：拖到背包或装备栏开始配装（绿色预览＝可放，红色＝放不下）');
 })();
 </script>

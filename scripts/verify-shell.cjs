@@ -226,7 +226,7 @@ const SELFTEST = `
         && written.state.stash.length === 5;
       out.store.platformKvWrite = platformWrites.length === 1
         && !!written
-        && JSON.stringify(written) === JSON.stringify(A.encodeSave(H.getState()));
+        && JSON.stringify(written) === JSON.stringify(A.encodeSave(H.getState(), H.getProgress()));
 
       // Restore the known 4-item lobby state for the deploy flow below.
       platformWrites.length = 0;
@@ -242,6 +242,29 @@ const SELFTEST = `
         stash: document.querySelectorAll('#grid-stash .cell').length,
       };
       out.equipSlots = document.querySelectorAll('.equip-slot').length;
+
+      // ---- 星图（设计 6.3 / 6.4）：局外可见、能点、能洗、出征带走 ----
+      var T = window.MetaTalent;
+      out.star = { defaultLevel: H.getProgress().level };
+      var starPanel = document.getElementById('star-panel');
+      out.star.panelVisible = !!starPanel && starPanel.hidden === false;
+      out.star.nodes = starPanel ? starPanel.querySelectorAll('.star-node').length : 0;
+      document.querySelector('.star-node[data-node="star_core"]').click();
+      out.star.picked = H.getProgress().picks.indexOf('star_core') >= 0;
+      // 前置未满足的高阶节点点不动（战意需要锋锐 + 铁骨）。
+      document.querySelector('.star-node[data-node="warlord"]').click();
+      out.star.blockedByPrereq = H.getProgress().picks.indexOf('warlord') < 0;
+      // 1 级只有 1 点：点完星核就不够点技能了，这正是路径 + 预算约束。
+      document.querySelector('.star-node[data-node="cleave"]').click();
+      out.star.budgetBlocked = H.getProgress().picks.indexOf('cleave') < 0;
+      document.getElementById('star-respec').click();
+      out.star.respec = H.getProgress().picks.length === 0;
+      // 换成一个 3 级的角色（3 点）继续测「技能进技能栏 + 乘区进战局」。
+      H.setProgress(T.createStarState(3));
+      document.querySelector('.star-node[data-node="star_core"]').click();
+      document.querySelector('.star-node[data-node="cleave"]').click();
+      out.star.deployPicks = H.getProgress().picks.slice();
+
       out.sharedState = H.state === H.getState() && H.getLobbyState() === H.state;
       snap('initial');
 
@@ -254,6 +277,8 @@ const SELFTEST = `
       // first, that ack would overwrite the settlement log.
       await waitFor(function () { return seenDeploy !== null && inBattle() && /出征中/.test(logText()); });
       out.deployment = seenDeploy;
+      out.star.hiddenInBattle = getComputedStyle(document.getElementById('star-panel')).display === 'none';
+      out.star.levelBeforeRun = H.getProgress().level;
       snap('deployed');
       var writesAfterDeploy = platformWrites.length;
       out.deployWrites = writesAfterDeploy - writesBeforeDeploy;
@@ -380,8 +405,14 @@ const SELFTEST = `
         loadout: M.loadoutFromRun(workerState),
         lootLog: [{ name: '霜之哀伤', quality: '暗金' }, { name: '射日', quality: '暗金' }],
         kills: 8,
+        xp: 200,
+        stage: 'arena',
       });
       await waitFor(function () { return !inBattle() && /通关/.test(logText()); });
+      // 结算把本局经验折算成等级 / 星图点，并把主线首通记一次。
+      out.star.levelAfterRun = H.getProgress().level;
+      out.star.xpAfterRun = H.getProgress().xp;
+      out.star.clearedOnce = H.getProgress().cleared.indexOf('arena') >= 0;
       snap('cleared');
 
       // Second run: gameOver discards EVERYTHING; the stash survives.
@@ -390,7 +421,7 @@ const SELFTEST = `
       snap('secondDeploy');
       sendResult({
         outcome: 'gameOver', loadout: null,
-        lootLog: [{ name: '巨剑', quality: '白' }], kills: 2,
+        lootLog: [{ name: '巨剑', quality: '白' }], kills: 2, xp: 70,
       });
       await waitFor(function () { return !inBattle() && /阵亡/.test(logText()); });
       snap('gameOver');
@@ -540,7 +571,7 @@ const checks = [
     result.equipped === true && S.beforeDeploy.weapon0 === 'longsword', S.beforeDeploy],
   ['deploy sends seed + kind + the whole loadout; the monster-count UI is gone',
     result.noMonsterInput === true
-      && Object.keys(d).sort().join(',') === 'kind,loadout,seed'
+      && Object.keys(d).sort().join(',') === 'kind,loadout,seed,stars'
       && typeof d.seed === 'number'
       && d.kind === 'pvpve', d],
   ['the loadout carries the brought-in weapon and all ten slots',
@@ -550,6 +581,20 @@ const checks = [
       && S.deployed.lobbyWorn === 0 && S.deployed.lobbyStash === 3, S.deployed],
   ['the run holds a DIFFERENT state object from the lobby',
     result.differentStates === true && S.deployed.isRun === true, result.differentStates],
+  ['星图面板在局外画出全部节点（坐标来自 starmap.xlsx）',
+    result.star.panelVisible === true && result.star.nodes >= 15, result.star],
+  ['点节点扣点、前置不满足点不动、点数不够也点不动',
+    result.star.picked === true && result.star.blockedByPrereq === true
+      && result.star.budgetBlocked === true, result.star],
+  ['免费洗点退回全部点数',
+    result.star.respec === true, result.star],
+  ['出征把星图技能与乘区快照给 Worker，局内星图面板隐藏',
+    !!d.stars && d.stars.skills.indexOf('cleave') >= 0
+      && d.stars.nodes.indexOf('star_core') >= 0
+      && result.star.hiddenInBattle === true, result.star],
+  ['结算把本局经验换成等级，并记下主线首通',
+    result.star.levelAfterRun > result.star.levelBeforeRun
+      && result.star.clearedOnce === true, result.star],
   ['deploy keeps the brought-in weapon visible in the run panel',
     S.deployed.weapon0 === 'longsword' && S.deployed.stash === 0, S.deployed],
   ['deploy switches the page into battle mode',

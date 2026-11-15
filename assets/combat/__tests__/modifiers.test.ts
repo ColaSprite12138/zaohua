@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  createState, NO_MODIFIERS, step, type CombatModifiers, type StepInput,
+  createModifiers, createState, deployRun, NO_MODIFIERS, reset, step, projection,
+  type CombatModifiers, type StepInput,
 } from '../simulation.ts';
+import { damageSkeleton } from '../attack.ts';
+import { monsterXp } from '../loot.ts';
+import { starmap } from '../../resource/generated/starmap.ts';
 
 const idle: StepInput = {
   mouse: undefined,
@@ -33,9 +37,11 @@ describe('talent-effect hook lives in combat', () => {
 
   it('a supplied modifier scales damage without touching combat code', () => {
     const double: CombatModifiers = {
-      effectIds: ['test.damage-x2'],
+      starNodes: ['test.damage-x2'],
       damageMultiplier: (base) => base * 2,
       meleeRangeBonus: () => 0,
+      maxHpMultiplier: () => 1,
+      maxManaMultiplier: () => 1,
     };
     const { s, sk } = queuedSwing(50);
     step(s, 0.016, idle, double);
@@ -44,9 +50,11 @@ describe('talent-effect hook lives in combat', () => {
 
   it('a range modifier lets a distant target be hit; default still approaches', () => {
     const reach: CombatModifiers = {
-      effectIds: ['test.reach+100'],
+      starNodes: ['test.reach+100'],
       damageMultiplier: (base) => base,
       meleeRangeBonus: () => 100,
+      maxHpMultiplier: () => 1,
+      maxManaMultiplier: () => 1,
     };
     const extended = queuedSwing(200);
     step(extended.s, 0.016, idle, reach);
@@ -56,5 +64,74 @@ describe('talent-effect hook lives in combat', () => {
     step(baseline.s, 0.016, idle, NO_MODIFIERS);
     expect(baseline.s.attacks).toBe(0);
     expect(baseline.s.attackOrder).toBe(true);
+  });
+});
+
+describe('star nodes are interpreted from starmap.xlsx (design 6.3)', () => {
+  const row = (id: string) => starmap.find((r) => r.id === id)!;
+
+  it('sums additive percentages and flat range over the picked nodes', () => {
+    const mods = createModifiers(['star_core', 'might', 'reach']);
+    const dmg = 1 + row('star_core').magnitude + row('might').magnitude;
+    expect(mods.damageMultiplier(100)).toBeCloseTo(100 * dmg, 6);
+    expect(mods.meleeRangeBonus()).toBe(row('reach').magnitude);
+    expect(mods.maxHpMultiplier()).toBe(1);
+    expect(mods.maxManaMultiplier()).toBe(1);
+  });
+
+  it('ignores unknown node ids and skill nodes (magnitude 0)', () => {
+    const mods = createModifiers(['cleave', 'ghost']);
+    expect(mods.damageMultiplier(50)).toBe(50);
+    expect(mods.maxHpMultiplier()).toBe(1);
+    expect(createModifiers([])).toBe(NO_MODIFIERS);
+  });
+
+  it('deploy applies HP / mana multipliers and the star skill bar', () => {
+    const s = createState();
+    deployRun(s, {
+      stars: { skills: ['cleave', 'thunder'], nodes: ['star_core', 'tough', 'focus'] },
+    });
+    const hp = 1 + row('tough').magnitude;
+    const mana = 1 + row('focus').magnitude;
+    expect(s.maxHp).toBe(Math.round(100 * hp));
+    expect(s.hp).toBe(s.maxHp);
+    expect(s.maxMana).toBe(Math.round(100 * mana));
+    expect(s.mana).toBe(s.maxMana);
+    expect(s.skillBar.map((slot) => slot.id)).toEqual([
+      'cleave', 'thunder', null, null, null, null, null,
+    ]);
+  });
+
+  it('a star map without skills deploys empty hands (no free pre-equipped kit)', () => {
+    const s = createState();
+    deployRun(s, { stars: { skills: [] } });
+    expect(s.skillBar.every((slot) => slot.id === null)).toBe(true);
+  });
+
+  it('restart keeps the deployed star kit instead of the fixture default', () => {
+    const s = createState();
+    deployRun(s, { stars: { skills: ['ice_shard'] } });
+    step(s, 0.016, { ...idle, restart: true }, NO_MODIFIERS);
+    expect(s.skillBar[0]!.id).toBe('ice_shard');
+  });
+});
+
+describe('kills are the only XP source (design 6.1)', () => {
+  it('a killed monster grants its authored xp', () => {
+    const s = createState();
+    const sk = s.skeletons[0]!;
+    expect(s.xp).toBe(0);
+    const xp = monsterXp(sk.monsterId);
+    expect(damageSkeleton(s, 0, 999)).toBe(true);
+    expect(s.xp).toBe(xp);
+    expect(projection(s).xp).toBe(xp);
+  });
+
+  it('a fresh run starts at zero xp', () => {
+    const s = createState();
+    damageSkeleton(s, 0, 999);
+    expect(s.xp).toBeGreaterThan(0);
+    reset(s);
+    expect(s.xp).toBe(0);
   });
 });

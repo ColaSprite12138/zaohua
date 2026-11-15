@@ -25,6 +25,8 @@ export {
   activeWeapon,
   syncWeaponSlots,
   NO_MODIFIERS,
+  createModifiers,
+  PLAYER_HP_MAX,
   CLICK_DRAG_PIXELS,
   DROP_LABEL_GAP,
   DROP_LABEL_H,

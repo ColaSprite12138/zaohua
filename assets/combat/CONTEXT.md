@@ -95,7 +95,7 @@
 |:--|:--|
 | 槽位 | `SKILL_SLOTS = 7`（设计 8.2）。位移技能占 1 格；**空格闪避是角色自带的，不占格** |
 | 键位 | `shared/constants.ts::SKILL_KEYS = Q W T F G V C`（唯一权威，HUD 角标读同一份）。不用 1–7：`1/2` 是武器槽、`Space` 闪避、`E` 引导门、`R` 重开。喝蓝药是 `POTION_KEY = X` |
-| 默认带什么 | `PRE_EQUIPPED_SKILLS = cleave / charge / ice_shard`。设计上「主动技能只来自星图，解锁即带」，星图批次没开工，所以先默认给三个；接上星图后填这张表，`createSkillBar()` 签名不变 |
+| 默认带什么 | **正式出征由星图决定**：`deploy.stars.skills`（点亮顺序）→ `createSkillBar(ids)`；**没点技能就是空手**（设计 6.2）。`PRE_EQUIPPED_SKILLS`（7 个）现在只是**自动验收夹具 / 单测 / 未接星图的宿主的兜底**，不再是玩家默认配置。`reset()` 用 `s.starSkills` 重建技能栏，所以重开一局不会把玩家配置换回兜底表 |
 | 法力 | `PLAYER_MANA_MAX = 100`，**不自动恢复**（设计 8.3）。只由「技能扣 / 蓝药涨 / 重开一局回满」改变；`mana` 只在 `skills.ts` 里被写 |
 | 蓝药 | `POTION_COUNT = 3` 瓶/局，`POTION_MANA = 60` 点在 `POTION_SECONDS = 5` 秒内缓慢回复（**不是一口回满**，对应 9.2 的空窗期）。满蓝 / 没药时喝不动，且**不消耗** |
 | 起手 | `beginSkill(s, slot, aim, mods)`：扣蓝 + 进冷却都在这一瞬间完成。返回 `ok / empty / cooling / mana / busy / ended`，**拒绝一律免费**（不扣蓝、不进冷却、不伤怪） |
@@ -187,6 +187,20 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 **为什么机制不搬表**：`kind` / `element` / `icon` 是「这个技能怎么实现」，不是「它多强」。
 放表里就要在运行时把字符串映射回 resolver，还得处理拼错（`'sweepp'`）—— 那是把编译期错误
 推成运行期错误。物品表也是同一个分法：`item.xlsx` 放数值，`voxel.ts` 放形状。
+
+### 等级 / 经验与星图乘区（2026-11-15 第四批，设计文档 6.1–6.4）
+
+等级与星图**不在 Worker 里**：Worker 只认识「本局拿了多少经验」和「这一局带进来的节点快照」，
+跨局账本（等级 / 点数 / 点亮节点）全部在主窗口的 `talent/`。这样局内永远没有改 build 的接口。
+
+| 项 | 契约 |
+|:--|:--|
+| 经验来源 | **只有击杀**（设计 6.1）。`damageSkeleton()` 的死亡分支里 `s.xp += monsterXp(monsterId)`，数值在 `monster.xlsx::xp`（缺行回落 10）。没有任务奖励、没有通关保底 |
+| 结算 | `RunResult.xp` + `RunResult.stage`（地图 id）交给壳层。失败的一局**照样给经验**：死一次不该连成长都没有 |
+| 星图快照 | `deployment.stars = { skills, nodes }`，整局只来一次（设计 6.4「局内不能换 build」）。缺省＝夹具兜底（`PRE_EQUIPPED_SKILLS` + 无乘区） |
+| 乘区 | `modifiers.ts::createModifiers(nodes)` 按 `starmap.xlsx` 的 `effect` 列加总：`dmg_pct` → 伤害 ×(1+Σ)、`range_px` → 近战距离 +Σ、`hp_pct` / `mana_pct` → `applyStarMods()` 在 deploy 时重算生命 / 法力上限。**加算不乘算**（0.05 + 0.08 = +13%） |
+| 落点 | `deployRun()` 里 `reset()` 之后调 `applyStarMods()`：reset 会把 hp 拉回 maxHp，上限必须在它之后改写 |
+| 不投影等级 | `projection()` 只有 `xp`；等级由主窗口算。Worker 里不得出现 `level` 字段（两份等级会立刻漂移） |
 
 ### 本局状态与投影
 
@@ -336,6 +350,13 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 41. **数值只有一个来源**：技能 / 状态 / 怪物 / 全局手感的数字**只允许来自 `tables/*.xlsx`**
     （经 `generated/`）。禁止在 TS 里再抄一份数字 —— `data-driven.test.ts` 会断言导出的常量
     等于表值，抄了就会红。新增技能 = 表里加一行 + 代码里加一条机制，缺一边启动即抛错。
+
+41. **经验只有一个入口**：`s.xp` 只在 `damageSkeleton()` 的死亡分支里增加；技能 / DOT / 撞墙
+    伤害都必须经过它，所以「中毒跳死也算经验」自然成立。禁止在其他地方 `s.xp +=`。
+42. **局内没有等级**：`GameState` / `projection()` 不得出现 `level`；等级与星图点只在
+    `talent/` 与主窗口存在。`deployment.stars` 是**唯一**从局外进入战斗的星图通道。
+43. **技能栏不是常量**：正式出征的技能来自 `deploy.stars.skills`；`PRE_EQUIPPED_SKILLS` 只做夹具兜底，
+    任何地方不得再把它当「玩家默认技能」。
 
 ## 目录与依赖方向（单向，禁止反向 import）
 

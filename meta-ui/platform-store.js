@@ -24,6 +24,7 @@
 
   var A = window.MetaAccount;
   var M = window.MetaInventory;
+  var T = window.MetaTalent;
   var host = window.MetaShell;
   if (!A || !M || !host) {
     console.error('[store] MetaAccount / MetaInventory / MetaShell missing; save disabled');
@@ -35,12 +36,29 @@
   var queue = null; // stays null until the platform adapter is mounted
   var identity = { id: '', name: '', mode: 'off' };
   var applying = false;
+  var progressBlob = null;
+  var tree = null;
+  if (T && host.starmap) {
+    try {
+      tree = T.createStarTree(host.starmap);
+    } catch (err) {
+      console.error('[store] 星图数据接线错误', err);
+    }
+  }
 
   /** Replacing state must not itself count as a user edit / extra write. */
   function apply(state) {
     applying = true;
     try {
       host.setState(state);
+      // 星图进度和背包同属一份 blob（v2）。坏数据 / 旧存档回退初始星图，
+      // 绝不让存档把局外页面弄白屏（`sanitizeProgress` 内部逐条校验）。
+      if (T && tree && host.levels && host.setProgress) {
+        var repaired = T.sanitizeProgress(progressBlob, tree, host.levels, host.starRule || {
+          mainline_star_points: 0, explore_star_points: 0,
+        });
+        host.setProgress(repaired || T.createStarState());
+      }
     } finally {
       applying = false;
     }
@@ -55,7 +73,8 @@
       // No platform host => no queue => no write. This is the ONLY reason the
       // 4174 preview can play the game without persisting anything.
       if (applying || !queue) return null;
-      return A.writeSave(queue, host.getState());
+      var p = host.getProgress ? host.getProgress() : null;
+      return A.writeSave(queue, host.getState(), p || undefined);
     },
     lastSaved: function () { return queue ? queue.last() : null; },
     writeCount: function () { return queue ? queue.calls() : 0; },
@@ -73,6 +92,7 @@
         mode: 'platform',
       };
       queue = A.createSaveQueue(function (env) { return bridge.write(env); });
+      progressBlob = A.decodeProgress(bridge.initial);
       apply(A.decodeSave(bridge.initial, fallback, slots));
       return true;
     },
