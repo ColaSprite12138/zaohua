@@ -818,3 +818,21 @@
 - **`voxel.ts` 是三个生成物的共同源**：改了它（这次加了 4 个技能图标与元素色）必须重跑
   `node scripts/build-meta-ui.mjs`；`--check` 报的「inventory.js 不同步」是列表里第一条的误导，
   真正的漂移项要自己看每行 `[FAIL]`。
+
+## 32. 渲染密度上提：`CanvasTexture` 可以运行时改尺寸，但验收截图看不见它
+
+- **`CanvasTexture` 支持运行时改画布尺寸，不用重建贴图**。引擎每帧在
+  `materialCanvasTextureView()` 里读 `canvas.width/height` 传给 `store.uploadFrame(key, image, w, h, …)`
+  （`generateMipmaps: true`），`update()` 只是把 version +1。所以 `OffscreenCanvas` 直接赋
+  `width/height` 再每帧 `update()` 即可生效；赋尺寸会重置 2D 状态（transform / smoothing），
+  所以 `setTransform` 必须写在 `paint()` 之前而不是只写一次。
+- **`project play` 的截图是「视口尺寸」，不是画布尺寸** —— 内部画布是 1280×720 还是 2560×1440，
+  截图文件一模一样大（都等于视口）。所以「截图看起来没变」不能证明改动没生效，反过来也一样：
+  想量收益必须比**锐度**（平均亮度梯度），不能比尺寸。
+- **`--viewports` 才是改验收窗口的正确开关**（`--viewports "1920x1080,1280x600"`）。默认
+  `1280x720,1280x600` 时窗口正好等于布局，整数倍上限自然取 1×，**在默认视口下做 2× 是纯负收益**
+  （多一道 2×→1× 的降采样，实测横幅锐度 12.67 → 12.19）—— 别在 720p 视口上判断这个改动的价值。
+- **同一脚本同一视口跑两次，结果可能不同**：加上 2× 后首次跑 1920×1080，"holding the left button
+  follows the live cursor" 断言失败（2254ms 就抛），第二次同样代码通过、`scriptMs` 68668（1× 那
+  次 69412）、FPS 145（1× 是 144）。不是性能回归，而是 `play.wait(150)` 这类**按墙钟等 150ms 再读
+  指针**的步骤，在首帧更慢时可能一帧都没跑到。遇到这种单步失败先重跑一次再改代码。

@@ -76,7 +76,33 @@ export const game: Plugin = {
     // Mouse-driven games need a free cursor, not pointer lock.
     host?.setPointerLockAllowed?.(false);
 
+    /**
+     * Render density, in whole multiples of the 1280x720 layout.
+     *
+     * The canvas is the ONLY surface the engine samples, and it used to be
+     * locked at 1280x720 and stretched to whatever the window happened to be
+     * (1.25x at 1600x900, 1.5x at 1080p). A non-integer bilinear upscale smears
+     * every voxel edge and every Chinese glyph, and the bigger the monitor the
+     * worse it gets -- that is the "resolution looks low" half of the problem.
+     * Painting at an integer multiple and letting the GPU scale DOWN instead
+     * keeps lines hard: 1280x720 stays the sole layout authority (all gameplay,
+     * HUD and input code is untouched), only the sampling density moves.
+     *
+     * 2x is the ceiling on purpose: 2560x1440 is 3.7M pixels to upload per
+     * frame, which is the most this 2D painter should push. Raising it further
+     * belongs with finer art (a smaller voxel unit), not with this one change.
+     */
+    const RENDER_SCALE_MAX = 2;
     const surface = new OffscreenCanvas(VIEW_W, VIEW_H);
+    let surfaceScale = 1;
+    const resizeSurface = (scale: number): void => {
+      if (scale === surfaceScale) return;
+      surfaceScale = scale;
+      // Assigning width/height resets the 2D state (transform, smoothing); both
+      // are re-established every frame right before `paint`, so nothing is lost.
+      surface.width = VIEW_W * scale;
+      surface.height = VIEW_H * scale;
+    };
     const context = surface.getContext('2d');
     if (context === null) throw new Error('game/arena requires a Canvas 2D context');
     const painter = context as unknown as CanvasRenderingContext2D;
@@ -188,6 +214,9 @@ export const game: Plugin = {
               };
             }),
             extent,
+            // Read-only proof of the render density, so acceptance can assert
+            // the canvas is actually supersampling instead of trusting a reply.
+            renderScale: surfaceScale,
           });
         }
       };
@@ -345,6 +374,19 @@ export const game: Plugin = {
               publishRunState();
               settleIfFinished();
             }
+            // Whole multiples only. A fractional ratio would make the 2D
+            // rasteriser antialias the block edges -- exactly the softness this
+            // change exists to remove. `ceil` (not `round`) because a 1.25x
+            // window has nothing to gain from rendering at 1x and being
+            // stretched, while 2x still supersamples it.
+            resizeSurface(Math.max(
+              1,
+              Math.min(
+                RENDER_SCALE_MAX,
+                Math.ceil(Math.max(canvasW / VIEW_W, canvasH / VIEW_H)),
+              ),
+            ));
+            painter.setTransform(surfaceScale, 0, 0, surfaceScale, 0, 0);
             paint(painter, state);
             texture.update();
             // Pointer feedback: the source realm cannot touch CSS, so tell the
