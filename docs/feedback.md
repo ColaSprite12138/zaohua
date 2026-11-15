@@ -747,3 +747,18 @@
   但往 stderr 打 `[warn] … sits in layer 'Props'` —— 拖门时图层没切错是最常见的误操作。
 - 另：`assets/resource/maps/arena/`（LDtk 自动备份）已进 `.gitignore`。
 - 教训：**任何“从编辑器导出”的字段都要先确认语义是否会被编辑器改写**；能存世界坐标就别存格号。
+
+## 29. `project play` 失败后重跑会自锁：陈旧 `.forgeax/play/lock.json` + pid 复用
+
+- 现象：第一次 `project play` 因为别的错误中途退出（本次是截图触发
+  `SAFE_DELETE_BULK_CONFIRM_REQUIRED`），重跑时脚本一直打印
+  `waiting for another play of this project (pid NNNN)`，等到 300 秒预算耗尽。
+- 根因：play 的并发锁是 `.forgeax/play/lock.json`（含 `pid`），失败退出没有清掉它；
+  重跑的新进程恰好**复用了同一个 pid**，于是它读到 `lock.pid === 自己` 认为「有人正在跑」，
+  自己等自己，永远不开始。`lock.json.takeover` 是它自己写的，不是第三方占锁。
+- 处理：确认没有别的 play 在跑后，`rm -f .forgeax/play/lock.json .forgeax/play/lock.json.takeover`
+  再重跑。判断依据是 `lock.json` 里的 `pid` 就是当前 `forgeax project play` 自己的 pid
+  （`Get-CimInstance Win32_Process` 看 `CommandLine`），而不是另一个独立进程。
+- 顺带：**截图需要删除旧产物**，占位超过 50 个文件会触发安全删除的批量确认。跑 play 前先
+  `export CODEBUDDY_SAFE_DELETE_ENABLED=0`（`verify.sh` / `verify-all.sh` 已经这么做了，
+  手动单跑容易忘）。

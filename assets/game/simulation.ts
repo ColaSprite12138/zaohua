@@ -52,6 +52,17 @@ export {
   PORTAL_COUNT,
   phaseAt,
   runFinished,
+  // 技能栏与法力（设计 8.2 / 8.3）：绘制层读技能定义与格子数。
+  SKILLS,
+  SKILL_SLOTS,
+  PRE_EQUIPPED_SKILLS,
+  PLAYER_MANA_MAX,
+  POTION_COUNT,
+  POTION_MANA,
+  POTION_SECONDS,
+  skillDef,
+  skillReady,
+  createSkillBar,
 } from '../combat/simulation.ts';
 export type { RunLoadout } from '../meta/inventory.ts';
 export {

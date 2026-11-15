@@ -61,8 +61,8 @@ describe('LDtk world runtime', () => {
 
   it('camera centres on the player and clamps to the world edges', () => {
     const w = makeWorld(arena);
-    // 出生点 (64,84) → 2064,2704；相机居中后被 clamp 在地图内。
-    expect(cameraFor(w, arena.spawn.x, arena.spawn.y)).toEqual({ x: 1424, y: 2344 });
+    // 出生点 (69,20) → 2224,656（2026-11-15 在 LDtk 里挪过）；居中不触发 clamp。
+    expect(cameraFor(w, arena.spawn.x, arena.spawn.y)).toEqual({ x: 1584, y: 296 });
     expect(cameraFor(w, 3900, 3000)).toEqual({
       x: arena.pxWid - 1280,
       y: arena.pxHei - 720,
@@ -128,7 +128,7 @@ describe('acceptance fixture vs playable arena', () => {
     setArena(s, arena);
     expect(s.map.id).toBe(arena.id);
     expect(s.skeletons).toHaveLength(7);
-    expect(s.camera).toEqual({ x: 1424, y: 2344 });
+    expect(s.camera).toEqual({ x: 1584, y: 296 });
     expect(spawnFromMap(arena).map((sk) => sk.monsterId))
       .toEqual(arena.monsters.map((m) => m.monsterId));
   });

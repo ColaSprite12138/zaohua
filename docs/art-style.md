@@ -80,6 +80,11 @@ function brazier(): VoxelModel {
 export const BRAZIER = brazier();
 ```
 
+**技能图标**（2026-11-15）：`voxel.ts::SKILL_ICONS` 里三件（`cleave` 刃弧 / `charge` 靴子+速度块 /
+`ice_shard` 冰晶），键与 `combat/skills.ts::SkillDef.icon` 一一对应，尺寸 ≤ 11×6 格（塞进 HUD 的
+44px 技能格）。**新增技能必须同时登记图标**：`skills.test.ts` 会断言「每个技能都解析到体素模型」，
+不许用字形 / emoji 顶替（HUD 上出现文字图标 = 风格破坏）。
+
 - `box(x, y, z, w, h, d, color)`：`y=0` 是地面，`x=0` 是身体中线，**`z` 目前只允许 0**
   （模型是一格厚的「体素立牌」，体积感靠三面着色，不靠厚度）。
 - `sym(...)`：以 `x=0` 为轴镜像，手臂/腿/护肩一律用它写，杜绝左右不齐。
@@ -193,7 +198,10 @@ bash scripts/verify.sh                 # 全量：单测 + 双视口 playthrough
 - `22-story-cleared` / `23-portal-channelling` / `24-extracted`：传送门是**石框 + 门洞能量场**
   （`PORTAL_FRAME` + `drawPixelGlow`），引导时门洞变亮、门顶三段进度条；**不允许**把门洞封成
   一整片体素 —— 每格自带的顶面亮条 + 暗边会把它切成百叶窗
+- `skill-sweep` / `skill-casting` / `skill-shard-hit`：**技能栏里是体素图标不是字形**（法力条 + 7 格 +
+  冷却遮罩秒数）；读条时头顶的进度条与脚下方块环是否比粒子更显眼（设计 8.4「极显眼」）
 - `25-viewport-1280x600`（或 `27-viewport-1280x600`）：HUD 在 1280×600 下不重叠、不裁切
+  （**新增技能栏后要重点看这一张**：底部现在是「技能栏 → 武器槽」两行）
 
 局外格子（`meta-ui/index.html` 或注入后的 `dist/index.html`）：仓库/背包/装备槽里必须是**模型**，
 出现字形文字（⚔ / ➶）说明 `voxel.js` 没加载或 `ItemDef.art` 没算出来。

@@ -378,6 +378,105 @@ export default async function playthrough(play) {
     await play.screenshot('dodge');
   });
 
+  // 逻辑像素距离：投影里 player / skeletons 都是屏幕归一化的，乘回去再比。
+  const logicalGap = (s, sk) => Math.hypot(
+    (sk.x - s.player.x) * 1280,
+    (sk.y - s.player.y) * 720,
+  );
+  /** 重开后等骷髅自己走进 [near, far] 这个环带（技能有射程，站桩等更稳）。 */
+  const waitUntilNear = async (near, far, limit = 16) => {
+    for (let i = 0; i < limit; i += 1) {
+      const s = await play.state('game.state');
+      const live = s.skeletons.filter((sk) => sk.alive);
+      if (live.some((sk) => {
+        const d = logicalGap(s, sk);
+        return d >= near && d <= far;
+      })) return s;
+      await play.advance(0.6);
+    }
+    return null;
+  };
+
+  await play.step('a skill spends mana, goes on cooldown and damages what closed in', async () => {
+    await play.keyboard.press('KeyR');
+    await play.wait(120);
+    const before = await play.state('game.state');
+    assert.equal(before.skills.length, 7, 'the skill bar has seven slots');
+    assert.equal(before.skills[0].id, 'cleave', 'slot Q holds the sweep');
+    assert.equal(before.mana, before.maxMana, 'a fresh run starts at full mana');
+    assert.equal(before.potions, 3, 'a fresh run starts with three blue potions');
+
+    // 横扫以玩家为圆心：等骷髅走到 170px 内再按，比追着跑更确定。
+    const staged = await waitUntilNear(60, 150);
+    assert.ok(staged, 'a skeleton walks into sweep range');
+    const hp = staged.skeletons.map((sk) => sk.hp);
+
+    await play.keyboard.press('KeyQ');
+    await play.advance(0.15);
+    const after = await play.state('game.state');
+    assert.ok(after.mana < staged.mana, `the sweep spends mana (${staged.mana} -> ${after.mana})`);
+    assert.ok(after.skills[0].cooldown > 0, 'the sweep goes on cooldown');
+    assert.ok(
+      after.skeletons.some((sk, i) => !sk.alive || sk.hp < hp[i]),
+      'the sweep damages a skeleton inside its radius',
+    );
+    await play.screenshot('skill-sweep');
+
+    // 冷却中再按一次：拒绝必须是免费的（不扣蓝、不出第二下）。
+    const spent = after.mana;
+    await play.keyboard.press('KeyQ');
+    await play.advance(0.1);
+    const refused = await play.state('game.state');
+    assert.equal(refused.mana, spent, 'a cooling skill costs no mana when refused');
+    assert.ok(refused.skills[0].cooldown > 0, 'the cooldown keeps running');
+  });
+
+  await play.step('the ice shard needs a cast and hits the line it aims down', async () => {
+    // 重开一局：从出生点让骷髅自己走过来，第一次进入 240px 时两人还隔着一段距离，
+    // 读条 0.5 秒内不会被普攻打到（怪的出手距离是 40px），所以这一发一定读得完。
+    await play.keyboard.press('KeyR');
+    await play.wait(120);
+    const staged = await waitUntilNear(120, 240);
+    assert.ok(staged, 'a skeleton closes to shard range');
+    const target = staged.skeletons
+      .filter((sk) => sk.alive)
+      .sort((a, b) => logicalGap(staged, a) - logicalGap(staged, b))[0];
+    await play.mouse.move([target.x, target.y]);
+    await play.wait(120);
+
+    await play.keyboard.press('KeyT');
+    await play.advance(0.12);
+    const casting = await play.state('game.state');
+    assert.ok(casting.cast, 'the ice shard starts a cast instead of firing instantly');
+    assert.equal(casting.cast.id, 'ice_shard');
+    assert.equal(casting.skills[2].id, 'ice_shard');
+    await play.screenshot('skill-casting');
+
+    // 比读条多推进一点：截图本身要花掉约 0.5 秒真实时间，结算会在这之后发生。
+    await play.advance(1.1);
+    const done = await play.state('game.state');
+    assert.equal(done.cast, null, 'the cast finishes on its own');
+    assert.ok(
+      done.skeletons.some((sk, i) => !sk.alive || sk.hp < staged.skeletons[i].hp),
+      'the shard damages the skeleton down the corridor',
+    );
+    await play.screenshot('skill-shard-hit');
+  });
+
+  await play.step('a blue potion restores mana slowly and is limited', async () => {
+    const before = await play.state('game.state');
+    assert.ok(before.mana < before.maxMana, 'the skills above spent some mana');
+    await play.keyboard.press('KeyX');
+    await play.advance(0.2);
+    const drunk = await play.state('game.state');
+    assert.equal(drunk.potions, before.potions - 1, 'drinking spends one bottle');
+    await play.advance(1.2);
+    const later = await play.state('game.state');
+    assert.ok(later.mana > drunk.mana, 'the potion keeps restoring mana over time');
+    assert.ok(later.mana <= later.maxMana, 'mana never exceeds its cap');
+    await play.screenshot('mana-potion');
+  });
+
   await play.step('armed melee still works on a clicked enemy', async () => {
     const before = await play.state('game.state');
     const live = livingEnemy(before);

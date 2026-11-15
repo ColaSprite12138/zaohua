@@ -85,6 +85,33 @@
 
 玩家 `stride` 在 `movement.ts::walk()` 里按「碰撞后的位移」推进；怪物在 `enemies.ts` 里同理。
 
+### 技能栏与法力（2026-11-15 新增，设计文档 8.2 / 8.3 / 9.3 第一批）
+
+代码：`combat/skills.ts`（技能定义 + 施法状态机 + 蓝药）+ `combat/state.ts`（类型 / 常量 /
+`createSkillBar`）。这一批只做**主动技能的运行时底座**：7 格、法力、冷却、读条与打断；
+状态 / 反应链、星图解锁、技能升级都不在这里。
+
+| 项 | 契约 |
+|:--|:--|
+| 槽位 | `SKILL_SLOTS = 7`（设计 8.2）。位移技能占 1 格；**空格闪避是角色自带的，不占格** |
+| 键位 | `shared/constants.ts::SKILL_KEYS = Q W T F G V C`（唯一权威，HUD 角标读同一份）。不用 1–7：`1/2` 是武器槽、`Space` 闪避、`E` 引导门、`R` 重开。喝蓝药是 `POTION_KEY = X` |
+| 默认带什么 | `PRE_EQUIPPED_SKILLS = cleave / charge / ice_shard`。设计上「主动技能只来自星图，解锁即带」，星图批次没开工，所以先默认给三个；接上星图后填这张表，`createSkillBar()` 签名不变 |
+| 法力 | `PLAYER_MANA_MAX = 100`，**不自动恢复**（设计 8.3）。只由「技能扣 / 蓝药涨 / 重开一局回满」改变；`mana` 只在 `skills.ts` 里被写 |
+| 蓝药 | `POTION_COUNT = 3` 瓶/局，`POTION_MANA = 60` 点在 `POTION_SECONDS = 5` 秒内缓慢回复（**不是一口回满**，对应 9.2 的空窗期）。满蓝 / 没药时喝不动，且**不消耗** |
+| 起手 | `beginSkill(s, slot, aim, mods)`：扣蓝 + 进冷却都在这一瞬间完成。返回 `ok / empty / cooling / mana / busy / ended`，**拒绝一律免费**（不扣蓝、不进冷却、不伤怪） |
+| 读条 | `castTime > 0` 的技能只写 `s.cast`，由 `advanceCast()` 推进；读条中玩家被钉住（`step()` 跳过 `classifyPointer` / `walk` / `resolveAttackOrder`），**和引导传送门同一套站桩** |
+| 打断 | 受击（`player.hurt > 0`）或闪避 → 读条取消，**蓝不退还、冷却照走**。`advanceCast()` 必须排在 `updateSkeletons()` 之后，同一帧挨打同一帧断 |
+| 三个技能 | `cleave` 横扫（自身半径 170，38 伤害，5s CD，12 蓝，瞬发）/ `charge` 冲锋（沿光标方向 220px，沿途 30 伤害，9s CD，15 蓝，瞬发，撞墙即停）/ `ice_shard` 冰锥（读条 0.8s，直线走廊 260×34，26 伤害，3.5s CD，16 蓝） |
+| 伤害入口 | 只走 `attack.ts::damageSkeleton()` —— 普攻与技能**共用**受击、击退、死亡、击杀计数、加权掉落。技能击杀必须掉同一份战利品 |
+| 星图乘区 | 技能伤害过 `mods.damageMultiplier()`（设计 6.2「技能强度来自星图乘区 + 装备白值」） |
+| 投影 | `mana` / `maxMana` / `potions` / `skills[7]`（`id,name,cost,cooldown,cooldownMax,castTime,ready`）/ `cast`（`id,slot,progress` 或 null） |
+| HUD | 底部中央第二行：法力条 + 7 格技能栏（体素图标 + 按键角标 + 蓝耗 + 冷却遮罩与秒数）；读条时头顶另有一条**世界空间**读条条 + 脚下方块环（设计 8.4「必须极显眼」） |
+| 美术 | 图标是 `voxel.ts::SKILL_ICONS` 的体素模型（`cleave / charge / ice_shard`），键来自 `SkillDef.icon`。新增技能不登记图标 = `skills.test.ts` 红 |
+
+**没做的部分**（别以为漏了）：状态 / 减速 / 反应链（8.4 / 8.5）、技能升级与形态（决策 11「解锁即完整」）、
+星图解锁接线、`spell` 类武器（`attack-spec.ts` 仍只留类型）、弹道运行时（冰锥走直线判定，
+远程武器与弓手怪的 `Projectile` 还没接进 `step()`）、法力药水做成背包物品（现在按局发瓶数）。
+
 ### 本局状态与投影
 
 - **没有得分**：`GameState` 没有 `score`，击杀 / 拾取都不加分；HUD 右上角是**只读小地图**，结算板显示 `击杀 / 拾取`。
@@ -195,6 +222,18 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 25. **引导中玩家被钉住**：`s.channel !== null` 时 `step()` 必须跳过 `classifyPointer` / `walk` /
     `resolveAttackOrder`，否则「站桩 8 秒」不成立（玩家能一边引导一边走位就失去风险）。
 
+26. **法力只由三处改变**：技能扣（`beginSkill`）、蓝药涨（`tickSkills` 的 `manaSurge`）、
+    重开一局（`reset`）。**不得**加任何按秒自动回复、击杀回蓝、升级回蓝 —— 设计 8.3
+    明确「法力不自动恢复」，R6 的答复也是「不加自动回复」。
+27. **被拒绝的起手必须免费**：`beginSkill` 返回 `empty / cooling / mana / busy / ended` 时，
+    蓝、冷却、怪物血量、`attacks` 一个都不许动。连按不该把自己罚死。
+28. **打断不退蓝、冷却照走**：受击 / 闪避打断读条后，`mana` 与 `slot.cooldown` 保持起手时
+    的值不动。改这条等于把「站桩读条的风险」删掉。
+29. **伤害只有一个入口**：普攻与技能都必须走 `attack.ts::damageSkeleton()`。任何「自己写
+    `sk.hp -= x`」的技能都会绕开掉落与击杀计数，`lootLog` 与实际击杀从此对不上。
+30. **冷却只在 `tickSkills()` 里递减**：别的模块不得直接写 `slot.cooldown`（`beginSkill`
+    负责置满、`reset` 负责清零，除此之外只有这里减）。
+
 ## 目录与依赖方向（单向，禁止反向 import）
 
 ```
@@ -203,8 +242,9 @@ combat/world.ts            ← 只 import shared；纯地图运行时，不持�
 combat/state.ts            ← shared + world + resource/maps 数据；类型权威
 combat/effects.ts          ← state(类型) + shared + world
 combat/modifiers.ts        ← 独立接口，不 import combat
-combat/attack.ts           ← state + effects + modifiers(类型)
+combat/attack.ts           ← state + effects + modifiers(类型)；`damageSkeleton()` 是唯一伤害入口
 combat/movement.ts         ← state + effects + attack + world
+combat/skills.ts           ← state + effects + attack(伤害入口) + movement(`canStand`) + modifiers(类型)
 combat/enemies.ts          ← state + effects + world
 combat/weapons.ts          ← state + effects
 combat/loot.ts             ← resource/generated/*.ts（只消费生成物，不读 xlsx）
@@ -225,7 +265,9 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 `itemRow(id)` / `weaponRow(id)` / `authoredItem(id)`（**item + weapon 的唯一 join 点**）/
 `AuthoredItemView` / `monsterRow(id)` / `poolEntries(poolId)` / `theoreticalDistribution(poolId)` /
 `updateRunClock(s, dt)` / `updateExtraction(s, dt, channelPressed)` / `phaseAt(runSeconds)` / `runFinished(s)` /
-`createPortals(world, count?)`。
+`createPortals(world, count?)` /
+`beginSkill(s, slot, aim, mods)` / `advanceCast(s, dt, mods)` / `tickSkills(s, dt)` / `drinkPotion(s)` /
+`skillDef(id)` / `skillReady(s, slot)` / `SKILLS` / `createSkillBar()` / `damageSkeleton(s, i, amount, opts?)`。
 引擎层从 `assets/game/simulation.ts` 门面 import；新代码应直接 import 本模块。
 
 ## 攻击规格与资源预留（架构层，2026-11-12 新增，**尚未接入运行时**）
@@ -254,7 +296,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 116 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3 / extraction 17）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 135 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3 / extraction 17 / **skills 19**）
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json

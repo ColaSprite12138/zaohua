@@ -31,6 +31,7 @@ import {
   type Deployment, type RunLoadout, type RunCommand,
 } from './simulation.ts';
 import { paint } from './paint.ts';
+import { POTION_KEY, SKILL_KEYS } from '../shared/constants.ts';
 import { arena } from '../resource/maps/arena.generated.ts';
 import { testArena } from '../resource/maps/arena-test.ts';
 
@@ -308,6 +309,10 @@ export const game: Plugin = {
             // no button produces no order at all.
             const mouse = snapshot?.mouse;
             const restart = snapshot?.keyboard?.justPressedCode('KeyR') ?? false;
+            // 技能键 / 喝药键只在输入层出现一次映射（SKILL_KEYS 是唯一权威，HUD 读同一份）。
+            const skillSlot = SKILL_KEYS.findIndex(
+              (code) => snapshot?.keyboard?.justPressedCode(code) ?? false,
+            );
             // Login overlay AND platform lifecycle pause: freeze simulation and
             // settlement, but keep painting so the canvas shows a live frame.
             if (!locked && !paused) {
@@ -320,6 +325,9 @@ export const game: Plugin = {
                   ? 0
                   : (snapshot?.keyboard?.justPressedCode('Digit2') ?? false) ? 1 : null,
                 dodge: snapshot?.keyboard?.justPressedCode('Space') ?? false,
+                // 主动技能（1..7 格）与蓝药：justPressed 才算，按住不会连发。
+                skill: skillSlot >= 0 ? skillSlot : null,
+                potion: snapshot?.keyboard?.justPressedCode(POTION_KEY) ?? false,
                 // E = 起手 / 取消传送门引导（搜打撤的「撤」）。
                 extractChannel: snapshot?.keyboard?.justPressedCode('KeyE') ?? false,
                 restart,

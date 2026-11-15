@@ -20,9 +20,9 @@
 			"instancesData": [{ "iids": {
 				"worldIid": "ee80b6eb-29ba-56a2-acb9-04820ae53d9c",
 				"levelIid": "0f11c35b-745e-5a4b-ac55-862c93bd4473",
-				"layerIid": "a30f6355-4bd4-51d9-a52a-f68992f7bb01",
-				"entityIid": "4c1e59b1-6fab-5cc4-8303-186a88209d96"
-			}, "worldX": 2064, "worldY": 2720, "widPx": 32, "heiPx": 32, "fields" : {} }]
+				"layerIid": "77c4ba29-d502-590e-a540-43608cbeb431",
+				"entityIid": "54626630-bde0-11f1-a84d-e13d54b07c63"
+			}, "worldX": 2224, "worldY": 672, "widPx": 32, "heiPx": 32, "fields" : {} }]
 		},
 		{
 			"identifier": "Monster",
@@ -384,8 +384,8 @@
 					"worldIid": "ee80b6eb-29ba-56a2-acb9-04820ae53d9c",
 					"levelIid": "0f11c35b-745e-5a4b-ac55-862c93bd4473",
 					"layerIid": "77c4ba29-d502-590e-a540-43608cbeb431",
-					"entityIid": "faa2da50-bde0-11f1-bde2-4b6ff9b38823"
-				}, "worldX": 2000, "worldY": 576, "widPx": 32, "heiPx": 32, "fields" : {} }
+					"entityIid": "58a16f70-bde0-11f1-a84d-718ef86c974e"
+				}, "worldX": 1872, "worldY": 992, "widPx": 32, "heiPx": 32, "fields" : {} }
 			]
 		}
 	],
@@ -1262,22 +1262,6 @@
 					"overrideTilesetUid": null,
 					"gridTiles": [],
 					"entityInstances": [
-						{
-							"__identifier": "PlayerSpawn",
-							"__grid": [64,84],
-							"__pivot": [0.5,1],
-							"__tags": [],
-							"__tile": null,
-							"__smartColor": "#B8DE4F",
-							"iid": "4c1e59b1-6fab-5cc4-8303-186a88209d96",
-							"width": 32,
-							"height": 32,
-							"defUid": 20,
-							"px": [2064,2720],
-							"fieldInstances": [],
-							"__worldX": 2064,
-							"__worldY": 2720
-						},
 						{
 							"__identifier": "Monster",
 							"__grid": [30,30],
@@ -2227,20 +2211,36 @@
 							"__worldY": 1376
 						},
 						{
+							"__identifier": "PlayerSpawn",
+							"__grid": [69,20],
+							"__pivot": [0.5,1],
+							"__tags": [],
+							"__tile": null,
+							"__smartColor": "#B8DE4F",
+							"iid": "54626630-bde0-11f1-a84d-e13d54b07c63",
+							"width": 32,
+							"height": 32,
+							"defUid": 20,
+							"px": [2224,672],
+							"fieldInstances": [],
+							"__worldX": 2224,
+							"__worldY": 672
+						},
+						{
 							"__identifier": "Portal",
-							"__grid": [62,17],
+							"__grid": [58,30],
 							"__pivot": [0.5,1],
 							"__tags": [],
 							"__tile": null,
 							"__smartColor": "#67E8F9",
-							"iid": "faa2da50-bde0-11f1-bde2-4b6ff9b38823",
+							"iid": "58a16f70-bde0-11f1-a84d-718ef86c974e",
 							"width": 32,
 							"height": 32,
 							"defUid": 105,
-							"px": [2000,576],
+							"px": [1872,992],
 							"fieldInstances": [],
-							"__worldX": 2000,
-							"__worldY": 576
+							"__worldX": 1872,
+							"__worldY": 992
 						}
 					]
 				}

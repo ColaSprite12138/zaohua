@@ -22,13 +22,16 @@ import {
   PORTAL_GUIDE_SECONDS,
   PORTAL_RADIUS,
   PORTAL_STAGE_COUNT,
+  SKILL_SLOTS,
   VIEW_H,
   VIEW_W,
+  skillDef,
   type Drop,
   type GameState,
   type Portal,
   type Skeleton,
 } from './simulation.ts';
+import { SKILL_KEYS, keyLabel } from '../shared/constants.ts';
 import { itemArtKey, itemDef } from '../meta/inventory.ts';
 import {
   atlasReady,
@@ -61,6 +64,7 @@ import {
   itemModel,
   modelBounds,
   prepareScene,
+  skillModel,
   type Facing,
   type Limb,
   type VoxelModel,
@@ -730,6 +734,29 @@ function drawHoverMark(g: Painter, s: GameState): void {
 
 /* --------------------------------------------------------------------- hud */
 
+/**
+ * 读条提示（设计 8.4：引导类技能必须有极显眼的引导动作，让对手能反应、能打断）。
+ *
+ * 画在**世界空间**、跟着玩家走：头顶一条进度条 + 名号，脚下套一圈方块环。
+ * 对手看见「他在读条、还剩多久」才有打断的动机，这比 HUD 角落里的一个数字有用。
+ */
+function drawCastBar(g: Painter, s: GameState): void {
+  const cast = s.cast;
+  if (cast === null) return;
+  const def = skillDef(cast.id);
+  const p = s.player;
+  const ratio = cast.total > 0 ? Math.min(1, cast.t / cast.total) : 1;
+  const w = 76;
+  const x = Math.round(p.x - w / 2);
+  const y = Math.round(p.y - bodyHeight(KNIGHT) - 34);
+  drawPixelRing(g, p.x, p.y + 2, 26, 11, '#8be9fd', { alpha: 0.45, lineWidth: 2 });
+  g.fillStyle = 'rgba(8,16,24,0.88)';
+  g.fillRect(x - 2, y - 2, w + 4, 12);
+  g.fillStyle = '#8be9fd';
+  g.fillRect(x, y, Math.round(w * ratio), 8);
+  text(g, def?.name ?? '读条', p.x, y - 12, 11, '#8be9fd', 'center', '700');
+}
+
 function hud(g: Painter, s: GameState): void {
   // Top-left: title + health.
   g.fillStyle = 'rgba(8,16,24,0.78)';
@@ -806,13 +833,101 @@ function hud(g: Painter, s: GameState): void {
   text(g, used ? weaponLabel(used) : '空手', slotX + 160, slotY + 47, 19, used ? '#ffd166' : '#dbe9f5', 'left', '700');
   text(g, '按 1 / 2 切换', VIEW_W / 2 + 140, slotY + 48, 11, '#8fa9bb', 'right', '600');
 
+  // 武器槽上面一行：7 格技能栏 + 法力条（设计 8.2 / 8.3）。
+  // 法力条**不做自动回复**，所以它只有「被扣」和「喝药慢慢涨」两种变化。
+  const barW = 376;
+  const barH = 74;
+  const barX = VIEW_W / 2 - barW / 2;
+  const barY = VIEW_H - 172;
+  g.fillStyle = 'rgba(8,16,24,0.82)';
+  roundRect(g, barX, barY, barW, barH, 14);
+  g.fill();
+  g.strokeStyle = 'rgba(150,180,205,0.4)';
+  g.lineWidth = 2;
+  roundRect(g, barX, barY, barW, barH, 14);
+  g.stroke();
+  const manaRatio = s.maxMana > 0 ? Math.max(0, Math.min(1, s.mana / s.maxMana)) : 0;
+  text(g, '法力', barX + 16, barY + 11, 10, '#8fa9bb', 'left', '700');
+  text(
+    g,
+    `${Math.round(s.mana)} / ${s.maxMana}   ·   蓝药 ×${s.potions}`,
+    barX + barW - 16, barY + 11, 10, '#8fa9bb', 'right', '600',
+  );
+  const manaBarW = barW - 32;
+  g.fillStyle = 'rgba(255,255,255,0.10)';
+  roundRect(g, barX + 16, barY + 17, manaBarW, 6, 3);
+  g.fill();
+  {
+    const cells = 42;
+    const stepX = manaBarW / cells;
+    const on = Math.max(0, Math.ceil(manaRatio * cells));
+    g.fillStyle = s.manaSurge > 0 ? '#8be9fd' : '#60a5fa';
+    for (let i = 0; i < on; i += 1) g.fillRect(barX + 16 + i * stepX, barY + 17, stepX - 1, 6);
+  }
+  const cell = 44;
+  const gap = 6;
+  const rowW = SKILL_SLOTS * cell + (SKILL_SLOTS - 1) * gap;
+  const rowX = barX + (barW - rowW) / 2;
+  const rowY = barY + 26;
+  const spent = s.gameOver || s.extracted || s.timedOut;
+  for (let i = 0; i < SKILL_SLOTS; i += 1) {
+    const slot = s.skillBar[i];
+    const def = slot === undefined ? null : skillDef(slot.id);
+    const bx = rowX + i * (cell + gap);
+    const cooling = slot !== undefined && slot.cooldown > 0;
+    const casting = s.cast !== null && s.cast.slot === i;
+    const ready = def !== null && !cooling && !spent && s.mana >= def.cost;
+    g.fillStyle = def === null
+      ? 'rgba(255,255,255,0.03)'
+      : ready ? 'rgba(96,165,250,0.16)' : 'rgba(255,255,255,0.06)';
+    roundRect(g, bx, rowY, cell, cell, 8);
+    g.fill();
+    g.strokeStyle = casting ? '#8be9fd' : ready ? 'rgba(150,200,255,0.62)' : 'rgba(150,180,205,0.3)';
+    g.lineWidth = casting || ready ? 2 : 1;
+    roundRect(g, bx, rowY, cell, cell, 8);
+    g.stroke();
+    if (def !== null) {
+      const model = skillModel(def.icon);
+      if (model !== null) {
+        const bounds = modelBounds(model);
+        const scale = fitScale(model, 34, 33);
+        drawVoxel(
+          g,
+          model,
+          bx + cell / 2 + (bounds.ax - bounds.w / 2) * scale,
+          rowY + cell / 2 + 4 + (bounds.ay - bounds.h / 2) * scale,
+          { scale },
+        );
+      }
+      if (cooling) {
+        // 冷却遮罩从顶部往下退，数字盖在遮罩上 —— 和武器槽的读法一致。
+        const ratio = def.cooldown > 0 ? Math.min(1, slot.cooldown / def.cooldown) : 1;
+        g.fillStyle = 'rgba(4,10,16,0.74)';
+        g.fillRect(bx + 1, rowY + 1, cell - 2, Math.round((cell - 2) * ratio));
+      }
+      text(g, keyLabel(SKILL_KEYS[i] ?? ''), bx + 5, rowY + 10, 10, ready ? '#cfe8ff' : '#6f8798', 'left', '800');
+      text(
+        g,
+        String(def.cost),
+        bx + cell - 5, rowY + cell - 9, 9,
+        s.mana >= def.cost ? '#60a5fa' : '#ff9b9b', 'right', '700',
+      );
+      if (cooling) {
+        text(g, slot.cooldown.toFixed(1), bx + cell / 2, rowY + cell / 2, 13, '#dbe9f5', 'center', '800');
+      }
+    } else {
+      text(g, keyLabel(SKILL_KEYS[i] ?? ''), bx + 5, rowY + 10, 10, '#41576a', 'left', '800');
+      text(g, '—', bx + cell / 2, rowY + cell / 2 + 1, 15, '#41576a', 'center', '700');
+    }
+  }
+
   // Bottom-right: controls.
   g.fillStyle = 'rgba(8,16,24,0.66)';
   roundRect(g, VIEW_W - 286, VIEW_H - 92, 262, 72, 12);
   g.fill();
   text(g, '单击地面  移动    长按  跟随光标', VIEW_W - 270, VIEW_H - 70, 12, '#c6dcea');
   text(g, '单击敌人  近战（进入距离后挥砍）', VIEW_W - 270, VIEW_H - 50, 12, '#c6dcea');
-  text(g, '空格  闪避          R  重新开始', VIEW_W - 270, VIEW_H - 30, 12, '#8fa9bb');
+  text(g, '空格 闪避   X 蓝药   R 重开', VIEW_W - 270, VIEW_H - 30, 12, '#8fa9bb');
 
   // 本局剩余时间 + 阶段：搜打撤的「撤」是从这里读的。
   const phaseText = s.extracted
@@ -884,9 +999,10 @@ function hud(g: Painter, s: GameState): void {
     ? null
     : s.portals.find((p) => p.id === s.channel) ?? null;
   if (channelPortal !== null) {
+    // 顶部中央：技能栏占了底部中央那条，引导进度改挂到计时胶囊下方。
     const w = 340;
     const x = VIEW_W / 2 - w / 2;
-    const y = VIEW_H - 142;
+    const y = 62;
     g.fillStyle = 'rgba(8,16,24,0.9)';
     roundRect(g, x, y, w, 48, 10);
     g.fill();
@@ -914,7 +1030,8 @@ function hud(g: Painter, s: GameState): void {
     const hint = s.runKind === 'story'
       ? `按 E 引导传送门 · ${PORTAL_GUIDE_SECONDS} 秒 · 受击或离开会清空进度`
       : '按 E 引导';
-    text(g, hint, VIEW_W / 2, VIEW_H - 124, 13, '#ffd166', 'center', '700');
+    // 技能栏上方一行：既不在技能格上压字，也不与顶部引导面板打架。
+    text(g, hint, VIEW_W / 2, VIEW_H - 186, 13, '#ffd166', 'center', '700');
   }
 
   // Centre toast.
@@ -957,8 +1074,9 @@ function hud(g: Painter, s: GameState): void {
       VIEW_W / 2, VIEW_H / 2 + 14, 14, win ? '#8fe3a8' : '#ff9b9b', 'center', '600',
     );
     text(g, '按 R 重新开始', VIEW_W / 2, VIEW_H / 2 + 50, 15, '#8fa9bb', 'center', '600');
-  } else if (s.cleared) {
+  } else if (s.cleared && s.channel === null) {
     // 清场后仍然要撤离：给一条常驻提示，而不是把画面盖住。
+    // 正在引导时不画 —— 顶部那一条引导进度面板已经在说同一件事。
     text(g, '目标达成 · 走向传送门撤离', VIEW_W / 2, 70, 12, '#ffd166', 'center', '700');
   }
 }
@@ -1017,6 +1135,8 @@ export function paint(g: Painter, s: GameState): void {
   // Name plates last: a body can cover the tiny model, never the clickable name.
   drawDropLabels(g, s);
   drawParticles(g, s);
+  // 读条提示盖在场景之上（它必须比头顶的粒子更显眼），但仍然属于世界空间。
+  drawCastBar(g, s);
   g.restore();
   hud(g, s);
   drawMinimap(g, s);

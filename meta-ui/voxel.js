@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/game/voxel.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 73d96ad3c5a99e36faa40d121ca273e5e6230a149c4e060171238dad8fb2d297
+ * Source SHA-256: c0b80582a279fa8006568439111c0e0660ee1517a02b771d95f4e71c3fc9ca48
  */
 (function (root) {
 "use strict";
@@ -37,8 +37,9 @@ var exports = module.exports;
  *    of the meta UI (which reuses this very file, see `scripts/build-meta-ui`).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.WALL_LIFT = exports.MODELS = exports.ACCENTS = exports.SKELETON_ARM = exports.KNIGHT_ARM = exports.ARM_REACH = exports.SHOULDER_X = exports.SHOULDER_Y = exports.CORPSE = exports.SKELETON = exports.KNIGHT = exports.PORTAL_FRAME = void 0;
+exports.WALL_LIFT = exports.SKILL_ICONS = exports.MODELS = exports.ACCENTS = exports.SKELETON_ARM = exports.KNIGHT_ARM = exports.ARM_REACH = exports.SHOULDER_X = exports.SHOULDER_Y = exports.CORPSE = exports.SKELETON = exports.KNIGHT = exports.PORTAL_FRAME = void 0;
 exports.itemModel = itemModel;
+exports.skillModel = skillModel;
 exports.modelBounds = modelBounds;
 exports.drawVoxel = drawVoxel;
 exports.modelHeight = modelHeight;
@@ -430,6 +431,64 @@ exports.MODELS = {
     bow: itemModel('bow:steel'),
     portalClosed: exports.PORTAL_FRAME,
 };
+/* -------------------------------------------------------- skill bar icons */
+/**
+ * 技能图标：也是体素模型，不是图标字体 / 文字。
+ *
+ * 规则和其它模型完全一样（一格一个方块、`z` 只允许 0、禁用渐变与圆角），
+ * 尺寸控制在 11×6 格以内，正好塞进 HUD 的 44px 技能格。技能与图标的对应
+ * 关系由 `assets/combat/skills.ts::SkillDef.icon` 决定 —— 新增技能必须同时
+ * 在这里登记一个模型，`skills.test.ts` 会断言这件事。
+ */
+/** 横扫：一道从左下扫到右下的刃弧 + 剑柄。 */
+function skillCleave() {
+    const b = new Builder('skill-cleave', 4);
+    b.box(0, 0, 0, 1, 2, 1, C.grip);
+    b.box(0, 2, 0, 1, 1, 1, C.gold);
+    b.box(-5, 1, 0, 1, 1, 1, C.steelHi);
+    b.box(-4, 2, 0, 1, 1, 1, C.steel);
+    b.box(-3, 3, 0, 1, 1, 1, C.steel);
+    b.box(-2, 4, 0, 1, 1, 1, C.steelHi);
+    b.box(-1, 4, 0, 2, 1, 1, C.steel);
+    b.box(1, 4, 0, 1, 1, 1, C.steelHi);
+    b.box(2, 3, 0, 1, 1, 1, C.steel);
+    b.box(3, 2, 0, 1, 1, 1, C.steel);
+    b.box(4, 1, 0, 1, 1, 1, C.steelHi);
+    return b.model();
+}
+/** 冲锋：前倾的靴子 + 身后三条速度块（朝右冲）。 */
+function skillCharge() {
+    const b = new Builder('skill-charge', 4);
+    b.box(1, 0, 0, 4, 1, 1, C.boot);
+    b.box(1, 1, 0, 2, 3, 1, C.armor);
+    b.box(1, 4, 0, 2, 1, 1, C.armorHi);
+    b.box(3, 1, 0, 1, 1, 1, C.armorDark);
+    b.box(-3, 2, 0, 3, 1, 1, C.glow);
+    b.box(-5, 3, 0, 3, 1, 1, C.glow);
+    b.box(-3, 4, 0, 2, 1, 1, C.glow);
+    return b.model();
+}
+/** 冰锥：立着的青色晶体 + 旁边两块碎冰。 */
+function skillIceShard() {
+    const b = new Builder('skill-ice-shard', 4);
+    b.box(0, 0, 0, 1, 1, 1, C.gem);
+    b.box(-1, 1, 0, 3, 1, 1, C.glow);
+    b.box(-1, 2, 0, 2, 2, 1, C.armorHi);
+    b.box(0, 4, 0, 1, 2, 1, C.steelHi);
+    b.box(-3, 1, 0, 1, 1, 1, C.glow);
+    b.box(2, 0, 0, 1, 1, 1, C.gem);
+    return b.model();
+}
+/** 技能 id → 体素图标。`skills.ts::SkillDef.icon` 就用这里的键。 */
+exports.SKILL_ICONS = Object.freeze({
+    cleave: skillCleave(),
+    charge: skillCharge(),
+    ice_shard: skillIceShard(),
+});
+/** 未知技能返回 null：HUD 会画一个空格子，而不是借别人的图标。 */
+function skillModel(icon) {
+    return exports.SKILL_ICONS[icon] ?? null;
+}
 const OUTLINE = '#050a12';
 const spriteCache = new Map();
 function canvasOf(w, h) {

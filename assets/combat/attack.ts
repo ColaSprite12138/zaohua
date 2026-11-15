@@ -107,6 +107,73 @@ export function clearAttackOrder(s: GameState): void {
   s.targetEnemy = null;
 }
 
+/**
+ * THE single place a monster loses HP.
+ *
+ * Both a sword swing and every skill funnel through here, so "how damage lands"
+ * (hit flash, knockback, death, kill counter, weighted loot roll) can never
+ * drift between the two. A skill that kills must drop loot exactly like a
+ * swing does -- otherwise the skill system silently becomes the worst way to
+ * farm, and `lootLog` stops matching the kills.
+ *
+ * `dir` is the knockback direction in world units (defaults to "away from the
+ * player", which is what a click-attack has always used).
+ */
+export function damageSkeleton(
+  s: GameState,
+  index: number,
+  amount: number,
+  options: { dirX?: number; dirY?: number; knockback?: number; color?: string } = {},
+): boolean {
+  const sk = s.skeletons[index];
+  if (sk === undefined || !sk.alive || amount <= 0) return false;
+  const p = s.player;
+  let dx = options.dirX ?? sk.x - p.x;
+  let dy = options.dirY ?? sk.y - p.y;
+  const d = Math.hypot(dx, dy) || 1;
+  dx /= d;
+  dy /= d;
+  const push = options.knockback ?? 1;
+
+  sk.hp -= amount;
+  sk.hit = 0.24;
+  sk.x += dx * 16 * push;
+  sk.y += dy * 12 * push;
+  burst(s, sk.x, sk.y - 26, options.color ?? '#ffd166', 9, 165);
+  if (sk.hp > 0) return false;
+
+  sk.alive = false;
+  s.kills += 1;
+  // Weighted roll from the authored loot table. `kind` stays 'longsword'
+  // (visual category) so the existing drop art and playthrough assertions
+  // remain valid; the authored identity rides in itemId/name/quality.
+  const loot = rollLoot(sk.monsterId, s.rng);
+  if (loot !== null) {
+    s.lootLog.push({
+      monsterId: sk.monsterId,
+      itemId: loot.itemId,
+      name: loot.name,
+      quality: loot.quality,
+      damageMin: loot.damageMin,
+      damageMax: loot.damageMax,
+      poolId: loot.poolId,
+    });
+    s.drops.push({
+      uid: nextDropUid(),
+      x: sk.x, y: sk.y, kind: 'longsword', t: 0,
+      itemId: loot.itemId, name: loot.name, quality: loot.quality,
+      monsterId: sk.monsterId,
+    });
+    burst(s, sk.x, sk.y - 24, '#e8e4d8', 22, 210);
+    say(s, `骷髅被击杀 · 掉落「${loot.name}」(${loot.quality})`);
+  } else {
+    // Authored data is inconsistent (unknown monster / empty pool). Do not
+    // spawn an unlabelled drop; surface it as a toast instead.
+    say(s, `骷髅被击杀 · 掉落表未配置 (monsterId=${sk.monsterId})`);
+  }
+  return true;
+}
+
 export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers): void {
   const sk = s.skeletons[index];
   if (sk === undefined || !sk.alive) return;
@@ -126,44 +193,10 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   p.face = aim;
   s.attacks += 1;
 
-  sk.hp -= mods.damageMultiplier(baseline);
-  sk.hit = 0.24;
-  sk.x += (ddx / d) * 16;
-  sk.y += (ddy / d) * 12;
-  burst(s, sk.x, sk.y - 26, armed ? '#ffd166' : '#ffb454', 9, 165);
+  damageSkeleton(s, index, mods.damageMultiplier(baseline), {
+    color: armed ? '#ffd166' : '#ffb454',
+  });
   burst(s, p.x + Math.cos(aim) * 52, p.y + Math.sin(aim) * 52 - 22, '#cfe8ff', 5, 90);
-
-  if (sk.hp <= 0) {
-    sk.alive = false;
-    s.kills += 1;
-    // Weighted roll from the authored loot table. `kind` stays 'longsword'
-    // (visual category) so the existing drop art and playthrough assertions
-    // remain valid; the authored identity rides in itemId/name/quality.
-    const loot = rollLoot(sk.monsterId, s.rng);
-    if (loot !== null) {
-      s.lootLog.push({
-        monsterId: sk.monsterId,
-        itemId: loot.itemId,
-        name: loot.name,
-        quality: loot.quality,
-        damageMin: loot.damageMin,
-        damageMax: loot.damageMax,
-        poolId: loot.poolId,
-      });
-      s.drops.push({
-        uid: nextDropUid(),
-        x: sk.x, y: sk.y, kind: 'longsword', t: 0,
-        itemId: loot.itemId, name: loot.name, quality: loot.quality,
-        monsterId: sk.monsterId,
-      });
-      burst(s, sk.x, sk.y - 24, '#e8e4d8', 22, 210);
-      say(s, `骷髅被击杀 · 掉落「${loot.name}」(${loot.quality})`);
-    } else {
-      // Authored data is inconsistent (unknown monster / empty pool). Do not
-      // spawn an unlabelled drop; surface it as a toast instead.
-      say(s, `骷髅被击杀 · 掉落表未配置 (monsterId=${sk.monsterId})`);
-    }
-  }
 }
 
 /** Out of range -> approach; in range + ready -> one swing; cooling down -> wait. */

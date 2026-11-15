@@ -115,7 +115,7 @@ export function applyDodge(s: GameState, dodge: boolean): void {
 const BODY_RADIUS = 10;
 
 /** A body may stand only if its centre and four extremities are walkable. */
-function canStand(w: World, x: number, y: number): boolean {
+export function canStand(w: World, x: number, y: number): boolean {
   return walkable(w, x, y)
     && walkable(w, x - BODY_RADIUS, y)
     && walkable(w, x + BODY_RADIUS, y)

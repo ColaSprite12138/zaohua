@@ -17,6 +17,9 @@ import { makeRng } from './loot.ts';
 import { say } from './effects.ts';
 import { makeRunInventory } from './run-inventory.ts';
 import { updateExtraction, updateRunClock } from './extraction.ts';
+import {
+  advanceCast, beginSkill, drinkPotion, skillDef, skillReady, tickSkills,
+} from './skills.ts';
 import type { RunLoadout } from '../meta/inventory.ts';
 import {
   activeWeapon, createState, dropLabelName, dropLabelRect, reset, setArena,
@@ -33,6 +36,8 @@ function tickTimers(s: GameState, dt: number): void {
   p.attackCd = Math.max(0, p.attackCd - dt);
   p.attackFx = Math.max(0, p.attackFx - dt);
   p.hurt = Math.max(0, p.hurt - dt);
+  // 技能冷却与蓝药药效：和别的计时器同一条时间轴。
+  tickSkills(s, dt);
   tickToast(s, dt);
 }
 
@@ -51,6 +56,8 @@ export function step(
   if (s.gameOver || s.extracted || s.timedOut) {
     // Nothing below can be clicked any more: drop the sword cursor / hover ring.
     s.hoverEnemy = null;
+    // 一局结束了就不该再有读条在走（阵亡时可能正读到一半）。
+    s.cast = null;
     return;
   }
 
@@ -58,18 +65,26 @@ export function step(
   tickTimers(s, dt);
   // 单局骨架：倒计时 / 阶段推进。本帧之后的所有系统读的都是这一份时间。
   updateRunClock(s, dt);
-  // 引导传送门时玩家被钉在门口：点击移动与攻击指令都不生效（updateExtraction
-  // 负责开始、打断与结算；这里只负责「这一帧能不能动」）。
-  const channeling = s.channel !== null;
+
+  // 技能起手排在最前面：瞬发技能这一帧就结算，读条技能这一帧就把玩家钉住，
+  // 所以下面的移动 / 攻击分支必须看到最新的 `s.cast`。
+  if (input.potion === true) drinkPotion(s);
+  if (input.skill !== undefined && input.skill !== null) {
+    beginSkill(s, input.skill, input.mouse ?? null, modifiers);
+  }
+
+  // 引导传送门时玩家被钉在门口，读条技能同理：点击移动与攻击指令都不生效
+  // （updateExtraction / advanceCast 负责开始、打断与结算；这里只负责「这一帧能不能动」）。
+  const pinned = s.channel !== null || s.cast !== null;
 
   // 1 / 2 only changes which slot is in use; it never moves items or attacks.
   if (input.switchWeapon !== undefined && input.switchWeapon !== null) {
     switchWeaponSlot(s, input.switchWeapon);
   }
-  if (!channeling) classifyPointer(s, input);
+  if (!pinned) classifyPointer(s, input);
   applyDodge(s, input.dodge);
-  if (!channeling) walk(s, dt);
-  if (!channeling) resolveAttackOrder(s, modifiers);
+  if (!pinned) walk(s, dt);
+  if (!pinned) resolveAttackOrder(s, modifiers);
   updateSkeletons(s, dt);
   // Nobody may stand inside anybody. Runs after both sides moved AND after
   // swing knockback, so a hit never leaves two bodies fused.
@@ -80,7 +95,10 @@ export function step(
   layoutDrops(s);
   checkCleared(s);
   // 撤离放在受击之后：同一帧挨打就立刻打断引导，不能靠「先抽完进度」蒙过去。
-  updateExtraction(s, dt, input.extractChannel === true);
+  // 读条中按 E 不生效：两套「站桩」不能并行，先把这一发读完再引导。
+  updateExtraction(s, dt, input.extractChannel === true && s.cast === null);
+  // 读条同理，而且必须排在 `updateSkeletons()` 之后：受击是这一帧写进 `hurt` 的。
+  advanceCast(s, dt, modifiers);
   tickParticles(s, dt);
   // Hover feedback LAST: it must describe the frame that is about to be
   // painted, using the very same hit test a click would use. Loot's name plate
@@ -244,6 +262,31 @@ export function projection(s: GameState) {
     dodging: s.player.dodge > 0,
     attackCooldown: s.player.attackCd,
     dodgeCooldown: s.player.dodgeCd,
+    // 技能栏与法力（设计 8.2 / 8.3）。每格给 id / 冷却 / 蓝耗 / 现在能否按，
+    // 验收脚本据此断言「按了就有反应、没钱就按不动」。
+    mana: s.mana,
+    maxMana: s.maxMana,
+    potions: s.potions,
+    skills: s.skillBar.map((slot) => {
+      const def = skillDef(slot.id);
+      return {
+        id: slot.id,
+        name: def?.name ?? null,
+        cost: def?.cost ?? 0,
+        cooldown: slot.cooldown,
+        cooldownMax: def?.cooldown ?? 0,
+        castTime: def?.castTime ?? 0,
+        ready: skillReady(s, slot),
+      };
+    }),
+    /** 读条中的技能 + 0..1 进度；null = 没在读条。 */
+    cast: s.cast === null
+      ? null
+      : {
+        id: s.cast.id,
+        slot: s.cast.slot,
+        progress: s.cast.total > 0 ? Math.min(1, s.cast.t / s.cast.total) : 1,
+      },
     gameOver: s.gameOver,
     cleared: s.cleared,
     // World-space map runtime facts (new; existing fields above are untouched).
@@ -283,13 +326,18 @@ export {
   DROP_LABEL_STEP, DROP_MODEL_RADIUS, DROP_MODEL_TOP, DROP_PILE_GAP,
   dropLabelAnchor, dropLabelName, dropLabelRect, dropQualityRank,
   MELEE_RANGE_ARMED, MELEE_RANGE_BARE,
-  MONSTER_SWING_TIME, PLAYER_SWING_TIME, STRIDE_PIXELS,
+  MONSTER_SWING_TIME, PLAYER_MANA_MAX, PLAYER_SWING_TIME, POTION_COUNT,
+  POTION_MANA, POTION_SECONDS, PRE_EQUIPPED_SKILLS, SKILL_SLOTS, STRIDE_PIXELS,
   PHASE_EXTRACT_AT, PHASE_FIGHT_AT, PORTAL_COUNT, PORTAL_GUIDE_SECONDS,
   PORTAL_RADIUS, PORTAL_STAGE_COUNT, PORTAL_USES, RUN_SECONDS,
-  createPortals,
+  createPortals, createSkillBar,
 } from './state.ts';
-export type { Portal, RunKind, RunPhase } from './state.ts';
+export type { CastState, Portal, RunKind, RunPhase, SkillSlot } from './state.ts';
 export { phaseAt, runFinished } from './extraction.ts';
+export {
+  SKILLS, advanceCast, beginSkill, drinkPotion, skillDef, skillReady, tickSkills,
+} from './skills.ts';
+export type { SkillDef, SkillKind } from './skills.ts';
 export type { ArenaMap } from './world.ts';
 export type { CombatModifiers } from './modifiers.ts';
 export { NO_MODIFIERS } from './modifiers.ts';

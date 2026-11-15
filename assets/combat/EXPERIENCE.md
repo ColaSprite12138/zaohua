@@ -238,3 +238,25 @@
   「抬着一条腿」的姿势上。
 - 验收要点：新增的 4 条 movement 断言全部只看状态（朝向的 `cos` 符号、`stride` 是否推进、
   `swing>0`、`moving===false`），不依赖任何像素；像素只由 playthrough 截图人工看。
+
+## 2026-11-15 — 技能第一批：法力是「不会自己长回来」的资源
+
+- 需求（设计文档 8.2 / 8.3 / 9.3，第一批）：7 格技能栏、法力、CD、读条与打断、蓝药。
+- 关键判断一：**死亡 / 掉落只有一个入口**。原来「扣血 + 击退 + 死亡 + 击杀计数 + 加权掉落」
+  整段埋在 `attack.ts::swingAtTarget()` 里。技能如果自己写 `sk.hp -= x`，技能击杀就不会掉战利品、
+  `kills` 也不涨。所以先抽 `damageSkeleton(s, i, amount, opts)`，普攻与所有技能都调它；
+  `skills.test.ts` 有专门一条「a skill kill drops loot exactly like a sword swing」守着。
+- 关键判断二：**拒绝必须免费**。`beginSkill()` 的 `cooling / mana / empty / busy / ended`
+  全部不扣蓝、不进冷却。否则连按两下就自己把蓝扣光，玩家会觉得「按了没反应还掉蓝」。
+- 关键判断三：**打断的代价 = 蓝 + 冷却**。受击 / 闪避打断读条后不退蓝、冷却照走，这条写进
+  CONTEXT 不变量 28。改软了，「站桩读条」就没有风险，PVP 里的打断也就没意义。
+- 踩坑一：`advanceCast()` 的调用位置。放在 `updateSkeletons()` **之前**会晚一帧才断，
+  受击的同一帧读条还在涨进度；现在排在 `updateExtraction()` 之后、`updateSkeletons()` 之后。
+- 踩坑二：**读条也要钉住玩家**。只把 `channel` 当成「不能动」的条件时，读条中点击地面仍会走路，
+  读条就变成「边跑边放」。现在 `step()` 用 `pinned = s.channel !== null || s.cast !== null`。
+- 踩坑三：技能伤害要过 `mods.damageMultiplier()`（星图乘区），不然接星图时要回头改每个技能。
+- 踩坑四：HUD 布局。底部中央原本是「武器槽 + 引导进度」；技能栏插进去后，把**引导进度条挪到
+  顶部计时胶囊下方**、把「按 E 引导」提示挪到技能栏上方（`VIEW_H-186`），否则 1280×600 下
+  技能栏与引导面板重叠。清场文案与引导面板同时出现时只画引导面板。
+- 美术：技能图标必须是体素模型（`SKILL_ICONS`），`skills.test.ts` 断言每个 `SkillDef.icon`
+  都能解析出模型 —— HUD 上不许再出现 ⚔ 这类字形。

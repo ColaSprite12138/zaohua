@@ -27,6 +27,13 @@ export interface StepInput {
   readonly dodge: boolean;
   /** Digit1 / Digit2 select which of the two weapon slots is in use. */
   readonly switchWeapon?: 0 | 1 | null;
+  /**
+   * 主动技能槽（0..SKILL_SLOTS-1，justPressed）。空格传 null / 省略，按住不算 ——
+   * 一次按键只尝试起手一次，读条中途重复按不会刷新技能。
+   */
+  readonly skill?: number | null;
+  /** 喝蓝药（justPressed）：法力不自动恢复，靠它续航（设计文档 8.3）。 */
+  readonly potion?: boolean;
   readonly restart: boolean;
   /**
    * E（justPressed）：起手 / 取消传送门引导。按住不算 —— 引导是一次主动决定，
@@ -81,6 +88,60 @@ export const PLAYER_SWING_TIME = 0.26;
 
 /** idle = no order; point = walking to a waypoint; follow = live cursor tracking. */
 export type MoveMode = 'idle' | 'point' | 'follow';
+
+/* ------------------------------------------- 技能栏与法力（设计文档 8.2 / 8.3） */
+
+/**
+ * 主动技能栏 7 格（设计文档 8.2）。空格闪避是角色自带的，**不占格**。
+ *
+ * 现在带进图里的技能写死在 `PRE_EQUIPPED_SKILLS`：设计上「主动技能只来自星图，
+ * 解锁什么就带什么」，但星图批次还没开工，所以先默认给三个；接上星图后这张表
+ * 由星图点出来的技能填充，`createSkillBar()` 的签名不变。
+ */
+export const SKILL_SLOTS = 7;
+export const PRE_EQUIPPED_SKILLS: readonly string[] = Object.freeze([
+  'cleave', 'charge', 'ice_shard',
+]);
+
+/** 法力上限（设计 8.3：只有生命 + 法力两种资源；**法力不自动恢复**）。 */
+export const PLAYER_MANA_MAX = 100;
+
+/**
+ * 蓝药：本局固定瓶数（开发期数值，等消耗品系统上线后改成从背包里取）。
+ * 药效是「缓慢回复」而不是一口回满 —— 这是 9.2 里「法术躲着回蓝」的那段空窗期。
+ */
+export const POTION_COUNT = 3;
+export const POTION_MANA = 60;
+export const POTION_SECONDS = 5;
+
+export interface SkillSlot {
+  /** authored 技能 id；null = 空格。 */
+  id: string | null;
+  /** 剩余冷却秒数；0 = 可用。 */
+  cooldown: number;
+}
+
+/** 读条中的技能。瞬发技能永远不会出现在这里。 */
+export interface CastState {
+  /** 技能栏下标，只用于 HUD 定位（技能身份看 `id`）。 */
+  readonly slot: number;
+  readonly id: string;
+  /** 已经读过的秒数（可变，每帧推进）。 */
+  t: number;
+  readonly total: number;
+  /** 起手瞬间的瞄准点（世界像素）：读条完成时按它结算，不会跟着鼠标飘。 */
+  readonly aimX: number;
+  readonly aimY: number;
+}
+
+/** 默认技能栏：前几个格子装满 `PRE_EQUIPPED_SKILLS`，其余留空。 */
+export function createSkillBar(): SkillSlot[] {
+  const bar: SkillSlot[] = [];
+  for (let i = 0; i < SKILL_SLOTS; i += 1) {
+    bar.push({ id: PRE_EQUIPPED_SKILLS[i] ?? null, cooldown: 0 });
+  }
+  return bar;
+}
 
 /* ------------------------------------------------- 单局骨架（搜打撤，设计文档 10） */
 
@@ -442,6 +503,17 @@ export interface GameState {
   carriedItems: string[];
   /** Drop uid the player clicked; null = no pickup order. */
   pickupTarget: string | null;
+  /** 送达 / 结算用不到，但绘制层与投影都要读：法力、技能栏与读条状态。 */
+  mana: number;
+  maxMana: number;
+  /** 7 格技能栏；`cooldown > 0` 时按不动。 */
+  skillBar: SkillSlot[];
+  /** 正在读条的技能；null = 没在读条。 */
+  cast: CastState | null;
+  /** 本局剩余蓝药瓶数。 */
+  potions: number;
+  /** 蓝药剩余生效秒数：> 0 时按每秒速率缓慢回蓝。 */
+  manaSurge: number;
   /* ---------------------------------------------------- 单局骨架（搜打撤） */
   /** 关卡类型；只影响「什么算结束 / 死了掉什么」，不改变战斗。 */
   runKind: RunKind;
@@ -505,6 +577,12 @@ export function createState(config: RunConfig = {}): GameState {
     lootLog: [],
     carriedItems: [],
     pickupTarget: null,
+    mana: PLAYER_MANA_MAX,
+    maxMana: PLAYER_MANA_MAX,
+    skillBar: createSkillBar(),
+    cast: null,
+    potions: POTION_COUNT,
+    manaSurge: 0,
     runKind: 'story',
     runSeconds: RUN_SECONDS,
     phase: 'explore',
@@ -565,7 +643,16 @@ export function reset(s: GameState): void {
   s.lootLog.length = 0;
   s.carriedItems.length = 0;
   s.pickupTarget = null;
-  s.toast = { text: '单击地面移动 · 单击掉落物拾取 · 单击敌人攻击 · 长按跟随光标 · 空格闪避', life: 4.2 };
+  s.toast = {
+    text: '单击移动 / 攻击 · 长按跟随 · 空格闪避 · Q W T 技能 · X 蓝药',
+    life: 4.2,
+  };
+  // 技能与法力是「本局」资源：重开一局 = 满蓝、满药、冷却清零。
+  s.mana = s.maxMana;
+  s.potions = POTION_COUNT;
+  s.manaSurge = 0;
+  s.cast = null;
+  s.skillBar = createSkillBar();
   // 单局骨架：计时归零、门重建（次数是「本局」资源，重开一局就恢复）。
   s.runSeconds = RUN_SECONDS;
   s.phase = 'explore';
