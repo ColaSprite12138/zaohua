@@ -886,3 +886,17 @@
 - **`item_type` 是格子和装备位的权威，不是 id 前缀**。`registerItemDefs` 以前把没有 `equip`
   的行默认成 2×3 武器，`30001` 弓箭就中过招；这一批加了 `item_type` 才顺手修掉（消耗品 1×1、
   `equip=null`）。加物品前先想清楚它在哪一类里。
+
+## 36. 物品悬停信息卡：数据放在 `ItemDef`，别在页面上再 join 一次表
+
+- 信息卡要显示「伤害区间 + 耐久上限」，这两样原本只在 `weapon.xlsx` / `inject-shell` 的 join 结果里。
+  做法是把它们**塞进 `ItemDef` 的只读副本**（`damageMin/Max` / `weaponSubtype` / `quality` / `itemType`），
+  页面只认 `itemDef(defId)` —— 否则局外页面会成长出第二处 join，两边迟早对不上。
+- 节点上只挂 `data-tip-def` / `data-tip-dura` 两个字符串属性，卡片内容靠它们重建。
+  这个页面每次 `render()` 都重建全部格子，用闭包缓存节点引用一定会失效；委托到 `document` +
+  `mousemove` 才活得久。
+- **独立页没有注入物品目录**：`longsword` 是代码里的演示物品（没有伤害/耐久），所以
+  `verify-meta-ui` 的这条断言要自己 `registerItemDefs()` 注册一件「表里的形状」的武器再悬停。
+  这也说明信息卡在真实壳层里的数据来源与独立页不同 —— 断言要分别覆盖。
+- 踩坑：自测脚本是**模板字符串里的 JS**，注释里写反引号会直接把 Node 语法打断
+  （`SyntaxError: Unexpected identifier`）。这类脚本里一律用「」代替反引号。

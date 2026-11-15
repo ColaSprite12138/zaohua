@@ -61,6 +61,7 @@
 | 名称 | 格子底部保留一行小字名称（品质色），模型是主体；不再显示 `2×3` 尺寸文字 |
 | `ItemDef.durability` | 耐久上限（`weapon.xlsx::durability`）；当前值在物品实例的 `durability` 上（`combat/durability.ts` 写）。局外武器槽底部那条细条读这两个值 |
 | 消耗品 | `item_type=消耗品`（红药 30002 / 蓝药 30003）：`equip=null`、1×1，模型是 `potion:hp` / `potion:mana`。`registerItemDefs` 按 `item_type` 推 equip 与格子，**不再默认成 2×3 武器** |
+| 悬停信息卡（2026-11-15 用户要求） | 鼠标移到**背包格 / 仓库格 / 已穿戴槽**上，弹一张卡：名字（品质色）+ `item_type · 品质 · 攻击方式` + 伤害区间 + 耐久（当前/上限 + 彩条，损坏时红字提示「伤害按空手算」）+ 格子大小。内容全部来自 `ItemDef`（表驱动的只读副本）与实例上的 `durability`，**页面不 join 表**；节点上只挂 `data-tip-def` / `data-tip-dura` 两个属性，`render()` 重建节点也不会失效（`document` 上委托 + `mousemove`）。拖拽中不弹卡。局内背包浮层同样生效（`shell.css` 把 `.item-tip` 排除在"战斗全隐藏"之外） |
 
 ## 单页流程与搜打撤契约（2026-11-11）
 
@@ -220,7 +221,7 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 ```bash
 ./node_modules/.bin/vitest run assets/meta/__tests__      # 40 条（inventory 16 + account 11 + run-settlement 10 + meta 3）
 node scripts/build-meta-ui.mjs --check                     # 三个生成物（inventory / account / voxel）与源码同步
-node scripts/verify-meta-ui.cjs                            # 独立页面 14 条（13 条真实拖放 + 1 条「格子画的是模型不是字形」像素断言）
+node scripts/verify-meta-ui.cjs                            # 独立页面 15 条（13 条真实拖放 + 1 条像素断言 + 1 条悬停信息卡）
 node scripts/inject-shell.mjs --check                      # dist 注入块与源同步
 node scripts/verify-shell.cjs                              # 4174 单页 45 条（含 5 条星图）（无宿主不写盘/平台身份/KV 存档/局内背包/局内拾取镜像/出征/撤离与通关/阵亡清 10 槽/超时/返回/lifecycle）
 ```

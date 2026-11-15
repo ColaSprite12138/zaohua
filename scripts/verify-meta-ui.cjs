@@ -144,6 +144,37 @@ const SELFTEST = `
     // Wrong-type equip: a sword cannot go into a ring slot.
     dragToSlot(document.querySelector('#wrap-stash .grid-item'), 2);
     snap('wrongTypeRejected');
+        // ---- 悬停信息卡：名字 / 属性 / 耐久（2026-11-15 用户要求） ----
+    out.tip = {};
+    (function () {
+      const tip = document.getElementById('fx-item-tip');
+      // 独立页没有注入物品目录（longsword 是代码里的演示物品，没有伤害/耐久），
+      // 所以这里按表里的真实形状注册一件带属性的武器再悬停它。
+      const MI = window.MetaInventory, HS = window.MetaShell;
+      MI.registerItemDefs([{
+        id: '10001', name: '巨剑', item_type: '武器', quality: '白',
+        damage_min: 10, damage_max: 15, weapon_subtype: '近战', durability: 160,
+      }]);
+      MI.addToBag(HS.getLobbyState(), 'tip-probe', '10001');
+      HS.render();
+      const target = document.querySelector('#wrap-bag [data-tip-def="10001"]');
+      if (!tip || !target) { out.tip.missing = true; return; }
+      const rect = target.getBoundingClientRect();
+      // 派发在**物品节点**上（和真实鼠标一样，target 是格子里的那个 div）。
+      target.dispatchEvent(new MouseEvent('mousemove', {
+        bubbles: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2,
+      }));
+      out.tip.visible = tip.hidden === false;
+      out.tip.text = tip.textContent || '';
+      out.tip.name = (tip.querySelector('.tip-name') || {}).textContent || '';
+      out.tip.rows = [...tip.querySelectorAll('.tip-row')].map((n) => n.textContent);
+      out.tip.bar = !!tip.querySelector('.tip-bar');
+      // 移开必须收起，否则卡片会一直挂在屏幕上
+      document.body.dispatchEvent(new MouseEvent('mousemove', {
+        bubbles: true, clientX: 2, clientY: 2,
+      }));
+      out.tip.hiddenAfterLeave = tip.hidden === true;
+    })();
     out.ok = true;
   } catch (e) {
     out.ok = false;
@@ -223,6 +254,13 @@ const checks = [
   ['key 2 activates weapon slot 2', S.key2.active === 1, S.key2],
   ['key 1 activates weapon slot 1', S.key1.active === 0, S.key1],
   ['wrong-type equip into a ring slot rejected', S.wrongTypeRejected.filled === 1 && /不能穿戴/.test(S.wrongTypeRejected.status), S.wrongTypeRejected],
+  ['悬停物品显示名字 / 属性 / 耐久（移开即收起）',
+    result.tip.visible === true
+      && result.tip.name === '巨剑'
+      && result.tip.rows.some((t) => /伤害/.test(t))
+      && result.tip.rows.some((t) => /耐久/.test(t))
+      && result.tip.bar === true
+      && result.tip.hiddenAfterLeave === true, result.tip],
 ];
 
 let failed = 0;

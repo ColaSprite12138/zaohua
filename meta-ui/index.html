@@ -87,6 +87,29 @@
     background: rgba(74,222,128,.16); z-index: 3; pointer-events: none; display: none;
   }
   .preview.bad { border-color: var(--red); background: rgba(255,123,123,.16); }
+  /* ---- 悬停信息卡（局外 / 装备栏 / 局内背包共用） ---- */
+  .item-tip {
+    position: fixed; z-index: 12; pointer-events: none;
+    min-width: 168px; max-width: 260px; padding: 9px 11px;
+    background: rgba(9, 17, 25, .97); border: 1px solid var(--line);
+    border-radius: 10px; box-shadow: 0 12px 34px rgba(0, 0, 0, .55);
+    font-size: 11px; line-height: 1.45; color: var(--text);
+  }
+  .item-tip .tip-name { font-size: 13px; font-weight: 800; letter-spacing: .3px; }
+  .item-tip .tip-meta { color: var(--muted); font-size: 10px; margin: 1px 0 6px; }
+  .item-tip .tip-row { display: flex; justify-content: space-between; gap: 10px; }
+  .item-tip .tip-row span { color: var(--muted); }
+  .item-tip .tip-row b { color: var(--text); font-weight: 700; }
+  .item-tip .tip-dura { margin-top: 5px; }
+  .item-tip .tip-bar {
+    height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .14);
+    overflow: hidden; margin-top: 3px;
+  }
+  .item-tip .tip-bar i { display: block; height: 100%; background: #7ddc7d; }
+  .item-tip .tip-bar.low i { background: #fbbf24; }
+  .item-tip .tip-bar.broken i { background: #ff6b6b; }
+  .item-tip .tip-broken { color: var(--red); font-size: 10px; margin-top: 3px; }
+  .item-tip .tip-size { color: var(--muted); font-size: 10px; margin-top: 6px; }
   .hint { color: var(--muted); font-size: 11px; margin-top: 8px; max-width: 300px; }
   .legend { margin-top: 14px; color: var(--muted); font-size: 11px; line-height: 1.9; }
   .legend code { color: var(--gold); }
@@ -217,6 +240,8 @@
     </div>
   </section>
 
+<div id="fx-item-tip" class="item-tip" hidden></div>
+
 <script src="./voxel.js"></script>
 <script src="./inventory.js"></script>
 <script src="./talent.js"></script>
@@ -321,6 +346,9 @@
     node.className = 'item';
     node.draggable = true;
     node.dataset.uid = item.uid;
+    // 悬停信息卡只靠这两个属性重建内容，不必回头查状态（节点每次 render 都会重建）。
+    node.dataset.tipDef = item.defId;
+    node.dataset.tipDura = item.durability === undefined ? '' : String(item.durability);
     node.style.width = w + 'px';
     node.style.height = h + 'px';
     const label = h >= 60 ? 14 : 12;
@@ -382,6 +410,10 @@
       node.className = 'equip-slot' + (isWeapon ? ' weapon' : '')
         + (active ? ' active' : '') + (item ? ' filled' : '');
       node.dataset.slot = String(index);
+      if (item) {
+        node.dataset.tipDef = item.defId;
+        node.dataset.tipDura = item.durability === undefined ? '' : String(item.durability);
+      }
 
       if (item) {
         const def = M.itemDef(item.defId);
@@ -777,6 +809,87 @@
         '已切换当前武器槽：' + e.key, '');
     }
   });
+
+  /* --------------------------- 悬停信息卡 -------------------------------- */
+  // 名字 / 属性 / 耐久。内容**全部**来自 `itemDef()`（表驱动的只读副本）与实例上的
+  // 当前耐久，所以不会出现"信息卡和背包里的东西对不上"。委托到 document，
+  // 所以 render() 重建节点也不受影响。
+  const tipEl = $('fx-item-tip');
+
+  function tipHtml(def, duraRaw) {
+    const parts = [];
+    parts.push('<div class="tip-name" style="color:' + def.color + '">' + def.name + '</div>');
+    const meta = [def.itemType, def.quality, def.itemType === '武器' ? def.weaponSubtype : null]
+      .filter((v) => v !== undefined && v !== null && v !== '' && v !== 'null')
+      .join(' · ');
+    parts.push('<div class="tip-meta">' + (meta || '物品') + '</div>');
+
+    if (typeof def.damageMin === 'number') {
+      const dmg = def.damageMax !== undefined && def.damageMax !== def.damageMin
+        ? def.damageMin + ' – ' + def.damageMax
+        : String(def.damageMin);
+      parts.push('<div class="tip-row"><span>伤害</span><b>' + dmg + '</b></div>');
+    }
+    if (def.durability) {
+      const cur = duraRaw === '' ? def.durability : Number(duraRaw);
+      const ratio = Math.max(0, Math.min(1, cur / def.durability));
+      const cls = ratio <= 0 ? ' broken' : ratio < 0.3 ? ' low' : '';
+      parts.push('<div class="tip-dura"><div class="tip-row"><span>耐久</span><b>'
+        + Math.round(cur) + ' / ' + def.durability + '</b></div>'
+        + '<div class="tip-bar' + cls + '"><i style="width:' + Math.round(ratio * 100) + '%"></i></div></div>');
+      if (ratio <= 0) parts.push('<div class="tip-broken">已损坏 · 伤害按空手算（带回局外可换）</div>');
+    } else if (def.itemType === '消耗品') {
+      parts.push('<div class="tip-row"><span>使用</span><b>'
+        + (def.id === '30002' ? 'Z 红药' : 'X 蓝药') + '</b></div>');
+    }
+    parts.push('<div class="tip-size">占 ' + def.cols + ' × ' + def.rows + ' 格'
+      + (def.equip ? ' · 可装备' : '') + '</div>');
+    return parts.join('');
+  }
+
+  function hideTip() {
+    if (tipEl) tipEl.hidden = true;
+  }
+
+  function moveTip(x, y) {
+    if (!tipEl || tipEl.hidden) return;
+    const w = tipEl.offsetWidth;
+    const h = tipEl.offsetHeight;
+    const left = x + 18 + w > window.innerWidth - 8 ? x - w - 14 : x + 18;
+    const top = y + 18 + h > window.innerHeight - 8 ? y - h - 14 : y + 18;
+    tipEl.style.left = Math.max(6, left) + 'px';
+    tipEl.style.top = Math.max(6, top) + 'px';
+  }
+
+  document.addEventListener('mousemove', (e) => {
+    if (!tipEl) return;
+    // 拖拽中不弹卡：卡片会跟着手指挡住落点。
+    if (drag) {
+      hideTip();
+      return;
+    }
+    const node = e.target && e.target.closest ? e.target.closest('[data-tip-def]') : null;
+    if (!node) {
+      hideTip();
+      return;
+    }
+    let def;
+    try {
+      def = M.itemDef(node.dataset.tipDef);
+    } catch (err) {
+      hideTip();
+      return;
+    }
+    const html = tipHtml(def, node.dataset.tipDura || '');
+    if (tipEl.dataset.for !== node.dataset.tipDef + '|' + node.dataset.tipDura) {
+      tipEl.dataset.for = node.dataset.tipDef + '|' + node.dataset.tipDura;
+      tipEl.innerHTML = html;
+    }
+    tipEl.hidden = false;
+    moveTip(e.clientX, e.clientY);
+  });
+  document.addEventListener('mouseleave', hideTip);
+  window.addEventListener('blur', hideTip);
 
   bindGrid('bag');
   bindGrid('stash');

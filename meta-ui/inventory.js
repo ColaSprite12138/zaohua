@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: f585211a1aef6a758915339d7d22b926de0de870bd3ab18ffe93306547100316
+ * Source SHA-256: a3726c9a9bd473fe7bb2c6ff00ad3e4acc3a46480aeccb42587226418cca308c
  */
 (function (root) {
 "use strict";
@@ -149,6 +149,11 @@ function registerItemDefs(rows) {
             glyph: row.glyph ?? (id.startsWith('2') ? '➶' : '⚔'),
             art: itemArtKey(id, row.quality, equip),
             ...(row.durability === undefined ? {} : { durability: row.durability }),
+            itemType: row.item_type,
+            ...(row.quality === undefined ? {} : { quality: row.quality }),
+            ...(row.weapon_subtype === undefined ? {} : { weaponSubtype: row.weapon_subtype }),
+            ...(row.damage_min === undefined ? {} : { damageMin: row.damage_min }),
+            ...(row.damage_max === undefined ? {} : { damageMax: row.damage_max }),
         };
         added += 1;
     }

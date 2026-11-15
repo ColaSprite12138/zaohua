@@ -70,6 +70,15 @@ export interface ItemDef {
    * 局外页面用它画武器槽下面那条细条；当前值在物品实例的 `durability` 上。
    */
   readonly durability?: number;
+  /**
+   * 悬停信息卡用的展示字段（2026-11-15）。都是**为读而存**的只读副本：
+   * 数值权威仍是 `item.xlsx` / `weapon.xlsx`，这里只是让局外页面不必再自己 join 一次表。
+   */
+  readonly itemType?: string;
+  readonly quality?: string;
+  readonly weaponSubtype?: string;
+  readonly damageMin?: number;
+  readonly damageMax?: number;
 }
 
 /**
@@ -150,6 +159,8 @@ export interface AuthoredItem {
   readonly damage_min?: number;
   readonly damage_max?: number;
   readonly durability?: number;
+  /** `weapon.xlsx::weapon_subtype`（近战 / 远程 / 子弹），信息卡上显示。 */
+  readonly weapon_subtype?: string;
   /** Grid footprint; defaults to the 2x3 weapon footprint. */
   readonly cols?: number;
   readonly rows?: number;
@@ -192,6 +203,11 @@ export function registerItemDefs(rows: readonly AuthoredItem[]): number {
       glyph: row.glyph ?? (id.startsWith('2') ? '➶' : '⚔'),
       art: itemArtKey(id, row.quality, equip),
       ...(row.durability === undefined ? {} : { durability: row.durability }),
+      itemType: row.item_type,
+      ...(row.quality === undefined ? {} : { quality: row.quality }),
+      ...(row.weapon_subtype === undefined ? {} : { weaponSubtype: row.weapon_subtype }),
+      ...(row.damage_min === undefined ? {} : { damageMin: row.damage_min }),
+      ...(row.damage_max === undefined ? {} : { damageMax: row.damage_max }),
     };
     added += 1;
   }
@@ -235,6 +251,15 @@ export interface ItemInstance {
    * 它跟着物品走，所以两个堆、存档、结算都会带上（`cloneEquipped` 不再丢掉它）。
    */
   readonly durability?: number;
+  /**
+   * 悬停信息卡用的展示字段（2026-11-15）。都是**为读而存**的只读副本：
+   * 数值权威仍是 `item.xlsx` / `weapon.xlsx`，这里只是让局外页面不必再自己 join 一次表。
+   */
+  readonly itemType?: string;
+  readonly quality?: string;
+  readonly weaponSubtype?: string;
+  readonly damageMin?: number;
+  readonly damageMax?: number;
 }
 
 export interface PlacedItem extends ItemInstance {
