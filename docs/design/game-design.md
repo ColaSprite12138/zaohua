@@ -56,7 +56,7 @@
 | HUD 布局（左下角血/法双条 + 居中武器槽与技能栏 8 格） | ✅ 已定型 | `game/paint.ts`（`drawVitalBars` / `drawWeaponSlots` / `drawSkillBar` / `drawActionCell`）；契约见 `combat/CONTEXT.md` 的「HUD」两行 |
 | 状态与反应链（6 元素 5 反应） | ✅ 第一批可玩 | `combat/status.ts` + `combat/reactions.ts`；**注册表 18 条状态**、5 条反应全部可在实战打出（7 个技能覆盖 6 元素）；视觉见 8.8 已落地；**数值已表化**（`status.xlsx` / `skill.xlsx` / `combat_rule.xlsx`） |
 | 等级 / 经验（击杀经验 → 星图点） | ✅ 第一批可玩 | `tables/level.xlsx`（18 级封顶）+ `combat/attack.ts` 击杀给经验；结算在主窗口 `talent/`，HUD 外显示等级与经验条 |
-| 星图（**亲和门槛** / 8 星座 23 节点 / 免费洗点 / 解锁技能） | ✅ 第一批可玩（v7 亲和版） | `talent/index.ts` + `tables/constellation.xlsx` + `tables/starmap.xlsx`；局外面板 `#star-panel`（星座卡片 + 六色亲和条，**没有连线**）；出征把技能与乘区快照进战局 |
+| 星图（**亲和门槛** / 8 星座 24 节点 / 免费洗点 / 解锁技能） | ✅ 第一批可玩（v7 亲和版） | `talent/index.ts` + `tables/constellation.xlsx` + `tables/starmap.xlsx`；局外面板 `#star-panel`（星座卡片 + 六色亲和条，**没有连线**）；出征把技能与乘区快照进战局 |
 | 耐久（三类武器 / 造成+承受扣 / 损坏回落空手） | ✅ 第一批可玩 | `combat/durability.ts` + `weapon.xlsx::durability` + `combat_rule.xlsx` 的两个比值；HUD 槽底细条 |
 | 消耗品（红药 / 蓝药是背包物品） | ✅ 第一批可玩 | `item.xlsx` 的 30002/30003 + `combat/consumables.ts`；`X` 蓝药 / `Z` 红药；**每局免费瓶数已删除** |
 | 保险格（**独立容器** / 2 格 / 阵亡保住里面的东西） | ✅ 第一批可玩 | `meta/inventory.ts` 的 `safe` 容器 + `splitOnDeath`；局外有独立的「保险格」面板（青色边） |
@@ -284,7 +284,7 @@ Dungeonborne 的教训：装备太稀有 → 玩家拿到就退游，且不敢�
 
 #### 6.3.1 点数配比（v7 暂定，开发期可调）
 
-| 用途 | 例（当前落地的 8 星座 / 23 节点） | 说明 |
+| 用途 | 例（当前落地的 8 星座 / 24 节点） | 说明 |
 |:--|:--|:--|
 | **主动技能** | 7 个 × 1 点 | 解锁便宜；技能同时还产亲和，是"顺手推色"的主要手段 |
 | **属性 / 乘区** | 12 个 × 1 点 | 通用乘区，1 点/个 |
@@ -961,7 +961,7 @@ Dungeonborne 的教训：装备太稀有 → 玩家拿到就退游，且不敢�
 | 技能（7 格 / CD / 施法 / 打断 / **动作与特效**） | ✅ 两批 | `combat/skills.ts`：`cleave` 横扫 / `charge` 冲锋 / `ice_shard` 冰锥；`SKILL_SLOTS=7`、`PLAYER_MANA_MAX=100`、蓝药 3 瓶。第二批补表现：**冲锋改为分帧位移（0.23s，不再瞬移）**、读条举杖 + 法力球、每个技能一套方块特效（扇形刀光 / 飞出冰晶 / 起手尘土 / 脚下法阵 / 命中炸点）+ 3.2 秒地面残留（灼痕 / 霜痕） |
 | **Debuff 注册表 / 反应链** | ✅ 第一批 | `combat/status.ts`（18 条状态的表 + 5 个效果查询）+ `combat/reactions.ts`（附着 / 5 条反应 / DOT / 地面区域）；技能从 3 个扩到 **7 个**，覆盖 6 种元素（`fire_wall` 火墙 / `venom_pool` 毒池 / `water_wave` 水浪 / `thunder` 落雷），所以**五条反应在实战里都打得出**；撞墙（击退 + 墙）也接进 `damageSkeleton` |
 | 等级 / 经验（6.1） | ✅ 第一批 | `tables/level.xlsx`（18 级，每级 1 点，`xp_to_next=0` = 封顶）；`monster.xlsx::xp`（剑士 12 / 弓手 10）；`damageSkeleton()` 死亡分支加 `s.xp`，`RunResult.xp` 交给主窗口 `talent::grantXp()`。**失败的一局也给经验** |
-| 星图（6.3 v7 亲和版 / 6.4） | ✅ 第一批 | `talent/index.ts`（零 import）+ `tables/constellation.xlsx`（8 星座：余烬/霜牙/潮汐/腐沼/疾风/怒雷/战意/奥能）+ `tables/starmap.xlsx`（23 节点）。**亲和只累积不消耗**，星座按自己颜色的亲和开锁（0/0/2/2/3/3/5/5），**节点之间没有前置、面板不画连线**；技能节点产本色 2 + 邻色 1，被动产本色 1 + 邻色 1（跨色是绕路的来源）。被动只允许四种通用乘区，`starmap-data.test.ts` 守着「不得绑定某个技能」。点数三来源：等级 / 主线首通 2 / 探索事件 1（**尚无内容触发**）。免费洗点、`sanitizeProgress()` 顺序重放校验；出征 `deployment.stars` 快照技能与乘区，局内没有改 build 的接口 |
+| 星图（6.3 v7 亲和版 / 6.4） | ✅ 第一批 | `talent/index.ts`（零 import）+ `tables/constellation.xlsx`（8 星座：余烬/霜牙/潮汐/腐沼/疾风/怒雷/战意/奥能）+ `tables/starmap.xlsx`（24 节点）。**亲和只累积不消耗**，星座按自己颜色的亲和开锁（0/0/2/2/3/3/5/5），**节点之间没有前置、面板不画连线**；技能节点产本色 2 + 邻色 1，被动产本色 1 + 邻色 1（跨色是绕路的来源）。被动只允许四种通用乘区，`starmap-data.test.ts` 守着「不得绑定某个技能」。点数三来源：等级 / 主线首通 2 / 探索事件 1（**尚无内容触发**）。免费洗点、`sanitizeProgress()` 顺序重放校验；出征 `deployment.stars` 快照技能与乘区，局内没有改 build 的接口 |
 | 耐久（5.2 / 7.4） | ✅ 第一批 | `combat/durability.ts`：上限 `weapon.xlsx::durability`（巨剑 160 / 弓 110），按造成 / 承受伤害扣（`durability_dealt 0.04` / `durability_taken 0.16` ≈ 3:7，只在激活槽）；扣到 0 = 损坏，伤害回落空手 22、距离回落 140，装备仍在槽里。**不做修理**（5.2 原话「修不如重铸」，等金币 + 词条批次） |
 | 消耗品（8.3 / 5.2） | ✅ 第一批 | 红药 `30002` / 蓝药 `30003` 进 `item.xlsx`（1×1、不可装备）+ 两个掉落池；`combat/consumables.ts` 从**局内背包**取药，`X` 蓝药（缓慢回复）/ `Z` 红药（一口 45）。`GameState.potions` 计数器删除 —— 计数改成背包里有几瓶 |
 | 保险格（4：初始赠送 2 格） | ✅ 第一批 | `meta/inventory.ts`：**独立容器** `InventoryState.safe`（`SAFE` = 2 列 × 1 行，自己的面板与格子，**不占背包的 40 格**）+ `splitOnDeath()`（两个堆共用一份，`kept.safe` 就是它）。自动拾取只写背包 ⇒ 结构上不存在「静默保险」；跨容器移动走同一条 `placeItem()`，局内 `RunCommand` 的 `place`/`unequip` 带 `container`。**只保保险格，穿戴中的 10 个槽永远是风险**；扩容是付费消耗品（商店批次，改 `SAFE` 即可）。 |
@@ -1045,7 +1045,7 @@ Dungeonborne 的教训：装备太稀有 → 玩家拿到就退游，且不敢�
      全在主窗口的 `talent/`。这样局内**没有**任何改 build 的接口（6.4 靠结构保证，不靠 UI 拦）。
   3. **失败的一局照样给经验**：搜打撤已经够惩罚了（全丢），再扣成长会让新手一局白打。
      经验只来自击杀，所以「送死刷经验」不如正常打完一局。
-  4. **节点规模是开发期取值**（8 星座 / 23 节点 / 18 级 / 约 21 点）：6.3.1 的 50 点是示例不是约束。
+  4. **节点规模是开发期取值**（8 星座 / 24 节点 / 18 级 / 约 21 点）：6.3.1 的 50 点是示例不是约束。
      现在的取舍压力在最后两个大点（各 3 点）上 —— 想全点就得放弃一条属性线。
 - **技能表现的第二批**（2026-11-15 晚）：冲锋不再是瞬移（`DASH_SPEED=950` 分帧推进，
   撞墙沿墙滑、同一只怪只挨一次）；读条时举杖 + 手上一颗法力球；每个技能有专属方块特效，

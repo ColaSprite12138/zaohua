@@ -46,7 +46,7 @@
 > 契约在 `assets/combat/CONTEXT.md`「弹道」，不变量 58–62；验收 `scripts/playthrough-projectile.mjs`。
 > ⑦ **星图 + 等级（第四批，2026-11-15 22:20 修订为亲和版）** —— 设计 6.1–6.4 / **6.3 v7** 落地：
 > `tables/level.xlsx`（18 级封顶）+ `tables/constellation.xlsx`（8 星座，**按颜色亲和开锁**）+
-> `tables/starmap.xlsx`（23 节点，每个节点产亲和；**没有节点前置、面板不画连线**）+ `monster.xlsx::xp`；
+> `tables/starmap.xlsx`（24 节点，每个节点产亲和；**没有节点前置、面板不画连线**）+ `monster.xlsx::xp`；
 > 击杀给经验 → 结算时主窗口 `talent/grantXp()` 升级 → 星图点；亲和门槛 / 免费洗点 /
 > 存档 v2（`{schemaVersion:2, state, progress}`，v1 老存档照常读）；局外 `#star-panel` 可点可洗；
 > 被动只做通用乘区（**不绑定任何主动技能**）；出征把 `stars:{skills,nodes}` 快照进战局，
