@@ -24,6 +24,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MAPS = os.path.join(ROOT, 'assets', 'resource', 'maps')
 SOURCE = os.path.join(MAPS, 'arena.ldtk')
 OUTPUT = os.path.join(MAPS, 'arena.generated.ts')
+ATLAS_PROPS = os.path.join(MAPS, 'tilesets', 'xianxia.json')
 MONSTER_TABLE = os.path.join(ROOT, 'assets', 'resource', 'generated', 'monster.ts')
 
 VALID_TILES = {0, 1, 2, 3}
@@ -97,7 +98,10 @@ def read_layers(level, grid_size):
 
     entities = []
     for layer in entity_layers:
-        entities.extend(layer.get('entityInstances') or [])
+        for inst in layer.get('entityInstances') or []:
+            # Remember which layer an instance came from: a Portal dragged into
+            # the Props layer still works, but it is almost always a mis-drop.
+            entities.append({**inst, '__layer': layer.get('__identifier')})
     return cols, rows, grid, entities
 
 
@@ -105,30 +109,54 @@ PROP_PREFIX = 'Prop_'
 PROP_KINDS = {'wall_run', 'censer', 'terrace'}
 
 
+def load_prop_footprints():
+    """Occupied cells per prop kind, from the same atlas the game paints with."""
+    with open(ATLAS_PROPS, 'r', encoding='utf-8') as fh:
+        atlas = json.load(fh)
+    out = {}
+    for kind, rect in (atlas.get('props') or {}).items():
+        out[kind] = (int(rect.get('footprintW', 1)), int(rect.get('footprintH', 1)))
+    return out
+
+
 def read_entities(entities, cols, rows, grid, grid_size, monster_ids):
     spawn = None
     monsters = []
     props = []
     portals = []
+    footprints = load_prop_footprints()
     seen_ids = set()
     for ent in entities:
         ident = ent.get('__identifier')
-        cell = ent.get('__grid') or []
-        if len(cell) != 2 or not all(isinstance(v, int) for v in cell):
-            fail('entity %r has invalid __grid %r' % (ident, cell))
-        col, row = cell
+        is_prop = str(ident).startswith(PROP_PREFIX)
+        kind = str(ident)[len(PROP_PREFIX):] if is_prop else ''
+        if is_prop and kind not in PROP_KINDS:
+            fail('unknown prop kind %r (allowed: %s)' % (kind, ', '.join(sorted(PROP_KINDS))))
+        # `__grid` is LDtk's own idea of where the entity sits, and it CHANGES
+        # when LDtk re-saves the file: for a prop it becomes the pivot cell, not
+        # the top-left of the footprint (a 8-wide wall run jumped 4 cells right,
+        # the 12-wide terrace 6). Re-running the importer after any LDtk save
+        # therefore used to shift every prop. The world pixel anchor (`px`) is
+        # stable, so derive the cell from it instead.
+        span = footprints.get(kind, (1, 1)) if is_prop else (1, 1)
+        pixel = ent.get('px') or []
+        if len(pixel) == 2 and all(isinstance(v, (int, float)) for v in pixel):
+            col = int(round(pixel[0] / grid_size - span[0] / 2))
+            row = int(round(pixel[1] / grid_size - span[1]))
+        else:
+            cell = ent.get('__grid') or []
+            if len(cell) != 2 or not all(isinstance(v, int) for v in cell):
+                fail('entity %r has neither a usable px nor __grid' % (ident,))
+            col, row = cell
         if not (0 <= col < cols and 0 <= row < rows):
             fail('entity %r at (%d,%d) is outside the map' % (ident, col, row))
         fields = {}
         for fi in ent.get('fieldInstances') or []:
             fields[fi.get('__identifier')] = fi.get('__value')
         eid = '%s_%d_%d' % (str(ident).lower(), col, row)
-        if ident.startswith(PROP_PREFIX):
+        if is_prop:
             # Props 是纯装饰：不参与碰撞、不参与 --check 的唯一性约束之外的逻辑，
             # 只按落位顺序画，所以允许同一格叠放（香炉可以摆在墙脚）。
-            kind = str(ident)[len(PROP_PREFIX):]
-            if kind not in PROP_KINDS:
-                fail('unknown prop kind %r (allowed: %s)' % (kind, ', '.join(sorted(PROP_KINDS))))
             props.append({'kind': kind, 'col': col, 'row': row})
             continue
         if eid in seen_ids:
@@ -161,6 +189,10 @@ def read_entities(entities, cols, rows, grid, grid_size, monster_ids):
             # 传送门是地图的一部分（需求 2026-11-14）：位置在这里读，运行时不再猜。
             if grid[row][col] not in WALKABLE:
                 fail('Portal at (%d,%d) is not walkable' % (col, row))
+            if ent.get('__layer') not in (None, 'Entities'):
+                # 不是错误：拖门时图层没切对，门照样生效。但要让人知道它放错层了。
+                print('[warn] Portal at (%d,%d) sits in layer %r; Entities is the '
+                      'intended layer' % (col, row, ent.get('__layer')), file=sys.stderr)
             portals.append({'id': eid, 'col': col, 'row': row, 'x': x, 'y': y})
         else:
             fail('unknown entity type %r' % ident)

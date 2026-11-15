@@ -76,7 +76,13 @@ python scripts/export_tables.py --check
 - 实体：`PlayerSpawn` 恰好一个；`Monster` 的 `monsterId` **必须引用** `tables/monster.xlsx` 的 id，
   数值仍由数值表唯一权威，地图文件不重复写数值；`Portal` 至少一扇（否则本局没有出口），
   落点必须可走且从出生点可达。**门的位置由地图决定**（2026-11-14 用户明确要求）：在 LDtk 里拖动
-  `Portal` 实例即可，运行时不再自己布点。
+  `Portal` 实例即可，运行时不再自己布点。门放错图层（例如拖进 `Props`）仍然生效，
+  `import_map.py` 会往 stderr 打一条 `[warn] … sits in layer` 提醒 —— 推荐放 `Entities` 层。
+- **格子从 `px` 反算，不要读 `__grid`（2026-11-15 踩坑）**：LDtk 每次保存都会改写 `__grid` ——
+  对道具它写的是 pivot 所在格，不是占地左上角（8 格宽的院墙 +4 格、12 格宽的高台 +6 格）。
+  `px`（世界像素锚点）在保存前后完全不变，`import_map.py` 因此用
+  `col = round(px_x/grid − footprintW/2)`、`row = round(px_y/grid − footprintH)` 反算，
+  footprint 取自 `tilesets/xianxia.json`（与绘制层同源）。**改回读 `__grid` 会让所有道具错位。**
 - 转换：`python scripts/import_map.py` 生成、`--check` 防漂移。校验：LDtk 1.5.x 版本、
   `externalLevels=false`、单关卡、尺寸 / 值域、`PlayerSpawn` 唯一、实体落点可走、
   从出生点连通可达、`monsterId` 引用完整性、`Portal` 存在且可达。

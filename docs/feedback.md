@@ -731,3 +731,19 @@
 - 附带：`applyCursor` 去掉「状态没变就跳过」的短路（Worker 只在变化时发消息，一条消息与
   `#app` 重建错位就会让光标永久停在错误状态）；`--virtual-time-budget` 15s → 25s（现在跑四次出征）。
 - Evidence: `verify-all.sh` ALL GREEN（189 单测 / playthrough 44 steps / single-page 40/40）。
+
+### 2026-11-15 — LDtk 保存一次就让导入器错位：`__grid` 不是占地左上角
+
+- Scope: `scripts/import_map.py`（地图导入链），非游戏运行时
+- 现象：用户第一次在 LDtk 里打开 `arena.ldtk` 加了一扇门并保存，`import_map.py --check` 立刻变红；
+  更危险的是，**直接重跑导入会让 43 个装饰物整体错位**（院墙右移 4 格、高台右移 6 格、香炉右移 1 格）。
+- 根因：LDtk 保存时把实体实例的 `__grid` 改写成「pivot 所在格」，而生成器/导入器一直把它当
+  「占地左上角格」。`px`（世界像素锚点）没有变 —— 位置其实一动没动，只是 `__grid` 的语义变了。
+- 修法：`read_entities()` 改用 `px` 反算格子：
+  `col = round(px_x/grid − footprintW/2)`、`row = round(px_y/grid − footprintH)`，
+  footprint 从 `tilesets/xianxia.json` 读（与 `paint.ts::propFootprint` 同源）。
+  验证：重导后 43 个 props 的 col/row 与保存前逐条相同，只有新增的门出现。
+- 附带：`read_layers()` 给每个实例打上 `__layer`；`Portal` 若落在 `Entities` 以外的图层仍生效，
+  但往 stderr 打 `[warn] … sits in layer 'Props'` —— 拖门时图层没切错是最常见的误操作。
+- 另：`assets/resource/maps/arena/`（LDtk 自动备份）已进 `.gitignore`。
+- 教训：**任何“从编辑器导出”的字段都要先确认语义是否会被编辑器改写**；能存世界坐标就别存格号。

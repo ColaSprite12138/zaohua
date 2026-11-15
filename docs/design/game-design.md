@@ -909,7 +909,7 @@ Dungeonborne 的教训：装备太稀有 → 玩家拿到就退游，且不敢�
 |:--|:--|:--|
 | 单局 900 秒 + 三段式（探索 / 交战 / 撤离） | ✅ | `combat/extraction.ts`（`updateRunClock` / `phaseAt`）；HUD 顶部计时胶囊 |
 | 传送门撤离：引导 / 3 段 / 可打断 / 开启次数 | ✅（引导取 8s 下限） | `updateExtraction`；`playthrough` 真实走门 + 按 E |
-| 门位由地图决定（LDtk `Portal` 实体） | ✅ | `arena.ldtk` Entities 层 5 扇门；`import_map.py` 导出 `portals`；运行时只吸附不布点 |
+| 门位由地图决定（LDtk `Portal` 实体） | ✅ | `arena.ldtk` 的 `Portal` 实例（当前 6 扇，可增删）；`import_map.py` 导出 `portals`；运行时只吸附不布点 |
 | 撤离带回 / 超时全丢 | ✅ | `game.pack.ts`：`outcome:'extracted'`、`gameOver + reason:'timedOut'`；壳层两套文案 |
 | 关卡分类 `story / dungeon / pvpve` | ✅ 规则分流 | `deployRun({kind})` + `checkCleared` 的 kind gate；**模式选择 UI 未做**（壳层固定发 pvpve） |
 | 副本「死亡原地掉落、捡回一次」 | ⬜ | 需要跨局存档一个 death-drop 槽，等副本入口一起做 |
