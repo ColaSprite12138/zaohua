@@ -150,14 +150,12 @@ describe('durability / potion tuning lives in the tables (5.2 / 7.4 / 8.3)', () 
     const rule = combat_rule[0];
     expect(rule.durability_dealt).toBeGreaterThan(0);
     expect(rule.durability_taken).toBeGreaterThan(rule.durability_dealt); // 承受为主（7:3）
-    // 药水效果搬到了 `consumable.xlsx`（每瓶一行）。全局表里那三列是历史遗留：
-    // 只要还在，就必须和药表**数值一致**（防两边漂移）；搬干净后这一分支自然失效。
-    const hp = consumableRows.find((row) => row.id === '30002')!;
-    const mp = consumableRows.find((row) => row.id === '30003')!;
+    // 药水效果只在 `consumable.xlsx`（每瓶一行）。全局手感表里**不许**再有副本 ——
+    // 两处数字一旦漂移，"喝一瓶回多少"就永远说不清。
     const legacy = rule as unknown as Record<string, number | undefined>;
-    if (legacy.hp_potion_heal !== undefined) expect(legacy.hp_potion_heal).toBe(hp.hp_restore);
-    if (legacy.potion_mana !== undefined) expect(legacy.potion_mana).toBe(mp.mana_restore);
-    if (legacy.potion_seconds !== undefined) expect(legacy.potion_seconds).toBe(mp.mana_seconds);
+    expect(legacy.hp_potion_heal).toBeUndefined();
+    expect(legacy.potion_mana).toBeUndefined();
+    expect(legacy.potion_seconds).toBeUndefined();
   });
 
   it('potion effects come from consumable.xlsx (one row per bottle)', () => {
