@@ -18,6 +18,10 @@ import {
   removeItem,
   setActiveWeapon,
   unequipItem,
+  bringBack,
+  normalizeEquipped,
+  registerItemDefs,
+  runInventoryFrom,
 } from '../inventory.ts';
 
 const at = (
@@ -188,5 +192,52 @@ describe('active weapon (1 / 2)', () => {
     expect(activeWeapon(s)).toBeNull();
     setActiveWeapon(s, 0);
     expect(activeWeapon(s)?.defId).toBe('longsword');
+  });
+});
+
+describe('只有武器能进武器槽（2026-11-15 用户要求）', () => {
+  it('consumables and ammunition are rejected by equipItem', () => {
+    registerItemDefs([
+      { id: '30002', name: '红药', item_type: '消耗品' },
+      { id: '30003', name: '蓝药', item_type: '消耗品' },
+      { id: '30001', name: '弓箭', item_type: '弹药' },
+    ]);
+    const state = createInventoryState(0);
+    addToBag(state, 'potion-1', '30002');
+    addToBag(state, 'potion-2', '30003');
+    addToBag(state, 'ammo-1', '30001');
+    expect(equipItem(state, 'potion-1', 0)).toBe(false);
+    expect(equipItem(state, 'potion-2', 1)).toBe(false);
+    expect(equipItem(state, 'ammo-1', 0)).toBe(false);
+    // 拒绝必须原子：物品还在背包里，槽位仍然空着。
+    expect(state.bag).toHaveLength(3);
+    expect(state.equipped.every((i) => i === null)).toBe(true);
+  });
+
+  it('a potion cannot sit in a weapon slot even if the state says so', () => {
+    registerItemDefs([{ id: '30003', name: '蓝药', item_type: '消耗品' }]);
+    const state = createInventoryState(0);
+    // 模拟手改存档 / 旧协议：把药塞进主手
+    state.equipped[0] = { uid: 'bad', defId: '30003' } as never;
+    expect(normalizeEquipped(state)).toBe(1);
+    expect(state.equipped[0]).toBeNull();
+    expect(state.bag.map((i) => i.uid)).toEqual(['bad']); // 挪回背包，不静默丢弃
+  });
+
+  it('runInventoryFrom / bringBack both normalize a corrupted loadout', () => {
+    registerItemDefs([{ id: '30002', name: '红药', item_type: '消耗品' }]);
+    const loadout = {
+      bag: [],
+      equipped: [{ uid: 'bad', defId: '30002' }, null, null, null, null, null, null, null, null, null],
+      activeWeaponSlot: 0 as const,
+    };
+    const run = runInventoryFrom(loadout);
+    expect(run.equipped[0]).toBeNull();
+    expect(run.bag).toHaveLength(1);
+
+    const lobby = createInventoryState(0);
+    bringBack(lobby, loadout);
+    expect(lobby.equipped[0]).toBeNull();
+    expect(lobby.bag).toHaveLength(1);
   });
 });

@@ -19,7 +19,7 @@
 > 第 1 版**明确不做组队**（设计文档 2.1），别提前为联机做同步层。
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-15 全套验收通过**（292 条单测 / 独立页 15 条 / 单页 46 条 / playthrough 98 steps / resize 4 steps；**单局骨架已按设计文档第 10 章落地**；**技能两批已落地（设计 8.2/8.3/9.3）**；**状态与反应链第一批已落地（设计 8.4 / 8.5）：18 条状态注册表 + 6 元素 5 条反应 + 地面区域（火墙/毒池/冰面）+ 8.8 的视觉语言，技能从 3 个扩到 7 个以覆盖全部元素**；**技能 / 状态 / 怪物 / 全局手感数值已全部表化（`skill.xlsx` / `status.xlsx` / `monster.xlsx` / `combat_rule.xlsx`），改数值不用改代码**；**角色/怪物已有走路与转身动画**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；**画面已全量体素化，正式地图是 128×96 的仙侠院落**）。**steps 会浮动**：23 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 92–100 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-15 全套验收通过**（298 条单测 / 独立页 15 条 / 单页 47 条 / playthrough 98 steps / resize 4 steps；**单局骨架已按设计文档第 10 章落地**；**技能两批已落地（设计 8.2/8.3/9.3）**；**状态与反应链第一批已落地（设计 8.4 / 8.5）：18 条状态注册表 + 6 元素 5 条反应 + 地面区域（火墙/毒池/冰面）+ 8.8 的视觉语言，技能从 3 个扩到 7 个以覆盖全部元素**；**技能 / 状态 / 怪物 / 全局手感数值已全部表化（`skill.xlsx` / `status.xlsx` / `monster.xlsx` / `combat_rule.xlsx`），改数值不用改代码**；**角色/怪物已有走路与转身动画**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；**画面已全量体素化，正式地图是 128×96 的仙侠院落**）。**steps 会浮动**：23 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 92–100 间变化，`verify-all.sh` 下限固定 35。
 > **2026-11-15 一天做了什么（新会话速读，三分钟对齐）**：
 > ① **技能两批** —— 7 格技能栏 / 法力（不自动恢复）/ 读条与打断 / 蓝药；第二批补表现：
 > **冲锋改成 0.23 秒的分帧位移**、读条举杖 + 法力球、每个技能一套方块特效 + 3.2 秒地面残留。
@@ -50,7 +50,11 @@
 > 扣到 0 = 损坏，伤害回落空手，**仍然留在槽里**；本轮不做修理）+ `combat/consumables.ts`
 > （红药 30002 / 蓝药 30003 是**背包物品**，`X` 蓝 / `Z` 红，`GameState.potions` 计数器删除）。
 > 掉落池加了两瓶药；雏形期有「补给药水」按钮（商店批次后改成买）。
-> 验收基线：**292 条单测 / 46 条单页壳层 / 15 条独立页 / playthrough 98 steps**。
+⑨ **装备规则与药水配置（2026-11-15 23:00）** —— 红蓝药的效果搬进 `tables/consumable.xlsx`（每瓶一行）；
+> **只有武器能进武器槽**（`collectDrop` 不再把药塞进空槽 + `normalizeEquipped()` 兜底 + 3 条测试）；
+> 修「局内背包开着按 1/2 道具整批消失」：页面与 Worker 都在写武器槽（一帧两条快照），改成
+> **局内只由 Worker 处理**，并给 `updateRun()` 加空快照兜底（`host.emptySnapshotSkips` 计数）。
+> 验收基线：**298 条单测 / 47 条单页壳层 / 15 条独立页 / playthrough 98 steps**。
 > **下一步按设计文档 15 章：保险格 + 副本死亡掉落回收**（4 / 5.2；要改死亡结算语义）。
 
 > 这份文件记录**跨模块红线、保护清单、验收基线与回滚方案**；**模块功能契约的正本在
@@ -68,7 +72,7 @@
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html`。**③ 2026-11-15 定为默认交付链路**（`scripts\preview-stable.cmd` 一条命令包办：`forgeax project build` → `node scripts/inject-shell.mjs` → 复用/启动 58080 → 开 Chrome）：造化预览宿主是每次构建任务的子进程，**turn 结束就被回收**（表现为「刚说能开、一分钟后就打不开」，端口每次还会变）。要一个稳定地址就直接静态托管 `dist/`：`forgeax project build` → `node scripts/inject-shell.mjs` → `cd dist && python -m http.server 58080 --bind 127.0.0.1`，打开 `http://127.0.0.1:58080/index.html`（浏览器缓存时加 `?v=N`）。这条路走壳层的 hostless 分支：**能玩、不写云存档**。**造化的 `previewUrl` 不要交给用户**：它是当次构建任务的子进程，turn 收尾即被回收（用户实测「刚说能开、一分钟就 `ERR_CONNECTION_REFUSED`」，端口每次还变），只当「代码能跑」的旁证；而且 `preview_reload` 会重建 `dist/` 抹掉壳层，跑完必须重新 `inject-shell`。交付前用 `node scripts/inject-shell.mjs --check`（有壳层 `dist/index.html` ≈139–142KB，没壳层 ≈45KB —— 只看 HTTP 200 会被骗）或 headless 截图自证。注意**不要**直接静态托管 `.game-builder/artifacts/forgeax-player`：那是造化产物，缺宿主注入的 provider，页面会卡在初始化 |
 | 地图 | 正式地图 `128×96` 格 @32px = **4096×3072** 世界像素（仙侠院落：北侧高台、东西厢房、院墙残段 + 香炉）。三个图层：`Terrain`(IntGrid=碰撞权威) / `Entities`(出生点 + 7 只怪 + **传送门**，数量由 LDtk 决定，当前 6 扇) / `Props`(纯装饰，贴素材库图集)。生成链：`bake-voxel-atlas.mjs` → 图集；`gen_arena_map.py` → `arena.ldtk`（之后人工在 LDtk 里改）；`import_map.py` → `arena.generated.ts` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **292**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **298**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
 | 数值表要一起提交吗 | **提交到 git（已提交），但发布产物里没有表也不需要表**。运行时只读 `assets/resource/generated/*.ts`（TS 常量），构建时被编译进 `program-*.js`；xlsx 是**开发期源数据**，不是引擎资产（没有 `.meta.json`，不进 pack）。实测：把 `assets/resource/tables/` 整个移走再 `project build` 仍然成功，产物里 `cost/cooldown/damage` 一个不少（2026-11-15 验证）。**三层保险**：① 发布归档 `forgeax-game-web.zip` 里 0 个 `.ts`/`.xlsx`（只有 js/json/wasm/html）；② `generated/*.ts` 也在 git 里 → 云端构建不跑 python 也能读到数据；③ `verify-all.sh` 跑 `export_tables.py --check`，表与生成物不同步直接失败 |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |

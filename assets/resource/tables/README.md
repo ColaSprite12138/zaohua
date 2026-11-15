@@ -42,6 +42,7 @@ sharedStrings，**不读 `styles.xml`**。曾有两张表的 `styles.xml` 把 `<
 | `skill.xlsx` | `id, name, cost, cooldown, cast_time, damage, reach, width, zone_radius, zone_life, hint` | `combat`（技能数值） |
 | `status.xlsx` | `id, name, category, duration, max_stacks, dot, move_mul, attack_interval_mul, damage_taken_mul, no_move, no_attack, no_skill, no_dodge, hint` | `combat`（状态数值） |
 | `combat_rule.xlsx` | 单行全局常量 + `mainline_star_points, explore_star_points` | `combat` / `talent`（手感 + 星图一次性点数） |
+| `consumable.xlsx` | `id, hp_restore, mana_restore, mana_seconds, hint` | `combat`（喝药效果，按 id join） |
 | `level.xlsx` | `id, level, xp_to_next, star_points` | `talent`（升级曲线，18 级封顶） |
 | `constellation.xlsx` | `id, name, color, requirement, x, y, hint` | `talent`（亲和门槛 + 面板布局） |
 | `starmap.xlsx` | `id, constellation, name, kind, effect, magnitude, cost, aff_fire…aff_wind, skill_id, hint` | `talent`（规则）+ `combat`（乘区） |

@@ -540,6 +540,37 @@ export function removeItem(state: InventoryState, uid: string): boolean {
  * The stash NEVER enters a run and is untouched by all three transitions.
  */
 
+/**
+ * 槽位与物品类型必须匹配（设计 7.4 / 9.x：只有武器进武器槽）。
+ *
+ * 这条规则在三处执行：`equipItem()`（拖放）、`collectDrop()`（拾取优先空武器槽）、
+ * 以及这里的**规范化**（读存档 / 出征 / 结算时把不合法的穿戴挪回背包）。
+ * 第三处是兜底：手改存档、旧版本遗留、协议升级都可能把药塞进武器槽，
+ * 一旦进了战斗，武器伤害与耐久就全乱。
+ *
+ * 挪不回去（背包满）就直接丢弃该实例 —— 它是非法数据，不能让它继续污染状态。
+ * 返回被挪走的件数。
+ */
+export function normalizeEquipped(state: InventoryState): number {
+  let moved = 0;
+  for (let i = 0; i < EQUIP_SLOTS.length; i += 1) {
+    const item = state.equipped[i];
+    if (!item) continue;
+    const slot = EQUIP_SLOTS[i]!;
+    if (itemDef(item.defId).equip === slot.accepts) continue;
+    state.equipped[i] = null;
+    const spot = findFirstFit(state, item.defId, item.uid, ['bag']);
+    if (spot !== null) {
+      listOf(state, spot.container).push({
+        uid: item.uid, defId: item.defId,
+        container: spot.container, col: spot.col, row: spot.row,
+      });
+    }
+    moved += 1;
+  }
+  return moved;
+}
+
 /** Everything a run owns: bag + 10 equipment slots, no stash, no loose items. */
 export interface RunLoadout {
   readonly bag: PlacedItem[];
@@ -587,17 +618,21 @@ export function bringBack(lobby: InventoryState, loadout: RunLoadout): void {
   lobby.bag = clonePlaced(loadout.bag);
   lobby.equipped = cloneEquipped(loadout.equipped);
   lobby.activeWeaponSlot = loadout.activeWeaponSlot === 1 ? 1 : 0;
+  normalizeEquipped(lobby);
   // lobby.stash is deliberately untouched.
 }
 
 /** Worker side: the run owns a full InventoryState whose stash is ALWAYS empty. */
 export function runInventoryFrom(loadout: RunLoadout): InventoryState {
-  return {
+  const state: InventoryState = {
     bag: clonePlaced(loadout.bag),
     stash: [],
     equipped: cloneEquipped(loadout.equipped),
     activeWeaponSlot: loadout.activeWeaponSlot === 1 ? 1 : 0,
   };
+  // 进战局前最后一道闸：非法穿戴挪回背包（存档篡改 / 旧协议遗留）。
+  normalizeEquipped(state);
+  return state;
 }
 
 /** Worker side: serialise the run state for the clear settlement. */

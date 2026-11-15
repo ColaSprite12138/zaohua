@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  addToBag, bringBack, createInventoryState, equipItem, itemDef,
-  loadoutFromRun, registerItemDefs, runInventoryFrom, takeIntoRun,
+  addToBag,
+  registerItemDefs, bringBack, createInventoryState, equipItem, itemDef,
+  loadoutFromRun, runInventoryFrom, takeIntoRun,
   EQUIP_SLOTS, type InventoryState,
 } from '../inventory.ts';
 
@@ -79,7 +80,10 @@ describe('run transfer — two heaps, explicit copy-in / copy-out', () => {
     const loadout = takeIntoRun(lobby);
     const run = runInventoryFrom(loadout);
     expect(addToBag(run, 'fresh-loot', '20006')).not.toBeNull();
-    run.equipped[2] = { uid: 'ring-1', defId: 'longsword' };
+    // 槽位与类型必须匹配（7.4）：这里注册一件真的戒指，而不是把剑塞进戒指槽 ——
+    // `bringBack` 现在会把不合法的穿戴挪回背包，那是另一条断言。
+    registerItemDefs([{ id: 'ring-demo', name: '戒指', item_type: '武器', equip: 'ring' }]);
+    run.equipped[2] = { uid: 'ring-1', defId: 'ring-demo' };
     run.activeWeaponSlot = 1;
     bringBack(lobby, loadoutFromRun(run));
     expect(lobby.bag.map((i) => i.uid).sort()).toEqual(['bag-loot', 'fresh-loot']);

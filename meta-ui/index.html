@@ -567,7 +567,18 @@
   };
   host.updateRun = (loadout) => {
     if (!runMode) return;
-    state = M.runInventoryFrom(loadout);
+    const next = M.runInventoryFrom(loadout);
+    // 兜底（2026-11-15）：一局进行中，背包与十个槽同时为空只可能发生在「刚出征 / 已 abort」，
+    // 这两个时刻都不该由 updateRun 覆盖面板。收到这种快照就忽略并留一条诊断，
+    // 否则玩家会看到装备栏与背包整批消失（再切一次又回来）。
+    const empty = next.bag.length === 0 && next.equipped.every((i) => i === null);
+    const hadItems = state.bag.length > 0 || state.equipped.some((i) => i !== null);
+    if (empty && hadItems) {
+      host.emptySnapshotSkips = (host.emptySnapshotSkips || 0) + 1;
+      console.warn('[shell] 忽略空 runState 快照（局内背包/装备不可能同时清空）', loadout);
+      return;
+    }
+    state = next;
     drag = null;
     render();
   };
@@ -803,6 +814,10 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === '1' || e.key === '2') {
+      // **局内不再发一遍**：1/2 由 Engine Worker 自己处理（`switchWeaponSlot`）并广播
+      // `runState`。以前页面也发 `runCommand {active}`，同一帧出现两条快照，面板会在
+      // 两条快照之间闪成空（用户 2026-11-15 报的「按 1/2 道具全消失」）。一个写者一条路。
+      if (runMode) return;
       const slotId = e.key === '1' ? 0 : 1;
       commit({ action: 'active', slot: slotId },
         () => { M.setActiveWeapon(state, slotId); return true; },

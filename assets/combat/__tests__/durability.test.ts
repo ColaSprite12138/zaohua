@@ -18,6 +18,7 @@ import {
   createState, deployRun, NO_MODIFIERS, projection, reset, step,
   type StepInput,
 } from '../simulation.ts';
+import { collectDrop } from '../run-inventory.ts';
 import { combat_rule } from '../../resource/generated/combat_rule.ts';
 import { weapon } from '../../resource/generated/weapon.ts';
 import type { ItemInstance } from '../../meta/inventory.ts';
@@ -178,5 +179,25 @@ describe('potions are bag items, not a free per-run quota', () => {
     expect(healPotion(s)).toBe(false);
     expect(s.mana).toBe(10);
     expect(s.hp).toBe(10);
+  });
+});
+
+describe('only weapons may occupy a weapon slot (design 7.4)', () => {
+  it('a potion drop goes to the BAG, never into an empty weapon slot', () => {
+    const s = createState();
+    s.runInventory.bag = [];
+    // 掉落池里有药（5.2）：以前 collectDrop 会把它们塞进空武器槽，等于"装备了一瓶药"。
+    const res = collectDrop(s.runInventory, 'drop-potion', '30003');
+    expect(res.where).toBe('bag');
+    expect(s.runInventory.equipped[0]).toBeNull();
+    expect(s.runInventory.bag.map((i) => i.defId)).toEqual(['30003']);
+  });
+
+  it('a weapon drop still prefers the empty weapon slot', () => {
+    const s = createState();
+    s.runInventory.bag = [];
+    const res = collectDrop(s.runInventory, 'drop-sword', '10006');
+    expect(res.where).toBe('weapon');
+    expect(s.runInventory.equipped[0]?.defId).toBe('10006');
   });
 });

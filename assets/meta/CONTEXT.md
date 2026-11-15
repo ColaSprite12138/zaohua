@@ -61,6 +61,7 @@
 | 名称 | 格子底部保留一行小字名称（品质色），模型是主体；不再显示 `2×3` 尺寸文字 |
 | `ItemDef.durability` | 耐久上限（`weapon.xlsx::durability`）；当前值在物品实例的 `durability` 上（`combat/durability.ts` 写）。局外武器槽底部那条细条读这两个值 |
 | 消耗品 | `item_type=消耗品`（红药 30002 / 蓝药 30003）：`equip=null`、1×1，模型是 `potion:hp` / `potion:mana`。`registerItemDefs` 按 `item_type` 推 equip 与格子，**不再默认成 2×3 武器** |
+| 穿戴合法性（2026-11-15） | `normalizeEquipped(state)`：把 `equip` 与槽位不匹配的物品挪回背包（背包满则丢弃），`runInventoryFrom()` / `bringBack()` 都调用它。**只有武器能进武器槽**，拾取侧由 `combat/run-inventory.ts::collectDrop()` 保证 |
 | 悬停信息卡（2026-11-15 用户要求） | 鼠标移到**背包格 / 仓库格 / 已穿戴槽**上，弹一张卡：名字（品质色）+ `item_type · 品质 · 攻击方式` + 伤害区间 + 耐久（当前/上限 + 彩条，损坏时红字提示「伤害按空手算」）+ 格子大小。内容全部来自 `ItemDef`（表驱动的只读副本）与实例上的 `durability`，**页面不 join 表**；节点上只挂 `data-tip-def` / `data-tip-dura` 两个属性，`render()` 重建节点也不会失效（`document` 上委托 + `mousemove`）。拖拽中不弹卡。局内背包浮层同样生效（`shell.css` 把 `.item-tip` 排除在"战斗全隐藏"之外） |
 
 ## 单页流程与搜打撤契约（2026-11-11）

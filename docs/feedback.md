@@ -900,3 +900,22 @@
   这也说明信息卡在真实壳层里的数据来源与独立页不同 —— 断言要分别覆盖。
 - 踩坑：自测脚本是**模板字符串里的 JS**，注释里写反引号会直接把 Node 语法打断
   （`SyntaxError: Unexpected identifier`）。这类脚本里一律用「」代替反引号。
+
+## 37. 「药被装到手上」与「按 1/2 道具整批消失」：两个真 bug + 一个复查方法
+
+- **`collectDrop()` 无条件优先空武器槽，而掉落池里现在有药。** 上一批把红 / 蓝药加进 `loot_pool`
+  之后，捡到一瓶药就会进主手槽 —— `weaponSlots[0] === '30003'`，伤害/耐久全部失去意义。
+  修法不是"拾取时判一下"，而是**三个入口都收口**：`equipItem()`（拖放）、`collectDrop()`（拾取）、
+  `normalizeEquipped()`（读存档 / 出征 / 结算时把非法穿戴挪回背包）。少任何一处都会从别的门进来。
+- **一个按键两个写者。** 局内按 1/2 时，Engine Worker 自己会 `switchWeaponSlot()`，页面的 keydown 又发
+  `runCommand { active }` —— 一次按键产生两条 `runState` 快照，面板在两帧之间被整体重建成空。
+  现在**局内只由 Worker 处理 1/2**（页面 handler 在 `runMode` 直接 return），并在 `updateRun()` 里加了
+  一道兜底：局内「背包 0 件且十个槽全空」的快照不覆盖有东西的面板，只累加 `host.emptySnapshotSkips`
+  并打一条 warn。兜底不是修复，是**留证据**：真再出现，控制台会指出是"空快照"而不是玩家眼花。
+- **为什么我没能在本地复现。** headless Chrome 里 ForgeAX 的播放器遮罩会吞掉所有点击
+  （`inputEnabled=false` 直到第一帧 ready），`#fx-deploy` 点了没反应 —— 所以 `verify-shell.cjs` 一直
+  用**最小页面 + 假 Worker**，那条路也复现不出真实的双写者时序。用 CDP + 软件 WebGPU 起真页面试过
+  （`Input.dispatchMouseEvent` 是 trusted 事件），仍然点不动，说明遮罩还在。结论：**这条只能靠
+  真实浏览器人工验**，自动化只能守「快照不会把面板清空」这一层。
+- **另一个容易被忽略的点**：`verify-shell` 里"等背包非空"这种用**长度当同步信号**的写法，在背包里
+  常驻药之后会立刻返回旧快照（本项目第三次踩）。等具体 uid。

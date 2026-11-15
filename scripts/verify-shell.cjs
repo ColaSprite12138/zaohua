@@ -329,6 +329,24 @@ const SELFTEST = `
       out.bag.noNewLock = out.lockMessages.filter(function (x) { return x === 'lock'; }).length
         === out.bag.locksBefore;
 
+      // ---- 局内背包开着时连按 1/2：面板不能"空一下"（2026-11-15 用户报的 bug）----
+      out.switchSpam = [];
+      for (var sp = 0; sp < 8; sp += 1) {
+        document.dispatchEvent(new KeyboardEvent('keydown', {
+          key: sp % 2 === 0 ? '2' : '1', bubbles: true,
+        }));
+        var want = sp % 2 === 0 ? 1 : 0;
+        await waitShort(function () { return H.getState().activeWeaponSlot === want; });
+        out.switchSpam.push({
+          key: sp % 2 === 0 ? '2' : '1',
+          bag: H.getState().bag.length,
+          worn: H.getState().equipped.filter(Boolean).length,
+          domBag: document.querySelectorAll('#wrap-bag .grid-item').length,
+          domWorn: document.querySelectorAll('.equip-slot.filled').length,
+          active: H.getState().activeWeaponSlot,
+        });
+      }
+
       // Clicking a weapon slot goes through commit() -> host.runCommand().
       //
       // The click is retried, not the assertion relaxed: render() rebuilds
@@ -621,6 +639,15 @@ const checks = [
       && result.star.budgetBlocked === true, result.star],
   ['免费洗点：点数退回，亲和归零',
     result.star.respec === true && result.star.affinityAfterRespec === 0, result.star],
+  ['局内背包开着连按 1/2，面板不会「空一下」（每步背包与槽位都还在）',
+    // 切槽本身由 Engine Worker 处理（页面不再重复发命令），假 Worker 这里不模拟键盘；
+    // 这条只守「快照/重绘不会把道具清空」，真实的切槽由 playthrough 的 1/2 步骤覆盖。
+    Array.isArray(result.switchSpam) && result.switchSpam.length === 8
+      && result.switchSpam.every(function (s) {
+        return s.bag > 0 && s.domBag > 0 && s.worn > 0 && s.domWorn > 0
+          && s.domBag === s.bag && s.domWorn === s.worn;
+      }),
+    result.switchSpam],
   ['补给把红 / 蓝药放进背包（消耗品是物品，不是计数器）',
     result.potions.before === 0 && result.potions.after === 5
       && result.potions.red === 2 && result.potions.blue === 3, result.potions],

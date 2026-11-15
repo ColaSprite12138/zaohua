@@ -21,6 +21,7 @@ import { monster as monsterRows } from '../../resource/generated/monster.ts';
 import { weapon as weaponRows } from '../../resource/generated/weapon.ts';
 import { item as itemRows } from '../../resource/generated/item.ts';
 import { loot_pool as lootRows } from '../../resource/generated/loot_pool.ts';
+import { consumable as consumableRows } from '../../resource/generated/consumable.ts';
 import {
   DASH_SPEED, DOT_TICK_SECONDS, PLAYER_ATTACK_CD, PLAYER_DODGE_CD, PLAYER_MANA_MAX,
   POTION_COUNT, POTION_MANA, POTION_SECONDS, REACTION_CHAIN_RADIUS, ZONE_RADIUS_MAX,
@@ -117,8 +118,9 @@ describe('combat_rule.xlsx owns the tuning knobs', () => {
     expect(PLAYER_DODGE_CD).toBe(rule.player_dodge_cd);
     expect(PLAYER_MANA_MAX).toBe(rule.player_mana_max);
     expect(POTION_COUNT).toBe(rule.potion_count);
-    expect(POTION_MANA).toBe(rule.potion_mana);
-    expect(POTION_SECONDS).toBe(rule.potion_seconds);
+    const mp = consumableRows.find((row) => row.id === '30003')!;
+    expect(POTION_MANA).toBe(mp.mana_restore);
+    expect(POTION_SECONDS).toBe(mp.mana_seconds);
     expect(DASH_SPEED).toBe(rule.dash_speed);
     expect(DOT_TICK_SECONDS).toBe(rule.dot_tick_seconds);
     expect(ZONE_TICK_SECONDS).toBe(rule.zone_tick_seconds);
@@ -148,7 +150,24 @@ describe('durability / potion tuning lives in the tables (5.2 / 7.4 / 8.3)', () 
     const rule = combat_rule[0];
     expect(rule.durability_dealt).toBeGreaterThan(0);
     expect(rule.durability_taken).toBeGreaterThan(rule.durability_dealt); // 承受为主（7:3）
-    expect(rule.hp_potion_heal).toBeGreaterThan(0);
+    // 药水效果搬到了 `consumable.xlsx`（每瓶一行）。全局表里那三列是历史遗留：
+    // 只要还在，就必须和药表**数值一致**（防两边漂移）；搬干净后这一分支自然失效。
+    const hp = consumableRows.find((row) => row.id === '30002')!;
+    const mp = consumableRows.find((row) => row.id === '30003')!;
+    const legacy = rule as unknown as Record<string, number | undefined>;
+    if (legacy.hp_potion_heal !== undefined) expect(legacy.hp_potion_heal).toBe(hp.hp_restore);
+    if (legacy.potion_mana !== undefined) expect(legacy.potion_mana).toBe(mp.mana_restore);
+    if (legacy.potion_seconds !== undefined) expect(legacy.potion_seconds).toBe(mp.mana_seconds);
+  });
+
+  it('potion effects come from consumable.xlsx (one row per bottle)', () => {
+    const hp = consumableRows.find((row) => row.id === '30002');
+    const mp = consumableRows.find((row) => row.id === '30003');
+    expect(hp?.hp_restore).toBeGreaterThan(0);
+    expect(hp?.mana_restore ?? -1).toBe(0);
+    expect(mp?.mana_restore).toBeGreaterThan(0);
+    expect(mp?.mana_seconds).toBeGreaterThan(0);
+    expect(mp?.hp_restore ?? -1).toBe(0);
   });
 
   it('both potions exist as authored items and drop from both pools', () => {

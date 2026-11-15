@@ -11,10 +11,10 @@ Creates / patches:
   level.xlsx           level -> xp_to_next + star_points          (NEW, 6.1)
   constellation.xlsx   8 constellations: color + requirement       (NEW, 6.3 v7)
   starmap.xlsx         23 nodes: constellation + affinity grants   (NEW, 6.3 v7)
+  consumable.xlsx   红药 / 蓝药的回复效果（每瓶一行）              (NEW, 8.3)
   monster.xlsx      + xp                                           (6.1)
   combat_rule.xlsx  + mainline/explore star points                 (6.3)
                     + durability_dealt / durability_taken          (5.2 / 7.4)
-                    + hp_potion_heal                               (8.3)
   weapon.xlsx       + durability                                   (5.2 / 7.4)
   item.xlsx         + 30002 红药 / 30003 蓝药                       (8.3)
 
@@ -237,6 +237,19 @@ def starmap_rows():
     return header, rows
 
 
+def drop_columns(name, names):
+    """删掉搬走的列（例如药水效果搬到 `consumable.xlsx` 之后，全局表里不该留副本）。"""
+    path = os.path.join(TABLES, name + '.xlsx')
+    fields, records = export_tables.parse_table(path)
+    gone = [f for f in names if f in fields]
+    if not gone:
+        print('[skip] %s has no %s' % (name, ', '.join(names)))
+        return
+    keep = [f for f in fields if f not in gone]
+    rows = [[rec[f] for f in keep] for rec in records]
+    write_xlsx(path, keep, rows)
+
+
 def patch_table(name, extra_header, extra_values):
     """Append columns to an existing table, preserving every authored row.
 
@@ -263,7 +276,7 @@ def main():
     check = '--check' in sys.argv[1:]
     if check:
         for name in ('level', 'starmap', 'constellation', 'monster', 'combat_rule',
-                     'weapon', 'item'):
+                     'weapon', 'item', 'consumable'):
             export_tables.validate_package(os.path.join(TABLES, name + '.xlsx'))
             print('[ OK ] %s.xlsx package is valid' % name)
         return 0
@@ -297,7 +310,24 @@ def main():
 
     add_consumables()
     add_loot_potions()
+    write_consumable_effects()
+    # 药水效果已经独立成表，全局手感表里不再留副本（一处一版，避免两边漂移）。
+    drop_columns('combat_rule', ['potion_mana', 'potion_seconds', 'hp_potion_heal'])
     return 0
+
+
+def write_consumable_effects():
+    """药水效果独立成表（设计 8.3）：**每瓶药一行**，改效果不用碰全局手感表。
+
+    以前这三组数字塞在 `combat_rule.xlsx`（单行全局常量）里，和"每瓶药"没有对应关系 ——
+    加第三种药时就没地方放了。现在 `drinkPotion` / `healPotion` 按 id 读这张表。
+    """
+    header = ['id', 'hp_restore', 'mana_restore', 'mana_seconds', 'hint']
+    rows = [
+        ['30002', 45, 0, 0, '喝下立刻回复 45 点生命'],
+        ['30003', 0, 60, 5, '5 秒内缓慢回复 60 点法力（不是一口回满）'],
+    ]
+    write_xlsx(os.path.join(TABLES, 'consumable.xlsx'), header, rows)
 
 
 def add_loot_potions():

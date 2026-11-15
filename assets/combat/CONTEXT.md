@@ -215,6 +215,8 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 | 不做修理 | 设计原话是「修不如重铸」。修理 / 重铸要等金币经济 + 词条批次；本轮坏了就换（5.3 装备是消耗品） |
 | 耐久跨局 | 耐久写在 `ItemInstance.durability` 上，跟着物品跨堆 / 进存档；**重开一局不会修满** |
 | 药是物品 | 红药 `30002` / 蓝药 `30003` 在 `item.xlsx`，1×1 格、`equip=null`，从两个掉落池都能刷到。`GameState.potions` 计数器**已删除** |
+| 药的效果在表里 | `tables/consumable.xlsx`（**每瓶一行**）：`hp_restore / mana_restore / mana_seconds`。以前塞在 `combat_rule.xlsx` 的单行全局常量里，加第三种药就无处可放；现在 `consumables.ts::consumableEffect(id)` 是唯一读法，缺行＝拒绝使用并提示「未配置」 |
+| 只有武器进武器槽（7.4） | 三处执行：`equipItem()`（拖放）、`collectDrop()`（**拾取优先空武器槽只对武器成立**，药/箭落进背包）、`normalizeEquipped()`（读存档 / 出征 / 结算时把非法穿戴挪回背包，背包满则丢弃）。三处缺一条，就会出现"捡到一瓶药被装备在主手" |
 | 喝药 | `X` 蓝药（缓慢回复，`POTION_SECONDS` 秒内 `POTION_MANA` 点）/ `Z` 红药（一口 `hp_potion_heal`）。都是从**局内背包**取走一件；满蓝 / 满血 / 没有药 → 拒绝且不消耗 |
 | 夹具 | `createState()` 给背包塞 `POTION_COUNT` 蓝 + `FIXTURE_HP_POTIONS` 红，供 playthrough / 单测；正式出征由局外背包决定 |
 | 投影 | `durability[2]`（`{slot,current,max,broken}`）/ `weaponBroken` / `potions` / `hpPotions`（后两个是背包计数） |
@@ -379,6 +381,9 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
    别在别处改 `runInventory.equipped[i].durability`（跨局账会立刻算错）。
 45. **药不设第二条来源**：`GameState` 里不得再出现 `potions` 计数器；「还有几瓶」一律
    `countConsumable(runInventory, ...)` 从背包算。喝药必须真的从背包取走一件。
+47. **武器槽只装武器**：`collectDrop()` 不得把非武器塞进空武器槽；`runInventoryFrom()` / `bringBack()`
+   必须经过 `normalizeEquipped()`。手改存档里的非法穿戴要在进战局**之前**被挪走。
+48. **药水效果只读 `consumable.xlsx`**：不得再从 `combat_rule` 或 TS 常量里取第二份数字。
 46. **损坏 ≠ 卸下**：耐久 0 的装备留在槽里，靠 `activeWeaponBroken()` 让伤害/距离回落空手。
    禁止在耐久归零时把物品删除或自动卸下 —— 那会让玩家觉得"装备凭空消失了"。
 

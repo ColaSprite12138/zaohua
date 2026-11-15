@@ -16,7 +16,7 @@
 import { item } from '../resource/generated/item.ts';
 import { weapon } from '../resource/generated/weapon.ts';
 import {
-  addToBag, createInventoryState, equipItem, loadoutFromRun, placeItem, registerItemDefs,
+  addToBag, createInventoryState, equipItem, itemDef, loadoutFromRun, placeItem, registerItemDefs,
   runInventoryFrom, setActiveWeapon, unequipItem,
   type InventoryState, type RunLoadout,
 } from '../meta/inventory.ts';
@@ -110,7 +110,11 @@ export function collectDrop(
   defId: string,
 ): PickupResult {
   ensureItemCatalog();
-  const empty = run.equipped[0] === null ? 0 : (run.equipped[1] === null ? 1 : -1);
+  // **只有武器能进武器槽**（设计 7.4）。掉落池里现在有药，以前这里无条件塞空槽，
+  // 结果捡到一瓶药就被"装备"到主手上了 —— 既违反装备规则，也让耐久 / 伤害无从算起。
+  const equippable = itemDef(defId).equip === 'weapon';
+  const empty = !equippable ? -1
+    : run.equipped[0] === null ? 0 : (run.equipped[1] === null ? 1 : -1);
   if (empty >= 0) {
     run.equipped[empty] = { uid, defId };
     return { where: 'weapon', slot: empty as 0 | 1 };

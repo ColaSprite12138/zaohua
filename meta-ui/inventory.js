@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: a3726c9a9bd473fe7bb2c6ff00ad3e4acc3a46480aeccb42587226418cca308c
+ * Source SHA-256: a5fa75d4f6e1c10207c5e1d3e6d9637e8c6b5b88aaf8267a89bae7ede88b2959
  */
 (function (root) {
 "use strict";
@@ -46,6 +46,7 @@ exports.coveredCells = coveredCells;
 exports.findFirstFit = findFirstFit;
 exports.addToBag = addToBag;
 exports.removeItem = removeItem;
+exports.normalizeEquipped = normalizeEquipped;
 exports.takeIntoRun = takeIntoRun;
 exports.bringBack = bringBack;
 exports.runInventoryFrom = runInventoryFrom;
@@ -382,6 +383,53 @@ function removeItem(state, uid) {
     }
     return false;
 }
+/* ------------------------------------------------------------------ *
+ * Run transfer — explicit copy-in / copy-out between two heaps        *
+ * ------------------------------------------------------------------ *
+ *
+ * The lobby InventoryState lives in the main window; the run InventoryState
+ * lives in the Engine Worker. They are DIFFERENT objects in DIFFERENT JS
+ * heaps and only meet as structured-cloned messages over BroadcastChannel.
+ * This module owns the RULES both heaps execute, never a shared state object.
+ *
+ *   deploy  takeIntoRun(lobby)          -> loadout; lobby bag+equipped EMPTY
+ *   cleared bringBack(lobby, loadout)   -> the WHOLE run state comes home
+ *   abort   discard the Worker's state; the lobby is already empty
+ *
+ * The stash NEVER enters a run and is untouched by all three transitions.
+ */
+/**
+ * 槽位与物品类型必须匹配（设计 7.4 / 9.x：只有武器进武器槽）。
+ *
+ * 这条规则在三处执行：`equipItem()`（拖放）、`collectDrop()`（拾取优先空武器槽）、
+ * 以及这里的**规范化**（读存档 / 出征 / 结算时把不合法的穿戴挪回背包）。
+ * 第三处是兜底：手改存档、旧版本遗留、协议升级都可能把药塞进武器槽，
+ * 一旦进了战斗，武器伤害与耐久就全乱。
+ *
+ * 挪不回去（背包满）就直接丢弃该实例 —— 它是非法数据，不能让它继续污染状态。
+ * 返回被挪走的件数。
+ */
+function normalizeEquipped(state) {
+    let moved = 0;
+    for (let i = 0; i < exports.EQUIP_SLOTS.length; i += 1) {
+        const item = state.equipped[i];
+        if (!item)
+            continue;
+        const slot = exports.EQUIP_SLOTS[i];
+        if (itemDef(item.defId).equip === slot.accepts)
+            continue;
+        state.equipped[i] = null;
+        const spot = findFirstFit(state, item.defId, item.uid, ['bag']);
+        if (spot !== null) {
+            listOf(state, spot.container).push({
+                uid: item.uid, defId: item.defId,
+                container: spot.container, col: spot.col, row: spot.row,
+            });
+        }
+        moved += 1;
+    }
+    return moved;
+}
 function clonePlaced(items) {
     return items.map((i) => ({ ...i }));
 }
@@ -418,16 +466,20 @@ function bringBack(lobby, loadout) {
     lobby.bag = clonePlaced(loadout.bag);
     lobby.equipped = cloneEquipped(loadout.equipped);
     lobby.activeWeaponSlot = loadout.activeWeaponSlot === 1 ? 1 : 0;
+    normalizeEquipped(lobby);
     // lobby.stash is deliberately untouched.
 }
 /** Worker side: the run owns a full InventoryState whose stash is ALWAYS empty. */
 function runInventoryFrom(loadout) {
-    return {
+    const state = {
         bag: clonePlaced(loadout.bag),
         stash: [],
         equipped: cloneEquipped(loadout.equipped),
         activeWeaponSlot: loadout.activeWeaponSlot === 1 ? 1 : 0,
     };
+    // 进战局前最后一道闸：非法穿戴挪回背包（存档篡改 / 旧协议遗留）。
+    normalizeEquipped(state);
+    return state;
 }
 /** Worker side: serialise the run state for the clear settlement. */
 function loadoutFromRun(state) {
