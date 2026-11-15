@@ -512,6 +512,81 @@ export default async function playthrough(play) {
     await play.screenshot('mana-potion');
   });
 
+  await play.step('the flame wall and the poison pool detonate together', async () => {
+    // 设计 8.5「火 + 毒 = 引爆毒层」：先铺毒池把毒挂上去，再落火墙引爆。
+    // 两个技能都指向骷髅当前位置 —— 它会走过来，所以每次起手前重新取一次坐标。
+    await play.keyboard.press('KeyR');
+    await play.wait(120);
+    const staged = await waitUntilNear(70, 160);
+    assert.ok(staged, 'a skeleton closes to ground-effect range');
+    const pick = (s) => s.skeletons
+      .filter((sk) => sk.alive)
+      .sort((a, b) => logicalGap(s, a) - logicalGap(s, b))[0];
+
+    const first = pick(staged);
+    await play.mouse.move([first.x, first.y]);
+    await play.wait(120);
+    await play.keyboard.press('KeyG'); // 毒池
+    await play.advance(0.3);
+    const poisoned = await play.state('game.state');
+    assert.ok(poisoned.zones.some((zone) => zone.element === 'poison'), 'the pool is on the ground');
+    assert.ok(
+      poisoned.skeletons.some((sk) => sk.statuses.some((st) => st.id === 'poison')),
+      'the pool attaches poison to whoever stands in it',
+    );
+    await play.screenshot('zone-poison-pool');
+
+    const second = pick(poisoned);
+    await play.mouse.move([second.x, second.y]);
+    await play.wait(120);
+    await play.keyboard.press('KeyF'); // 火墙
+    await play.advance(0.4);
+    const blown = await play.state('game.state');
+    assert.ok(
+      blown.reactions.some((r) => r.id === 'detonate'),
+      `fire on a poisoned target detonates (${JSON.stringify(blown.reactions)})`,
+    );
+    assert.ok(blown.zones.some((zone) => zone.element === 'fire'), 'the flame wall stays on the ground');
+    await play.screenshot('reaction-detonate');
+  });
+
+  await play.step('water then ice freezes the target solid', async () => {
+    // 设计 8.5「水 + 冰 = 冻结」：水浪挂湿身，冰锥读条后命中即冻结（硬控）。
+    // 冻结只有 1.5 秒，而截图从调用到成像有 1~2 秒延迟 —— 所以画面证据以
+    // 冰面 / 状态条为准，**硬控本身由投影断言证明**（`statuses` 里出现 freeze）。
+    await play.keyboard.press('KeyR');
+    await play.wait(120);
+    const staged = await waitUntilNear(90, 200);
+    assert.ok(staged, 'a skeleton closes into the wave cone');
+    const pick = (s) => s.skeletons
+      .filter((sk) => sk.alive)
+      .sort((a, b) => logicalGap(s, a) - logicalGap(s, b))[0];
+
+    const target = pick(staged);
+    await play.mouse.move([target.x, target.y]);
+    await play.wait(120);
+    await play.keyboard.press('KeyV'); // 水浪
+    await play.advance(0.2);
+    const wet = await play.state('game.state');
+    assert.ok(
+      wet.skeletons.some((sk) => sk.statuses.some((st) => st.id === 'wet')),
+      'the wave soaks the target',
+    );
+
+    const soaked = pick(wet);
+    await play.mouse.move([soaked.x, soaked.y]);
+    await play.wait(120);
+    await play.keyboard.press('KeyT'); // 冰锥（读条）
+    await play.advance(1.0);
+    const frozen = await play.state('game.state');
+    assert.ok(
+      frozen.reactions.some((r) => r.id === 'freeze'),
+      `ice on a soaked target freezes it (${JSON.stringify(frozen.reactions)})`,
+    );
+    assert.ok(frozen.zones.some((zone) => zone.element === 'ice'), 'the shard leaves an ice patch');
+    await play.screenshot('status-freeze');
+  });
+
   await play.step('armed melee still works on a clicked enemy', async () => {
     const before = await play.state('game.state');
     const live = livingEnemy(before);

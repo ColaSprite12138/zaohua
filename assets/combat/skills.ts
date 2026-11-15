@@ -19,13 +19,32 @@ import { damageSkeleton } from './attack.ts';
 import { burst, say } from './effects.ts';
 import { canStand } from './movement.ts';
 import type { CombatModifiers } from './modifiers.ts';
+import { applyElement, spawnZone } from './reactions.ts';
+import { applyStatus, lockedFlags } from './status.ts';
 import {
   DASH_SPEED, POTION_MANA, POTION_SECONDS, SKILL_SLOTS, STRIDE_PIXELS,
-  type CastState, type GameState, type SkillFx, type SkillFxKind, type SkillSlot,
+  type CastState, type ElementId, type GameState, type SkillFx, type SkillFxKind,
+  type SkillSlot, type StatusId,
 } from './state.ts';
 
-/** 技能的作用形态。加一个「新技能」= 复用这三种之一，或在这里加一种 + 一个 resolver。 */
-export type SkillKind = 'sweep' | 'dash' | 'bolt';
+/**
+ * 技能的作用形态。加一个「新技能」= 复用这六种之一，或在这里加一种 + 一个 resolver。
+ *
+ * - `sweep` 以自身为圆心的范围
+ * - `dash`  分帧位移，沿途命中
+ * - `bolt`  直线走廊
+ * - `cone`  朝光标方向的一扇形（水浪）
+ * - `zone`  在光标处放一片地面区域（火墙 / 毒池）
+ * - `strike` 在光标处砸一片圆形（落雷）
+ */
+export type SkillKind = 'sweep' | 'dash' | 'bolt' | 'cone' | 'zone' | 'strike';
+
+/** 地面区域规格：`zone` 类技能用。 */
+export interface SkillZone {
+  readonly element: ElementId;
+  readonly radius: number;
+  readonly life: number;
+}
 
 export interface SkillDef {
   readonly id: string;
@@ -38,46 +57,94 @@ export interface SkillDef {
   /** 读条秒数；0 = 瞬发。 */
   readonly castTime: number;
   readonly damage: number;
-  /** sweep: 半径 / dash: 冲刺距离 / bolt: 走廊长度（世界像素）。 */
+  /** sweep: 半径 / dash: 冲刺距离 / bolt: 走廊长度 / cone+strike: 作用距离（世界像素）。 */
   readonly reach: number;
-  /** dash: 撞到目标的判定半宽 / bolt: 走廊半宽。sweep 不用。 */
+  /** dash: 撞到目标的判定半宽 / bolt: 走廊半宽 / cone: 半角×reach / strike+zone: 半径。 */
   readonly width: number;
   /** HUD 上的一句话说明。 */
   readonly hint: string;
   /** 体素图标键（`voxel.ts::skillModel()`）。 */
   readonly icon: string;
+  /** 命中后挂的元素附着（反应链的输入）；没有 = 纯物理技能。 */
+  readonly element?: ElementId;
+  /** 命中后额外上的状态（流血 / 迟滞…），与元素附着互不影响。 */
+  readonly status?: StatusId;
+  /** 留一片地面区域（火墙 / 毒池）。 */
+  readonly zone?: SkillZone;
 }
 
 /**
- * 首批三个技能，正好覆盖三条流派轴（设计 9.3 的骨架）：
- * 重甲的横扫 / 重甲的冲锋（位移占 1 格）/ 法术的冰锥（读条 + 直线）。
+ * 首批七个技能：三条流派轴 + 覆盖 6 种元素的 5 条反应链（设计 8.5）。
  *
  * 数值是开发期取值（设计文档 Q4「各流派技能数值与 CD 做功能时再定」）：
  * 参照夹具骷髅 66 HP —— 横扫 38 要两下、冰锥 26 要三下、冲锋 30 要三下，
  * 普攻 46 仍是主要的收尾手段（8.1「普攻为资源 / 收尾 / 过渡」）。
+ *
+ * **元素归属是设计决定，不是数值**：
+ * - 横扫 / 冲锋是重甲的物理技能 → 横扫挂流血，冲锋撞出**风**（3 条位移技能的
+ *   「风」暂时由它承担，等游侠的陷阱 / 后跳那一批再拆开）；
+ * - 冰锥 = 冰（减速附着）、火墙 = 火（点燃）、毒池 = 毒（中毒）、
+ *   水浪 = 水（湿身）、落雷 = 雷（感电）。
+ * 六个元素各有一个来源，所以 8.5 的五条反应**全部可在实战中打出来**。
  */
 export const SKILLS: Readonly<Record<string, SkillDef>> = Object.freeze({
   cleave: Object.freeze({
     id: 'cleave', name: '横扫', kind: 'sweep',
     cost: 12, cooldown: 5, castTime: 0, damage: 38, reach: 170, width: 0,
-    hint: '以自身为中心横扫一圈', icon: 'cleave',
+    hint: '以自身为中心横扫一圈，命中即流血', icon: 'cleave',
+    status: 'bleed',
   }),
   charge: Object.freeze({
     id: 'charge', name: '冲锋', kind: 'dash',
     cost: 15, cooldown: 9, castTime: 0, damage: 30, reach: 220, width: 44,
     hint: '向光标方向冲一段并撞伤沿途目标', icon: 'charge',
+    // 冲锋撞出的气流就是「风」：冲进火里会把火吹旺（风 + 火 = 火势蔓延）。
+    element: 'wind',
   }),
   ice_shard: Object.freeze({
     id: 'ice_shard', name: '冰锥', kind: 'bolt',
     // 读条 0.8 秒：设计 8.4 要求「让对手能反应、能打断」，0.5 秒在俯视角下几乎反应不过来，
     // 而且它比截图的采集时延还短，读条条根本拍不到 —— 也就没法当验收证据。
     cost: 16, cooldown: 3.5, castTime: 0.8, damage: 26, reach: 260, width: 34,
-    hint: '读条 0.8 秒，沿光标方向射出冰锥', icon: 'ice_shard',
+    hint: '读条 0.8 秒，沿光标方向射出冰锥，命中减速', icon: 'ice_shard',
+    element: 'ice',
+    zone: Object.freeze({ element: 'ice' as ElementId, radius: 54, life: 3.2 }),
+  }),
+  fire_wall: Object.freeze({
+    id: 'fire_wall', name: '火墙', kind: 'zone',
+    cost: 18, cooldown: 7, castTime: 0, damage: 12, reach: 260, width: 92,
+    hint: '在光标处铺一片火焰，踩进去就点燃', icon: 'fire_wall',
+    element: 'fire',
+    zone: Object.freeze({ element: 'fire' as ElementId, radius: 92, life: 5 }),
+  }),
+  venom_pool: Object.freeze({
+    id: 'venom_pool', name: '毒池', kind: 'zone',
+    cost: 16, cooldown: 8, castTime: 0, damage: 8, reach: 260, width: 80,
+    hint: '在光标处铺一片毒池，中毒可叠 5 层', icon: 'venom_pool',
+    element: 'poison',
+    zone: Object.freeze({ element: 'poison' as ElementId, radius: 80, life: 6 }),
+  }),
+  water_wave: Object.freeze({
+    id: 'water_wave', name: '水浪', kind: 'cone',
+    cost: 14, cooldown: 5, castTime: 0, damage: 20, reach: 200, width: 0.55,
+    hint: '朝光标方向推出一道水浪，把人浇湿', icon: 'water_wave',
+    element: 'water',
+  }),
+  thunder: Object.freeze({
+    id: 'thunder', name: '落雷', kind: 'strike',
+    cost: 20, cooldown: 8, castTime: 0.5, damage: 34, reach: 300, width: 110,
+    hint: '读条 0.5 秒，在光标处落下一道雷', icon: 'thunder',
+    element: 'shock',
   }),
 });
 
 /** 起手被拒绝的原因。`ok` 之外的每一种都**不扣蓝、不进冷却**。 */
-export type CastResult = 'ok' | 'empty' | 'cooling' | 'mana' | 'busy' | 'ended';
+export type CastResult =
+  | 'ok' | 'empty' | 'cooling' | 'mana' | 'busy' | 'ended'
+  /** 沉默 / 硬控：技能入口被状态封住（设计 8.4）。 */
+  | 'silenced'
+  /** 禁锢：位移技能也一起禁掉（但普通技能照常）。 */
+  | 'rooted';
 
 export function skillDef(id: string | null): SkillDef | null {
   if (id === null) return null;
@@ -93,6 +160,9 @@ function runOver(s: GameState): boolean {
 export function skillReady(s: GameState, slot: SkillSlot): boolean {
   const def = skillDef(slot.id);
   if (def === null || runOver(s)) return false;
+  const locks = lockedFlags(s.player);
+  if (locks.noSkill) return false;
+  if (locks.noMove && def.kind === 'dash') return false;
   return slot.cooldown <= 0 && s.mana >= def.cost;
 }
 
@@ -129,11 +199,22 @@ export function beginSkill(
 ): CastResult {
   if (runOver(s)) return 'ended';
   if (s.channel !== null || s.cast !== null) return 'busy';
+  // 沉默 / 硬控封住技能入口；禁锢额外封掉位移技能（设计 8.4）。
+  // 两种拒绝都在扣蓝之前，**一律免费**。
+  const locks = lockedFlags(s.player);
+  if (locks.noSkill) {
+    say(s, '被控制中 · 无法释放技能');
+    return 'silenced';
+  }
   if (!Number.isInteger(slot) || slot < 0 || slot >= SKILL_SLOTS) return 'empty';
   const entry = s.skillBar[slot];
   if (entry === undefined) return 'empty';
   const def = skillDef(entry.id);
   if (def === null) return 'empty';
+  if (locks.noMove && def.kind === 'dash') {
+    say(s, '被禁锢 · 位移技能用不出来');
+    return 'rooted';
+  }
   if (entry.cooldown > 0) return 'cooling';
   if (s.mana < def.cost) {
     say(s, `法力不足 · 「${def.name}」需要 ${def.cost} 点`);
@@ -222,10 +303,35 @@ function resolveSkill(
   aim: { x: number; y: number },
   mods: CombatModifiers,
 ): void {
+  // 伤害乘区只作用于**直接伤害**；DOT / 区域伤害走各自的状态数值（避免同一节点双吃）。
   const damage = mods.damageMultiplier(def.damage);
   if (def.kind === 'sweep') sweep(s, def, damage);
   else if (def.kind === 'dash') startDash(s, def, aim, damage);
-  else bolt(s, def, aim, damage);
+  else if (def.kind === 'bolt') bolt(s, def, aim, damage);
+  else if (def.kind === 'cone') cone(s, def, aim, damage);
+  else if (def.kind === 'zone') zone(s, def, aim, damage);
+  else strike(s, def, aim, damage);
+}
+
+/**
+ * 命中的**唯一出口**：先扣血（走 `damageSkeleton`，击杀 / 掉落只有一套），
+ * 再挂元素附着与附加状态。
+ *
+ * 元素附着排在伤害之后：被这一下打死的人不该再上状态（也不会触发反应），
+ * 反过来「先上元素再打死」会让最后一击的反应伤害拿不到击杀计数。
+ */
+function hit(
+  s: GameState,
+  index: number,
+  def: SkillDef,
+  damage: number,
+  options: { dirX?: number; dirY?: number; knockback?: number; color?: string } = {},
+): void {
+  damageSkeleton(s, index, damage, options);
+  const sk = s.skeletons[index];
+  if (sk === undefined || !sk.alive) return;
+  if (def.status !== undefined) applyStatus(sk, def.status);
+  if (def.element !== undefined) applyElement(s, index, def.element);
 }
 
 /** 记一条视觉事件。特效只是「这一帧发生了什么」的记录，逻辑从不去读它。 */
@@ -254,7 +360,7 @@ function sweep(s: GameState, def: SkillDef, damage: number): void {
     const sk = s.skeletons[i];
     if (sk === undefined || !sk.alive) continue;
     if (Math.hypot(sk.x - p.x, sk.y - p.y) > def.reach + 20) continue;
-    damageSkeleton(s, i, damage, { color: '#ffd166', knockback: 1.4 });
+    hit(s, i, def, damage, { color: '#ffd166', knockback: 1.4 });
     spawnFx(s, 'impact', sk.x, sk.y, p.face, 26, 0.45);
     hits += 1;
   }
@@ -295,6 +401,7 @@ function startDash(
     uy: dy / d,
     damage,
     hit: [],
+    skillId: def.id,
   };
   spawnFx(s, 'dash', p.x, p.y, p.face, def.reach, 0.35);
   burst(s, p.x, p.y, '#8be9fd', 8, 90);
@@ -338,7 +445,14 @@ export function updateDash(s: GameState, dt: number, _mods: CombatModifiers): vo
     if (sk === undefined || !sk.alive || dash.hit.includes(i)) continue;
     if (Math.hypot(sk.x - p.x, sk.y - p.y) > 44) continue;
     dash.hit.push(i);
-    damageSkeleton(s, i, dash.damage, { dirX: dash.ux, dirY: dash.uy, color: '#8be9fd', knockback: 1.7 });
+    const def = skillDef(dash.skillId);
+    if (def !== null) {
+      hit(s, i, def, dash.damage, { dirX: dash.ux, dirY: dash.uy, color: '#8be9fd', knockback: 1.7 });
+    } else {
+      damageSkeleton(s, i, dash.damage, {
+        dirX: dash.ux, dirY: dash.uy, color: '#8be9fd', knockback: 1.7,
+      });
+    }
     spawnFx(s, 'impact', sk.x, sk.y, p.face, 30, 0.45);
     burst(s, sk.x, sk.y - 20, '#cfe8ff', 14, 200);
   }
@@ -361,6 +475,7 @@ function bolt(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
   ux /= d;
   uy /= d;
   let hits = 0;
+  let farthest = 0;
   for (let i = 0; i < s.skeletons.length; i += 1) {
     const sk = s.skeletons[i];
     if (sk === undefined || !sk.alive) continue;
@@ -371,16 +486,114 @@ function bolt(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
     if (along < 0 || along > def.reach) continue;
     const side = Math.abs(rx * uy - ry * ux);
     if (side > def.width + 18) continue;
-    damageSkeleton(s, i, damage, { dirX: ux, dirY: uy, color: '#8be9fd', knockback: 0.6 });
+    hit(s, i, def, damage, { dirX: ux, dirY: uy, color: '#8be9fd', knockback: 0.6 });
     spawnFx(s, 'impact', sk.x, sk.y, Math.atan2(uy, ux), 30, 0.45);
     burst(s, sk.x, sk.y - 20, '#8be9fd', 16, 190);
     hits += 1;
+    farthest = Math.max(farthest, along);
   }
+  const angle = Math.atan2(uy, ux);
   // 一条会「射出去」的冰锥（绘制层按角度铺晶体块），比原来的固定光点清楚得多。
-  spawnFx(s, 'bolt', p.x, p.y, Math.atan2(uy, ux), def.reach, 0.85);
+  spawnFx(s, 'bolt', p.x, p.y, angle, def.reach, 0.85);
   // 霜痕：同一条走廊留一层结霜，走过去还看得出冰锥是朝哪打的。
-  spawnFx(s, 'frostMark', p.x, p.y, Math.atan2(uy, ux), def.reach, 3.2);
+  spawnFx(s, 'frostMark', p.x, p.y, angle, def.reach, 3.2);
+  // 冰面（真实区域，不是纯装饰）：走廊上留一片薄冰，踩上去减速，也是「冰」的附着。
+  if (def.zone !== undefined) {
+    const at = Math.min(def.reach, farthest > 0 ? farthest : def.reach * 0.7);
+    spawnZone(s, def.zone.element, p.x + ux * at, p.y + uy * at, def.zone.radius, def.zone.life, def.id);
+  }
   if (hits === 0) say(s, `「${def.name}」没有命中`);
+}
+
+/**
+ * 水浪：朝光标方向的一个扇形，命中即「湿身」（水元素附着）。
+ *
+ * 它单独打不出伤害以外的收益 —— 这正是 8.5「每一环都必须单独有收益」的要求：
+ * 湿身本身不值钱，但配冰锥 / 落雷就是冻结 / 麻痹。水浪自己也有 20 点伤害和击退，
+ * 所以「水浪空了」也不至于完全白放。
+ */
+function cone(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage: number): void {
+  const p = s.player;
+  const angle = Math.atan2(aim.y - p.y, aim.x - p.x);
+  let hits = 0;
+  for (let i = 0; i < s.skeletons.length; i += 1) {
+    const sk = s.skeletons[i];
+    if (sk === undefined || !sk.alive) continue;
+    const rx = sk.x - p.x;
+    const ry = sk.y - p.y;
+    const along = Math.hypot(rx, ry);
+    if (along > def.reach + 20) continue;
+    // 角度差取短弧：左后方和右后方的目标不能都被算进正面扇形。
+    let diff = Math.atan2(ry, rx) - angle;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    if (Math.abs(diff) > def.width) continue;
+    hit(s, i, def, damage, { dirX: Math.cos(angle), dirY: Math.sin(angle), color: '#60a5fa', knockback: 0.9 });
+    spawnFx(s, 'impact', sk.x, sk.y, angle, 24, 0.45);
+    hits += 1;
+  }
+  spawnFx(s, 'tide', p.x, p.y, angle, def.reach, 0.85);
+  if (hits === 0) say(s, `「${def.name}」没有命中`);
+}
+
+/**
+ * 预铺地面（火墙 / 毒池）：在光标处放一片区域，落点被钳到 `reach` 内。
+ *
+ * 区域**不靠一次性伤害**，而是每 0.4 秒给圈内续一次状态（点燃 / 中毒），
+ * 伤害由 DOT 跳 —— 所以「站在里面」才是惩罚，走开就慢慢熄。
+ */
+function zone(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage: number): void {
+  const p = s.player;
+  if (def.zone === undefined) return;
+  let dx = aim.x - p.x;
+  let dy = aim.y - p.y;
+  const d = Math.hypot(dx, dy) || 1;
+  if (d > def.reach) {
+    dx = (dx / d) * def.reach;
+    dy = (dy / d) * def.reach;
+  }
+  const x = p.x + dx;
+  const y = p.y + dy;
+  const radius = def.zone.radius;
+  let hits = 0;
+  for (let i = 0; i < s.skeletons.length; i += 1) {
+    const sk = s.skeletons[i];
+    if (sk === undefined || !sk.alive) continue;
+    if (Math.hypot(sk.x - x, sk.y - y) > radius + 16) continue;
+    // 落地这一下给少量伤害 + 轻推，真正的输出交给区域里的 DOT。
+    hit(s, i, def, damage, { knockback: 0.4, color: def.zone.element === 'fire' ? '#fb923c' : '#4ade80' });
+    spawnFx(s, 'impact', sk.x, sk.y, p.face, 22, 0.45);
+    hits += 1;
+  }
+  spawnZone(s, def.zone.element, x, y, radius, def.zone.life, def.id);
+  spawnFx(s, def.zone.element === 'fire' ? 'fire' : 'venom', x, y, p.face, radius, 0.85);
+  say(s, `「${def.name}」铺开 · ${hits > 0 ? `命中 ${hits} 个目标` : '地面已点燃'}`);
+}
+
+/** 落雷：读条结束后在光标处砸一片圆形（雷元素附着）。 */
+function strike(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage: number): void {
+  const p = s.player;
+  let dx = aim.x - p.x;
+  let dy = aim.y - p.y;
+  const d = Math.hypot(dx, dy) || 1;
+  if (d > def.reach) {
+    dx = (dx / d) * def.reach;
+    dy = (dy / d) * def.reach;
+  }
+  const x = p.x + dx;
+  const y = p.y + dy;
+  let hits = 0;
+  for (let i = 0; i < s.skeletons.length; i += 1) {
+    const sk = s.skeletons[i];
+    if (sk === undefined || !sk.alive) continue;
+    if (Math.hypot(sk.x - x, sk.y - y) > def.width) continue;
+    hit(s, i, def, damage, { color: '#c084fc', knockback: 1.1 });
+    spawnFx(s, 'impact', sk.x, sk.y, Math.atan2(sk.y - y, sk.x - x), 30, 0.45);
+    burst(s, sk.x, sk.y - 26, '#c084fc', 16, 220);
+    hits += 1;
+  }
+  spawnFx(s, 'shock', x, y, -Math.PI / 2, def.width, 0.85);
+  if (hits === 0) say(s, `「${def.name}」落空了`);
 }
 
 /**

@@ -126,9 +126,44 @@
 | 读条姿态 | `player.castPose`（秒）在起手时置为 `castTime`，绘制层据此**举杖 + 手上一颗发光法力球**；读条结束 / 被打断都清零 |
 | 冲锋姿态 | 绘制层把身体整体抬起 2px（read 作「扑出去」）+ `drawDashTrail` 画身后 5 块拖影 |
 
-**没做的部分**（别以为漏了）：状态 / 减速 / 反应链（8.4 / 8.5）、技能升级与形态（决策 11「解锁即完整」）、
+**没做的部分**（别以为漏了）：技能升级与形态（决策 11「解锁即完整」）、
 星图解锁接线、`spell` 类武器（`attack-spec.ts` 仍只留类型）、弹道运行时（冰锥走直线判定，
 远程武器与弓手怪的 `Projectile` 还没接进 `step()`）、法力药水做成背包物品（现在按局发瓶数）。
+状态与反应链**已在下一节落地**（8.4 / 8.5）。
+
+### 状态与反应链（2026-11-15 第三批，设计文档 8.4 / 8.5）
+
+代码：`combat/status.ts`（状态注册表 + 纯查询）+ `combat/reactions.ts`（元素附着 / 5 条反应 /
+DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技能、绘制层都问它，不各写一套判定。
+
+| 项 | 契约 |
+|:--|:--|
+| 状态形状 | `Skeleton.statuses` / `Player.statuses`（`StatusInstance[]`：`id/left/total/stacks/dot/next`）。玩家与怪物共用同一套宿主接口 `StatusHost` |
+| 注册表 | `STATUS`：22 条（硬控 6 / 软控 6 / 持续伤害 3 / 元素附着 3 + 见下），每条有 `category` / `color` / `duration` / `maxStacks` / 效果标志与 `hint` |
+| 效果出口 | 只有 5 个查询：`lockedFlags()`（禁移动 / 普攻 / 技能 / 闪避）、`moveMultiplier()`、`attackIntervalMultiplier()`、`damageTakenMultiplier()`、`healingBlocked()`。`movement.ts` / `attack.ts` / `skills.ts` / `enemies.ts` 全部读它 |
+| 硬控 | `stun` 晕眩 / `freeze` 冻结（水+冰）/ `paralyze` 麻痹（水+雷）/ `root` 禁锢（**禁移动·位移·闪避，仍可原地攻击**）/ `petrify` 石化 / `sleep` 睡眠（受击即醒，首次受伤 ×1.5） |
+| 软控 | `slow` 减速（移速 ×0.5，**同时是「冰」的附着**）/ `chill` 迟滞（出刀间隔 ×1.6）/ `silence` 沉默 / `disarm` 缴械 / `vulnerable` 易伤（受伤 ×1.3）/ `grievous` 重伤（禁疗档，等治疗系统） |
+| 持续伤害 | `bleed` 流血 3/s / `poison` 中毒 1.6/s **可叠 5 层** / `burn` 点燃 4/s（并标禁疗）；每 `DOT_TICK_SECONDS=0.5` 一跳，首跳延迟 0.35s |
+| 元素附着 | 6 种元素各有一个承载状态：水 `wet` / 冰 `slow` / 火 `burn` / 毒 `poison` / 雷 `shock` / 风 `wind`（`ELEMENT_STATUS` 是唯一映射） |
+| 反应表 | `REACTIONS` **正好 5 条**：水+冰 冻结 / 水+雷 麻痹（向 140px 内传导，半时长）/ 火+毒 引爆（每层毒 12 点，至少 12）/ 风+火 火势蔓延 / 风+毒 毒雾扩散。**不做两两组合的 N² 判定** |
+| 反应消耗 | 触发即清掉**双方**附着，所以一次反应不可能自己连爆；也不再需要「反应冷却」字段（改过一版按秒冷却，会挡掉「火墙→毒池」这种正常连招，已删） |
+| 地面区域 | `GameState.zones`（`Zone`：`element/status/x/y/radius/life/next/source`）。每 `ZONE_TICK_SECONDS=0.4` 给圈内活体续一次对应状态，**不直接扣血**（伤害一律由 DOT 走 `damageSkeleton`）；半径上限 `ZONE_RADIUS_MAX=220` |
+| 区域影响玩家 | **对所有人生效**，包括玩家自己（踩自己的火墙会烧）。这是「预铺地面要站远处放」的原因，也是玩家侧状态目前唯一的来源 |
+| 撞墙（物理反应） | `damageSkeleton` 里做：击退强度 ≥ `WALL_BOUNCE_KNOCKBACK=1.2` 且落点不可站 → 不位移、改为 `stun` 0.6s + `WALL_BOUNCE_DAMAGE=12`，**在同一函数内结算**，所以撞死的怪照样掉战利品 |
+| 唯一伤害入口 | DOT / 引爆 / 传导 / 撞墙 / 技能 / 普攻全部经 `damageSkeleton()`；`sk.hp -= x` 仍然只在它里面出现 |
+| 技能带元素 | 横扫=物理（挂流血）/ 冲锋=物理+**风** / 冰锥=冰（+冰面区域）/ 火墙=火 / 毒池=毒 / 水浪=水 / 落雷=雷。**6 个元素各有一个来源**，所以 5 条反应全都能在实战里打出来 |
+| 投影 | `skeletons[].statuses[{id,left,stacks}]` / `playerStatuses` / `zones[{element,x,y,radius,left,source}]` / `reactions[{id,x,y}]`（最多 8 条，坐标屏幕归一化） |
+| 视觉（设计 8.8） | 头顶一排状态方块（硬控盖横杠、叠层点白点）；冻结/减速=脚下冰环+冰晶，点燃=上升火苗，中毒=绿泡，流血=脚下降血；区域=不规则方块地皮 + 上升粒子；火墙/毒池=方块环落地，水浪=三道水脊，落雷=折线闪电。**全部只用 `fillRect` / `drawPixelRing`** |
+
+**为什么拆成两个文件**：`status.ts` 不 import 任何 combat 运行时，所以 `attack.ts`（唯一伤害入口）
+可以 import 它来上状态，而不会与「会伤害别人」的 `reactions.ts` 形成环。依赖方向：
+`reactions.ts → attack.ts → status.ts`，`skills.ts → {attack, reactions, status}`。
+
+**没做的部分**（别以为漏了）：`petrify` / `sleep` / `silence` / `disarm` / `vulnerable` /
+`grievous` 的效果与查询都已就位、单测覆盖，但**还没有技能或怪物会施加它们**（怪物技能 / 词条批次）；
+击飞 / 拉拽两种位移还没有来源；点燃的「禁疗」要等治疗与药水系统；DOT 暂**不吃**星图乘区
+（直接伤害吃，DOT 走独立数值轴，等星图批次一起接）；`aura` 类持续区域（毒雾随时间扩散）没做，
+现在的扩散是「风把已有区域吹大」。
 
 ### 本局状态与投影
 
@@ -260,22 +295,43 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
     并在 `moved <= 0.5 && step > 0.5` 时报「被墙挡住」。
 34. **同一只怪一次冲锋只挨一下**：`DashState.hit` 记已结算的下标，撞到后继续冲不再重复伤害。
 
+35. **状态效果只有一个出口**：想知道「能不能动 / 打得快不快 / 挨打疼不疼」，只能读
+    `status.ts` 的 `lockedFlags()` / `moveMultiplier()` / `attackIntervalMultiplier()` /
+    `damageTakenMultiplier()`。在 AI、输入、绘制里各写一份 `hasStatus()` 判断 = 迟早出现
+    「动画停了但还在走」这类分叉。
+36. **反应只认 `REACTIONS` 的 5 条**：不许按「任意两元素」自动组合（那是 N² 学习成本），
+    也不许为了好看再加第 6 条而不改设计文档 8.5。
+37. **反应必须消耗双方附着**：否则同一次命中会连爆，或者在区域里每帧触发一次。
+    改这条之前先想清楚「一次火焰为什么能引爆两瓶毒」。
+38. **区域不直接扣血**：`updateZones()` 只续状态，伤害一律由 DOT 经 `damageSkeleton()`
+    结算。两套伤害源会让「中毒跳了几下」永远对不上 `lootLog`。
+39. **撞墙是击退的后果，不是第二个伤害入口**：`wallBounce` 的额外伤害写在
+    `damageSkeleton()` 内部同一段代码里；抽成独立函数再回调自己，会绕开击杀计数与掉落。
+40. **状态只由注册表定义**：新增状态 = 在 `status.ts::STATUS` 加一条 + 在 8.4 的表里加一行，
+    不许在技能里临时写 `if (id === 'xxx')`。没有 `STATUS` 条目的 id 会在 `applyStatus` 里直接崩
+    （这是有意的：静默忽略会让「看不见的 debuff」上线）。
+
 ## 目录与依赖方向（单向，禁止反向 import）
 
 ```
 shared/constants.ts        ← 所有模块可 import（常量与纯类型，无状态）
 combat/world.ts            ← 只 import shared；纯地图运行时，不持有游戏状态
-combat/state.ts            ← shared + world + resource/maps 数据；类型权威
+combat/state.ts            ← shared + world + resource/maps 数据；类型权威（含 StatusId / ElementId）
+combat/status.ts           ← 只 import state 的类型；状态注册表与纯查询，**不碰 GameState**
 combat/effects.ts          ← state(类型) + shared + world
 combat/modifiers.ts        ← 独立接口，不 import combat
-combat/attack.ts           ← state + effects + modifiers(类型)；`damageSkeleton()` 是唯一伤害入口
-combat/movement.ts         ← state + effects + attack + world
-combat/skills.ts           ← state + effects + attack(伤害入口) + movement(`canStand`) + modifiers(类型)
-combat/enemies.ts          ← state + effects + world
+combat/attack.ts           ← state + effects + modifiers(类型) + status(上状态) + world(撞墙)；`damageSkeleton()` 是唯一伤害入口
+combat/reactions.ts        ← state + status + attack(伤害入口) + effects；元素附着 / 5 条反应 / DOT / 地面区域
+combat/movement.ts         ← state + effects + attack + status(禁移动/减速) + world
+combat/skills.ts           ← state + effects + attack + reactions + status + movement(`canStand`) + modifiers(类型)
+combat/enemies.ts          ← state + effects + status(硬控/减速/迟滞) + world
 combat/weapons.ts          ← state + effects
 combat/loot.ts             ← resource/generated/*.ts（只消费生成物，不读 xlsx）
 combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯一对外门面
 ```
+
+**`status.ts` 不许 import `attack.ts` / `reactions.ts`**：它是所有子系统都要读的表，
+一旦反过来 import 就会形成「伤害入口 ↔ 反应结算」的环（`attack.ts` 需要它来上状态）。
 
 `battle/` `meta/` `talent/` **不得 import combat 内部文件**；跨模块只通过 `shared/` 与 `combat/modifiers.ts` 的接口。
 
@@ -294,7 +350,12 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 `createPortals(world, count?)` /
 `beginSkill(s, slot, aim, mods)` / `advanceCast(s, dt, mods)` / `updateDash(s, dt, mods)` / `tickSkills(s, dt)` / `drinkPotion(s)` /
 `skillDef(id)` / `skillReady(s, slot)` / `SKILLS` / `createSkillBar()` / `damageSkeleton(s, i, amount, opts?)` /
-`DASH_SPEED` / `SkillFx` / `DashState`（类型）。
+`DASH_SPEED` / `SkillFx` / `DashState`（类型）/
+`applyStatus(host, id, opts?)` / `hasStatus` / `statusOf` / `statusDef(id)` / `STATUS` / `ELEMENT_STATUS` /
+`lockedFlags(host)` / `moveMultiplier` / `attackIntervalMultiplier` / `damageTakenMultiplier` /
+`statusSnapshot(host)`（`status.ts` — **状态效果的唯一出口**）/
+`applyElement(s, index, element, opts?)` / `spawnZone(s, element, x, y, radius, life, source)` /
+`growZones(s, x, y, elements)` / `updateZones(s, dt)` / `tickStatuses(s, dt)` / `REACTIONS` / `reactionFor(a, b)`（`reactions.ts`）。
 引擎层从 `assets/game/simulation.ts` 门面 import；新代码应直接 import 本模块。
 
 ## 攻击规格与资源预留（架构层，2026-11-12 新增，**尚未接入运行时**）
@@ -323,7 +384,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 138 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3 / extraction 17 / **skills 22**）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 166 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3 / extraction 17 / skills 22 / **status 28**）
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json

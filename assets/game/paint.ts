@@ -28,6 +28,8 @@ import {
   VIEW_H,
   VIEW_W,
   skillDef,
+  statusDef,
+  type StatusId,
   type Drop,
   type GameState,
   type Portal,
@@ -174,6 +176,65 @@ function drawGround(g: Painter, s: GameState): void {
       drawGroundTile(g, tile, x, y);
       drawGroundDetail(g, x, y, c, r);
     }
+  }
+}
+
+/**
+ * 地面区域（火墙 / 毒池 / 冰面 / 水洼）—— 设计 8.4 的「状态必须看得见」。
+ *
+ * 画在**地板之上、所有实体之下**：区域是地面的东西，站在里面的人必须压住它。
+ * 形状全部是 8~12px 的方块，边缘用确定性的低哈希挖掉一部分（不规则边），
+ * 不用渐变、不用圆。
+ */
+const ZONE_PAINT: Record<string, { base: string; hi: string; ember: string }> = {
+  fire: { base: '#c2410c', hi: '#fb923c', ember: '#ffd166' },
+  poison: { base: '#166534', hi: '#4ade80', ember: '#bbf7d0' },
+  ice: { base: '#0e7490', hi: '#8be9fd', ember: '#eaf8ff' },
+  water: { base: '#1e3a8a', hi: '#60a5fa', ember: '#bfdbfe' },
+};
+
+function drawZones(g: Painter, s: GameState): void {
+  const step = 12;
+  for (const zone of s.zones) {
+    const palette = ZONE_PAINT[zone.element];
+    if (palette === undefined) continue;
+    // 最后 35% 寿命淡出：地面效果「慢慢熄掉」比突然消失可信。
+    const fade = Math.min(1, zone.life / Math.max(0.001, zone.max * 0.35));
+    g.save();
+    for (let dy = -zone.radius; dy <= zone.radius; dy += step) {
+      for (let dx = -zone.radius; dx <= zone.radius; dx += step) {
+        const d = Math.hypot(dx, dy);
+        if (d > zone.radius) continue;
+        // 边缘用位置哈希挖孔：每个区域长得不一样，但每次重绘完全一致。
+        const h = Math.abs(Math.sin(dx * 12.9898 + dy * 78.233)) % 1;
+        if (d > zone.radius - step * 1.6 && h < 0.42) continue;
+        const x = Math.round(zone.x + dx);
+        const y = Math.round(zone.y + dy);
+        const near = d < zone.radius * 0.55;
+        g.globalAlpha = fade * (near ? 0.85 : 0.6);
+        g.fillStyle = near ? palette.hi : palette.base;
+        g.fillRect(x - 5, y - 4, 10, 7);
+        if (h > 0.82) {
+          g.globalAlpha = fade * 0.9;
+          g.fillStyle = palette.ember;
+          g.fillRect(x - 3, y - 3, 5, 4);
+        }
+      }
+    }
+    // 上升的粒子（火苗 / 气泡）：按时间循环，火焰比毒雾跳得快一档。
+    const rise = zone.element === 'fire' ? 2.6 : zone.element === 'poison' ? 1.1 : 0.5;
+    const count = zone.element === 'ice' || zone.element === 'water' ? 4 : 7;
+    for (let i = 0; i < count; i += 1) {
+      const phase = (s.t * rise + i / count) % 1;
+      const ang = i * 2.399 + zone.uid;
+      const cx = zone.x + Math.cos(ang) * zone.radius * (0.25 + 0.5 * ((i * 37) % 10) / 10);
+      const cy = zone.y + Math.sin(ang) * zone.radius * 0.45;
+      g.globalAlpha = fade * (1 - phase) * 0.85;
+      g.fillStyle = palette.hi;
+      const size = zone.element === 'fire' ? 5 : 4;
+      g.fillRect(Math.round(cx) - size / 2, Math.round(cy - phase * 34), size, size);
+    }
+    g.restore();
   }
 }
 
@@ -481,6 +542,10 @@ function drawPlayer(g: Painter, s: GameState): void {
     g.fillStyle = '#8be9fd';
     g.fillRect(Math.round(hand.x) - 1, Math.round(hand.y) - 7, 2, 4);
   }
+
+  // 玩家也会中状态（踩到自己的火墙、被减速…）：头顶同样给一排标记，
+  // 否则「我为什么走不动了」在画面上完全读不出来。
+  drawStatusMarks(g, p.x, p.y, p.statuses, bodyHeight(KNIGHT));
 }
 
 /** 骷髅剑士 carries a bone-grey blade, 骷髅弓手 a bow (see `monster.xlsx`). */
@@ -488,26 +553,133 @@ function skeletonBlade(sk: Skeleton): VoxelModel {
   return itemModel(sk.monsterId === '200001' ? 'bow:steel' : 'blade:steel');
 }
 
-function drawSkeleton(g: Painter, sk: Skeleton): void {
+/**
+ * 头顶的状态条（设计 8.8「debuff 在画面上看不见就等于不存在」）。
+ *
+ * 一行小方块，每个状态一块：颜色来自注册表，硬控件上盖一道横杠（读作「被禁住」），
+ * 叠层的（毒）右下角点一个白点。位置在血条上方，不抢血条的位置。
+ */
+function drawStatusMarks(
+  g: Painter,
+  x: number,
+  y: number,
+  statuses: readonly { id: StatusId; stacks: number }[],
+  heightPx: number,
+): void {
+  if (statuses.length === 0) return;
+  const cell = 10;
+  const shown = statuses.slice(0, 6);
+  const top = Math.round(y) - heightPx - 22;
+  const startX = Math.round(x) - (shown.length * cell) / 2 + 1;
+  for (let i = 0; i < shown.length; i += 1) {
+    const st = shown[i]!;
+    const def = statusDef(st.id);
+    const x = startX + i * cell;
+    g.fillStyle = 'rgba(6,12,18,0.78)';
+    g.fillRect(x, top, 8, 8);
+    g.fillStyle = def.color;
+    g.fillRect(x + 1, top + 1, 6, 6);
+    if (def.category === 'hard') {
+      g.fillStyle = '#050a12';
+      g.fillRect(x + 1, top + 3, 6, 2);
+    }
+    if (st.stacks > 1) {
+      g.fillStyle = '#ffffff';
+      g.fillRect(x + 5, top + 5, 2, 2);
+    }
+  }
+}
+
+/**
+ * 状态的身体表现：冻结结冰、石化褪色、点燃冒火、中毒冒绿泡、流血滴地。
+ *
+ * 全部由 `s.t` 与状态剩余时长驱动，绘制层不自己存动画帧 —— 截图与录像里
+ * 「他确实被冻住了」必须看得出来。
+ */
+function drawStatusAura(g: Painter, s: GameState, sk: Skeleton): void {
+  if (sk.statuses.length === 0) return;
+  for (const st of sk.statuses) {
+    const def = statusDef(st.id);
+    if (st.id === 'freeze' || st.id === 'slow') {
+      // 脚下冰环 + 三块立起来的冰晶。
+      drawPixelRing(g, sk.x, sk.y, 22, 9, '#8be9fd', { alpha: 0.55, lineWidth: 2 });
+      for (let i = 0; i < 3; i += 1) {
+        const ang = st.left * 1.2 + i * 2.1;
+        g.fillStyle = i % 2 === 0 ? '#cfe8ff' : '#8be9fd';
+        g.fillRect(
+          Math.round(sk.x + Math.cos(ang) * 16) - 2,
+          Math.round(sk.y - 6 - Math.abs(Math.sin(ang)) * 10) - 4,
+          5, 8,
+        );
+      }
+    } else if (st.id === 'burn') {
+      // 火苗：三簇按时间往上跳的橙块。
+      for (let i = 0; i < 3; i += 1) {
+        const phase = (s.t * 3 + i / 3) % 1;
+        g.globalAlpha = 0.85 * (1 - phase);
+        g.fillStyle = i === 1 ? '#ffd166' : '#fb923c';
+        g.fillRect(
+          Math.round(sk.x - 10 + i * 9) - 2,
+          Math.round(sk.y - 20 - phase * 24) - 3,
+          5, 6,
+        );
+        g.globalAlpha = 1;
+      }
+    } else if (st.id === 'poison') {
+      // 绿气泡：按剩余时间错开，层数越多越密。
+      for (let i = 0; i < Math.min(5, st.stacks + 1); i += 1) {
+        const phase = (s.t * 1.3 + i * 0.31) % 1;
+        g.globalAlpha = 0.8 * (1 - phase);
+        g.fillStyle = '#4ade80';
+        g.fillRect(Math.round(sk.x - 12 + i * 6) - 2, Math.round(sk.y - 14 - phase * 26) - 2, 4, 4);
+        g.globalAlpha = 1;
+      }
+    } else if (st.id === 'bleed') {
+      // 血滴：脚下两块暗红，随时间闪。
+      g.globalAlpha = 0.55 + 0.3 * Math.sin(s.t * 9);
+      g.fillStyle = '#a01b1b';
+      g.fillRect(Math.round(sk.x) - 9, Math.round(sk.y) - 3, 7, 3);
+      g.fillRect(Math.round(sk.x) + 3, Math.round(sk.y) - 1, 5, 2);
+      g.globalAlpha = 1;
+    } else if (def.category === 'element' || st.id === 'chill') {
+      // 其它元素 / 软控：身上绕一圈该色的小方块。
+      for (let i = 0; i < 4; i += 1) {
+        const ang = s.t * 2 + i * Math.PI / 2;
+        g.fillStyle = def.color;
+        g.fillRect(
+          Math.round(sk.x + Math.cos(ang) * 18) - 2,
+          Math.round(sk.y - 24 + Math.sin(ang) * 12) - 2,
+          4, 4,
+        );
+      }
+    }
+  }
+}
+
+function drawSkeleton(g: Painter, s: GameState, sk: Skeleton): void {
   if (!sk.alive) {
     drawShadow(g, sk.x, sk.y, 24, 9, 0.28);
     drawVoxel(g, CORPSE, sk.x, sk.y + 2, { alpha: 0.55 });
     return;
   }
 
+  // 石化：动作停止（固定站姿）+ 色调转灰（设计 8.8「灰化 + 动画停止」）。
+  const petrified = sk.statuses.some((st) => st.id === 'petrify');
+  const frozen = sk.statuses.some((st) => st.id === 'freeze');
   const rig = facingOf(sk.face);
   const frame = Math.floor(sk.stride);
-  const bob = sk.moving && frame % 2 === 1 ? 1 : 0;
+  const bob = sk.moving && !petrified && frame % 2 === 1 ? 1 : 0;
   // A strike leans the whole body in; the arm does the rest.
   const swing = sk.swing > 0 ? 1 - sk.swing / MONSTER_SWING_TIME : 0;
   const lean = swing > 0 ? Math.cos(sk.face) * 4 * Math.sin(swing * Math.PI) : 0;
 
   shadow(g, sk.x, sk.y + 2, 21, 8, 0.42);
+  drawStatusAura(g, s, sk);
   drawBody(g, SKELETON, sk.x + lean, sk.y - bob, {
-    frame: sk.moving ? frame : 0,
+    frame: sk.moving && !petrified ? frame : 0,
     facing: rig.facing,
     flip: rig.flip,
-    flash: sk.hit > 0,
+    flash: sk.hit > 0 || frozen,
   });
   drawWeaponArm(
     g,
@@ -522,6 +694,17 @@ function drawSkeleton(g: Painter, sk: Skeleton): void {
     0.9,
   );
 
+  // 石化 / 冻结的覆盖层：几块半透明的方块，不是整屏滤镜（体素红线：不用渐变）。
+  if (petrified) {
+    g.save();
+    g.globalAlpha = 0.35;
+    g.fillStyle = '#9a9584';
+    for (let i = 0; i < 4; i += 1) {
+      g.fillRect(Math.round(sk.x) - 12 + i * 7, Math.round(sk.y) - bodyHeight(SKELETON) + 6, 6, bodyHeight(SKELETON) - 8);
+    }
+    g.restore();
+  }
+
   // Health bar above the head: hard blocks, no rounded pill.
   const w = 44;
   const top = Math.round(sk.y) - bodyHeight(SKELETON) - 10;
@@ -531,6 +714,8 @@ function drawSkeleton(g: Painter, sk: Skeleton): void {
   g.fillRect(Math.round(sk.x) - w / 2, top + 2, (w * Math.max(0, sk.hp / sk.maxHp)), 4);
   g.fillStyle = 'rgba(255,255,255,0.18)';
   g.fillRect(Math.round(sk.x) - w / 2, top + 2, (w * Math.max(0, sk.hp / sk.maxHp)), 2);
+  // 状态标记画在血条之上：先读「他中了什么」，再读「还剩多少血」。
+  drawStatusMarks(g, sk.x, sk.y, sk.statuses, bodyHeight(SKELETON));
 }
 
 /**
@@ -1033,6 +1218,60 @@ function drawSkillFx(g: Painter, s: GameState): void {
         const d = 10 + 20 * spread;
         g.fillRect(Math.round(fx.x + Math.cos(ang) * d) - 2, Math.round(fx.y + Math.sin(ang) * d * 0.5) - 2, 4, 4);
       }
+    } else if (fx.kind === 'fire' || fx.kind === 'venom') {
+      // 火墙 / 毒池的落地表现：一圈方块环由内向外铺开 + 竖起的火苗 / 气泡。
+      // 和 `impact` 的区别是**大**：这是「地上多了一片东西」，不是「打中了一下」。
+      const fire = fx.kind === 'fire';
+      const base = fire ? '#fb923c' : '#4ade80';
+      const hi = fire ? '#ffd166' : '#bbf7d0';
+      const r = 16 + fx.reach * spread;
+      g.globalAlpha = fade * 0.5;
+      for (let i = 0; i < 16; i += 1) {
+        const ang = (Math.PI * 2 * i) / 16;
+        g.fillStyle = base;
+        g.fillRect(
+          Math.round(fx.x + Math.cos(ang) * r) - 4,
+          Math.round(fx.y + Math.sin(ang) * r * 0.55) - 3,
+          9, 6,
+        );
+      }
+      for (let i = 0; i < 9; i += 1) {
+        const phase = (u * 2.4 + i / 9) % 1;
+        g.globalAlpha = fade * (1 - phase) * 0.95;
+        g.fillStyle = hi;
+        const ang = i * 2.399;
+        g.fillRect(
+          Math.round(fx.x + Math.cos(ang) * fx.reach * 0.45) - 2,
+          Math.round(fx.y + Math.sin(ang) * fx.reach * 0.26 - phase * 40) - 3,
+          5, fire ? 7 : 5,
+        );
+      }
+    } else if (fx.kind === 'tide') {
+      // 水浪：三道沿扇形推出去的水脊，前沿一道亮边。
+      for (let layer = 0; layer < 3; layer += 1) {
+        const d = (fx.reach * spread) * (0.45 + layer * 0.28);
+        g.globalAlpha = fade * (0.75 - layer * 0.18);
+        for (let i = 0; i < 11; i += 1) {
+          const ang = fx.angle + (i / 10 - 0.5) * 1.1;
+          g.fillStyle = layer === 0 ? '#bfdbfe' : '#60a5fa';
+          g.fillRect(
+            Math.round(fx.x + Math.cos(ang) * d) - 4,
+            Math.round(fx.y + Math.sin(ang) * d * 0.58) - 3,
+            9, 6,
+          );
+        }
+      }
+    } else if (fx.kind === 'shock') {
+      // 落雷：从天上劈下来的折线 + 落地的一圈紫环。
+      g.globalAlpha = fade;
+      for (let i = 0; i < 10; i += 1) {
+        const y = fx.y - 8 - i * 14;
+        const jitter = Math.sin(i * 2.1 + u * 12) * 7;
+        g.fillStyle = i % 2 === 0 ? '#e9d5ff' : '#c084fc';
+        g.fillRect(Math.round(fx.x + jitter) - 3, Math.round(y), 6, 15);
+      }
+      g.globalAlpha = fade * 0.6;
+      drawPixelRing(g, fx.x, fx.y, 14 + fx.reach * spread * 0.9, 7 + fx.reach * 0.4 * spread, '#c084fc', { lineWidth: 2 });
     } else if (fx.kind === 'sweepMark') {
       // 地面灼痕：两道同心的弧线留在原地，慢慢淡掉（比闪光长一倍寿命）。
       g.globalAlpha = fade * 0.62;
@@ -1277,6 +1516,8 @@ export function paint(g: Painter, s: GameState): void {
   g.save();
   g.translate(-Math.round(s.camera.x), -Math.round(s.camera.y));
   drawGround(g, s);
+  // 地面区域（火墙 / 毒池 / 冰面）压在地板上、所有实体之下。
+  drawZones(g, s);
   drawMoveTarget(g, s);
   drawTargetLock(g, s);
   drawHoverMark(g, s);
@@ -1306,7 +1547,7 @@ export function paint(g: Painter, s: GameState): void {
     const py = (prop.row + footprint.h) * grid;
     items.push({ y: py, draw: () => { drawAtlasProp(g, prop.kind, px, py); } });
   }
-  for (const sk of s.skeletons) items.push({ y: sk.y, draw: () => drawSkeleton(g, sk) });
+  for (const sk of s.skeletons) items.push({ y: sk.y, draw: () => drawSkeleton(g, s, sk) });
   // 传送门是「站在地上的建筑」：和角色共用一套深度排序，玩家走到门后会被门挡住。
   for (const portal of s.portals) {
     items.push({ y: portal.y, draw: () => drawPortal(g, portal) });

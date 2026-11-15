@@ -38,6 +38,7 @@ function stage(s: GameState, spots: [number, number][]): void {
     x, y, hp: 66, maxHp: 66, alive: true,
     attackCd: 999, hit: 0, bob: 0, face: Math.PI / 2, swing: 0,
     stride: 0, moving: false, monsterId: '100001', path: [], repath: 999,
+    statuses: [],
   }));
 }
 
@@ -108,6 +109,9 @@ describe('skill bar and mana', () => {
   it('empty and out-of-range slots are refused', () => {
     const s = createState();
     stage(s, []);
+    // 7 格现在默认带满（Q 横扫 / W 冲锋 / T 冰锥 / F 火墙 / G 毒池 / V 水浪 / C 落雷），
+    // 所以「空格子」要自己造一个 —— 断言的是空槽不扣蓝、不进冷却，不是某一格恰好空着。
+    s.skillBar[5] = { id: null, cooldown: 0 };
     expect(beginSkill(s, 5, null, NO_MODIFIERS)).toBe('empty');
     expect(beginSkill(s, SKILL_SLOTS, null, NO_MODIFIERS)).toBe('empty');
     expect(beginSkill(s, -1, null, NO_MODIFIERS)).toBe('empty');

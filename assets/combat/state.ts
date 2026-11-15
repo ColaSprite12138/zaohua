@@ -108,8 +108,18 @@ export type MoveMode = 'idle' | 'point' | 'follow';
  * 由星图点出来的技能填充，`createSkillBar()` 的签名不变。
  */
 export const SKILL_SLOTS = 7;
+/**
+ * 默认带满 7 格（设计 8.2 的 7 格上限）。顺序就是 HUD 上的键位顺序
+ * （`SKILL_KEYS` = Q W T F G V C），也正好把 6 种元素全部带进场：
+ *
+ * Q 横扫（物理·流血）/ W 冲锋（物理·风）/ T 冰锥（冰）/ F 火墙（火）/
+ * G 毒池（毒）/ V 水浪（水）/ C 落雷（雷）。
+ *
+ * 所以 8.5 的五条反应在实战里都打得出来 —— 反应链不是只有单测见过的东西。
+ * 星图批次接上后这张表由玩家点出来的技能填充，`createSkillBar()` 签名不变。
+ */
 export const PRE_EQUIPPED_SKILLS: readonly string[] = Object.freeze([
-  'cleave', 'charge', 'ice_shard',
+  'cleave', 'charge', 'ice_shard', 'fire_wall', 'venom_pool', 'water_wave', 'thunder',
 ]);
 
 /** 法力上限（设计 8.3：只有生命 + 法力两种资源；**法力不自动恢复**）。 */
@@ -135,6 +145,8 @@ export const POTION_SECONDS = 5;
  */
 export type SkillFxKind =
   | 'sweep' | 'dash' | 'bolt' | 'cast' | 'impact'
+  /** 元素技能的表现：火墙 / 毒池 / 水浪 / 落雷。 */
+  | 'fire' | 'venom' | 'tide' | 'shock'
   /** 地面残留（刀光灼痕 / 冰锥霜痕）：寿命长得多，让玩家在技能放完之后仍读得出「刚才是什么」。 */
   | 'sweepMark' | 'frostMark';
 
@@ -153,6 +165,101 @@ export interface SkillFx {
   max: number;
 }
 
+/* ------------------------------------------------------- 状态与反应链（8.4 / 8.5） */
+
+/**
+ * 6 种元素（设计文档 8.5）。**只认这 6 种**，不做「油」那类场景属性；
+ * 元素不是独立资源，它是挂在身上的**附着**（`StatusInstance` 带 `element`），
+ * 两个附着凑成反应表里的一对就触发反应。
+ */
+export type ElementId = 'water' | 'ice' | 'fire' | 'poison' | 'shock' | 'wind';
+
+/**
+ * 全部状态 id（设计文档 8.4 的表）。定义（时长 / 效果 / 颜色）在 `status.ts`，
+ * 这里只放类型，因为 `GameState` 要引用它而 `state.ts` 不允许 import 别的 combat 文件。
+ */
+export type StatusId =
+  /* 硬控：禁止操作类 */
+  | 'stun' | 'freeze' | 'paralyze' | 'root' | 'petrify' | 'sleep'
+  /* 软控 / 削弱 */
+  | 'slow' | 'chill' | 'silence' | 'disarm' | 'vulnerable' | 'grievous'
+  /* 持续伤害 */
+  | 'bleed' | 'poison' | 'burn'
+  /* 元素附着（反应链的输入，本身也可能带效果） */
+  | 'wet' | 'shock' | 'wind';
+
+/** 反应链 id（设计文档 8.5 的 5 条，一条不多）。 */
+export type ReactionId =
+  'freeze' | 'paralyze' | 'detonate' | 'fireSpread' | 'poisonSpread';
+
+/**
+ * 挂在身上的一层状态。
+ *
+ * `stacks` 只对「可叠层」状态有意义（设计 8.4：中毒可叠层，其余命中即上、不叠）。
+ * `dot` 是**施加瞬间**按星图乘区算好的每跳伤害，之后不再重算 —— 否则中途换装
+ * 会让已经点上的火自己变强。
+ */
+export interface StatusInstance {
+  id: StatusId;
+  /** 剩余秒数。 */
+  left: number;
+  /** 施加时的总时长（绘制 / 投影算进度用）。 */
+  total: number;
+  /** 层数；不可叠层的状态恒为 1。 */
+  stacks: number;
+  /** 每跳伤害（仅 DOT 类 > 0）。 */
+  dot: number;
+  /** 距下一跳的秒数。 */
+  next: number;
+}
+
+/** 任何可以挂状态的宿主（玩家与怪物共用一套规则）。 */
+export interface StatusHost {
+  statuses: StatusInstance[];
+}
+
+/** 一次反应的发生记录（只做观测与表现，不参与判定）。 */
+export interface ReactionRecord {
+  id: ReactionId;
+  x: number;
+  y: number;
+  /** 发生时刻（游戏内秒）。 */
+  t: number;
+}
+
+/**
+ * 地面区域（设计 9.3「预铺地面」/ 8.5「火势蔓延、毒雾扩散」）。
+ *
+ * 区域**不直接扣血**：它每 `ZONE_TICK_SECONDS` 给范围内的身体续一次对应状态
+ * （点燃 / 中毒 / 减速），伤害由 DOT 自己结算 —— 两个伤害源会互相打架，
+ * 而「区域里站着就一直在烧」本身已经读得很清楚。
+ */
+export interface Zone {
+  uid: number;
+  /** 元素归属，决定扩散反应认不认它。 */
+  element: ElementId;
+  /** 每跳续上的状态。 */
+  status: StatusId;
+  x: number;
+  y: number;
+  radius: number;
+  life: number;
+  max: number;
+  /** 距下一跳的秒数。 */
+  next: number;
+  /** 来自哪个技能（表现用）。 */
+  source: string;
+}
+
+/** DOT 结算间隔（秒）：每 0.5 秒一跳，肉眼能读出节奏，也不会每帧写一次血。 */
+export const DOT_TICK_SECONDS = 0.5;
+/** 区域续状态的间隔（秒）。 */
+export const ZONE_TICK_SECONDS = 0.4;
+/** 「水 + 雷」麻痹的传导半径（世界像素）。 */
+export const REACTION_CHAIN_RADIUS = 140;
+/** 区域半径上限：风蔓延可以长大，但不能吃到整张图。 */
+export const ZONE_RADIUS_MAX = 220;
+
 /**
  * 位移技能进行中的状态。冲锋**不是瞬移**：它按 `DASH_SPEED` 分帧推进，
  * 每一帧检查碰撞、结算沿途命中，所以画面里能看到人冲过去的过程。
@@ -168,6 +275,8 @@ export interface DashState {
   readonly damage: number;
   /** 本次位移已经打过的怪下标，同一只只挨一次。 */
   hit: number[];
+  /** 来源技能 id：位移沿途要挂的元素 / 状态从技能定义里取，不另存一份。 */
+  readonly skillId: string;
 }
 
 /** 位移技能速度（世界像素 / 秒）：220px 的冲锋 ≈ 0.23 秒，读得到过程。 */
@@ -345,6 +454,8 @@ export interface Skeleton {
   /** Cached A* route to the player, recomputed on a timer. */
   path: Vec[];
   repath: number;
+  /** 身上挂着的状态（硬控 / DOT / 元素附着），规则见 `status.ts`。 */
+  statuses: StatusInstance[];
 }
 
 export interface Drop {
@@ -471,6 +582,13 @@ export function nextDropUid(): string {
   return `drop-${dropUidCounter}`;
 }
 
+let zoneUidCounter = 0;
+/** 区域的稳定 id：只用于绘制 / 单测定位，不参与规则。 */
+export function nextZoneUid(): number {
+  zoneUidCounter += 1;
+  return zoneUidCounter;
+}
+
 export interface Player {
   x: number;
   y: number;
@@ -493,6 +611,11 @@ export interface Player {
   dash: DashState | null;
   /** 施法姿态剩余秒数：> 0 时手臂保持抬起（举杖读条），归零回站姿。 */
   castPose: number;
+  /**
+   * 玩家身上的状态（设计 8.4 对玩家同样成立：禁锢禁移动、沉默禁技能…）。
+   * 当前没有怪物技能会施加状态 —— 支撑逻辑与单测已就位，等怪物技能批次接来源。
+   */
+  statuses: StatusInstance[];
 }
 
 export interface GameState {
@@ -579,6 +702,11 @@ export interface GameState {
   manaSurge: number;
   /** 技能视觉事件队列（只写不读，见 `SkillFx`）。 */
   skillFx: SkillFx[];
+  /* ---------------------------------------------------- 状态与反应链 */
+  /** 地面区域（火墙 / 毒池 / 冰面 / 水洼），每帧结算见 `reactions.ts::updateZones`。 */
+  zones: Zone[];
+  /** 最近发生的反应（只留最后 8 条，供投影与验收取证）。 */
+  reactions: ReactionRecord[];
   /* ---------------------------------------------------- 单局骨架（搜打撤） */
   /** 关卡类型；只影响「什么算结束 / 死了掉什么」，不改变战斗。 */
   runKind: RunKind;
@@ -613,7 +741,7 @@ export function createState(config: RunConfig = {}): GameState {
     player: {
       x, y, vx: 0, vy: 0, face: 0, stride: 0,
       invuln: 0, dodge: 0, dodgeCd: 0, attackCd: 0,
-      attackFx: 0, hurt: 0, trail: [], dash: null, castPose: 0,
+      attackFx: 0, hurt: 0, trail: [], dash: null, castPose: 0, statuses: [],
     },
     target: { x, y },
     moveMode: 'idle',
@@ -649,6 +777,8 @@ export function createState(config: RunConfig = {}): GameState {
     potions: POTION_COUNT,
     manaSurge: 0,
     skillFx: [],
+    zones: [],
+    reactions: [],
     runKind: 'story',
     runSeconds: RUN_SECONDS,
     phase: 'explore',
@@ -682,6 +812,7 @@ export function spawnFromMap(map: ArenaMap): Skeleton[] {
     monsterId: m.monsterId,
     path: [],
     repath: 0,
+    statuses: [],
   }));
 }
 
@@ -720,6 +851,9 @@ export function reset(s: GameState): void {
   s.cast = null;
   s.skillFx.length = 0;
   s.skillBar = createSkillBar();
+  // 状态与区域是「本局」资源：重开一局 = 身上干净、地上干净。
+  s.zones.length = 0;
+  s.reactions.length = 0;
   // 单局骨架：计时归零、门重建（次数是「本局」资源，重开一局就恢复）。
   s.runSeconds = RUN_SECONDS;
   s.phase = 'explore';
@@ -749,6 +883,7 @@ export function reset(s: GameState): void {
   p.trail.length = 0;
   p.dash = null;
   p.castPose = 0;
+  p.statuses.length = 0;
   s.target = { x: p.x, y: p.y };
   s.path = [];
   s.camera = cameraFor(s.world, p.x, p.y);

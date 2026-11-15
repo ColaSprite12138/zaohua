@@ -66,6 +66,13 @@ export {
   skillDef,
   skillReady,
   createSkillBar,
+  // 状态与反应链（设计 8.4 / 8.5）：绘制层读状态定义画标记，读区域画地面效果。
+  STATUS,
+  ELEMENT_LABEL,
+  DOT_TICK_SECONDS,
+  statusDef,
+  statusSnapshot,
+  lockedFlags,
 } from '../combat/simulation.ts';
 export type { RunLoadout } from '../meta/inventory.ts';
 export {
@@ -86,4 +93,10 @@ export type {
   Skeleton,
   StepInput,
   Deployment,
+  StatusHost,
+  StatusId,
+  StatusInstance,
+  ElementId,
+  ReactionId,
+  Zone,
 } from '../combat/simulation.ts';

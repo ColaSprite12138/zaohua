@@ -17,9 +17,8 @@ import { burst, setTarget } from './effects.ts';
 import {
   clearAttackOrder, dropAtPoint, hitTestEnemy,
 } from './attack.ts';
-import {
-  CLICK_DRAG_PIXELS, PLAYER_DODGE_CD, STRIDE_PIXELS, type GameState, type StepInput,
-} from './state.ts';
+import { CLICK_DRAG_PIXELS, PLAYER_DODGE_CD, STRIDE_PIXELS, type GameState, type StepInput } from './state.ts';
+import { lockedFlags, moveMultiplier } from './status.ts';
 import { walkable, type World } from './world.ts';
 
 export function classifyPointer(s: GameState, input: StepInput): void {
@@ -102,6 +101,8 @@ export function classifyPointer(s: GameState, input: StepInput): void {
 export function applyDodge(s: GameState, dodge: boolean): void {
   const p = s.player;
   if (!dodge || p.dodgeCd > 0) return;
+  // 禁锢 / 硬控：设计 8.4 明确「禁锢禁止闪避」（闪避也是一次位移）。
+  if (lockedFlags(p).noDodge) return;
   p.dodge = 0.24;
   p.invuln = 0.36;
   p.dodgeCd = PLAYER_DODGE_CD;
@@ -141,11 +142,20 @@ function moveWithCollision(s: GameState, dx: number, dy: number): void {  const 
  */
 export function walk(s: GameState, dt: number): void {
   const p = s.player;
+  // 禁锢 / 硬控：钉在原地。落点与指令都保留（禁锢解除后会接着走），只是这一帧不动。
+  if (lockedFlags(p).noMove) {
+    p.vx = 0;
+    p.vy = 0;
+    for (const mark of p.trail) mark.life -= dt;
+    p.trail = p.trail.filter((mark) => mark.life > 0);
+    return;
+  }
   const goal = s.path.length > 0 ? s.path[0]! : s.target;
   const dx = goal.x - p.x;
   const dy = goal.y - p.y;
   const dist = Math.hypot(dx, dy);
-  const speed = p.dodge > 0 ? 560 : 205;
+  // 减速状态压在走速上（闪避的爆发不受影响：闪避是固定位移，不吃移速加成）。
+  const speed = (p.dodge > 0 ? 560 : 205 * moveMultiplier(p));
   if (s.moveMode !== 'idle' && dist > 6) {
     const nx = dx / dist;
     const ny = dy / dist;

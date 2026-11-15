@@ -14,6 +14,10 @@ PROTECTED=(
   assets/game/paint.ts
   assets/game/voxel.ts
   assets/game/atlas.ts
+  assets/combat/status.ts
+  assets/combat/reactions.ts
+  assets/combat/attack.ts
+  assets/combat/skills.ts
   assets/resource/maps/arena.ldtk
   assets/resource/maps/arena.generated.ts
   assets/resource/maps/tileset.generated.ts

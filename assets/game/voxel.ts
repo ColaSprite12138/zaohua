@@ -163,6 +163,16 @@ const C = {
   goldHi: '#fff3c4',
   goldDark: '#a86f16',
   gem: '#67e8f9',
+  /* 元素色（设计 8.5 的 6 种元素各有一档主色 + 一档高光，技能图标共用） */
+  fire: '#fb923c',
+  fireHi: '#ffd166',
+  ember: '#c2410c',
+  venom: '#4ade80',
+  venomHi: '#bbf7d0',
+  water: '#60a5fa',
+  waterHi: '#bfdbfe',
+  bolt: '#c084fc',
+  boltHi: '#e9d5ff',
 } as const;
 
 /* ------------------------------------------------------- characters (rigs) */
@@ -575,11 +585,70 @@ function skillDodge(): VoxelModel {
   return b.model();
 }
 
+/**
+ * 火墙：底下一排炭砖，上面三簇高低不一的火苗（橙 → 金）。
+ * 火苗刻意做成阶梯，不用曲线 —— 这是体素，不是火焰贴图。
+ */
+function skillFireWall(): VoxelModel {
+  const b = new Builder('skill-fire-wall', 4);
+  b.box(-4, 0, 0, 9, 1, 1, C.ember);
+  b.box(-4, 1, 0, 2, 1, 1, C.fire);
+  b.box(-2, 1, 0, 1, 2, 1, C.fireHi);
+  b.box(-1, 1, 0, 2, 1, 1, C.fire);
+  b.box(1, 1, 0, 1, 3, 1, C.fireHi);
+  b.box(2, 1, 0, 2, 2, 1, C.fire);
+  b.box(-1, 3, 0, 1, 1, 1, C.fireHi);
+  b.box(3, 3, 0, 1, 1, 1, C.fire);
+  return b.model();
+}
+
+/** 毒池：一洼绿水 + 三个上浮的气泡。 */
+function skillVenomPool(): VoxelModel {
+  const b = new Builder('skill-venom-pool', 4);
+  b.box(-4, 0, 0, 9, 1, 1, C.venom);
+  b.box(-3, 1, 0, 3, 1, 1, C.venomHi);
+  b.box(2, 1, 0, 2, 1, 1, C.venomHi);
+  b.box(-2, 2, 0, 1, 1, 1, C.venomHi);
+  b.box(0, 2, 0, 1, 2, 1, C.venom);
+  b.box(3, 2, 0, 1, 1, 1, C.venom);
+  return b.model();
+}
+
+/** 水浪：三道阶梯状的水脊，从左下推到右上。 */
+function skillWaterWave(): VoxelModel {
+  const b = new Builder('skill-water-wave', 4);
+  b.box(-4, 0, 0, 3, 1, 1, C.water);
+  b.box(-1, 1, 0, 3, 1, 1, C.water);
+  b.box(2, 2, 0, 3, 1, 1, C.waterHi);
+  b.box(-3, 1, 0, 2, 1, 1, C.waterHi);
+  b.box(0, 2, 0, 2, 1, 1, C.waterHi);
+  b.box(2, 3, 0, 2, 1, 1, C.water);
+  b.box(4, 3, 0, 1, 1, 1, C.waterHi);
+  return b.model();
+}
+
+/** 落雷：折线闪电 + 顶上一块雷云。 */
+function skillThunder(): VoxelModel {
+  const b = new Builder('skill-thunder', 4);
+  b.box(-3, 4, 0, 7, 1, 1, C.iron);
+  b.box(-2, 5, 0, 4, 1, 1, C.armorDark);
+  b.box(0, 3, 0, 2, 1, 1, C.boltHi);
+  b.box(-1, 2, 0, 2, 1, 1, C.bolt);
+  b.box(-2, 1, 0, 2, 1, 1, C.boltHi);
+  b.box(-1, 0, 0, 1, 1, 1, C.bolt);
+  b.box(1, 2, 0, 1, 1, 1, C.bolt);
+  return b.model();
+}
+
 /** 技能 id → 体素图标。`skills.ts::SkillDef.icon` 就用这里的键。 */
 export const SKILL_ICONS: Readonly<Record<string, VoxelModel>> = Object.freeze({
   cleave: skillCleave(),
   charge: skillCharge(),
   ice_shard: skillIceShard(),
+  fire_wall: skillFireWall(),
+  venom_pool: skillVenomPool(),
+  water_wave: skillWaterWave(),
+  thunder: skillThunder(),
   // 不是 `SkillDef`：闪避是角色自带的（设计 8.2 不占 7 格），但 HUD 上它和技能并排，
   // 所以图标也放在这里，共用同一套格子画法。
   dodge: skillDodge(),

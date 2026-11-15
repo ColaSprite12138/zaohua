@@ -17,6 +17,8 @@ import { makeRng } from './loot.ts';
 import { say } from './effects.ts';
 import { makeRunInventory } from './run-inventory.ts';
 import { updateExtraction, updateRunClock } from './extraction.ts';
+import { tickStatuses, updateZones } from './reactions.ts';
+import { statusSnapshot } from './status.ts';
 import {
   advanceCast, beginSkill, drinkPotion, skillDef, skillReady, tickSkills, updateDash,
 } from './skills.ts';
@@ -92,6 +94,10 @@ export function step(
   // Nobody may stand inside anybody. Runs after both sides moved AND after
   // swing knockback, so a hit never leaves two bodies fused.
   resolveBodyOverlap(s);
+  // 地面区域先给圈内续状态（会触发反应、可能当场打死人），再统一跑 DOT 与过期。
+  // 顺序反了会让「刚踩进火里」晚一帧才点燃，截图与断言都读不到。
+  updateZones(s, dt);
+  tickStatuses(s, dt);
   updateDrops(s, dt);
   // Piles fan out AFTER collection resolved, so every frame paints (and every
   // click tests) the same quality-ranked column.
@@ -193,7 +199,14 @@ export function projection(s: GameState) {
     skeletonsAlive: s.skeletons.filter((sk) => sk.alive).length,
     skeletons: s.skeletons.map((sk) => {
       const v = scr(sk.x, sk.y);
-      return { x: v.x / VIEW_W, y: v.y / VIEW_H, hp: sk.hp, alive: sk.alive };
+      return {
+        x: v.x / VIEW_W,
+        y: v.y / VIEW_H,
+        hp: sk.hp,
+        alive: sk.alive,
+        // 状态（硬控 / DOT / 元素附着）：验收脚本据此断言「冻住了 / 中毒叠了几层」。
+        statuses: statusSnapshot(sk),
+      };
     }),
     attackTarget: s.targetEnemy,
     attackOrder: s.attackOrder,
@@ -294,6 +307,26 @@ export function projection(s: GameState) {
         slot: s.cast.slot,
         progress: s.cast.total > 0 ? Math.min(1, s.cast.t / s.cast.total) : 1,
       },
+    /** 玩家身上的状态（当前没有怪物技能会施加，等下一批；结构先留好）。 */
+    playerStatuses: statusSnapshot(s.player),
+    /**
+     * 地面区域（火墙 / 毒池 / 冰面）：坐标屏幕归一化，验收脚本可以直接断言
+     * 「火墙在地上、被风吹大了」。`radius` 是屏幕归一化后的横向半径。
+     */
+    zones: s.zones.map((zone) => {
+      const v = scr(zone.x, zone.y);
+      return {
+        uid: zone.uid,
+        element: zone.element,
+        x: v.x / VIEW_W,
+        y: v.y / VIEW_H,
+        radius: zone.radius / VIEW_W,
+        left: Math.round(zone.life * 100) / 100,
+        source: zone.source,
+      };
+    }),
+    /** 最近发生的反应（最多 8 条，`id` 就是设计 8.5 的表项）。 */
+    reactions: s.reactions.map((r) => ({ id: r.id, x: r.x / VIEW_W, y: r.y / VIEW_H })),
     gameOver: s.gameOver,
     cleared: s.cleared,
     // World-space map runtime facts (new; existing fields above are untouched).
@@ -338,17 +371,29 @@ export {
   POTION_MANA, POTION_SECONDS, PRE_EQUIPPED_SKILLS, SKILL_SLOTS, STRIDE_PIXELS,
   PHASE_EXTRACT_AT, PHASE_FIGHT_AT, PORTAL_COUNT, PORTAL_GUIDE_SECONDS,
   PORTAL_RADIUS, PORTAL_STAGE_COUNT, PORTAL_USES, RUN_SECONDS,
-  createPortals, createSkillBar,
+  DOT_TICK_SECONDS, ZONE_TICK_SECONDS, REACTION_CHAIN_RADIUS, ZONE_RADIUS_MAX,
+  createPortals, createSkillBar, nextZoneUid,
 } from './state.ts';
 export type {
-  CastState, DashState, Portal, RunKind, RunPhase, SkillFx, SkillFxKind, SkillSlot,
+  CastState, DashState, Portal, ReactionId, ReactionRecord, RunKind, RunPhase,
+  SkillFx, SkillFxKind, SkillSlot, StatusHost, StatusId, StatusInstance, Zone, ElementId,
 } from './state.ts';
 export { phaseAt, runFinished } from './extraction.ts';
 export {
   SKILLS, advanceCast, beginSkill, drinkPotion, skillDef, skillReady, tickSkills,
   updateDash,
 } from './skills.ts';
-export type { SkillDef, SkillKind } from './skills.ts';
+export type { SkillDef, SkillKind, SkillZone } from './skills.ts';
+export {
+  ELEMENT_LABEL, ELEMENT_STATUS, STATUS, applyStatus, attackIntervalMultiplier,
+  clearStatus, damageTakenMultiplier, elementOn, hasStatus, lockedFlags,
+  moveMultiplier, statusDef, statusOf, statusSnapshot,
+} from './status.ts';
+export type { LockedFlags, StatusCategory, StatusDef } from './status.ts';
+export {
+  REACTIONS, applyElement, growZones, reactionFor, spawnZone, tickStatuses, updateZones,
+} from './reactions.ts';
+export type { ReactionDef } from './reactions.ts';
 export type { ArenaMap } from './world.ts';
 export type { CombatModifiers } from './modifiers.ts';
 export { NO_MODIFIERS } from './modifiers.ts';

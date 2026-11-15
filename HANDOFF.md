@@ -19,18 +19,20 @@
 > 第 1 版**明确不做组队**（设计文档 2.1），别提前为联机做同步层。
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-15 全套验收通过**（211 条单测 / 独立页 14 条 / 单页 40 条 / playthrough 77 steps / resize 4 steps；**单局骨架已按设计文档第 10 章落地：900 秒倒计时 + 探索/交战/撤离三段 + 传送门 8 秒引导（按 E、受击/离开只清进度、3 次开启）+ 关卡类型分流（story 清场即达成、dungeon/pvpve 必须撤离、超时整份丢失）**；**技能两批已落地（设计 8.2/8.3/9.3）：7 格技能栏 + 法力（不自动恢复）+ 3 个技能（横扫 / 冲锋 / 冰锥）+ 读条与打断 + 蓝药，键位 Q W T F G V C，喝药 X；第二批补表现 —— 冲锋改为分帧位移（0.23 秒，不再瞬移）、读条举杖、每个技能一套方块特效 + 3.2 秒地面残留**；**角色/怪物已有走路与转身动画（4 帧步态 × 正/背面 × 左右镜像，按位移推进）、武器由手臂绕肩关节握在拳头上并带挥击残影，背包/仓库/装备槽/掉落/HUD 全部用体素模型代替文字，底部是「左下角血/法双条 + 居中武器槽与技能栏（首格闪避）」**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、撤离或通关整份搬回、阵亡/超时/中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效；**画面已全量体素化，正式地图是 128×96 的仙侠院落，风格与素材管线见 `docs/art-style.md`**）。**steps 会浮动**：21 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 74–80 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-15 全套验收通过**（239 条单测 / 独立页 14 条 / 单页 40 条 / playthrough 97 steps / resize 4 steps；**单局骨架已按设计文档第 10 章落地**；**技能两批已落地（设计 8.2/8.3/9.3）**；**状态与反应链第一批已落地（设计 8.4 / 8.5）：22 条状态注册表 + 6 元素 5 条反应 + 地面区域（火墙/毒池/冰面）+ 8.8 的视觉语言，技能从 3 个扩到 7 个以覆盖全部元素**；**角色/怪物已有走路与转身动画**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；**画面已全量体素化，正式地图是 128×96 的仙侠院落**）。**steps 会浮动**：23 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 92–100 间变化，`verify-all.sh` 下限固定 35。
 > **2026-11-15 一天做了什么（新会话速读，三分钟对齐）**：
-> ① **技能两批** —— 7 格技能栏 / 法力（不自动恢复）/ 3 个技能（横扫·冲锋·冰锥）/ 读条与打断 / 蓝药；
-> 第二批补表现：**冲锋改成 0.23 秒的分帧位移（不再瞬移）**、读条举杖 + 法力球、每个技能一套方块特效
-> （扇形刀光 / 飞出冰晶 / 起手尘土 / 脚下法阵 / 命中炸点）+ 3.2 秒地面残留（灼痕 / 霜痕）。
-> 契约在 `assets/combat/CONTEXT.md`「技能栏与法力」「技能表现」。**状态与反应链还没做**（8.4 / 8.5）。
-> ② **HUD 定型**（用户两轮改主意后的最终形态）—— 左下角血条 + 法力条（20 段方块），底部居中
-> 武器槽 + 技能栏（**第一格是闪避**，空格键，不占 7 格名额）；左上血条面板、左下冷却面板、
-> 右下操作说明、**壳层 DOM `#fx-battle-hint`** 全部删除。契约在同文件「HUD」两行。
+> ① **技能两批** —— 7 格技能栏 / 法力（不自动恢复）/ 读条与打断 / 蓝药；第二批补表现：
+> **冲锋改成 0.23 秒的分帧位移**、读条举杖 + 法力球、每个技能一套方块特效 + 3.2 秒地面残留。
+> 契约在 `assets/combat/CONTEXT.md`「技能栏与法力」「技能表现」。
+> ② **HUD 定型**（用户两轮改主意后的最终形态）—— 左下角血条 + 法力条，底部居中
+> 武器槽 + 技能栏（**第一格是闪避**，空格键，不占 7 格名额）。
 > ③ **稳定预览链路**（造化宿主会被回收）—— 见「30 秒定位 → 怎么开 ③」。
-> ④ **验收基线**：211 条单测 / playthrough 77 steps / resize 4 / 单页壳层 40 条 / 独立页 14 条。
-> **下一步按设计文档 15 章的建议顺序：状态与反应链**（技能现在只会直接扣血）。
+> ④ **状态与反应链（第三批）** —— `combat/status.ts` 状态注册表（硬控 6 / 软控 6 / DOT 3 / 元素 3）
+> + `combat/reactions.ts`（附着、5 条反应、DOT、地面区域）；7 个技能覆盖 6 元素，五条反应实战可打；
+> 硬控 / 减速 / 迟滞 / 沉默 / 缴械 / 易伤全部作用到 AI 与输入；头部状态标记 + 区域地皮 + 八种技能特效。
+> 契约在 `assets/combat/CONTEXT.md`「状态与反应链」，不变量 35–40。
+> ⑤ **验收基线**：239 条单测 / playthrough 97 steps / resize 4 / 单页壳层 40 条 / 独立页 14 条。
+> **下一步按设计文档 15 章的建议顺序：星图重做 + 等级**（技能仍是写死 7 个、没有点数与解锁）。
 
 > 这份文件记录**跨模块红线、保护清单、验收基线与回滚方案**；**模块功能契约的正本在
 > `assets/<模块>/CONTEXT.md`**（2026-11-14 拆分，见下节「模块契约在哪」）。
@@ -47,7 +49,7 @@
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html`。**③ 2026-11-15 新增（最省事、地址固定）**：造化预览宿主是每次构建任务的子进程，**turn 结束就被回收**（表现为「刚说能开、一分钟后就打不开」，端口每次还会变）。要一个稳定地址就直接静态托管 `dist/`：`forgeax project build` → `node scripts/inject-shell.mjs` → `cd dist && python -m http.server 58080 --bind 127.0.0.1`，打开 `http://127.0.0.1:58080/index.html`（浏览器缓存时加 `?v=N`）。这条路走壳层的 hostless 分支：**能玩、不写云存档**。注意**不要**直接静态托管 `.game-builder/artifacts/forgeax-player`：那是造化产物，缺宿主注入的 provider，页面会卡在初始化 |
 | 地图 | 正式地图 `128×96` 格 @32px = **4096×3072** 世界像素（仙侠院落：北侧高台、东西厢房、院墙残段 + 香炉）。三个图层：`Terrain`(IntGrid=碰撞权威) / `Entities`(出生点 + 7 只怪 + **传送门**，数量由 LDtk 决定，当前 6 扇) / `Props`(纯装饰，贴素材库图集)。生成链：`bake-voxel-atlas.mjs` → 图集；`gen_arena_map.py` → `arena.ldtk`（之后人工在 LDtk 里改）；`import_map.py` → `arena.generated.ts` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **211**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **239**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
 | 怎么还原 | `git checkout HEAD -- <path>`；整包兜底见「可回滚基线」 |
@@ -68,6 +70,10 @@
 工程分五个模块：`combat/`（战斗，最重）/ `battle/`（局内关卡）/ `meta/`（局外系统）/
 `talent/`（局外天赋养成）/ `resource/`（人工 Excel 数据表），另有 `shared/`（常量）与
 `game/`（引擎装配）。目录图与依赖方向见 `README.md`「工程结构」。
+
+**combat 里两个新文件**（2026-11-15）：`status.ts`（状态注册表 + 纯查询，**不 import 任何 combat 运行时**）、
+`reactions.ts`（元素附着 / 5 条反应 / DOT / 地面区域，会伤害所以 import `attack.ts`）。
+依赖方向 `reactions → attack → status`，**不许反向**（否则伤害入口与反应结算成环）。
 
 ## 模块契约在哪（本文件只管跨模块红线与验收）
 
@@ -148,7 +154,17 @@
     都能解析），HUD 上不许出现字形图标。⑦ 键位唯一权威是 `shared/constants.ts::SKILL_KEYS`
     （`Q W T F G V C` + `POTION_KEY=X`），HUD 角标读同一份；不要改成 1–7（1/2 是武器槽）。
 
-`scripts/check-drift.sh` 会把上面 1–17 涉及的文件单独列出来，接手时先看它。
+18. **状态与反应链红线（2026-11-15）**：① **状态效果只有一个出口** —— `status.ts::lockedFlags()` /
+    `moveMultiplier()` / `attackIntervalMultiplier()` / `damageTakenMultiplier()`，AI、输入、普攻、
+    技能都读它，不许各写一份 `hasStatus()`。② **反应只认 `REACTIONS` 的 5 条**（水+冰 / 水+雷 /
+    火+毒 / 风+火 / 风+毒），不许做「任意两元素」自动组合，也不许不更新设计 8.5 就加第 6 条。
+    ③ **反应触发即消耗双方附着**，且**不设按秒的反应冷却**（加过 0.35s，把「火墙→毒池」的正常连招挡掉了）。
+    ④ **区域不直接扣血**：`updateZones()` 只续状态，伤害一律由 DOT 走 `damageSkeleton()`。
+    ⑤ **撞墙伤害写在 `damageSkeleton()` 内部**（击退 ≥1.2 且落点不可站 → 不位移、改为眩晕 + 12 伤害），
+    不许抽成会回调自己的独立函数，否则绕开击杀计数与掉落。⑥ **新增状态必须在 `STATUS` 注册表里**，
+    未登记的 id 会在 `applyStatus` 直接抛错（有意如此：静默忽略 = 看不见的 debuff 上线）。
+
+`scripts/check-drift.sh` 会把上面 1–18 涉及的文件单独列出来，接手时先看它。
 
 ## 改完必跑（任何一项不绿 = 不许交付）
 
@@ -176,7 +192,7 @@
 
 ```bash
 ./node_modules/.bin/forgeax project check --json
-./node_modules/.bin/forgeax project test --json          # 211/211（下限 83）
+./node_modules/.bin/forgeax project test --json          # 239/239（下限 83）
 node scripts/build-meta-ui.mjs --check                  # 生成物与源码同步
 python scripts/export_tables.py --check                  # xlsx 与 generated/*.ts 同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000   # 真实 rollLoot 跑批
@@ -196,14 +212,14 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **211** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-15 +22 条 `combat/__tests__/skills.test.ts`：技能栏 / 法力不自动恢复 / 拒绝起手免费 / 冷却 / 技能击杀走同一掉落路径 / 读条与钉住 / 受击与闪避打断不退蓝 / 蓝药 / 图标齐全） |
+| `test` | **239** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-15 状态批次 +28 条 `combat/__tests__/status.test.ts`：注册表齐全 / 只 5 条反应 / 叠层上限 / 硬控禁操作 / 减速与迟滞真的生效 / 禁锢仍可攻击 / 沉默与缴械各自封口 / 易伤与石化碎裂 / DOT 击杀照样掉落 / 五条反应各一条 / 区域只续状态 / 投影字段） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` 四张表与 `generated/*.ts` 一致，且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
 | `meta-ui` | 三个生成物（inventory / account / voxel）同步 + 独立页面浏览器验收 **14/14**（含「格子画的是模型不是字形」像素断言） |
 | `build` | `ok` |
 | `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **40/40**（含 7 条平台身份 / KV 存档、1 条「无宿主不写盘」、2 条平台 lifecycle、局内背包、局内拾取镜像到装备栏、阵亡清空全部 10 槽、2 条光标反馈、**1 条超时未撤离的结算文案**） |
-| `playthrough` 1600x900 | `passed:true`、74–80 steps（下限 35；新增的技能三步各含 1 个 `advance` 轮询循环，所以比 44 步多得多）、0 errors |
+| `playthrough` 1600x900 | `passed:true`、92–100 steps（下限 35；技能三步 + 反应链两步各含 `advance` 轮询，所以比 44 步多得多）、0 errors |
 | `playthrough-resize` 1700x1000 | `passed:true`、4 steps、0 errors |
 | `package` | sha256 校验通过，包内 README + feedback 齐全 |
 | `web-zip shell`（发布产物） | `verify-all.sh` 的 `package` 步骤产出 `artifacts/verify/forgeax-game-web.zip`：`sha256sum -c` 通过、`index.html` 含 `FORGEAX_META_SHELL_BEGIN`、`forgeax-dist.json` 的 `bytes`/`sha256` 与实际一致；Builder 玩家产物同时含壳层与平台 bootstrap |
@@ -214,13 +230,14 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 
 下表把**各模块 `CONTEXT.md`「功能契约（正文）」**逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 211 条＝combat 130（loot 14 + movement **33** + attack-spec 10 +
-projectiles 10 + weapons 10 + world 11 + modifiers 3 + 单局骨架 extraction 17 + **技能 skills 22**）
+删断言不会让这张表悄悄失效。单测 239 条＝combat 166（loot 14 + movement **33** + attack-spec 10 +
+projectiles 10 + weapons 10 + world 11 + modifiers 3 + 单局骨架 extraction 17 + 技能 skills 22 +
+**状态与反应 status 28**）
 + 局内 `run-inventory` 8、
 meta 40（inventory 16 + platform-KV account 11 + run-settlement 10 + meta 3）、battle 4、talent 3、
 resource 14（tables 7 + map 7）、**美术 10（`assets/__tests__/voxel.test.ts`）**、模板 2；
 全量下限 83 条（下限不随新增断言抬高）。
-浏览器验收：playthrough 21 个命名场景（展开 74–80 steps，下限 35）、独立页 14 条、4174 单页 40 条
+浏览器验收：playthrough 23 个命名场景（展开 92–100 steps，下限 35）、独立页 14 条、4174 单页 40 条
 （含 7 条平台身份 / KV 存档 + 1 条「无宿主不写盘」+ 2 条平台 lifecycle + 2 条光标反馈）。
 真实硬件 WebGPU 冒烟（历史一次性脚本）：`node artifacts/smoke-login-bag.mjs` 曾覆盖「强制登录 / 刷新后存档」，
 **该脚本按已删除的本地登录 + 本地存盘流程编写，现已不适用**；现行契约里无宿主不写盘、刷新不恢复，
@@ -268,6 +285,7 @@ resource 14（tables 7 + map 7）、**美术 10（`assets/__tests__/voxel.test.t
 | **通关整份搬回、阵亡整份丢弃** | `run-settlement.test.ts`：`a clear brings the WHOLE run state home` / `a loss discards the run` | `verify-shell.cjs`：`cleared brings the WHOLE run state home` / `gameOver permanently loses every carried item` / `a mid-run return sends abort` |
 | **技能表现（动作 / 特效 / 地面残留）** | `assets/combat/__tests__/skills.test.ts`：`the charge is a DASH over time, not a teleport` / `the charge damages an enemy exactly once while passing through it` / `a zero-length frame never cancels the dash` / `every skill leaves a distinguishable effect record behind` | `playthrough.mjs`：`the charge is a dash you can watch, not a teleport`（截图 `skill-dash-landing`）+ `skill-casting`（举杖 + 法力球 + 脚下法阵）+ `skill-sweep`（橙色弧状灼痕）+ `skill-shard-hit`（青色走廊霜痕） |
 | **技能栏 / 法力 / 读条与打断** | `assets/combat/__tests__/skills.test.ts`（18 条）：`starts with seven slots, three equipped skills, full mana and three potions` / `a sweep spends mana, starts its cooldown and hits only what is in reach` / `a skill that cannot be paid for is refused for free` / `a cooling skill is refused, and becomes ready again when the cooldown expires` / `mana never regenerates on its own` / `a skill kill drops loot exactly like a sword swing` / `the ice shard pins the player, then damages the corridor it aims down` / `a hit interrupts the cast without refunding mana or the cooldown` / `restore mana slowly, one bottle per drink` / `every skill resolves to a voxel icon` | `playthrough.mjs`：`a skill spends mana, goes on cooldown and damages what closed in`（真实按 Q、断言扣蓝 / CD / 掉血 / 冷却中再按不扣蓝）+ `the ice shard needs a cast and hits the line it aims down`（截图 `skill-casting` / `skill-shard-hit`）+ `a blue potion restores mana slowly and is limited`（截图 `mana-potion`） |
+| **状态与反应链（8.4 / 8.5）** | `assets/combat/__tests__/status.test.ts`（28 条）：注册表齐全 / 只认 5 条反应 / 叠层上限 / 硬控不动不打 / 减速半速 / 迟滞拖慢出刀 / 禁锢可攻击但不可移动与闪避 / 沉默与缴械各自封口 / 易伤与石化碎裂 / DOT 击杀照样掉落 / 五条反应各一条（含传导与两侧区域只涨对应元素）/ 区域只续状态不扣血 / 投影含 statuses 与 zones | `playthrough.mjs`：`the flame wall and the poison pool detonate together`（截图 `zone-poison-pool` / `reaction-detonate`）+ `water then ice freezes the target solid`（截图 `status-freeze`） |
 | **单局骨架：900 秒 / 三段阶段 / 传送门撤离** | `assets/combat/__tests__/extraction.test.ts`（16 条）：`starts each run at 15:00` / `moves explore -> fight -> extract` / `running out of time fails the run and freezes it` / `channelling for the full guide time extracts and banks the run` / `taking a hit clears the progress without a stagger` / `walking out of the ring clears the progress` / `pressing E a second time cancels` / `a spent portal is no longer an exit` | `playthrough.mjs`：`clearing the arena marks the story objective complete` + `the portal is the only way out: guide it and extract`（真实点击走门、真实按 E、8.5 秒引导、截图 `portal-channelling` / `extracted`） |
 | **关卡类型分流（story 自动完成、pvpve 必须撤离）** | `extraction.test.ts`：`story clears when every monster is down` / `dungeon and pvpve never auto-clear: you must extract` / `deployRun carries the kind into the run` | `verify-shell.cjs`：`deploy sends seed + kind + the whole loadout`（kind = pvpve） |
 | **超时未撤离 = 全部丢失** | `extraction.test.ts`：`running out of time fails the run and freezes it` | `verify-shell.cjs`：`running out of time without extracting loses the run and says so` |
@@ -328,6 +346,9 @@ resource 14（tables 7 + map 7）、**美术 10（`assets/__tests__/voxel.test.t
 | `gen_arena_map.py` 重跑后 Terrain 图层没了 | 脚本原先按 `layerInstances` 下标取图，重跑后顺序变了；必须按 `__identifier` 找图层，且 uid 固定（100/101/102-104）保证幂等 |
 | 掉落物在地上「消失」 | 掉落物的横向压缩 `squash` 被压到 ≈0（转到侧边）+ 排序 key 偏后，被尸体盖住；`squash` 下限 0.55，掉落物排序 key `y+0.5` |
 | LDtk 报 `Cannot read properties of null (reading 'externalLevels')` | 这句是**假消息**：`ProjectLoader` 把 `Project.fromJson` 的异常吞了（`p` 变 null）再读 `p.externalLevels`。真因在生成器：① `tileRect` 缺 `tilesetUid`（`JsonTools.readTileRect` 直接 throw，编辑器报 "TileRect contains an invalid value"）；② 字段实例 `defUid: null` / `realEditorValues: []`（值全空）；③ `layerInstances` 与 `defs.layers` 不同序且缺 `iid`。现在 `python scripts/gen_arena_map.py --check` 会逐条报出来 |
+| `project play` 启动即报 `pack-source-revision-conflict` / `pack-malformed-meta` | 跑验收期间**改了源码**（`edit` 或生成器重写）→ 打包捕获的源与发布时不一致。等这次跑完再改，或直接重跑一次即可（不需要清缓存） |
+| 改了 `assets/game/voxel.ts` 后 `verify.sh` 在 meta-ui 步骤红，报的却是 `inventory.js` 不同步 | 实际漂移的是 `meta-ui/voxel.js`（三个生成物之一，报错文案会指向列表里第一条）。跑一次 `node scripts/build-meta-ui.mjs` 再提交，别只信那句文案 |
+| 冻结 / 眩晕的截图里看不到「冻住」的样子 | 硬控只有 1.2–1.5 秒，而 `play.screenshot` 从调用到成像有 1–2 秒延迟。画面证据看**冰面 / 状态条 / 霜痕**，硬控本身由投影里的 `skeletons[].statuses` 断言证明 |
 
 ## 可回滚基线（两层）
 
