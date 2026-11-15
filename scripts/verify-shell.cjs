@@ -111,9 +111,10 @@ const SELFTEST = `
       out.commands.push(msg.command);
       var c = msg.command;
       if (workerState) {
-        if (c.action === 'place') M.placeItem(workerState, c.uid, 'bag', c.col, c.row);
+        var box = c.container === 'safe' ? 'safe' : 'bag';
+        if (c.action === 'place') M.placeItem(workerState, c.uid, box, c.col, c.row);
         else if (c.action === 'equip') M.equipItem(workerState, c.uid, c.slot, ['bag']);
-        else if (c.action === 'unequip') M.unequipItem(workerState, c.slot, 'bag', c.col, c.row);
+        else if (c.action === 'unequip') M.unequipItem(workerState, c.slot, box, c.col, c.row);
         else if (c.action === 'active') M.setActiveWeapon(workerState, c.slot);
         chan.postMessage({ type: 'runState', loadout: M.loadoutFromRun(workerState) });
       }
@@ -132,6 +133,8 @@ const SELFTEST = `
       weapon0: s.equipped[0] ? s.equipped[0].defId : null,
       weapon1: s.equipped[1] ? s.equipped[1].defId : null,
       bagDefs: s.bag.map(function (i) { return i.defId; }),
+      safe: (s.safe || []).length,
+      safeDefs: (s.safe || []).map(function (i) { return i.defId; }),
       lobbyBag: lobby.bag.length, lobbyStash: lobby.stash.length,
       lobbyWorn: lobby.equipped.filter(Boolean).length,
       isRun: H.isRun(),
@@ -242,9 +245,12 @@ const SELFTEST = `
       out.gridCells = {
         bag: document.querySelectorAll('#grid-bag .cell').length,
         stash: document.querySelectorAll('#grid-stash .cell').length,
-        // 保险格（设计 4）：背包左上角 1×2 必须真的画出来，而不是只存在于规则里
-        insured: document.querySelectorAll('#grid-bag .cell.insured').length,
-        note: !!document.getElementById('insured-note'),
+        // 保险格（设计 4）是**独立容器**：自己的面板 + 2 格，背包里没有"保险标记"
+        safe: document.querySelectorAll('#grid-safe .cell').length,
+        safePanel: !!document.getElementById('safe-panel')
+          && getComputedStyle(document.getElementById('safe-panel')).display !== 'none',
+        note: !!document.getElementById('safe-note'),
+        insuredInBag: document.querySelectorAll('#grid-bag .cell.insured').length,
       };
       out.equipSlots = document.querySelectorAll('.equip-slot').length;
 
@@ -485,6 +491,36 @@ const SELFTEST = `
       await waitFor(function () { return !inBattle() && /阵亡/.test(logText()); });
       snap('gameOver');
 
+      // 保险格是独立容器：**真的把背包里的药拖进保险格面板**（不是直接改状态）。
+      // 后面几局用它证明「玩家自己保的东西才会回家」，也证明它不占背包格。
+      M.addToBag(H.getLobbyState(), 'insured-probe', '30002');
+      H.render();
+      (function () {
+        var node = document.querySelector('#wrap-bag .item[data-uid="insured-probe"]');
+        var wrap = document.getElementById('wrap-safe');
+        var grid = document.getElementById('grid-safe');
+        if (!node || !wrap || !grid) { out.safeDrag = { missing: true }; return; }
+        var dt = new DataTransfer();
+        var fire = function (target, type, x, y) {
+          target.dispatchEvent(new DragEvent(type, {
+            bubbles: true, cancelable: true, dataTransfer: dt, clientX: x, clientY: y,
+          }));
+        };
+        var fr = node.getBoundingClientRect();
+        var gr = grid.getBoundingClientRect();
+        fire(node, 'dragstart', fr.left + 4, fr.top + 4);
+        fire(wrap, 'dragover', gr.left + 20, gr.top + 20);
+        fire(wrap, 'drop', gr.left + 20, gr.top + 20);
+        fire(node, 'dragend', gr.left + 20, gr.top + 20);
+        out.safeDrag = {
+          safe: H.getLobbyState().safe.length,
+          bag: H.getLobbyState().bag.length,
+          def: H.getLobbyState().safe[0] ? H.getLobbyState().safe[0].defId : null,
+        };
+      })();
+      H.render();
+      snap('insuredReady');
+
       // Third run: a mid-run return is a LOSS and sends an abort to the Worker.
       document.getElementById('fx-deploy').click();
       await waitFor(function () { return inBattle() && /出征中/.test(logText()); });
@@ -543,7 +579,8 @@ const SELFTEST = `
       snap('dungeonDeath');
       var savedEnvelope = Store.lastSaved ? Store.lastSaved() : null;
       out.corpse = {
-        keptInsured: H.getLobbyState().bag.length,
+        keptInsured: (H.getLobbyState().safe || []).length,
+        keptBag: H.getLobbyState().bag.length,
         worn: H.getLobbyState().equipped.filter(Boolean).length,
         saved: H.deathDrop && H.deathDrop.items ? H.deathDrop.items.length : 0,
         savedDef: H.deathDrop && H.deathDrop.items[0] ? H.deathDrop.items[0].defId : null,
@@ -681,8 +718,12 @@ const checks = [
     result.authoredRegistered === true, result.authoredRegistered],
   ['bag 5x8 = 40 cells, stash 16x10 = 160 cells',
     result.gridCells.bag === 40 && result.gridCells.stash === 160, result.gridCells],
-  ['保险格在背包里画成左上 1×2，并带一条图例说明',
-    result.gridCells.insured === 2 && result.gridCells.note === true, result.gridCells],
+  ['保险格是独立面板（2 格 + 说明），背包里没有"保险标记"',
+    result.gridCells.safe === 2 && result.gridCells.safePanel === true
+      && result.gridCells.note === true && result.gridCells.insuredInBag === 0, result.gridCells],
+  ['把背包里的药拖进保险格面板：物品从 bag 移到 safe，不占背包格',
+    !!result.safeDrag && result.safeDrag.safe === 1 && result.safeDrag.bag === 0
+      && result.safeDrag.def === '30002', result.safeDrag],
   ['关卡类型可选（主线 / 副本 / 搜打撤），出征按选中的类型发',
     result.kind.exists === true && result.kind.initial === 'pvpve'
       && result.kind.options.join(',') === 'pvpve,dungeon,story'
@@ -751,26 +792,29 @@ const checks = [
   ['a second deploy empties the lobby again',
     S.secondDeploy.lobbyBag === 0 && S.secondDeploy.lobbyWorn === 0
       && S.secondDeploy.lobbyStash === 3, S.secondDeploy],
-  ['阵亡只留下保险格里的东西：其余穿戴与背包全丢',
-    S.gameOver.bag === 1 && S.gameOver.worn === 0
-      && S.gameOver.bagDefs[0] === '30002'
-      && S.gameOver.weapon0 === null && S.gameOver.isRun === false, S.gameOver],
-  ['阵亡保住了仓库，并在日志里说明保险格救回了几件',
-    S.gameOver.lobbyStash === 3 && /阵亡/.test(S.gameOver.log)
-      && /保险格保住 1 件/.test(S.gameOver.log), S.gameOver.log],
+  ['阵亡时自动拾取的药不会被保险格救走（2026-11-15 用户实测的问题）',
+    // 补给 / 拾取的药落在保险格以外，所以整份都该丢；日志里也不能出现「保险格保住」。
+    S.gameOver.bag === 0 && S.gameOver.worn === 0 && S.gameOver.weapon0 === null
+      && S.gameOver.isRun === false && !/保险格保住/.test(S.gameOver.log),
+    S.gameOver],
+  ['阵亡保住了仓库，并如实说明这一局什么都没保住',
+    S.gameOver.lobbyStash === 3 && /阵亡/.test(S.gameOver.log), S.gameOver.log],
+  ['拖进保险格的物品是阵亡后唯一被保住的东西',
+    S.insuredReady.lobbyBag === 0 && S.insuredReady.safe === 1
+      && S.insuredReady.safeDefs[0] === '30002', S.insuredReady],
   ['副本阵亡：保险格回家，遗物进存档并提示待捡回',
-    result.corpse.keptInsured === 1 && result.corpse.worn === 0
+    result.corpse.keptInsured === 1 && result.corpse.keptBag === 0 && result.corpse.worn === 0
       && result.corpse.saved === 1 && result.corpse.savedDef === 'longsword'
       && result.corpse.kv === 1 && /遗物 1 件/.test(result.corpse.badge)
       && /遗落在副本/.test(result.corpse.log), result.corpse],
   ['第一次进副本时遗物槽是空的，下一次才把遗物摆回死亡地点',
     result.firstDungeonHasNoCorpse === true && result.corpse.deployed === true, result.corpse],
   ['running out of time without extracting loses the run and says so',
-    // 背包里那 1 件是保险格里的药：超时与战死同罚，保险格照旧生效。
-    S.timedOut.isRun === false && S.timedOut.bag === 1 && S.timedOut.worn === 0
-      && /超时未撤离/.test(S.timedOut.log), S.timedOut],
+    // 那 1 件在**保险格容器**里（不是背包）：超时与战死同罚，保险格照旧生效。
+    S.timedOut.isRun === false && S.timedOut.bag === 0 && S.timedOut.safe === 1
+      && S.timedOut.worn === 0 && /超时未撤离/.test(S.timedOut.log), S.timedOut],
   ['a mid-run return sends exactly one abort and discards the run',
-    result.abortAfterReturn === 1 && S.aborted.lobbyBag === 1
+    result.abortAfterReturn === 1 && S.aborted.lobbyBag === 0
       && S.aborted.lobbyWorn === 0 && S.aborted.lobbyStash === 3
       && /中途退出/.test(S.aborted.log), S.aborted],
   ['returning to meta keeps the inventory usable',

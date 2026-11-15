@@ -99,10 +99,13 @@
 
 | 项 | 契约 |
 |:--|:--|
-| 保险格形状 | `InventoryState.insured = { col, row, cols, rows }`，**初始赠送 1 列 × 2 行**放在背包左上角（`INSURED_GIFT`）。缺字段时 `insuredRect()` 回落成赠送值，所以 v1/v2 存档与旧夹具都不用改 |
-| 判定 | `isInsuredItem(state, item)`：物品占的**每一格**都在区域内才算保住（半截露在外的 2×3 巨剑不算）。`insuredCells()` 给 UI 高亮 |
-| 只保背包格 | 穿戴中的 10 个槽**永远算风险**，不参与保险 —— 这是设计 4「带什么下场」的核心取舍 |
-| 阵亡分割 | `splitOnDeath(state) -> { kept: RunLoadout, lost: ItemInstance[] }`。纯函数、不改传入状态；两个堆共用。**主线不调用它**（`combat/death-drop.ts::settleOnDeath()` 直接整份带回） |
+| 保险格容器 | `InventoryState.safe: PlacedItem[]` + `CONTAINERS.safe = SAFE`（**2 列 × 1 行**）。它**不是背包里的一块区域**（2026-11-15 用户纠正：要像三角洲的保险箱那样独立），所以背包仍是完整的 5×8 = 40 格 |
+| 自动拾取 | `addToBag()` 只写 `bag`，结构上碰不到保险格 —— 「补给 / 拾取被静默保险」这个 bug 不可能再出现 |
+| 移动 | 背包 ↔ 保险格 ↔ 仓库都是同一条 `placeItem(state, uid, container, col, row)`；局内 `RunCommand` 的 `place` / `unequip` 必须带 `container`（`'bag' \| 'safe'`，本局没有仓库），缺省按背包处理（旧载荷兼容） |
+| 只保保险格 | 穿戴中的 10 个槽**永远算风险**，不参与保险 —— 这是设计 4「带什么下场」的核心取舍 |
+| 阵亡分割 | `splitOnDeath(state) -> { kept, lost }`：`kept.safe` 就是保险格里的东西，`kept.bag/equipped` 恒空；`lost` 是背包全部 + 全部穿戴。纯函数，两个堆共用。**主线不调用它**（`combat/death-drop.ts::settleOnDeath()` 直接整份带回） |
+| 载荷 | `RunLoadout.safe?: PlacedItem[]` 跟着出征 / 撤离 / 阵亡结算走；`takeIntoRun()` 会把局外 `safe` 一起清空（和 bag / equipped 一样） |
+| 老存档 | v1/v2 没有 `safe` 字段：`normalizeContainers(state)` 在读存档 / 建状态时补空数组（`platform-store.js::apply()` 调用） |
 | 遗物槽 | 主窗口 `window.MetaShell.deathDrop = { stage, x, y, items: [{ defId, durability? }] }`，随存档 v3 的 `envelope.extra` 落盘（`account.ts::encodeSave(state, progress, extra)` / `decodeExtra()`）。空槽不写字段 |
 | 摆回地图 | 出征时 `deploy.deathDrop` → `combat/death-drop.ts::spawnDeathDrop()`（间距 44×30、过 `nearestWalkable`、带冷白环）。只有 `kind:'dungeon'` 会发送 |
 | 一致性 | 遗物的耐久跟着 `Drop.durability` 走到 `collectDrop(..., durability)`，**捡回来还是磨过的那把**（5.2 的出口） |

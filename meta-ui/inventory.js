@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 8aa4d7325ca9d6cfb18ed31ec14ac8feb7578d906d49799e3770af618816001b
+ * Source SHA-256: 7d09dd7e48d400b751f492759c3e9e8e6772613087fa13d0353ce7854f594b9d
  */
 (function (root) {
 "use strict";
@@ -29,11 +29,8 @@ var exports = module.exports;
  * NOT shared is the state object itself — see the transfer section at the end.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.moveItem = exports.WEAPON_SLOT_INDICES = exports.EQUIP_SLOTS = exports.ITEM_DEFS = exports.INSURED_MAX_COLS = exports.INSURED_GIFT = exports.CONTAINERS = exports.STASH = exports.BAG = void 0;
-exports.insuredRect = insuredRect;
-exports.normalizeInsured = normalizeInsured;
-exports.insuredCells = insuredCells;
-exports.isInsuredItem = isInsuredItem;
+exports.moveItem = exports.WEAPON_SLOT_INDICES = exports.EQUIP_SLOTS = exports.ITEM_DEFS = exports.CONTAINERS = exports.SAFE = exports.STASH = exports.BAG = void 0;
+exports.normalizeContainers = normalizeContainers;
 exports.itemArtShape = itemArtShape;
 exports.itemArtKey = itemArtKey;
 exports.registerItemDefs = registerItemDefs;
@@ -58,49 +55,40 @@ exports.loadoutFromRun = loadoutFromRun;
 exports.splitOnDeath = splitOnDeath;
 exports.BAG = { cols: 5, rows: 8, label: '背包' };
 exports.STASH = { cols: 16, rows: 10, label: '仓库' };
+/* ---------------------------------- 保险格 --------------------------------- *
+ * 设计 4 / 5.2：死亡掉落范围是「已穿戴 10 个装备槽 + 背包全部」，**保险格除外**。
+ *
+ * 2026-11-15 用户拍板：保险格**不是背包里的一块区域，而是独立容器**（对标三角洲行动的
+ * 保险箱）—— 否则玩家会以为"背包前两格被占了"，而且自动拾取会偷偷把东西塞进去
+ * 变成"静默保险"。独立容器从结构上就没有这两个问题：它有自己的面板、自己的格子，
+ * 东西只能手动拖进去。
+ *
+ * 两条规则（别在这里发明第三条）：
+ * 1. **保险格只装得下它自己的格子能装的东西**。初始赠送 2 格（2 列 × 1 行），
+ *    所以目前只有 1×1 的小件（药 / 弹药）放得进去；扩容是付费消耗品（商店批次，
+ *    改 `SAFE` 即可，规则不动）。
+ * 2. **穿戴中的 10 个装备槽永远是风险**，不进保险格 —— 否则「带什么下场」这个决定就没了。
+ */
+exports.SAFE = { cols: 2, rows: 1, label: '保险格' };
 exports.CONTAINERS = {
     bag: exports.BAG,
     stash: exports.STASH,
+    safe: exports.SAFE,
 };
-/** 初始赠送的保险格：1 列 × 2 行（占 2 格）。 */
-exports.INSURED_GIFT = Object.freeze({ col: 0, row: 0, cols: 1, rows: 2 });
-/** 扩容上限（商店批次用；当前没有购买入口，只在存档里预留了这个字段）。 */
-exports.INSURED_MAX_COLS = 3;
-/** 只读：夹进背包边界、尺寸取整；缺字段回落到赠送那一份。不改状态。 */
-function insuredRect(state) {
-    const raw = state.insured ?? exports.INSURED_GIFT;
-    const cols = Math.max(1, Math.min(exports.BAG.cols, Math.floor(raw.cols || exports.INSURED_GIFT.cols)));
-    const rows = Math.max(1, Math.min(exports.BAG.rows, Math.floor(raw.rows || exports.INSURED_GIFT.rows)));
-    const col = Math.max(0, Math.min(exports.BAG.cols - cols, Math.floor(raw.col || 0)));
-    const row = Math.max(0, Math.min(exports.BAG.rows - rows, Math.floor(raw.row || 0)));
-    return { col, row, cols, rows };
-}
-/** 写回一份规范化后的保险格（读存档 / 出征 / 存档写入前调用）。 */
-function normalizeInsured(state) {
-    const rect = insuredRect(state);
-    state.insured = rect;
-    return rect;
-}
-/** 保险格覆盖的格子（UI 高亮 / 单测断言用）。 */
-function insuredCells(state) {
-    const rect = insuredRect(state);
-    const cells = [];
-    for (let r = 0; r < rect.rows; r += 1) {
-        for (let c = 0; c < rect.cols; c += 1)
-            cells.push({ col: rect.col + c, row: rect.row + r });
-    }
-    return cells;
-}
-/** 这件背包物品是否整件落在保险格里。 */
-function isInsuredItem(state, item) {
-    const rect = insuredRect(state);
-    for (const cell of coveredCells(item)) {
-        if (cell.col < rect.col || cell.col >= rect.col + rect.cols)
-            return false;
-        if (cell.row < rect.row || cell.row >= rect.row + rect.rows)
-            return false;
-    }
-    return true;
+/**
+ * 老存档 / 旧消息里没有 `safe` 字段时补一个空容器。
+ *
+ * 不放在 `createInventoryState()` 里就够了吗？不够：读存档、跨堆快照、手改数据都可能
+ * 送来一个缺字段的对象。所有入口（读盘 / 出征 / 结算 / 存档写入前）都过这一道，
+ * 后面的代码就能假设三个容器都在。
+ */
+function normalizeContainers(state) {
+    if (!Array.isArray(state.bag))
+        state.bag = [];
+    if (!Array.isArray(state.stash))
+        state.stash = [];
+    if (!Array.isArray(state.safe))
+        state.safe = [];
 }
 /**
  * Code-side fallback catalog. The authored `item.xlsx` rows are injected at
@@ -246,12 +234,18 @@ function createInventoryState(seedSwords = 3) {
         stash,
         equipped: exports.EQUIP_SLOTS.map(() => null),
         activeWeaponSlot: 0,
-        insured: { ...exports.INSURED_GIFT },
+        safe: [],
     };
 }
 function listOf(state, container) {
-    return container === 'bag' ? state.bag : state.stash;
+    if (container === 'bag')
+        return state.bag;
+    if (container === 'safe')
+        return state.safe;
+    return state.stash;
 }
+/** 三个容器（`findItem` / `removeItem` 的遍历顺序：背包 → 保险格 → 仓库）。 */
+const ALL_CONTAINERS = ['bag', 'safe', 'stash'];
 /** Rectangular footprint overlap + bounds check. Atomic: never mutates. */
 function canPlace(state, container, defId, col, row, ignoreUid) {
     if (!Number.isInteger(col) || !Number.isInteger(row))
@@ -273,7 +267,7 @@ function canPlace(state, container, defId, col, row, ignoreUid) {
     return true;
 }
 function findItem(state, uid) {
-    for (const container of ['bag', 'stash']) {
+    for (const container of ALL_CONTAINERS) {
         const i = listOf(state, container).findIndex((it) => it.uid === uid);
         if (i >= 0) {
             return { where: 'grid', item: listOf(state, container)[i], index: i, container };
@@ -441,7 +435,7 @@ durability) {
 }
 /** Remove an item by uid from bag or stash. */
 function removeItem(state, uid) {
-    for (const container of ['bag', 'stash']) {
+    for (const container of ALL_CONTAINERS) {
         const list = listOf(state, container);
         const i = list.findIndex((it) => it.uid === uid);
         if (i >= 0) {
@@ -523,9 +517,10 @@ function takeIntoRun(lobby) {
         bag: clonePlaced(lobby.bag),
         equipped: cloneEquipped(lobby.equipped),
         activeWeaponSlot: lobby.activeWeaponSlot === 1 ? 1 : 0,
-        insured: insuredRect(lobby),
+        safe: clonePlaced(lobby.safe ?? []),
     };
     lobby.bag = [];
+    lobby.safe = [];
     lobby.equipped = exports.EQUIP_SLOTS.map(() => null);
     lobby.activeWeaponSlot = 0;
     return loadout;
@@ -533,6 +528,8 @@ function takeIntoRun(lobby) {
 /** Clear: move the WHOLE run state back into the emptied lobby. */
 function bringBack(lobby, loadout) {
     lobby.bag = clonePlaced(loadout.bag);
+    // 保险格是独立容器，但仍然是「带回来的东西」的一部分：阵亡时 `kept.safe` 就是它。
+    lobby.safe = clonePlaced(loadout.safe ?? []);
     lobby.equipped = cloneEquipped(loadout.equipped);
     lobby.activeWeaponSlot = loadout.activeWeaponSlot === 1 ? 1 : 0;
     normalizeEquipped(lobby);
@@ -545,7 +542,7 @@ function runInventoryFrom(loadout) {
         stash: [],
         equipped: cloneEquipped(loadout.equipped),
         activeWeaponSlot: loadout.activeWeaponSlot === 1 ? 1 : 0,
-        insured: { ...(loadout.insured ?? exports.INSURED_GIFT) },
+        safe: clonePlaced(loadout.safe ?? []),
     };
     // 进战局前最后一道闸：非法穿戴挪回背包（存档篡改 / 旧协议遗留）。
     normalizeEquipped(state);
@@ -557,37 +554,32 @@ function loadoutFromRun(state) {
         bag: clonePlaced(state.bag),
         equipped: cloneEquipped(state.equipped),
         activeWeaponSlot: state.activeWeaponSlot === 1 ? 1 : 0,
-        insured: insuredRect(state),
+        safe: clonePlaced(state.safe ?? []),
     };
 }
 /**
  * **阵亡分割**（设计 4）：把局内状态切成「带得回家的」和「丢下的」。
  *
- * - `kept` = 整件落在保险格里的背包物品（穿戴中的 10 个槽永远是风险）。
- * - `lost` = 其余背包物品 + 全部穿戴，顺序稳定（先背包后槽位）便于存档与断言。
+ * - `kept` = **保险格容器里的东西**（独立容器，不是背包里的一块区域）。
+ * - `lost` = 背包全部 + 全部穿戴，顺序稳定（先背包后槽位）便于存档与断言。
  *
  * 主线（`story`）不调用它 —— 那条规则是「身上 + 背包全不掉」，由战斗层直接整份带回。
  * 本函数是纯函数：不改传入的 state，返回的都是副本。
  */
 function splitOnDeath(state) {
-    const keptBag = [];
     const lost = [];
-    for (const item of state.bag) {
-        if (isInsuredItem(state, item))
-            keptBag.push({ ...item });
-        else
-            lost.push(instanceOf(item));
-    }
+    for (const item of state.bag)
+        lost.push(instanceOf(item));
     for (const item of state.equipped) {
         if (item)
             lost.push(instanceOf(item));
     }
     return {
         kept: {
-            bag: keptBag,
+            bag: [],
             equipped: exports.EQUIP_SLOTS.map(() => null),
             activeWeaponSlot: 0,
-            insured: insuredRect(state),
+            safe: clonePlaced(state.safe ?? []),
         },
         lost,
     };

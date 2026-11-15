@@ -117,19 +117,23 @@ describe('副本死亡掉落：摆点与拾取', () => {
 });
 
 describe('死亡结算：三种关卡三套规则', () => {
-  const gear = (): RunLoadout => loadout(
-    [{ uid: 'insured-potion', defId: '30003', container: 'bag', col: 0, row: 0 }],
-    [{ uid: 'worn-blade', defId: '10006', durability: 40 }, null, null, null, null,
-      null, null, null, null, null],
-  );
+  const gear = (): RunLoadout => ({
+    ...loadout(
+      [{ uid: 'bag-loot', defId: '10006', container: 'bag', col: 3, row: 4 }],
+      [{ uid: 'worn-blade', defId: '10006', durability: 40 }, null, null, null, null,
+        null, null, null, null, null],
+    ),
+    safe: [{ uid: 'insured-potion', defId: '30003', container: 'safe', col: 0, row: 0 }],
+  });
 
-  it('dungeon keeps only what sat in the insured cells', () => {
+  it('dungeon keeps only the safe container, losing bag + worn gear', () => {
     const s = quiet({ kind: 'dungeon', loadout: gear() });
     const { kept, lost } = settleOnDeath(s, false);
-    expect(kept.bag.map((i) => i.uid)).toEqual(['insured-potion']);
+    expect(kept.safe?.map((i) => i.uid)).toEqual(['insured-potion']);
+    expect(kept.bag).toEqual([]);
     expect(kept.equipped.every((slot) => slot === null)).toBe(true);
-    expect(lost.map((i) => i.uid)).toEqual(['worn-blade']);
-    expect(lost[0]!.durability).toBe(40);
+    expect(lost.map((i) => i.uid).sort()).toEqual(['bag-loot', 'worn-blade']);
+    expect(lost.find((i) => i.uid === 'worn-blade')!.durability).toBe(40);
   });
 
   it('an uninsured bag item is lost in pvpve as well', () => {
@@ -150,6 +154,7 @@ describe('死亡结算：三种关卡三套规则', () => {
     const { kept, lost } = settleOnDeath(s, false);
     expect(lost).toEqual([]);
     expect(kept.bag).toHaveLength(1);
+    expect(kept.safe).toHaveLength(1);
     expect(kept.equipped[0]?.uid).toBe('worn-blade');
   });
 

@@ -9,8 +9,8 @@
  * | 副本 `dungeon` | 掉在**死亡地点**；下一次进本可**捡回一次**；第二次死亡 = 永久消失 |
  * | 搜打撤 `pvpve` | **无二次机会**，全部掉落（本作单人，所以等价于永久消失） |
  *
- * 保险格（设计 4）：`InventoryState.insured` 这块矩形里的**背包物品**跟着回家，
- * 其余（含全部 10 个穿戴槽）都算「丢下」。分割规则在
+ * 保险格（设计 4）：`InventoryState.safe` 这个**独立容器**里的东西跟着回家，
+ * 其余（背包全部 + 全部 10 个穿戴槽）都算「丢下」。分割规则在
  * `meta/inventory.ts::splitOnDeath()`，两个堆共用同一份；本文件只负责
  * 「把丢下的东西变成地上的掉落物」和「把上一局遗留的东西重新摆回地图」。
  *
@@ -136,14 +136,14 @@ export function leftoverDeathDrops(s: GameState): LeftoverItem[] {
  *
  * - 成功（撤离 / 主线清场）：整份带回，`lost` 为空（保险格不需要兜底）。
  * - 主线阵亡：整份带回（设计 4「身上 + 背包全不掉」）。
- * - 副本 / 搜打撤阵亡：只有保险格里的背包物品回家，其余 `lost`。
+ * - 副本 / 搜打撤阵亡：只有**保险格容器**里的东西回家，其余 `lost`。
  */
 export function settleOnDeath(s: GameState, survived: boolean): DeathSettlement {
   const whole: RunLoadout = {
     bag: s.runInventory.bag.map((i) => ({ ...i })),
     equipped: s.runInventory.equipped.map((i) => (i ? { ...i } : null)),
     activeWeaponSlot: s.runInventory.activeWeaponSlot,
-    ...(s.runInventory.insured === undefined ? {} : { insured: s.runInventory.insured }),
+    safe: (s.runInventory.safe ?? []).map((i) => ({ ...i })),
   };
   if (survived || s.runKind === 'story') return { kept: whole, lost: [] };
   return splitOnDeath(s.runInventory);

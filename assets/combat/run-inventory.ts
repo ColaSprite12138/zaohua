@@ -70,10 +70,27 @@ export function snapshotRun(run: InventoryState): RunLoadout {
   return loadoutFromRun(run);
 }
 
+/**
+ * 局内面板发来的编辑指令。**`container` 必须带上**：保险格是独立容器（设计 4），
+ * 以前这里把落点写死成 `'bag'`，局内把药拖进保险格会静默落进背包。
+ * 一局没有仓库（`stash` 恒空），所以只接受 `bag` / `safe`。
+ */
+export type RunContainer = 'bag' | 'safe';
+
+function runContainer(value: unknown): RunContainer {
+  return value === 'safe' ? 'safe' : 'bag';
+}
+
 export type RunCommand =
-  | { readonly action: 'place'; readonly uid: string; readonly col: number; readonly row: number }
+  | {
+    readonly action: 'place'; readonly uid: string;
+    readonly container?: RunContainer; readonly col: number; readonly row: number;
+  }
   | { readonly action: 'equip'; readonly uid: string; readonly slot: number }
-  | { readonly action: 'unequip'; readonly slot: number; readonly col: number; readonly row: number }
+  | {
+    readonly action: 'unequip'; readonly slot: number;
+    readonly container?: RunContainer; readonly col: number; readonly row: number;
+  }
   | { readonly action: 'active'; readonly slot: 0 | 1 };
 
 /** A rejected command leaves the run state untouched. */
@@ -81,11 +98,11 @@ export function applyRunCommand(run: InventoryState, cmd: RunCommand): boolean {
   ensureItemCatalog();
   switch (cmd.action) {
     case 'place':
-      return placeItem(run, cmd.uid, 'bag', cmd.col, cmd.row);
+      return placeItem(run, cmd.uid, runContainer(cmd.container), cmd.col, cmd.row);
     case 'equip':
       return equipItem(run, cmd.uid, cmd.slot, ['bag']);
     case 'unequip':
-      return unequipItem(run, cmd.slot, 'bag', cmd.col, cmd.row);
+      return unequipItem(run, cmd.slot, runContainer(cmd.container), cmd.col, cmd.row);
     case 'active':
       setActiveWeapon(run, cmd.slot);
       return true;

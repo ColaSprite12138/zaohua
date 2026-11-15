@@ -68,17 +68,17 @@
   /* Cells draw their own 1px separator so every cell is EXACTLY size x size:
      an item's pixel origin is col*size / row*size with zero accumulated drift. */
   .grid .cell { position: relative; background: var(--cell); box-shadow: inset -1px -1px 0 var(--line); }
-  /* 保险格（设计 4）：背包左上角那块，阵亡时这里的物品跟着回家。 */
-  .grid .cell.insured {
+  /* 保险格（设计 4）：**独立容器**，不是背包里的格子 —— 对标三角洲的保险箱。
+     它有自己的面板与格子，阵亡时这里的东西跟着回家。 */
+  #safe-panel { width: max-content; min-width: 200px; }
+  #safe-panel .grid { box-shadow: 0 0 0 1px rgba(103, 232, 249, .55); }
+  #safe-panel .grid .cell {
     background: #101f2b;
-    box-shadow: inset -1px -1px 0 var(--line), inset 0 0 0 1px rgba(103, 232, 249, .45);
+    box-shadow: inset -1px -1px 0 rgba(103, 232, 249, .35);
   }
-  .grid .cell.insured::after {
-    content: ""; position: absolute; inset: 3px; border: 1px dashed rgba(103, 232, 249, .35);
-    border-radius: 4px; pointer-events: none;
-  }
-  .insured-note { color: var(--cyan); font-size: 11px; margin-top: 6px; max-width: 300px; }
-  .insured-note b { color: var(--gold); font-weight: 700; }
+  #safe-panel .grid.dragover { box-shadow: 0 0 0 2px var(--cyan); }
+  .safe-note { color: var(--cyan); font-size: 11px; margin-top: 8px; max-width: 230px; line-height: 1.5; }
+  .safe-note b { color: var(--gold); font-weight: 700; }
   .grid.dragover { box-shadow: 0 0 0 2px var(--cyan); }
   .item {
     position: absolute; border-radius: 7px; border: 1px solid var(--sword);
@@ -210,14 +210,23 @@
       </div>
     </section>
 
+    <section class="panel" id="safe-panel">
+      <div class="panel-title"><h2>保险格</h2><small>2 格 · 阵亡不掉</small></div>
+      <div class="grid-wrap" id="wrap-safe">
+        <div class="grid" id="grid-safe"></div>
+        <div class="preview" id="preview-safe"></div>
+      </div>
+      <div class="safe-note" id="safe-note">
+        <b>独立容器</b>，不占背包格。阵亡时只有这里的东西跟着回家 ——
+        <b>自己拖进来的才算</b>，拾取与补给不会自动占用。
+      </div>
+    </section>
+
     <section class="panel">
       <div class="panel-title"><h2>背包</h2><small>5 × 8 = 40 格</small></div>
       <div class="grid-wrap" id="wrap-bag">
         <div class="grid" id="grid-bag"></div>
         <div class="preview" id="preview-bag"></div>
-      </div>
-      <div class="insured-note" id="insured-note">
-        左上角 <b>1 × 2</b> 是<b>保险格</b>：阵亡时这里的物品跟着回家（穿戴中的装备永远是风险）。
       </div>
     </section>
 
@@ -267,7 +276,9 @@
   // the ACTUAL item model, coloured by quality -- the text glyph is only a
   // fallback for a host that forgot to load voxel.js.
   const V = window.MetaVoxel ?? null;
-  const CELL = { bag: 46, stash: 34 };
+  const CELL = { bag: 46, stash: 34, safe: 46 };
+  // 三个容器：背包 / 仓库 / 保险格（独立容器，不占背包格）。
+  const GRIDS = ['bag', 'safe', 'stash'];
   // Optional host hook: the 4174 single-page shell injects this page and needs
   // to SHARE the very same InventoryState object (memory, not a copy). When
   // opened standalone via file:// the hook is absent and behaviour is unchanged.
@@ -279,6 +290,8 @@
   // run the UI renders a COPY of the Engine Worker's own state instead; all
   // edits become commands and the Worker answers with a fresh snapshot.
   let lobbyState = host.state ?? M.createInventoryState(3);
+  // 三个容器必须都在：老存档 / 手改数据 / 旧快照都可能缺 `safe`（独立容器的第一批）。
+  M.normalizeContainers(lobbyState);
   host.state = lobbyState;
   let state = lobbyState;
   let runMode = false;
@@ -291,7 +304,10 @@
     el.className = 'status' + (bad ? ' bad' : '');
   }
 
-  function gridOf(container) { return container === 'bag' ? state.bag : state.stash; }
+  function gridOf(container) {
+    if (container === 'safe') return state.safe ?? (state.safe = []);
+    return container === 'bag' ? state.bag : state.stash;
+  }
 
   /**
    * A run has NO stash and lives in the Worker. Never mutate a snapshot here:
@@ -397,15 +413,9 @@
     el.style.gridTemplateColumns = 'repeat(' + spec.cols + ', ' + size + 'px)';
     el.style.gridTemplateRows = 'repeat(' + spec.rows + ', ' + size + 'px)';
     el.innerHTML = '';
-    // 保险格只在背包上存在（仓库是局外存储，永不进战局，也就没有风险）。
-    const insured = container === 'bag' ? M.insuredRect(state) : null;
     for (let i = 0; i < spec.cols * spec.rows; i += 1) {
       const cell = document.createElement('div');
-      const col = i % spec.cols;
-      const row = Math.floor(i / spec.cols);
-      const inside = !!insured && col >= insured.col && col < insured.col + insured.cols
-        && row >= insured.row && row < insured.row + insured.rows;
-      cell.className = 'cell' + (inside ? ' insured' : '');
+      cell.className = 'cell';
       el.appendChild(cell);
     }
     wrap.querySelectorAll('.grid-item').forEach((n) => n.remove());
@@ -504,7 +514,7 @@
   }
 
   function clearPreview() {
-    for (const c of ['bag', 'stash']) {
+    for (const c of GRIDS) {
       $('preview-' + c).style.display = 'none';
       $('grid-' + c).classList.remove('dragover');
     }
@@ -550,7 +560,7 @@
       drag = null;
       if (!uid || !Number.isInteger(col) || !Number.isInteger(row)) return;
       if (runMode && container === 'stash') return; // a run owns no stash
-      commit({ action: 'place', uid: uid, col: col, row: row },
+      commit({ action: 'place', uid: uid, container: container, col: col, row: row },
         () => M.placeItem(state, uid, container, col, row),
         '已放入' + M.CONTAINERS[container].label + ' (' + col + ', ' + row + ')',
         '放不下：超出边界或与其他物品重叠');
@@ -559,6 +569,7 @@
 
   function render() {
     buildGrid('bag');
+    buildGrid('safe');
     buildGrid('stash');
     buildEquip();
     const active = M.activeWeapon(state);
@@ -927,6 +938,7 @@
   window.addEventListener('blur', hideTip);
 
   bindGrid('bag');
+  bindGrid('safe');
   bindGrid('stash');
   render();
   renderStar();

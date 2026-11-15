@@ -294,6 +294,11 @@ export function projection(s: GameState) {
           ? null
           : { uid: i.uid, defId: i.defId, ...(i.durability === undefined ? {} : { durability: i.durability }) }
       )),
+      // 保险格是独立容器（设计 4）：阵亡只保它，局内面板要有自己的一栏。
+      safe: (s.runInventory.safe ?? []).map((i) => ({
+        uid: i.uid, defId: i.defId, container: i.container, col: i.col, row: i.row,
+        ...(i.durability === undefined ? {} : { durability: i.durability }),
+      })),
       activeWeaponSlot: s.runInventory.activeWeaponSlot,
     },
     // Run / loot contract: consumed by the loot report and by the single-page

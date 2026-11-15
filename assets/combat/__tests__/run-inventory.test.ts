@@ -56,6 +56,24 @@ describe('Worker-side run inventory', () => {
     expect(run.stash).toEqual([]);
   });
 
+  it('a place command honours the container it names (bag vs the safe box)', () => {
+    // 保险格是独立容器（设计 4）：局内拖进保险格必须真的进 `safe`，
+    // 而不是"落到背包同坐标"。以前 `place` 把容器写死成 'bag'，这里守着。
+    const run = makeRunInventory(emptyLoadout());
+    collectDrop(run, 'potion-a', '30002');
+    const uid = run.bag[0]!.uid;
+    expect(applyRunCommand(run, { action: 'place', uid, container: 'safe', col: 0, row: 0 })).toBe(true);
+    expect(run.safe.map((i) => i.uid)).toEqual([uid]);
+    expect(run.bag).toEqual([]);
+    // 回到背包也是同一条命令
+    expect(applyRunCommand(run, { action: 'place', uid, container: 'bag', col: 2, row: 2 })).toBe(true);
+    expect(run.bag.map((i) => i.uid)).toEqual([uid]);
+    expect(run.safe).toEqual([]);
+    // 没写 container 的旧载荷按背包处理（协议向后兼容）
+    expect(applyRunCommand(run, { action: 'place', uid, col: 1, row: 1 })).toBe(true);
+    expect(run.bag[0]).toMatchObject({ col: 1, row: 1 });
+  });
+
   it('a displaced worn item returns to the BAG, never to a hidden stash', () => {
     const run = makeRunInventory(emptyLoadout());
     run.equipped[0] = { uid: 'w0', defId: 'longsword' };

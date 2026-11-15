@@ -91,7 +91,11 @@ const SELFTEST = `
       fire(fromNode, 'dragend', x, y, d);
     };
 
-    out.gridCells = { bag: cells('bag'), stash: cells('stash') };
+    out.gridCells = { bag: cells('bag'), stash: cells('stash'), safe: cells('safe') };
+    // 保险格是**独立容器**（设计 4）：它有自己的两格，且不占背包的 40 格。
+    out.gridCells.safePanel = !!document.getElementById('safe-panel')
+      && getComputedStyle(document.getElementById('safe-panel')).display !== 'none';
+    out.gridCells.insuredInBag = document.querySelectorAll('#grid-bag .cell.insured').length;
     out.equipSlots = document.querySelectorAll('.equip-slot').length;
     // Items must be drawn as VOXEL MODELS, not as text: every item node has a
     // canvas, all of them actually painted pixels, and none fell back to glyphs.
@@ -240,6 +244,9 @@ const S = result.steps;
 const checks = [
   ['bag renders 5x8 = 40 cells', result.gridCells.bag === 40, result.gridCells.bag],
   ['stash renders 16x10 = 160 cells', result.gridCells.stash === 160, result.gridCells.stash],
+  ['保险格是独立容器：自己 2 格、有独立面板，背包里不再有「保险格」标记',
+    result.gridCells.safe === 2 && result.gridCells.safePanel === true
+      && result.gridCells.insuredInBag === 0, result.gridCells],
   ['ten equipment slots', result.equipSlots === 10, result.equipSlots],
   ['every stash item is drawn as a painted voxel model, not a glyph',
     result.art.canvases >= 3 && result.art.painted === result.art.canvases

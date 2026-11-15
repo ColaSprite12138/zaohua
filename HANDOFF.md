@@ -19,7 +19,7 @@
 > 第 1 版**明确不做组队**（设计文档 2.1），别提前为联机做同步层。
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-15 全套验收通过**（315 条单测 / 独立页 15 条 / 单页 51 条 / playthrough 98 steps + death-drop 2 steps / resize 4 steps；**单局骨架已按设计文档第 10 章落地**；**技能两批已落地（设计 8.2/8.3/9.3）**；**状态与反应链第一批已落地（设计 8.4 / 8.5）：18 条状态注册表 + 6 元素 5 条反应 + 地面区域（火墙/毒池/冰面）+ 8.8 的视觉语言，技能从 3 个扩到 7 个以覆盖全部元素**；**技能 / 状态 / 怪物 / 全局手感数值已全部表化（`skill.xlsx` / `status.xlsx` / `monster.xlsx` / `combat_rule.xlsx`），改数值不用改代码**；**角色/怪物已有走路与转身动画**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；**画面已全量体素化，正式地图是 128×96 的仙侠院落**）。**steps 会浮动**：23 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 92–100 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-15 全套验收通过**（318 条单测 / 独立页 16 条 / 单页 53 条 / playthrough 98 steps + death-drop 2 steps / resize 4 steps；**单局骨架已按设计文档第 10 章落地**；**技能两批已落地（设计 8.2/8.3/9.3）**；**状态与反应链第一批已落地（设计 8.4 / 8.5）：18 条状态注册表 + 6 元素 5 条反应 + 地面区域（火墙/毒池/冰面）+ 8.8 的视觉语言，技能从 3 个扩到 7 个以覆盖全部元素**；**技能 / 状态 / 怪物 / 全局手感数值已全部表化（`skill.xlsx` / `status.xlsx` / `monster.xlsx` / `combat_rule.xlsx`），改数值不用改代码**；**角色/怪物已有走路与转身动画**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；**画面已全量体素化，正式地图是 128×96 的仙侠院落**）。**steps 会浮动**：23 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 92–100 间变化，`verify-all.sh` 下限固定 35。
 > **2026-11-15 一天做了什么（新会话速读，三分钟对齐）**：
 > ① **技能两批** —— 7 格技能栏 / 法力（不自动恢复）/ 读条与打断 / 蓝药；第二批补表现：
 > **冲锋改成 0.23 秒的分帧位移**、读条举杖 + 法力球、每个技能一套方块特效 + 3.2 秒地面残留。
@@ -59,7 +59,7 @@
 > 副本回收在正式链路里根本走不到）。遗物带冷白环、点名字牌捡回、**耐久跟着走**。
 > 顺手修两个真 bug：`projection().dropPlates` 用世界坐标（相机一偏移，脚本点到的就是空地）、
 > `detach()` 丢耐久（拖一次装备就自动修满）。新增浏览器验收 `scripts/playthrough-death-drop.mjs`。
-> 验收基线：**315 条单测 / 51 条单页壳层 / 15 条独立页 / playthrough 98 + death-drop 2 steps**。
+> 验收基线：**318 条单测 / 53 条单页壳层 / 16 条独立页 / playthrough 98 + death-drop 2 steps**。
 ⑨ **装备规则与药水配置（2026-11-15 23:00）** —— 红蓝药的效果搬进 `tables/consumable.xlsx`（每瓶一行）；
 > **只有武器能进武器槽**（`collectDrop` 不再把药塞进空槽 + `normalizeEquipped()` 兜底 + 3 条测试）；
 > 修「局内背包开着按 1/2 道具整批消失」：页面与 Worker 都在写武器槽（一帧两条快照），改成
@@ -83,7 +83,7 @@
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html`。**③ 2026-11-15 定为默认交付链路**（`scripts\preview-stable.cmd` 一条命令包办：`forgeax project build` → `node scripts/inject-shell.mjs` → 复用/启动 58080 → 开 Chrome）：造化预览宿主是每次构建任务的子进程，**turn 结束就被回收**（表现为「刚说能开、一分钟后就打不开」，端口每次还会变）。要一个稳定地址就直接静态托管 `dist/`：`forgeax project build` → `node scripts/inject-shell.mjs` → `cd dist && python -m http.server 58080 --bind 127.0.0.1`，打开 `http://127.0.0.1:58080/index.html`（浏览器缓存时加 `?v=N`）。这条路走壳层的 hostless 分支：**能玩、不写云存档**。**造化的 `previewUrl` 不要交给用户**：它是当次构建任务的子进程，turn 收尾即被回收（用户实测「刚说能开、一分钟就 `ERR_CONNECTION_REFUSED`」，端口每次还变），只当「代码能跑」的旁证；而且 `preview_reload` 会重建 `dist/` 抹掉壳层，跑完必须重新 `inject-shell`。交付前用 `node scripts/inject-shell.mjs --check`（有壳层 `dist/index.html` ≈139–142KB，没壳层 ≈45KB —— 只看 HTTP 200 会被骗）或 headless 截图自证。注意**不要**直接静态托管 `.game-builder/artifacts/forgeax-player`：那是造化产物，缺宿主注入的 provider，页面会卡在初始化 |
 | 地图 | 正式地图 `128×96` 格 @32px = **4096×3072** 世界像素（仙侠院落：北侧高台、东西厢房、院墙残段 + 香炉）。三个图层：`Terrain`(IntGrid=碰撞权威) / `Entities`(出生点 + 7 只怪 + **传送门**，数量由 LDtk 决定，当前 6 扇) / `Props`(纯装饰，贴素材库图集)。生成链：`bake-voxel-atlas.mjs` → 图集；`gen_arena_map.py` → `arena.ldtk`（之后人工在 LDtk 里改）；`import_map.py` → `arena.generated.ts` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **315**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **318**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
 | 数值表要一起提交吗 | **提交到 git（已提交），但发布产物里没有表也不需要表**。运行时只读 `assets/resource/generated/*.ts`（TS 常量），构建时被编译进 `program-*.js`；xlsx 是**开发期源数据**，不是引擎资产（没有 `.meta.json`，不进 pack）。实测：把 `assets/resource/tables/` 整个移走再 `project build` 仍然成功，产物里 `cost/cooldown/damage` 一个不少（2026-11-15 验证）。**三层保险**：① 发布归档 `forgeax-game-web.zip` 里 0 个 `.ts`/`.xlsx`（只有 js/json/wasm/html）；② `generated/*.ts` 也在 git 里 → 云端构建不跑 python 也能读到数据；③ `verify-all.sh` 跑 `export_tables.py --check`，表与生成物不同步直接失败 |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
@@ -201,13 +201,17 @@
 
 19. **死亡结算红线（2026-11-15 深夜）**：① **死亡规则只有三套**（设计 4：主线全不掉 / 副本掉原地
     可捡回一次 / 搜打撤全丢），唯一实现是 `combat/death-drop.ts::settleOnDeath()`，
-    不许在 `game.pack.ts` 或壳层再写一套 `if kind`。② **保险格只保背包格**（穿戴中的 10 槽永远掉），
-    判定是**整件覆盖**（`meta/inventory.ts::isInsuredItem()`），半个身子露在外面的不算。
-    ③ **`splitOnDeath()` 是两个堆共用的唯一分割规则**（主窗口算「中途退出」、Worker 算「阵亡」），
-    别各写一份。④ **遗物槽是主窗口的**（`MetaShell.deathDrop` → 存档 v3 `extra.deathDrop`），
+    不许在 `game.pack.ts` 或壳层再写一套 `if kind`。② **保险格是独立容器**（`InventoryState.safe`
+    + `CONTAINERS.safe = SAFE`，**不占背包的 40 格** —— 用户 2026-11-15 拍板：像三角洲的保险箱。
+    以前做成「背包左上角 1×2 区域」，玩家会以为背包被占格，自动拾取还会静默把东西保进去）。
+    阵亡只保它，穿搭的 10 槽永远掉。③ **`splitOnDeath()` 是两个堆共用的唯一分割规则**
+    （主窗口算「中途退出」、Worker 算「阵亡」），别各写一份；`kept.safe` 就是保险格。
+    ④ **遗物槽是主窗口的**（`MetaShell.deathDrop` → 存档 v3 `extra.deathDrop`），
     Worker 拿不到也不该拿。⑤ **`reset()` 保留 `fromDeathDrop` 掉落**（R 重开是重玩这张图），
     清空全部掉落是 `deployRun()` 的事。⑥ **耐久必须跟着物品走**：`Drop.durability` →
     `collectDrop(..., durability)`，`detach()`/`instanceOf()` 整份实例搬运，不许只搬 `uid/defId`。
+    ⑦ **自动放置不许进保险格**：`addToBag()` 只写背包，`findFirstFit()` 的默认容器列表不含 `safe`。
+    ⑧ **局内 `RunCommand` 的 `place`/`unequip` 必须带 `container`**，否则拖进保险格会静默落进背包。
 
 `scripts/check-drift.sh` 会把上面 1–19 涉及的文件单独列出来，接手时先看它。
 
@@ -258,11 +262,11 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **315** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-15 深夜保险格批次 +17：`combat/__tests__/death-drop.test.ts` 10 条（摆点 / R 重开保留 / 耐久跟着走 / 遗留回传 / 三套规则）+ `meta/__tests__/insurance.test.ts` 6 条（1×2 赠送 / 整件覆盖 / 分割 / 载荷随出征 / 拖放保耐久）+ `account.test.ts` +1（v3 遗物槽）） |
+| `test` | **318** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-15 深夜保险格批次 +20：`combat/__tests__/death-drop.test.ts` 10 条（摆点 / R 重开保留 / 耐久跟着走 / 遗留回传 / 三套规则）+ `meta/__tests__/insurance.test.ts` 9 条（独立容器 2 格 / 老存档补空容器 / 尺寸门槛 / 背包↔保险格移动 / 自动拾取碰不到它 / 分割 / 载荷往返 / 拖放保耐久）+ `account.test.ts` +1（v3 遗物槽）+ `run-inventory.test.ts` +1（局内命令带 container）） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` 四张表与 `generated/*.ts` 一致，且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
-| `meta-ui` | 四个生成物（inventory / account / talent / voxel）同步 + 独立页面浏览器验收 **15/15**（含「格子画的是模型不是字形」像素断言） |
+| `meta-ui` | 四个生成物（inventory / account / talent / voxel）同步 + 独立页面浏览器验收 **16/16**（含「格子画的是模型不是字形」像素断言） |
 | `build` | `ok` |
 | `single-page shell` | 注入块 `--check` 通过 + `verify-shell.cjs` **51/51**（含 7 条平台身份 / KV 存档、1 条「无宿主不写盘」、2 条平台 lifecycle、局内背包、局内拾取镜像到装备栏、**阵亡只留保险格里的东西**、**副本遗物进存档并下次摆回地图**、**关卡类型选择器**、2 条光标反馈、1 条超时未撤离的结算文案） |
 | `playthrough` 1600x900 | `passed:true`、92–100 steps（下限 35；技能三步 + 反应链两步各含 `advance` 轮询，所以比 44 步多得多）、0 errors |
@@ -277,11 +281,11 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 
 下表把**各模块 `CONTEXT.md`「功能契约（正文）」**逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 315 条＝combat 211（loot 14 + movement **33** + attack-spec 10 +
+删断言不会让这张表悄悄失效。单测 318 条＝combat 212（loot 14 + movement **33** + attack-spec 10 +
 projectiles 10 + weapons 10 + world 11 + modifiers 10 + 单局骨架 extraction 17 + 技能 skills 22 +
 状态与反应 status 28 + **数值表驱动 data-driven 14** + 耐久 durability 14 + **死亡掉落 death-drop 10**，
 含 `run-inventory` 8）、meta 52（inventory 19 + platform-KV account 14 + run-settlement 10 + meta 3 +
-**保险格 insurance 6**）、battle 4、talent 22（talent 15 + starmap-data 7）、
+**保险格 insurance 9**）、battle 4、talent 22（talent 15 + starmap-data 7）、
 resource 14（tables 7 + map 7）、**美术 10（`assets/__tests__/voxel.test.ts`）**、模板 2；
 全量下限 83 条（下限不随新增断言抬高）。
 浏览器验收：playthrough 23 个命名场景（展开 92–100 steps，下限 35）、death-drop 2 步
@@ -339,7 +343,7 @@ resource 14（tables 7 + map 7）、**美术 10（`assets/__tests__/voxel.test.t
 | **关卡类型分流（story 自动完成、pvpve 必须撤离）** | `extraction.test.ts`：`story clears when every monster is down` / `dungeon and pvpve never auto-clear: you must extract` / `deployRun carries the kind into the run` | `verify-shell.cjs`：`deploy sends seed + kind + the whole loadout`（kind = pvpve） |
 | **超时未撤离 = 全部丢失** | `extraction.test.ts`：`running out of time fails the run and freezes it` | `verify-shell.cjs`：`running out of time without extracting loses the run and says so` |
 | **门位来自 LDtk（可拖动）** | `map.test.ts`：`portals are authored in the LDtk entity layer, walkable and reachable`；`extraction.test.ts`：`reads portal positions from the map when the map defines them` | —（`import_map.py` 的 `Portal` 可达性校验 + `gen_arena_map.py --check`） |
-| **保险格（设计 4）** | `meta/__tests__/insurance.test.ts`（6 条）：1×2 赠送 / 越界与垃圾存档夹回包里 / **整件覆盖才算保住** / 阵亡只留保险格 + 10 槽全掉 / 保险格随出征载荷往返 / 拖放保耐久 | `verify-shell.cjs`：`#grid-bag .cell.insured === 2` + 图例存在 + 「阵亡只留下保险格里的东西」+「超时同样只留保险格」 |
+| **保险格（设计 4，独立容器）** | `meta/__tests__/insurance.test.ts`（9 条）：容器形状 2 格 / 老存档补空容器 / 尺寸门槛（剑放不进）/ 背包↔保险格移动 / **自动拾取碰不到它** / 阵亡只留 `safe` + 10 槽全掉 / 载荷往返 / 拖放保耐久 | `verify-meta-ui.cjs`：`#grid-safe` 2 格 + 独立面板 + 背包无保险标记；`verify-shell.cjs`：**真的把背包里的药拖进保险格面板**（`safeDrag`）+「阵亡只留保险格里的东西」 |
 | **副本死亡掉落回收（设计 4）** | `combat/__tests__/death-drop.test.ts`（10 条）：deploy 摆回遗物 / 没载荷的出征清空旧遗物 / R 重开保留地上遗物 / 点拾取带回耐久 / 未捡走的回传 leftover / 空载荷 / 三套死亡规则各一条 | `scripts/playthrough-death-drop.mjs`（2 步 + 两张截图）+ `verify-shell.cjs`：副本阵亡写进存档 v3 的 `extra.deathDrop`、下一次出征把遗物按死亡点发回去 |
 | **任务指引只在主线** | 代码上 `runKind === 'story'` 才出完整提示（`deployRun` / `startChannel` / `paint` 门提示） | 靠截图人工确认：主线有完整句，pvpve 只有「按 E 引导」 |
 

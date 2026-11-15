@@ -50,9 +50,9 @@
   function apply(state) {
     applying = true;
     try {
-      // 保险格（设计 4）：v1/v2 存档没有这个字段，读进来先补成赠送的 1×2，
-      // 否则旧存档的背包里会没有「阵亡不掉」的那块区域。
-      if (state && typeof M.normalizeInsured === 'function') M.normalizeInsured(state);
+      // 保险格现在是独立容器（设计 4）：v1/v2 存档没有 `safe` 字段，先补一个空容器，
+      // 否则旧存档一打开就会在 `state.safe` 上踩空。
+      if (state && typeof M.normalizeContainers === 'function') M.normalizeContainers(state);
       host.setState(state);
       // 星图进度和背包同属一份 blob（v2）。坏数据 / 旧存档回退初始星图，
       // 绝不让存档把局外页面弄白屏（`sanitizeProgress` 内部逐条校验）。

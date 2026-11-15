@@ -463,7 +463,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 
 | 函数 | 契约 |
 |:--|:--|
-| `settleOnDeath(s, survived)` | 成功的局 / 主线阵亡 → `kept` 是整份 `RunLoadout`、`lost` 为空；副本 / 搜打撤阵亡 → `splitOnDeath(s.runInventory)`（`meta/inventory.ts`，两个堆共用） |
+| `settleOnDeath(s, survived)` | 成功的局 / 主线阵亡 → `kept` 是整份 `RunLoadout`、`lost` 为空；副本 / 搜打撤阵亡 → `splitOnDeath(s.runInventory)`（`meta/inventory.ts`，两个堆共用）：**`kept.safe` = 保险格容器里的东西**，`kept.bag` / `kept.equipped` 恒空 |
 | `spawnDeathDrop(s, payload)` | 出征时把上一局遗物摆回地图：间距 44×30、每件过 `nearestWalkable()`（否则 50px 拾取半径够不到）、`Drop.fromDeathDrop = true`、耐久落在 `Drop.durability` |
 | `leftoverDeathDrops(s)` | 本局还没捡走的遗物（结算时交回壳层写进遗物槽，下次进本还在原地） |
 
@@ -471,7 +471,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 
 1. **死亡规则只有三套**（设计 4）：主线全不掉 / 副本掉在原地可捡回一次 / 搜打撤全丢。
    别在 `game.pack.ts` 里再写一套「if kind」分支 —— 一律走 `settleOnDeath()`。
-2. **保险格只保背包格**（穿戴中的 10 槽永远掉）。判定是「整件覆盖」，见 `meta/inventory.ts::isInsuredItem()`。
+2. **保险格是独立容器**（`InventoryState.safe`，穿戴中的 10 槽永远掉）：阵亡只保它，背包全部算丢。
 3. **遗物不产生伤害、不参与击杀计数**：`death-drop.ts` 不 import `attack.ts`，它只往 `s.drops` 里放东西。
 4. **`reset()` 保留 `fromDeathDrop` 的掉落物**（R 重开是「重玩这张图」，图上的东西还在），
    而 `deployRun()` 会先清空全部掉落再摆新遗物 —— 否则重开一次就复制一份，或者一按 R 就把遗物扫没了。

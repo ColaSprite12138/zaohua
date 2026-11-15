@@ -104,7 +104,10 @@
 
   var countItems = function (loadout) {
     if (!loadout) return 0;
-    return loadout.bag.length + loadout.equipped.filter(Boolean).length;
+    // 保险格里的东西也算「带下去的/带回来的」（它是独立容器，不在 bag 里）。
+    return loadout.bag.length
+      + (loadout.safe ? loadout.safe.length : 0)
+      + loadout.equipped.filter(Boolean).length;
   };
 
   /**
