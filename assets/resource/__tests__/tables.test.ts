@@ -107,7 +107,9 @@ describe('resource table contract', () => {
     expect(monster).toHaveLength(2);
     // 16 行怪物池 + 14 行可破坏物池（2026-11-16，设计 10.5：木箱/铜箱走池 3，
     // 舍利匣走池 4 —— 可破坏物不能只有剑池那点收益）。
-    expect(loot_pool).toHaveLength(30);
+    // +3 行箭矢（2026-11-16 弹道落地：池 1/2 各一行，可破坏物池 3 一行）——
+    // 弓要按发数打，就必须有地方捡箭，否则远程武器在实战里等于废掉。
+    expect(loot_pool).toHaveLength(33);
     expect(new Set(item.map((r) => r.id)).size).toBe(15);
     expect(new Set(weapon.map((r) => r.id)).size).toBe(13);
     // 武器阶梯仍是 10/8/6/4/2/1；药各有固定权重，两个池子都能刷到。
@@ -115,10 +117,14 @@ describe('resource table contract', () => {
       const rows = loot_pool.filter((r) => r.loot_pool_id === poolId);
       const weapons = rows.filter((r) => /^(1000|2000)/.test(String(r.item_id)));
       expect(weapons.map((r) => r.weight)).toEqual([10, 8, 6, 4, 2, 1]);
-      const potions = rows.filter((r) => String(r.item_id).startsWith('300'));
+      // 30001 是箭矢（弹药），不是药：别把「300 开头」当成「消耗品」。
+      const potions = rows.filter((r) => /^3000[23]$/.test(String(r.item_id)));
       expect(potions.map((r) => [String(r.item_id), r.weight])).toEqual([
         ['30002', 5], ['30003', 6],
       ]);
+      const arrows = rows.filter((r) => String(r.item_id) === '30001');
+      expect(arrows).toHaveLength(1);
+      expect(arrows[0]!.weight).toBeGreaterThan(0);
     }
     // 武器两表严格 1:1 join；药只在 item 表（没有武器属性）。
     const ids = item.map((r) => r.id as string).sort();

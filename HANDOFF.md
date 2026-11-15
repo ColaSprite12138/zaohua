@@ -19,7 +19,7 @@
 > 第 1 版**明确不做组队**（设计文档 2.1），别提前为联机做同步层。
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-16 全套验收通过**（358 条单测 / 独立页 16 条 / 单页 53 条 / playthrough 98 steps + death-drop 2 steps + destructible 132 steps + worldmap 40 steps / resize 4 steps；**单局骨架已按设计文档第 10 章落地**；**技能两批已落地（设计 8.2/8.3/9.3）**；**状态与反应链第一批已落地（设计 8.4 / 8.5）：18 条状态注册表 + 6 元素 5 条反应 + 地面区域（火墙/毒池/冰面）+ 8.8 的视觉语言，技能从 3 个扩到 7 个以覆盖全部元素**；**技能 / 状态 / 怪物 / 全局手感数值已全部表化（`skill.xlsx` / `status.xlsx` / `monster.xlsx` / `combat_rule.xlsx`），改数值不用改代码**；**角色/怪物已有走路与转身动画**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；**画面已全量体素化，正式地图是 256×160（四区环形）的仙侠院落**；**大地图 / 分区第一批已落地（设计 11）：四区环形 + `M` 大地图 + HUD 区域名**）。**steps 会浮动**：23 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 92–100 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-16 全套验收通过**（388 条单测 / 独立页 16 条 / 单页 53 条 / playthrough 98 steps + death-drop 2 steps + destructible 132 steps + worldmap 40 steps + **projectile 42 steps** / resize 4 steps；**单局骨架已按设计文档第 10 章落地**；**技能两批已落地（设计 8.2/8.3/9.3）**；**状态与反应链第一批已落地（设计 8.4 / 8.5）：18 条状态注册表 + 6 元素 5 条反应 + 地面区域（火墙/毒池/冰面）+ 8.8 的视觉语言，技能从 3 个扩到 7 个以覆盖全部元素**；**技能 / 状态 / 怪物 / 全局手感数值已全部表化（`skill.xlsx` / `status.xlsx` / `monster.xlsx` / `combat_rule.xlsx`），改数值不用改代码**；**弹道已落地（2026-11-16）：箭矢 / 弹道法术 / 怪物远程共用 `projectile.xlsx` 驱动的飞行体，指向性（锁定追踪）与非指向性（可被走位躲开）两种形态**；**角色/怪物已有走路与转身动画**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；**画面已全量体素化，正式地图是 256×160（四区环形）的仙侠院落**；**大地图 / 分区第一批已落地（设计 11）：四区环形 + `M` 大地图 + HUD 区域名**）。**steps 会浮动**：23 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 92–100 间变化，`verify-all.sh` 下限固定 35。
 > **2026-11-15 一天做了什么（新会话速读，三分钟对齐）**：
 > ① **技能两批** —— 7 格技能栏 / 法力（不自动恢复）/ 读条与打断 / 蓝药；第二批补表现：
 > **冲锋改成 0.23 秒的分帧位移**、读条举杖 + 法力球、每个技能一套方块特效 + 3.2 秒地面残留。
@@ -38,6 +38,12 @@
 > 1920×1080 实测：文字区锐度 +10~18%、地面与角色 +16%，FPS 145 不变。**这条是「提高分辨率」的第
 > 一步（只去糊、不去粗）**；体素格子仍是 4px，要让动作/模型更精细必须动 `unit`，见 `docs/art-style.md`
 > 与本次讨论的三条路线（A 缓冲 / B 网格 / C 占屏比）。
+> ⑦ **弹道（2026-11-16 凌晨）** —— `combat/projectile-runtime.ts` + `combat/ranged.ts` + `tables/projectile.xlsx`：
+> 弓箭在代码里**不再是射程 170 的剑**（以前点怪就贴脸砍）；**指向性**（玩家弓箭锁人追踪）
+> 与**非指向性**（骷髅箭 / 火球只管方向、走位能躲）是同一套飞行体上的两个属性；
+> 箭矢按件消耗（没箭免费拒绝 + toast），火球点哪炸哪、落地留火。
+> 玩家掉血收口到 `attack.ts::damagePlayer()`（怪物出刀 / 弹道 / DOT 共用无敌帧与耐久）。
+> 契约在 `assets/combat/CONTEXT.md`「弹道」，不变量 58–62；验收 `scripts/playthrough-projectile.mjs`。
 > ⑦ **星图 + 等级（第四批，2026-11-15 22:20 修订为亲和版）** —— 设计 6.1–6.4 / **6.3 v7** 落地：
 > `tables/level.xlsx`（18 级封顶）+ `tables/constellation.xlsx`（8 星座，**按颜色亲和开锁**）+
 > `tables/starmap.xlsx`（23 节点，每个节点产亲和；**没有节点前置、面板不画连线**）+ `monster.xlsx::xp`；
@@ -80,7 +86,7 @@
 > 正式图现在是 **12 扇门 / 17 个可破坏物 / 20 只怪**（LDtk 实体决定，不是代码）。
 > 投影新增 `bigMap` / `zone{id,name}` / `regions[{id,name,x,y}]`（屏幕归一化，x 除 VIEW_W、y 除 VIEW_H）；
 > **`zones` 这个字段名早被地面区域（火墙/毒池）占用，分区必须叫 `regions`**。
-> 验收：**358 单测**（+8 `zones.test.ts`）/ 新增 `scripts/playthrough-worldmap.mjs` 8 步 + 8 张截图
+> 验收：**388 单测**（+29 弹道 / +8 `zones.test.ts`）/ 新增 `scripts/playthrough-worldmap.mjs` 8 步 + 8 张截图
 > （四区各一张 + 大地图 + 1280x600）。
 ⑨ **装备规则与药水配置（2026-11-15 23:00）** —— 红蓝药的效果搬进 `tables/consumable.xlsx`（每瓶一行）；
 > **只有武器能进武器槽**（`collectDrop` 不再把药塞进空槽 + `normalizeEquipped()` 兜底 + 3 条测试）；
@@ -105,7 +111,7 @@
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html`。**③ 2026-11-15 定为默认交付链路**（`scripts\preview-stable.cmd` 一条命令包办：`forgeax project build` → `node scripts/inject-shell.mjs` → 复用/启动 58080 → 开 Chrome）：造化预览宿主是每次构建任务的子进程，**turn 结束就被回收**（表现为「刚说能开、一分钟后就打不开」，端口每次还会变）。要一个稳定地址就直接静态托管 `dist/`：`forgeax project build` → `node scripts/inject-shell.mjs` → `cd dist && python -m http.server 58080 --bind 127.0.0.1`，打开 `http://127.0.0.1:58080/index.html`（浏览器缓存时加 `?v=N`）。这条路走壳层的 hostless 分支：**能玩、不写云存档**。**造化的 `previewUrl` 不要交给用户**：它是当次构建任务的子进程，turn 收尾即被回收（用户实测「刚说能开、一分钟就 `ERR_CONNECTION_REFUSED`」，端口每次还变），只当「代码能跑」的旁证；而且 `preview_reload` 会重建 `dist/` 抹掉壳层，跑完必须重新 `inject-shell`。交付前用 `node scripts/inject-shell.mjs --check`（有壳层 `dist/index.html` ≈139–142KB，没壳层 ≈45KB —— 只看 HTTP 200 会被骗）或 headless 截图自证。注意**不要**直接静态托管 `.game-builder/artifacts/forgeax-player`：那是造化产物，缺宿主注入的 provider，页面会卡在初始化 |
 | 地图 | 正式地图 **`256×160` 格 @32px = 8192×5120 世界像素**，**四区环形**（院落 → 东廊 → 石窟 → 水榭 → 院落；分区矩形由 `gen_arena_map.py::ZONES` 定，`import_map.py` 校验铺满 / 每区 ≥2 通道 / 每区有门）。三个图层不变：`Terrain`(IntGrid=碰撞权威) / `Entities`(出生点 + **20 只怪** + **12 扇传送门** + **17 个可破坏物** + **2 个事件点**，数量全由 LDtk 决定) / `Props`(纯装饰，贴素材库图集)。生成链：`bake-voxel-atlas.mjs` → 图集；`gen_arena_map.py` → `arena.ldtk`（之后人工在 LDtk 里改）；`import_map.py` → `arena.generated.ts`（含 `zones`）。**改分区只能改 `ZONES` 并重跑导入**，代码里没有第二份坐标 |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **358**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **388**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
 | 数值表要一起提交吗 | **提交到 git（已提交），但发布产物里没有表也不需要表**。运行时只读 `assets/resource/generated/*.ts`（TS 常量），构建时被编译进 `program-*.js`；xlsx 是**开发期源数据**，不是引擎资产（没有 `.meta.json`，不进 pack）。实测：把 `assets/resource/tables/` 整个移走再 `project build` 仍然成功，产物里 `cost/cooldown/damage` 一个不少（2026-11-15 验证）。**三层保险**：① 发布归档 `forgeax-game-web.zip` 里 0 个 `.ts`/`.xlsx`（只有 js/json/wasm/html）；② `generated/*.ts` 也在 git 里 → 云端构建不跑 python 也能读到数据；③ `verify-all.sh` 跑 `export_tables.py --check`，表与生成物不同步直接失败 |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
@@ -284,9 +290,9 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **358** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-16 分区批次 +8：`combat/__tests__/zones.test.ts` 8 条（四区 id / 铺满不重叠 / 世界 256×160 / **每区 ≥2 通道** / 每区有门有怪有箱有事件点 / 出生点可达四区中心 / 图外返回 null / 无分区夹具不崩）；2026-11-16 可破坏物批次 +32：`combat/__tests__/destructibles.test.ts` 18 条（表驱动 / 站桩 / 打断 / 机关 / 产出 / 声响 / 沉睡不动 / **砸开后不复活**）+ `events.test.ts` 9 条（第 7 分钟 / 只触发一次 / 画在事件点 / 光柱衰减 / 惊动 / 结束不刷 / 重开复位 / 守门）+ `data-driven.test.ts` +5；2026-11-15 深夜保险格批次 +20：`combat/__tests__/death-drop.test.ts` 10 条（摆点 / R 重开保留 / 耐久跟着走 / 遗留回传 / 三套规则）+ `meta/__tests__/insurance.test.ts` 9 条（独立容器 2 格 / 老存档补空容器 / 尺寸门槛 / 背包↔保险格移动 / 自动拾取碰不到它 / 分割 / 载荷往返 / 拖放保耐久）+ `account.test.ts` +1（v3 遗物槽）+ `run-inventory.test.ts` +1（局内命令带 container）） |
+| `test` | **388** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-16 弹道批次 +29：`combat/__tests__/projectiles.test.ts` 重写为 17 条（子步防穿透 / 撞墙与出界上报落点 / 射程消散 / 命中容错叠加 / **锁定弹会拐弯追移动目标** / 非指向性打空 / 穿透不重复命中）+ `projectile-runtime.test.ts` 19 条（表 join 缺行抛错 / 锁定与方向两种发射 / 撞墙拦截 / 溅射 / 落地留火 / **点哪炸哪** / 打人走 damagePlayer 且吃无敌帧 / 弹道击杀照样给经验掉战利品 / 箭矢按件消耗与空弹匣免费拒绝）+ `attack-spec.test.ts` 重写为 14 条（弓=锁定+弹药、射程与弹速来自表）；2026-11-16 分区批次 +8：`combat/__tests__/zones.test.ts` 8 条（四区 id / 铺满不重叠 / 世界 256×160 / **每区 ≥2 通道** / 每区有门有怪有箱有事件点 / 出生点可达四区中心 / 图外返回 null / 无分区夹具不崩）；2026-11-16 可破坏物批次 +32：`combat/__tests__/destructibles.test.ts` 18 条（表驱动 / 站桩 / 打断 / 机关 / 产出 / 声响 / 沉睡不动 / **砸开后不复活**）+ `events.test.ts` 9 条（第 7 分钟 / 只触发一次 / 画在事件点 / 光柱衰减 / 惊动 / 结束不刷 / 重开复位 / 守门）+ `data-driven.test.ts` +5；2026-11-15 深夜保险格批次 +20：`combat/__tests__/death-drop.test.ts` 10 条（摆点 / R 重开保留 / 耐久跟着走 / 遗留回传 / 三套规则）+ `meta/__tests__/insurance.test.ts` 9 条（独立容器 2 格 / 老存档补空容器 / 尺寸门槛 / 背包↔保险格移动 / 自动拾取碰不到它 / 分割 / 载荷往返 / 拖放保耐久）+ `account.test.ts` +1（v3 遗物槽）+ `run-inventory.test.ts` +1（局内命令带 container）） |
 | `tsc --noEmit` | 0 error |
-| `tables` | `export_tables.py --check` **十六**张表与 `generated/*.ts` 一致，且 `validate_package()` 校验全部 OOXML 部件 |
+| `tables` | `export_tables.py --check` **十四**张表与 `generated/*.ts` 一致（含新表 `projectile.xlsx`；表目录是唯一权威，别在这里写死数字），且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
 | `meta-ui` | 四个生成物（inventory / account / talent / voxel）同步 + 独立页面浏览器验收 **16/16**（含「格子画的是模型不是字形」像素断言） |
 | `build` | `ok` |
@@ -305,15 +311,16 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 
 下表把**各模块 `CONTEXT.md`「功能契约（正文）」**逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 **358** 条＝combat **252**（17 个文件：loot / movement / attack-spec /
-projectiles / weapons / world / modifiers / 单局骨架 extraction 17 / 技能 skills 22 / 状态与反应 status 28 /
+删断言不会让这张表悄悄失效。单测 **388** 条＝combat **282**（19 个文件：loot / movement / attack-spec /
+projectiles 17 / **projectile-runtime 19** / weapons / world / modifiers / 单局骨架 extraction 17 / 技能 skills 22 / 状态与反应 status 28 /
 数值表驱动 data-driven / 耐久 durability / 死亡掉落 death-drop 10 / 可破坏物 destructibles 18 / 单局事件 events 9 /
 `run-inventory` 9 / **分区 zones 8**）、meta **54**（inventory / platform-KV account / run-settlement / meta 3 /
 **保险格 insurance 9**）、battle 4、talent 22（talent 15 + starmap-data 7）、
 resource 14（tables 7 + map 7）、**美术 12（`assets/__tests__/voxel.test.ts`）**；
 全量下限 83 条（下限不随新增断言抬高）。
 浏览器验收：playthrough 23 个命名场景（展开 92–100 steps，下限 35）、death-drop 2 步
-（遗物摆点 / 点回 / 耐久）、**worldmap 8 个命名场景（展开 40 steps，下限 6）**、独立页 16 条、4174 单页 53 条（含 7 条平台身份 / KV 存档 +
+（遗物摆点 / 点回 / 耐久）、**worldmap 8 个命名场景（展开 40 steps，下限 6）**、
+**projectile 6 个命名场景（展开 42 steps，下限 6：箭在飞 / 锁定命中 / 箭矢耗尽拒绝 / 火球飞行 / 落地留火 / 骷髅箭打人）**、独立页 16 条、4174 单页 53 条（含 7 条平台身份 / KV 存档 +
 1 条「无宿主不写盘」+ 2 条平台 lifecycle + 2 条光标反馈 + 3 条保险格 / 遗物 / 关卡类型）。
 真实硬件 WebGPU 冒烟（历史一次性脚本）：`node artifacts/smoke-login-bag.mjs` 曾覆盖「强制登录 / 刷新后存档」，
 **该脚本按已删除的本地登录 + 本地存盘流程编写，现已不适用**；现行契约里无宿主不写盘、刷新不恢复，

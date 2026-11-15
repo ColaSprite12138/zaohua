@@ -1,21 +1,22 @@
 /**
- * Targeted melee. A click on an enemy queues exactly ONE swing; the swing
- * fires only in range and damages ONLY that locked enemy. No cone, no splash,
- * no soft lock onto a different monster.
+ * 近战命中 / 受击 / 掉落 / 玩家掉血 —— 战斗的**两个伤害出口**都在这个文件里。
+ *
+ * 普攻与技能的「打怪」走 `damageSkeleton()`（唯一入口）；怪物出刀、弹道命中、
+ * DOT 的「打人」走 `damagePlayer()`（唯一入口）。近战的出手判定本身在
+ * `ranged.ts::resolveAttackOrder()` —— 那里按当前武器槽分派近战 / 远程。
  */
 
 import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { activeWeaponBroken, weaponUsable, wearWeapon } from './durability.ts';
-import { burst, say, setTarget } from './effects.ts';
+import { burst, say } from './effects.ts';
 import { monsterXp, rollLoot } from './loot.ts';
 import { weaponDamage } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
 import { applyStatus, clearStatus, damageTakenMultiplier, lockedFlags, statusOf } from './status.ts';
 import { walkable, type World } from './world.ts';
 import {
-  activeWeapon, DROP_MODEL_RADIUS, dropLabelRect, MELEE_RANGE_ARMED,
-  MELEE_RANGE_BARE, nextDropUid, PLAYER_ATTACK_CD, PLAYER_SWING_TIME,
-  type Drop, type GameState,
+  activeWeapon, DROP_MODEL_RADIUS, dropLabelRect, nextDropUid,
+  PLAYER_ATTACK_CD, PLAYER_SWING_TIME, type Drop, type GameState,
 } from './state.ts';
 
 /** Clickable body box of a living skeleton (art spans about [-21,21] x [-57,0]). */
@@ -265,35 +266,47 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   burst(s, p.x + Math.cos(aim) * 52, p.y + Math.sin(aim) * 52 - 22, '#cfe8ff', 5, 90);
 }
 
-/** Out of range -> approach; in range + ready -> one swing; cooling down -> wait. */
-export function resolveAttackOrder(s: GameState, mods: CombatModifiers): void {
-  if (s.player.dodge > 0 || !s.attackOrder || s.targetEnemy === null) return;
-  // 缴械 / 硬控（晕眩、冻结、麻痹…）：普攻入口在这里一次性挡住。
-  if (lockedFlags(s.player).noAttack) {
-    clearAttackOrder(s);
-    return;
-  }
-  const index = s.targetEnemy;
-  const sk = s.skeletons[index];
-  if (sk === undefined || !sk.alive) {
-    clearAttackOrder(s);
-    return;
-  }
-  // 损坏 = 空手距离（同一条判定，不要只看槽里有没有东西）。
-  const baseRange = activeWeapon(s) !== null && !activeWeaponBroken(s)
-    ? MELEE_RANGE_ARMED : MELEE_RANGE_BARE;
-  const range = baseRange + mods.meleeRangeBonus();
-  const d = Math.hypot(sk.x - s.player.x, sk.y - s.player.y);
-  if (d > range - 8) {
-    setTarget(s, sk.x, sk.y);
-    s.moveMode = 'point';
-  } else if (s.player.attackCd <= 0) {
-    swingAtTarget(s, index, mods);
-    clearAttackOrder(s);
-    setTarget(s, s.player.x, s.player.y);
-    s.moveMode = 'idle';
-  } else {
-    setTarget(s, s.player.x, s.player.y);
-    s.moveMode = 'point';
-  }
+/* ------------------------------------------------- 玩家掉血（唯一入口） */
+
+export interface PlayerDamageOptions {
+  readonly color?: string;
+  /** 来源标签（弹道名 / 状态名），只用于文案与排查。 */
+  readonly source?: string;
+  /**
+   * 是否吃无敌帧。**攻击类伤害吃**（闪避 / 受击硬直期间不再掉血），
+   * **DOT / 区域伤害不吃** —— 站在火里翻滚不该免疫灼烧。
+   */
+  readonly invuln?: boolean;
+  /** 是否算「承受伤害」扣耐久（设计 7.4 的 7:3）。DOT 也算。 */
+  readonly wear?: boolean;
+  /** 阵亡文案。 */
+  readonly deathText?: string;
+}
+
+/**
+ * 玩家掉血的**唯一出口**：怪物出刀、弹道命中、DOT / 地面区域三条路都走这里。
+ *
+ * 为什么必须收成一个入口：无敌帧、受伤闪红、掉耐久、阵亡结算这四件事各自散在
+ * 三处时，「翻滚到底有没有用」会变成三个不同的答案。收口之后只需要读一个函数。
+ */
+export function damagePlayer(
+  s: GameState,
+  amount: number,
+  options: PlayerDamageOptions = {},
+): boolean {
+  if (s.gameOver || s.extracted || s.timedOut || s.cleared) return false;
+  if (amount <= 0) return false;
+  const p = s.player;
+  if ((options.invuln ?? true) && p.invuln > 0) return false;
+  // 易伤（软控）对**所有**打向玩家的伤害生效：和怪物打怪走同一条倍率表。
+  const taken = amount * damageTakenMultiplier(p);
+  s.hp = Math.max(0, s.hp - taken);
+  if (options.wear ?? true) wearWeapon(s, 0, taken);
+  p.hurt = Math.max(p.hurt, options.invuln === false ? 0.18 : 0.35);
+  if (options.invuln ?? true) p.invuln = 0.7;
+  burst(s, p.x, p.y - 26, options.color ?? '#ff6b6b', 8, 120);
+  if (s.hp > 0) return false;
+  s.gameOver = true;
+  say(s, options.deathText ?? '你被击倒了 · 按 R 重新开始');
+  return true;
 }

@@ -14,8 +14,7 @@
  */
 
 import { combat_rule } from '../resource/generated/combat_rule.ts';
-import { damageSkeleton } from './attack.ts';
-import { wearWeapon } from './durability.ts';
+import { damagePlayer, damageSkeleton } from './attack.ts';
 import { burst, say } from './effects.ts';
 import {
   DOT_TICK_SECONDS, REACTION_CHAIN_RADIUS, ZONE_RADIUS_MAX, ZONE_TICK_SECONDS,
@@ -306,16 +305,11 @@ function tickHost(
   host.statuses.push(...alive);
 }
 
-/** 玩家掉血（没有 `damageSkeleton` 这种入口：玩家不滚落、不计击杀）。 */
+/** 玩家掉血：走 `attack.ts::damagePlayer()`，和怪物出刀 / 弹道共用同一条路。 */
 function hurtPlayer(s: GameState, amount: number, color: string): void {
-  if (s.gameOver || s.extracted || s.timedOut || amount <= 0) return;
-  s.hp = Math.max(0, s.hp - amount);
-  // DOT / 区域伤害同样算「承受伤害」：站在自己火墙里也要付耐久（7.4）。
-  wearWeapon(s, 0, amount);
-  s.player.hurt = Math.max(s.player.hurt, 0.18);
-  burst(s, s.player.x, s.player.y - 26, color, 4, 70);
-  if (s.hp <= 0) {
-    s.gameOver = true;
-    say(s, '你被持续伤害击倒了 · 按 R 重新开始');
-  }
+  damagePlayer(s, amount, {
+    color,
+    invuln: false,     // DOT 不吃无敌帧：站在火里翻滚不该免疫灼烧
+    deathText: '你被持续伤害击倒了 · 按 R 重新开始',
+  });
 }

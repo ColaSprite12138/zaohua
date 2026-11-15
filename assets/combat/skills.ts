@@ -25,6 +25,7 @@ import { POTION_MANA, POTION_SECONDS } from './consumables.ts';
 export { drinkPotion } from './consumables.ts';
 export { POTION_MANA, POTION_SECONDS, POTION_HP_HEAL, healPotion, countConsumable } from './consumables.ts';
 import { skill as skillTable } from '../resource/generated/skill.ts';
+import { fireProjectile } from './projectile-runtime.ts';
 import { applyElement, spawnZone } from './reactions.ts';
 import { applyStatus, lockedFlags } from './status.ts';
 import {
@@ -34,16 +35,18 @@ import {
 } from './state.ts';
 
 /**
- * 技能的作用形态。加一个「新技能」= 复用这六种之一，或在这里加一种 + 一个 resolver。
+ * 技能的作用形态。加一个「新技能」= 复用这七种之一，或在这里加一种 + 一个 resolver。
  *
  * - `sweep` 以自身为圆心的范围
  * - `dash`  分帧位移，沿途命中
- * - `bolt`  直线走廊
+ * - `bolt`  直线走廊（瞬发判定，没有飞行时间）
  * - `cone`  朝光标方向的一扇形（水浪）
  * - `zone`  在光标处放一片地面区域（火墙 / 毒池）
  * - `strike` 在光标处砸一片圆形（落雷）
+ * - `missile` **弹道法术**（火球）：真的飞出去，能被打断视线 / 被走位躲开，
+ *   落点才结算。和 `bolt` 的区别是「有飞行时间」，这是非指向性的核心
  */
-export type SkillKind = 'sweep' | 'dash' | 'bolt' | 'cone' | 'zone' | 'strike';
+export type SkillKind = 'sweep' | 'dash' | 'bolt' | 'cone' | 'zone' | 'strike' | 'missile';
 
 /** 地面区域规格：`zone` 类技能用。 */
 export interface SkillZone {
@@ -77,6 +80,8 @@ export interface SkillDef {
   readonly status?: StatusId;
   /** 留一片地面区域（火墙 / 毒池）。 */
   readonly zone?: SkillZone;
+  /** `missile` 形态用的弹道原型（`projectile.xlsx` 的一行）。 */
+  readonly projectile?: string;
 }
 
 /**
@@ -93,6 +98,8 @@ interface SkillMechanics {
   readonly status?: StatusId;
   /** 地面区域的元素；半径与时长在表里。 */
   readonly zoneElement?: ElementId;
+  /** `missile` 形态的弹道原型 id（数值 / 溅射 / 落地留火都在 `projectile.xlsx`）。 */
+  readonly projectile?: string;
 }
 
 /**
@@ -114,6 +121,12 @@ const SKILL_MECHANICS: Readonly<Record<string, SkillMechanics>> = Object.freeze(
   venom_pool: Object.freeze({ kind: 'zone', icon: 'venom_pool', element: 'poison', zoneElement: 'poison' }),
   water_wave: Object.freeze({ kind: 'cone', icon: 'water_wave', element: 'water' }),
   thunder: Object.freeze({ kind: 'strike', icon: 'thunder', element: 'shock' }),
+  /**
+   * 火球：**非指向性弹道法术**。它和火墙同属火，但换取的是「远距离 + 会飞」
+   * 而不是「一片地」。落地留火与溅射半径都在 `projectile.xlsx::fireball` 里，
+   * 所以这一行只声明「我是弹道形态、用哪个弹」。
+   */
+  fireball: Object.freeze({ kind: 'missile', icon: 'fireball', element: 'fire', projectile: 'fireball' }),
 });
 
 /**
@@ -133,6 +146,11 @@ function buildSkills(): Record<string, SkillDef> {
     if (wantsZone !== (mech.zoneElement !== undefined)) {
       throw new Error(`技能 ${row.id} 的区域配置与机制不符：表 zone_radius=${row.zone_radius}，机制 zoneElement=${mech.zoneElement ?? '无'}`);
     }
+    // 弹道形态与「有没有指定弹」必须一致：少了会打出一发没有数值的弹，
+    // 多了会让一个瞬发技能偷偷变成飞行体。
+    if ((mech.kind === 'missile') !== (mech.projectile !== undefined)) {
+      throw new Error(`技能 ${row.id} 的形态与弹道配置不符：kind=${mech.kind}，projectile=${mech.projectile ?? '无'}`);
+    }
     out[row.id] = Object.freeze({
       id: row.id,
       name: row.name,
@@ -150,6 +168,7 @@ function buildSkills(): Record<string, SkillDef> {
       ...(mech.zoneElement !== undefined
         ? { zone: Object.freeze({ element: mech.zoneElement, radius: row.zone_radius, life: row.zone_life }) }
         : {}),
+      ...(mech.projectile !== undefined ? { projectile: mech.projectile } : {}),
     });
   }
   for (const id of Object.keys(SKILL_MECHANICS)) {
@@ -334,6 +353,7 @@ function resolveSkill(
   else if (def.kind === 'bolt') bolt(s, def, aim, damage);
   else if (def.kind === 'cone') cone(s, def, aim, damage);
   else if (def.kind === 'zone') zone(s, def, aim, damage);
+  else if (def.kind === 'missile') missile(s, def, aim, damage);
   else strike(s, def, aim, damage);
 }
 
@@ -595,6 +615,47 @@ function zone(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
   spawnZone(s, def.zone.element, x, y, radius, def.zone.life, def.id);
   spawnFx(s, def.zone.element === 'fire' ? 'fire' : 'venom', x, y, p.face, radius, 0.85);
   say(s, `「${def.name}」铺开 · ${hits > 0 ? `命中 ${hits} 个目标` : '地面已点燃'}`);
+}
+
+/**
+ * 弹道法术（火球）：**真的飞出去**，不是瞬发的走廊判定。
+ *
+ * 这是「非指向性」在玩家侧的落点：起手只决定角度，之后不再修正 —— 怪走开就
+ * 打空（`projectile.xlsx::fireball` 的 homing = 0）。代价与收益都在这条上：
+ * 换来了 640px 的射程、92px 的溅射和落地一片火，换来的是「可能白放一发」。
+ *
+ * 命中 / 撞墙 / 飞满射程的结算统一在 `projectile-runtime.ts`：溅射与火焰区域
+ * 都由弹道原型决定，技能这边只负责「扔出去」。
+ */
+function missile(
+  s: GameState, def: SkillDef, aim: { x: number; y: number }, damage: number,
+): void {
+  const p = s.player;
+  if (def.projectile === undefined) return;
+  // 落点钳到 reach 内：和火墙 / 落雷同一条「不能隔半张图丢」的规矩。
+  let dx = aim.x - p.x;
+  let dy = aim.y - p.y;
+  const d = Math.hypot(dx, dy) || 1;
+  if (d > def.reach) {
+    dx = (dx / d) * def.reach;
+    dy = (dy / d) * def.reach;
+  }
+  const spot = { x: p.x + dx, y: p.y + dy };
+  const angle = Math.atan2(dy, dx);
+  p.face = angle;
+  p.castPose = Math.max(p.castPose, 0.24);
+  fireProjectile(s, {
+    owner: 'player',
+    projectileId: def.projectile,
+    damage,
+    from: { x: p.x, y: p.y },
+    aim: spot,
+    angle,
+    // 「点哪炸哪」：飞行距离取到落点为止，而不是飞到原型射程尽头。
+    aimRange: Math.hypot(dx, dy),
+    sourceId: def.id,
+  });
+  spawnFx(s, 'fire', p.x, p.y, angle, 26, 0.35);
 }
 
 /** 落雷：读条结束后在光标处砸一片圆形（雷元素附着）。 */

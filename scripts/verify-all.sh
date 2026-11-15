@@ -167,6 +167,13 @@ run_json worldmap "$FX" project play \
   --script scripts/playthrough-worldmap.mjs --json
 check_report worldmap artifacts/play/scripts/playthrough-worldmap/play.json 6
 
+# 弹道（2026-11-16，设计 7.4 / 8.7 的远程部分）：一支箭必须是**看得见的飞行体**，
+# 指向性（锁定）与非指向性（火球）都要有，箭矢按件消耗（打空了要拒绝并说话），
+# 骷髅弓手的箭也要真的打到人。真地图，所以必须走到弓手射程内 —— 夹具没有弓手。
+run_json projectile "$FX" project play \
+  --script scripts/playthrough-projectile.mjs --json
+check_report projectile artifacts/play/scripts/playthrough-projectile/play.json 6
+
 run_json package node scripts/package-with-shell.mjs --format web-zip --output "$OUT/forgeax-game-web.zip" --json
 ( cd "$OUT" && sha256sum -c forgeax-game-web.zip.sha256 ) >> "$SUMMARY" 2>&1 \
   || die "package：sha256 校验失败"

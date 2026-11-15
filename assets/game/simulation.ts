@@ -96,7 +96,20 @@ export {
   zoneAt,
   zoneRect,
   zoneChannels,
+  // 弹道（2026-11-16）：绘制层画箭 / 火球，HUD 读弹药，验收读飞行体与计数。
+  BODY_LIFT,
+  PROJECTILES,
+  activeAmmo,
+  ammoCount,
+  fireProjectile,
+  needsAmmo,
+  projectileProfile,
+  projectileSnapshot,
+  takeAmmo,
+  updateProjectiles,
+  weaponSpec,
 } from '../combat/simulation.ts';
+export type { ProjectileStats, ProjectileProfile } from '../combat/simulation.ts';
 export type { RunLoadout } from '../meta/inventory.ts';
 export {
   applyRunCommand, ensureItemCatalog, makeRunInventory, snapshotRun,

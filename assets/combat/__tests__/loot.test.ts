@@ -186,23 +186,34 @@ describe('arena population and loot settlement', () => {
 
   it('explicitly picking up a drop carries its authored item id to settlement', () => {
     const s = createState({ seed: 777 });
-    s.skeletons[0]!.hp = 1;
-    swingAtTarget(s, 0, NO_MODIFIERS);
-    const expected = s.lootLog[0]!.itemId;
+    // 掉落池会随内容批次增删（2026-11-16 加了箭矢），所以这里不假定「第一只怪掉什么」，
+    // 而是杀到第一把**武器**掉出来 —— 断言的是「武器会进武器槽」，不是某次随机的结果。
+    let drop: (typeof s.drops)[number] | null = s.drops[0] ?? null;
+    for (let i = 0; i < s.skeletons.length && (drop === null || weaponRow(drop.itemId ?? '') === undefined); i += 1) {
+      s.skeletons[i]!.hp = 1;
+      swingAtTarget(s, i, NO_MODIFIERS);
+      drop = s.drops.find((d) => weaponRow(d.itemId ?? '') !== undefined) ?? null;
+    }
+    if (drop === null) throw new Error('这局没有掉出任何武器，没法验「进武器槽」');
+    const expected = drop.itemId!;
     // A click on the drop is the ONLY thing that orders a pickup.
-    const drop = s.drops[0]!;
     s.player.x = drop.x;
     s.player.y = drop.y;
     s.pickupTarget = drop.uid;
     updateDrops(s, 1 / 60);
-    expect(s.drops).toHaveLength(0);
+    expect(s.drops.some((d) => d.uid === drop!.uid)).toBe(false);
     expect(s.carriedItems).toEqual([expected]);
     // The authored id now lives in the Worker's OWN inventory, not in a
     // settlement queue that had to be replayed in the main window.
-    expect(s.runInventory.equipped[0]?.defId).toBe(expected);
-    expect(s.weaponSlots[0]).toBe(expected);
-    expect(projection(s).weaponDefIds[0]).toBe(expected);
-    expect(projection(s).equippedWeapon).toBe('longsword');
+    const equippedIds = s.runInventory.equipped.filter((it) => it !== null).map((it) => it!.defId);
+    const bagIds = s.runInventory.bag.map((it) => it.defId);
+    expect(equippedIds.concat(bagIds)).toContain(expected);
+    if (weaponRow(expected)?.weapon_subtype !== '子弹') {
+      // 近战 / 远程武器会占武器槽；弹药（30001）只进背包。
+      expect(equippedIds).toContain(expected);
+      expect(projection(s).weaponDefIds).toContain(expected);
+      expect(projection(s).equippedWeapon).toBe('longsword');
+    }
   });
 
   it('walking past a drop without clicking never collects it', () => {

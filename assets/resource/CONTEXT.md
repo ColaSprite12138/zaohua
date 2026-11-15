@@ -38,8 +38,9 @@
 | `item.xlsx` | `combat/`、`meta/` | 15 行物品通用信息 `id / name / item_type / stack_size`：12 件武器 + `30001` 弓箭（`弹药`）+ **`30002` 红药 / `30003` 蓝药（`消耗品`，1×1）**；`item_type` 决定能不能装备与占几格 |
 | `weapon.xlsx` | `combat/`、`meta/` | 13 行武器专属信息 `id / quality / weapon_subtype / damage_min / damage_max / **durability**`（2026-11-15 加，消费方 `combat/durability.ts` 与局外武器槽耐久条）；`weapon_subtype` 是攻击方式**唯一权威** |
 | `monster.xlsx` | `combat/`、`battle/`（地图引用校验） | 怪物 id → 掉落池 id（骷髅剑士 → 1，骷髅弓手 → 2）**+ 战斗手感四列 `walk_speed / attack_interval / attack_damage / sense_radius`**（2026-11-15 加前三列，2026-11-16 加感知半径：沉睡的怪只有在感知圈内 / 挨打 / 附近被砸开时才醒）；2026-11-12 由 `monster_loot.xlsx` 改名，生成物为 `monster.ts` / 常量 `monster` |
-| `loot_pool.xlsx` | `combat/` | 掉落池内各物品的权重：池 1/2 是怪物（武器阶梯 10/8/6/4/2/1 + 两瓶药 红 5 / 蓝 6）；**池 3/4 是可破坏物**（2026-11-16 加：木箱/铜箱走池 3，舍利匣走池 4，才有资格抽紫装 / 橙装 / 名字武器） |
-| `skill.xlsx` | `combat/skills.ts` | **7 个主动技能的数值**：`cost / cooldown / cast_time / damage / reach / width / zone_radius / zone_life / name / hint`。机制列（`kind` / `element` / `status` / `icon`）留在代码 |
+| `loot_pool.xlsx` | `combat/` | 掉落池内各物品的权重：池 1/2 是怪物（武器阶梯 10/8/6/4/2/1 + 两瓶药 红 5 / 蓝 6 + **箭矢 `30001` 6/8**：弓要按件打就必须有地方捡箭）；**池 3/4 是可破坏物**（2026-11-16 加：木箱/铜箱走池 3，舍利匣走池 4，才有资格抽紫装 / 橙装 / 名字武器） |
+| `projectile.xlsx` | `combat/projectile-runtime.ts`（join）+ `combat/attack-spec.ts`（读射程 / 弹速） | **弹道原型的数值**（2026-11-16 加）：`speed / range / hit_radius / splash_radius / pierce / homing / element / status / zone_radius / zone_life / visual / name / hint`。行：`arrow`（玩家箭，`homing>0` = 指向性）、`monster_arrow`（骷髅箭，`homing=0` = 非指向性）、`fireball`（溅射 + 落地留火）。**机制（形态 / 谁在射）留在代码**：`attack-spec.ts::targeting` 决定锁定还是锁方向 |
+| `skill.xlsx` | `combat/skills.ts` | **8 个技能的数值**（含 2026-11-16 加的 `fireball` 弹道法术）：`cost / cooldown / cast_time / damage / reach / width / zone_radius / zone_life / name / hint`。机制列（`kind` / `element` / `status` / `icon`）留在代码 |
 | `status.xlsx` | `combat/status.ts` | **18 条状态的数值**：`duration / max_stacks / dot / move_mul / attack_interval_mul / damage_taken_mul / no_move / no_attack / no_skill / no_dodge / name / hint`。视觉色与元素归属留在代码 |
 | `consumable.xlsx` | `combat/consumables.ts` | **红药 / 蓝药的效果，每瓶一行**：`hp_restore / mana_restore / mana_seconds / hint`。加第三种药 = 加一行，代码不用动 |
 | `level.xlsx` | `talent/`（局外页面经 `MetaShell.levels` 注入） | **升级曲线 18 行**：`level / xp_to_next / star_points`；最后一行 `xp_to_next = 0` ＝等级上限。改这里就改了「多少击杀升一级」 |

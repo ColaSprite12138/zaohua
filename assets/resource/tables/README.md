@@ -41,6 +41,7 @@ sharedStrings，**不读 `styles.xml`**。曾有两张表的 `styles.xml` 把 `<
 | `loot_pool.xlsx` | `id, loot_pool_id, item_id, weight` | `combat`（权重掉落；武器阶梯 + 两瓶药） |
 | `skill.xlsx` | `id, name, cost, cooldown, cast_time, damage, reach, width, zone_radius, zone_life, hint` | `combat`（技能数值） |
 | `status.xlsx` | `id, name, category, duration, max_stacks, dot, move_mul, attack_interval_mul, damage_taken_mul, no_move, no_attack, no_skill, no_dodge, hint` | `combat`（状态数值） |
+| `projectile.xlsx` | `id, name, speed, range, hit_radius, splash_radius, pierce, homing, element, status, zone_radius, zone_life, visual, hint` | `combat`（弹道：加入 2026-11-16。`homing>0` = 指向性追踪，`splash_radius / zone_radius` = 落点爆炸与留火） |
 | `combat_rule.xlsx` | 单行全局常量 + `mainline_star_points, explore_star_points` | `combat` / `talent`（手感 + 星图一次性点数） |
 | `consumable.xlsx` | `id, hp_restore, mana_restore, mana_seconds, hint` | `combat`（喝药效果，按 id join） |
 | `level.xlsx` | `id, level, xp_to_next, star_points` | `talent`（升级曲线，18 级封顶） |
@@ -49,6 +50,12 @@ sharedStrings，**不读 `styles.xml`**。曾有两张表的 `styles.xml` 把 `<
 
 `level.xlsx` / `constellation.xlsx` / `starmap.xlsx` 的初版由 `scripts/make_authored_tables.py` 生成（本机没有 openpyxl，
 而工程禁止手写 OOXML 部件）。**生成后请直接用 Excel 改，不要再跑那个脚本** —— 它会覆盖。
+
+> **2026-11-16 更新（改表的工具链）**：现在 `python -m pip install openpyxl` 可用（引擎自带的 3.13；
+> 注意 PATH 上的 `pip` 是另一个 3.7，必须用 `python -m pip`）。`projectile.xlsx`（新表）与
+> `loot_pool.xlsx` / `skill.xlsx` 的追加行就是这样写的：`load_workbook` → 追加行 → `save`，
+> 然后**必须**跑 `python scripts/export_tables.py` 并确认 `--check` 通过（`validate_package()`
+> 会拦住 openpyxl 写坏包的极端情况）。openpyxl 会给出一条 "no default style" 警告，无害。
 
 **`item` / `weapon` 必须按 `id` join**：`item.xlsx` 只放物品通用信息，`weapon.xlsx` 只放武器
 专属数值。两表当前各 13 行、id 集合严格 1:1，由 `tables.test.ts` 守住。join 点只有两个：

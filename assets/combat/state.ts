@@ -18,6 +18,8 @@ import { createInventoryState, type InventoryState } from '../meta/inventory.ts'
 import { makeRng } from './loot.ts';
 import { seedFixturePotions } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
+// 只 import 类型：`projectiles.ts` 是纯飞行逻辑，运行时不反向依赖战局状态。
+import type { Projectile } from './projectiles.ts';
 import {
   cameraFor, makeWorld, nearestWalkable, type ArenaMap, type Vec, type World,
 } from './world.ts';
@@ -758,6 +760,34 @@ export interface Player {
   statuses: StatusInstance[];
 }
 
+/**
+ * 弹道统计（只做观测）。验收脚本靠它区分「打空了」「撞墙了」「飞满射程消散了」——
+ * 这三件事在画面上都表现为「伤害没跳」，没有计数器就分不清是设计还是 bug。
+ */
+export interface ProjectileStats {
+  /** 出手次数（玩家 + 怪物）。 */
+  fired: number;
+  /** 命中身体的次数（含穿透的第二、三个目标）。 */
+  hits: number;
+  /** 打中玩家的次数。 */
+  playerHits: number;
+  /** 撞墙销毁。 */
+  blocked: number;
+  /** 出界销毁。 */
+  outOfBounds: number;
+  /** 飞满射程消散（没打中任何东西）。 */
+  fizzled: number;
+  /** 触发过多少次溅射（火球）。 */
+  splashes: number;
+}
+
+export function zeroProjectileStats(): ProjectileStats {
+  return {
+    fired: 0, hits: 0, playerHits: 0,
+    blocked: 0, outOfBounds: 0, fizzled: 0, splashes: 0,
+  };
+}
+
 export interface GameState {
   t: number;
   attacks: number;
@@ -861,6 +891,17 @@ export interface GameState {
   zones: Zone[];
   /** 最近发生的反应（只留最后 8 条，供投影与验收取证）。 */
   reactions: ReactionRecord[];
+  /* ------------------------------------------------ 弹道（2026-11-16） */
+  /**
+   * 在飞的弹道。**箭矢与法术弹共用同一条管道**：形态（指向性 / 非指向性）与
+   * 数值（速度 / 射程 / 溅射 / 追踪）都来自 `projectile.xlsx`，见
+   * `projectile-runtime.ts`。绘制层只读它画方块箭 / 光球。
+   */
+  projectiles: Projectile[];
+  /** 弹道自增序号：id 稳定且不跨局重复（投影与单测据此定位一支箭）。 */
+  projectileSeq: number;
+  /** 弹道统计：**只做观测**，不参与任何规则（验收脚本靠它断言「撞墙了 / 打空了」）。 */
+  projectileStats: ProjectileStats;
   /* ---------------------------------------------------- 单局骨架（搜打撤） */
   /** 关卡类型；只影响「什么算结束 / 死了掉什么」，不改变战斗。 */
   runKind: RunKind;
@@ -948,6 +989,9 @@ export function createState(config: RunConfig = {}): GameState {
     skillFx: [],
     zones: [],
     reactions: [],
+    projectiles: [],
+    projectileSeq: 0,
+    projectileStats: zeroProjectileStats(),
     runKind: 'story',
     runSeconds: RUN_SECONDS,
     phase: 'explore',
@@ -1035,6 +1079,10 @@ export function reset(s: GameState): void {
   // 状态与区域是「本局」资源：重开一局 = 身上干净、地上干净。
   s.zones.length = 0;
   s.reactions.length = 0;
+  // 在飞的弹道也是「本局」资源：重开一局不该有上一局的箭还在天上飞。
+  s.projectiles.length = 0;
+  s.projectileSeq = 0;
+  s.projectileStats = zeroProjectileStats();
   // 单局骨架：计时归零、门重建（次数是「本局」资源，重开一局就恢复）。
   s.runSeconds = RUN_SECONDS;
   s.phase = 'explore';

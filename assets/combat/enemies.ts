@@ -10,16 +10,18 @@
  */
 
 import { combat_rule } from '../resource/generated/combat_rule.ts';
-import { wearWeapon } from './durability.ts';
-import { burst, say } from './effects.ts';
+import { monsterSpec } from './attack-spec.ts';
+import { damagePlayer } from './attack.ts';
+import { burst } from './effects.ts';
 import { monsterRow } from './loot.ts';
+import { fireProjectile } from './projectile-runtime.ts';
 import {
   MONSTER_SWING_TIME, STRIDE_PIXELS, type GameState,
 } from './state.ts';
 import {
-  attackIntervalMultiplier, damageTakenMultiplier, lockedFlags, moveMultiplier,
+  attackIntervalMultiplier, lockedFlags, moveMultiplier,
 } from './status.ts';
-import { findPath, walkable, type World } from './world.ts';
+import { findPath, lineOfSight, walkable, type World } from './world.ts';
 
 const REPATH_SECONDS = 0.7;
 const BODY_RADIUS = 8;
@@ -143,12 +145,17 @@ export function updateSkeletons(s: GameState, dt: number): void {
     sk.goal = goal;
 
     const locks = lockedFlags(sk);
+    // 出手形态决定「多近才该停下来」：近战贴到 40px 出刀，远程站在射程内就放箭。
+    // 取 0.9 倍射程而不是贴着极限：站在极限边缘时目标一晃就出射程，
+    // 箭全部飞到一半消散，看起来像「弓手在乱射」。
+    const spec = monsterSpec(sk.monsterId);
+    const engage = spec.kind === 'projectile' ? spec.range * 0.9 : STRIKE_RANGE;
     if (locks.noMove) {
       // 动不了（晕眩 / 冻结 / 麻痹 / 禁锢 / 石化 / 睡眠）：不走路、不绕路，
       // 但仍要维持「面朝玩家」的姿势，否则画面上一只会被冻成背对。
       sk.path = [];
       sk.moving = false;
-    } else if (goal === 'player' ? sd > STRIKE_RANGE : Math.hypot(gx - sk.x, gy - sk.y) > 24) {
+    } else if (goal === 'player' ? sd > engage : Math.hypot(gx - sk.x, gy - sk.y) > 24) {
       if (sk.repath <= 0 || sk.path.length === 0) {
         sk.path = findPath(s.world, { x: sk.x, y: sk.y }, { x: gx, y: gy });
         sk.repath = REPATH_SECONDS;
@@ -179,19 +186,24 @@ export function updateSkeletons(s: GameState, dt: number): void {
         sk.attackCd = stats.attackInterval * attackIntervalMultiplier(sk);
         // The lunge plays whether or not it connects: a whiff still reads.
         sk.swing = MONSTER_SWING_TIME;
-        if (p.invuln <= 0) {
-          // 易伤（软控）同样作用于玩家：受到伤害倍率只有一个入口。
-          const taken = stats.attackDamage * damageTakenMultiplier(p);
-          s.hp = Math.max(0, s.hp - taken);
-          // 承受伤害也扣耐久，权重比造成高（7.4 的 7:3）：贴身近战天然更费。
-          wearWeapon(s, 0, taken);
-          p.hurt = 0.35;
-          p.invuln = 0.7;
-          burst(s, p.x, p.y - 26, '#ff6b6b', 8, 120);
-          if (s.hp <= 0) {
-            s.gameOver = true;
-            say(s, '你被击倒了 · 按 R 重新开始');
+        if (spec.kind === 'projectile') {
+          // 弓手：**非指向性**。朝玩家此刻站的位置放箭，不追踪 —— 走位能躲开，
+          // 这就是「远程压制」和「纯数值对轰」的区别。看不见人就不放（省得墙后乱射）。
+          if (lineOfSight(s.world, { x: sk.x, y: sk.y }, { x: p.x, y: p.y })) {
+            fireProjectile(s, {
+              owner: 'monster',
+              projectileId: spec.projectileId ?? 'monster_arrow',
+              damage: stats.attackDamage,
+              from: { x: sk.x, y: sk.y },
+              targetIndex: spec.targeting === 'locked' ? 0 : null,
+              aim: { x: p.x, y: p.y },
+              angle: Math.atan2(p.y - sk.y, p.x - sk.x),
+              sourceId: sk.monsterId,
+            });
           }
+        } else if (p.invuln <= 0) {
+          // 近战：易伤（软控）同样作用于玩家，伤害入口只有一个。
+          damagePlayer(s, stats.attackDamage, { source: sk.monsterId });
         }
       }
     }

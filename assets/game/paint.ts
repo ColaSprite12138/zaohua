@@ -13,7 +13,9 @@
  */
 
 import {
+  activeAmmo,
   activeWeapon,
+  BODY_LIFT,
   dropLabelName,
   dropLabelRect,
   MINIMAP,
@@ -24,6 +26,7 @@ import {
   PORTAL_GUIDE_SECONDS,
   PORTAL_RADIUS,
   PORTAL_STAGE_COUNT,
+  projectileProfile,
   SKILL_SLOTS,
   VIEW_H,
   VIEW_W,
@@ -1429,6 +1432,76 @@ function drawWeaponSlots(g: Painter, s: GameState, x: number, y: number): void {
       if (ratio <= 0) text(g, '坏', bx + HUD_SLOT - 9, y + HUD_SLOT - 12, 9, '#ff6b6b', 'center', '800');
     }
   }
+  // 弹药（远程武器）：槽上方一行「箭 N」。打空了变红 —— 否则「按了没反应」
+  // 会被读成掉帧或卡输入，而这其实是设计里的「没箭了」。
+  const ammo = activeAmmo(s);
+  if (ammo !== null) {
+    const empty = ammo.count <= 0;
+    text(g, `箭 ${ammo.count}`, x + 2, y - 9, 11, empty ? '#ff6b6b' : '#e8e4d8', 'left', '700');
+    if (empty) text(g, '没箭了', x + 46, y - 9, 10, '#ff6b6b', 'left', '700');
+  }
+}
+
+/**
+ * 弹道（箭矢 / 火球 / 骷髅箭）。
+ *
+ * 画的是**飞行体本身**，所以必须读它的实时位置与速度方向：一支箭如果总是
+ * 竖直朝上，玩家读不出它是从哪个方向射来的，也读不出它是不是在追着自己拐。
+ * 玩家与怪物的弹用不同配色（金羽 / 暗红羽），一眼分得清该躲哪一发。
+ */
+function drawProjectiles(g: Painter, s: GameState): void {
+  for (const p of s.projectiles) {
+    const profile = projectileProfile(p.specId);
+    const angle = Math.atan2(p.vy, p.vx);
+    // 地面影子：飞行体也是「离地的东西」，没有影子会读成贴在地板上的贴图。
+    g.save();
+    g.globalAlpha = 0.26;
+    g.fillStyle = '#050a12';
+    g.fillRect(Math.round(p.x) - 5, Math.round(p.y + BODY_LIFT) - 2, 10, 4);
+    g.restore();
+
+    if (profile.visual === 'arrow') {
+      const fletch = p.owner === 'player' ? '#ffd166' : '#a33c3c';
+      // 射向玩家的箭必须比射出去的箭更扎眼：一支 22px 的浅色小箭在沙地上会「看漏」，
+      // 而看漏一支正在飞来的箭是致命的。给它一圈暗红光晕（同一套像素方块）。
+      if (p.owner === 'monster') drawPixelGlow(g, p.x, p.y, 14, 10, '#a33c3c', 0.45);
+      g.save();
+      g.translate(Math.round(p.x), Math.round(p.y));
+      g.rotate(angle);
+      // 杆 → 箭头 → 尾羽，三段都要有，否则 20px 的箭读成一颗飞行的点。
+      g.fillStyle = '#c9b48a';
+      g.fillRect(-15, -1, 19, 2);
+      g.fillStyle = '#f2efe6';
+      g.fillRect(4, -2, 7, 4);
+      g.fillStyle = fletch;
+      g.fillRect(-17, -3, 5, 2);
+      g.fillRect(-17, 1, 5, 2);
+      g.restore();
+      continue;
+    }
+
+    // 法术弹：光晕 + 一条越来越短的拖尾（速度感来自拖尾，不是粒子数）。
+    for (let i = 1; i <= 4; i += 1) {
+      const back = 8 + i * 7;
+      g.save();
+      g.globalAlpha = 0.5 - i * 0.1;
+      g.fillStyle = i < 3 ? '#ffd166' : '#c2410c';
+      const size = Math.max(2, 8 - i * 1.5);
+      g.fillRect(
+        Math.round(p.x - Math.cos(angle) * back) - size / 2,
+        Math.round(p.y - Math.sin(angle) * back) - size / 2,
+        size, size,
+      );
+      g.restore();
+    }
+    drawPixelGlow(g, p.x, p.y, 16, 14, '#fb923c', 0.5);
+    g.fillStyle = '#fb923c';
+    g.fillRect(Math.round(p.x) - 4, Math.round(p.y) - 5, 9, 10);
+    g.fillStyle = '#ffd166';
+    g.fillRect(Math.round(p.x) - 2, Math.round(p.y) - 3, 5, 6);
+    g.fillStyle = '#fff7d6';
+    g.fillRect(Math.round(p.x) - 1, Math.round(p.y) - 1, 3, 3);
+  }
 }
 
 /* ---------------------------------------------------------- skill effects */
@@ -1896,6 +1969,8 @@ export function paint(g: Painter, s: GameState): void {
   // Name plates last: a body can cover the tiny model, never the clickable name.
   drawDropLabels(g, s);
   drawParticles(g, s);
+  // 弹道压在实体之上（飞在空中的东西要被看见），但在技能特效之下。
+  drawProjectiles(g, s);
   // 技能特效与冲刺残影：都在世界空间，画在粒子上方（技能表现要被看见）。
   drawSkillFx(g, s);
   drawDashTrail(g, s);

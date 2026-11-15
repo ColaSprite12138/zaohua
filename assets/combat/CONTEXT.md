@@ -129,9 +129,9 @@
 | 冲锋姿态 | 绘制层把身体整体抬起 2px（read 作「扑出去」）+ `drawDashTrail` 画身后 5 块拖影 |
 
 **没做的部分**（别以为漏了）：技能升级与形态（决策 11「解锁即完整」）、
-星图解锁接线、`spell` 类武器（`attack-spec.ts` 仍只留类型）、弹道运行时（冰锥走直线判定，
-远程武器与弓手怪的 `Projectile` 还没接进 `step()`）、法力药水做成背包物品（现在按局发瓶数）。
-状态与反应链**已在下一节落地**（8.4 / 8.5）。
+星图解锁接线、`spell` 类**武器**（法术走技能栏的 `missile` 形态，武器里仍只留类型）、
+法力药水做成背包物品（现在按局发瓶数）。
+弹道运行时**已在「弹道」一节落地**（箭矢 / 火球 / 弓手箭，见上），技能库与词条等下一批。
 
 ### 状态与反应链（2026-11-15 第三批，设计文档 8.4 / 8.5）
 
@@ -416,6 +416,20 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 57. **分区与地面区域不能混名**：`projection().zones` 是地面效果（火墙 / 毒池），
     `projection().regions` 才是地图分区。新增「区域」相关字段前先确认不会覆盖这两个。
 
+58. **弹道不是第二个伤害系统**：飞行体只负责「在哪、撞到谁」；伤害一律在
+    `projectile-runtime.ts` 里转交给 `damageSkeleton()` / `damagePlayer()`。禁止在弹道代码里
+    直接改 `sk.hp` / `s.hp` —— 那会绕开击杀计数、掉落、无敌帧与耐久。
+59. **形态在代码，数字在表**：`targeting`（指向性 / 非指向性）是机制；速度 / 射程 / 溅射 /
+    穿透 / 追踪率 / 落地留什么只能在 `projectile.xlsx`。加一种弹**不许**改 runtime，
+    改的是表 + 引用它的那一行 spec。
+60. **指向性=锁人，非指向性=锁方向**：`targetId !== null` 的弹道必须每帧朝目标转向；
+    `homing = 0` 的弹道**绝不**偷偷修方向（那就把 skillshot 变成了必中）。两者都是设计的一部分，
+    不要为了「命中率好看」给非指向性加追踪。
+61. **弹药是物品**：`takeAmmo()` 从背包取走一件；没弹药必须是**免费拒绝**（不进冷却、不扣耐久），
+    并且给一句 toast。禁止加「箭矢计数器」——那会让「死了掉箭」这条风险规则失效。
+62. **落地一定结算**：命中 / 撞墙 / 飞满射程三种结束都必须进 `explode()`（只要有溅射或
+    `zone_radius`）。让火球在墙上凭空消失，玩家会读成「这技能偶尔不生效」。
+
 ## 目录与依赖方向（单向，禁止反向 import）
 
 ```
@@ -425,11 +439,14 @@ combat/state.ts            ← shared + world + resource/{maps,generated/combat_
 combat/status.ts           ← state 的类型 + resource/generated/status；注册表与纯查询，**不碰 GameState**
 combat/effects.ts          ← state(类型) + shared + world
 combat/modifiers.ts        ← 独立接口，不 import combat
-combat/attack.ts           ← state + effects + modifiers(类型) + status(上状态) + world(撞墙)；`damageSkeleton()` 是唯一伤害入口
+combat/attack.ts           ← state + effects + modifiers(类型) + status(上状态) + world(撞墙)；`damageSkeleton()` / `damagePlayer()` 是两个唯一伤害出口
+combat/projectiles.ts      ← 只 import attack-spec(类型) + shared；**纯飞行逻辑**（无战局状态、无表）
+combat/projectile-runtime.ts ← state + attack(两个伤害出口) + reactions + status + world + generated/projectile；弹道表 join、命中/溅射/落地留区域、弹药
+combat/ranged.ts           ← state + attack-spec + projectile-runtime + attack(`swingAtTarget`)；**一次点击的出手分派**（近战 / 放箭）
 combat/reactions.ts        ← state + status + attack(伤害入口) + effects；元素附着 / 5 条反应 / DOT / 地面区域
 combat/movement.ts         ← state + effects + attack + status(禁移动/减速) + world
-combat/skills.ts           ← state + effects + attack + reactions + status + movement(`canStand`) + modifiers(类型)
-combat/enemies.ts          ← state + effects + status(硬控/减速/迟滞) + loot(monsterRow 取手感) + world
+combat/skills.ts           ← state + effects + attack + projectile-runtime(`fireProjectile`) + reactions + status + movement(`canStand`) + modifiers(类型)
+combat/enemies.ts          ← state + effects + status(硬控/减速/迟滞) + attack-spec(形态) + projectile-runtime(弓手放箭) + loot(monsterRow 取手感) + world
 combat/weapons.ts          ← state + effects
 combat/loot.ts             ← resource/generated/*.ts（只消费生成物，不读 xlsx）；`rollPool()` 是唯一抽样算法
 combat/enemies.ts          ← state + effects + status + loot + world；**惊醒模型**（`wakeNoise()` 也在这里）
@@ -476,28 +493,55 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 `spawnDestructibles(map)` / `SMASH_RANGE` / `SMASH_SWING_SECONDS` / `RUBBLE_SECONDS`（`state.ts`）。
 引擎层从 `assets/game/simulation.ts` 门面 import；新代码应直接 import 本模块。
 
-## 攻击规格与资源预留（架构层，2026-11-12 新增，**尚未接入运行时**）
+## 弹道（箭矢 / 弹道法术 / 怪物远程）— 2026-11-16 落地
+
+**一句话**：*远程攻击是一个真的会飞的东西，不是「瞬间生效的近战」。*
+
+以前 `attack-spec.ts` / `cost.ts` / `projectiles.ts` 三个文件都写好了却没有消费者，于是弓箭
+在代码里是一把「射程 170 的剑」—— 点一下怪就贴脸砍。这一批把它们接上，并且把用户要求的
+两种远程形态做成了**同一套飞行体上的两个属性**：
+
+| 形态 | 谁在用 | 行为 | 打空的可能 |
+|:--|:--|:--|:--|
+| 指向性 `targeting: 'locked'` | 玩家弓箭（点中的那一只） | 带 `targetId`，每帧朝目标转向（`homing` 弧度/秒） | 只有撞墙 / 目标先死 |
+| 非指向性 `targeting: 'directional'` | 骷髅弓手、火球 | 只认起手角度，之后不修正 | 走位能躲，这是设计允许的答案 |
 
 | 文件 | 职责 |
 |:--|:--|
-| `attack-spec.ts` | `AttackSpec`（`kind` / `damage` / `range` / `cooldown` / `costKind` / `projectileSpeed`）、`weaponSpec(itemId)`（按 `weapon_subtype` 查 `SUBTYPE_SPEC`）、`monsterSpec(monsterId)`、`PROJECTILE_SPEED=420` |
-| `cost.ts` | `CostPolicy` 接口、`costPolicyFor(owner, playerPolicy?)`、`NO_COST`、`costKindOf()` |
-| `projectiles.ts` | `Projectile` / `createProjectile()` / `advanceProjectiles()` 纯函数、可注入 `CollisionQuery` |
+| `projectiles.ts` | **纯飞行逻辑**：`makeProjectile(init)` / `advanceProjectiles(projectiles, dt, query, targets)`。不 import 战局状态，只吃数字 |
+| `projectile-runtime.ts` | 表 join（`PROJECTILES`）、`fireProjectile()`、`updateProjectiles()`、命中/溅射/落地留区域结算、弹药 `ammoCount/takeAmmo` |
+| `ranged.ts` | `resolveAttackOrder()`：一次点击按当前武器槽分派**近战 / 放箭**；`fireRangedAt()` |
+| `attack-spec.ts` | `projectileId` / `targeting` / `ammoId`；速度与射程从 `projectile.xlsx` join |
+| `tables/projectile.xlsx` | **弹道数值正本**：`speed / range / hit_radius / splash_radius / pierce / homing / element / status / zone_radius / zone_life / visual` |
 
-- **攻击方式由激活武器槽的 `AttackSpec.kind` 决定**，不设独立开火键；`fire()` 只按 `kind`
-  分派，不按 `owner` 分支 —— 玩家与怪物共用同一条路径。加新攻击方式＝加 `kind` + resolver；
-  加新怪 / 新武器＝加一条 spec 映射。
-- 资源规划（owner 拍板）：近战消耗武器耐久、远程消耗箭矢、法术消耗法力；**怪物一律不消耗**。
-  `spell` 只在类型层预留，本轮**不实现**；耐久 / 箭矢 / 法力尚无权威数据源，故只留策略接口，
-  `NO_COST` 是明确的「本次不扣减」策略，不是待填占位。
-- 武器分类依据（2026-11-12 更新）：`tables/weapon.xlsx::weapon_subtype` 是**唯一权威**，
-  `SUBTYPE_SPEC` 把 `近战` / `远程` 映射到 spec；未来加「法术」只加一行。
-  `30001` 是 `子弹`（弹药），`weaponSpec()` 明确回落到 `BARE_HANDS`，**不得用 id 前缀推断**。
-  `item.xlsx` / `weapon.xlsx` 按 `id` join，运行时唯一入口是 `loot.ts::authoredItem()`。
-- 子弹射程无限：只因命中合法目标 / 地形阻挡 / 飞出世界而销毁。`advanceProjectiles()` 按
-  8px 子步推进防穿透；`NO_COLLISION` 保持旧竞技场行为；真实格子查询已在 `combat/world.ts::lineOfSight()` 备好，但要等下一批「攻击运行时接线」才注入（本批只做地图）。
-- 当前消费方：`assets/combat/__tests__/{attack-spec,projectiles}.test.ts`（20 条：10 + 10）。
-  **`step()` / `attack.ts` / `enemies.ts` / `paint.ts` 尚未引用**，playthrough 不受影响。
+四条不变量：
+
+1. **伤害仍然只有两个出口**：打怪 `attack.ts::damageSkeleton()`（击杀 / 掉落 / 经验 / 撞墙全在
+   那一条路上），打人 `attack.ts::damagePlayer()`（怪物出刀、弹道、DOT 共用，无敌帧与耐久
+   只在那里判）。弹道不许自己写 `sk.hp -= x`。
+2. **形态在 spec，数值在表**：`targeting` 是机制（代码），速度 / 射程 / 溅射 / 追踪率 / 落地
+   留什么都是 `projectile.xlsx` 的列。加一种弹（毒箭、追踪飞弹）= 表里加一行 + 引用它的地方
+   写一个 id，**不改 runtime**。表里 `element` / `status` 拼错会在启动时抛错，不静默失效。
+3. **箭矢是物品**：每发从背包取走一件 `30001`（`takeAmmo`），没有就**拒绝出手并且不进冷却、
+   不扣耐久**，同时给一句 toast（「没有箭了」）。打空只丢一支箭 —— 耐久按**造成的伤害**扣，
+   发生在命中时（7.4 的 3:7）。
+4. **落地一定结算**：命中 / 撞墙 / 飞满射程三种结束方式都会产生 `impacts`，带溅射或
+   `zone_radius` 的弹道在这三种情况下都会炸。`aimRange`（技能侧传「到落点的距离」）让火球
+   **点哪炸哪**，而不是一路飞到原型射程尽头。
+
+| 项 | 契约 |
+|:--|:--|
+| 飞行高度 | 弹道在**躯干高度**（`BODY_LIFT = 26`）飞：出手点与命中判定用同一抬升，不会「画在身上、判定在脚下」 |
+| 碰撞 | 只有 `world.blocks()`（墙 / 虚空 / 出界）能挡住；**可破坏物不挡弹道**（和它不挡路同一条口径） |
+| 穿透 | `pierce = 命中后还能穿过几个目标`；同一个身体不会被同一发打两次（`struck`） |
+| 溅射 | `splash_radius > 0` 时对落点半径内的**其它**目标追加同一份伤害（不衰减、不打直击目标第二次） |
+| 怪物弓手 | `monsterSpec('200001')` 是非指向性弹道；AI 在 `range * 0.9` 处停下放箭，**没有视线就不放**（不隔墙乱射） |
+| 观测 | 投影多出 `projectiles`（屏幕归一化 + `locked` / `travelled`）、`ammo`、`projectileStats`（出手 / 命中 / 打人 / 撞墙 / 出界 / 消散 / 溅射）、`toast` |
+
+**没做的部分**（别以为漏了）：箭矢**不堆叠**（一件一支、一格一件，等物品堆叠批次）；
+`pierce` 这一列全是 0（没有穿透弹，机制与单测已就位）；非指向性目前**只能由技能或怪物发出**，
+玩家没有「按住某键朝光标射一发」的键位（`Q W T F G V C` 全给技能了，等输入批次）；
+`magic_bolt`（追踪法术）没有做成技能，表里也没留空行 —— 等技能库批次；怪物不会**边退边射**。
 
 ## 死亡掉落与保险格（设计 4 / 5.2，2026-11-15 深夜）
 

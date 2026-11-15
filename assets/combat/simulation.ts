@@ -6,7 +6,10 @@
  */
 
 import { VIEW_H, VIEW_W } from '../shared/constants.ts';
-import { dropAtPoint, hitTestEnemy, resolveAttackOrder } from './attack.ts';
+import { dropAtPoint, hitTestEnemy } from './attack.ts';
+import { weaponSpec } from './attack-spec.ts';
+import { ammoCount, projectileSnapshot, updateProjectiles } from './projectile-runtime.ts';
+import { resolveAttackOrder } from './ranged.ts';
 import { updateSkeletons } from './enemies.ts';
 import { tickParticles, tickToast } from './effects.ts';
 import {
@@ -38,6 +41,16 @@ import {
 } from './state.ts';
 import { checkCleared, layoutDrops, switchWeaponSlot, updateDrops } from './weapons.ts';
 import { cameraFor, worldToScreen, type ArenaMap } from './world.ts';
+
+/**
+ * 当前武器需要的弹药：`id` + 背包里还剩几件。近战 / 空手返回 null。
+ * HUD（`paint.ts`）与出手前检查（`ranged.ts`）读的是同一份计数。
+ */
+export function activeAmmo(s: GameState): { id: string; count: number } | null {
+  const spec = weaponSpec(activeWeapon(s));
+  if (spec.ammoId === undefined) return null;
+  return { id: spec.ammoId, count: ammoCount(s, spec.ammoId) };
+}
 
 function tickTimers(s: GameState, dt: number): void {
   const p = s.player;
@@ -109,6 +122,9 @@ export function step(
   updateDestructibles(s, dt);
   if (!pinned && !dashing) resolveAttackOrder(s, modifiers);
   updateSkeletons(s, dt);
+  // 弹道：怪与玩家在这一帧都可能刚出手，所以推进排在两边都动完之后。
+  // 命中会在 `damageSkeleton` / `damagePlayer` 里结算（含击杀、掉落、阵亡）。
+  updateProjectiles(s, dt);
   // Nobody may stand inside anybody. Runs after both sides moved AND after
   // swing knockback, so a hit never leaves two bodies fused.
   resolveBodyOverlap(s);
@@ -252,6 +268,8 @@ export function projection(s: GameState) {
         y: v.y / VIEW_H,
         hp: sk.hp,
         alive: sk.alive,
+        /** authored 怪物 id（`monster.xlsx`）：验收要能区分近战与弓手。 */
+        monsterId: sk.monsterId,
         // 状态（硬控 / DOT / 元素附着）：验收脚本据此断言「冻住了 / 中毒叠了几层」。
         statuses: statusSnapshot(sk),
         /** 是否已被惊醒（设计 10.5）；沉睡的怪站着盯人，不会来打你。 */
@@ -403,6 +421,24 @@ export function projection(s: GameState) {
     }),
     /** 最近发生的反应（最多 8 条，`id` 就是设计 8.5 的表项）。 */
     reactions: s.reactions.map((r) => ({ id: r.id, x: r.x / VIEW_W, y: r.y / VIEW_H })),
+    /**
+     * 在飞的弹道（箭矢 / 火球 / 骷髅箭）。坐标**屏幕归一化**（和 `player` 同一套），
+     * 验收脚本据此断言「真的有一发在飞」「锁定的那一发拐过去了」。
+     * `locked` = 指向性追踪中；`travelled` 是已飞距离（世界像素）。
+     */
+    projectiles: projectileSnapshot(s).map((p) => {
+      const v = scr(p.x, p.y);
+      return { ...p, x: v.x / VIEW_W, y: v.y / VIEW_H };
+    }),
+    /** 背包里还剩几支箭（弹药是物品，不是计数器）。 */
+    ammo: activeAmmo(s)?.count ?? 0,
+    /** 弹道计数：出手 / 命中 / 撞墙 / 出界 / 消散 / 溅射。 */
+    projectileStats: { ...s.projectileStats },
+    /**
+     * 当前那一条提示（HUD 底部）。验收脚本靠它区分「按了没反应」的两种原因：
+     * 真的没效果（bug）还是有话没说出来（「没有箭了」这类拒绝）。
+     */
+    toast: s.toast === null ? null : { text: s.toast.text, life: Math.round(s.toast.life * 10) / 10 },
     gameOver: s.gameOver,
     cleared: s.cleared,
     // World-space map runtime facts (new; existing fields above are untouched).
@@ -555,5 +591,15 @@ export type { DestructibleDef } from './destructibles.ts';
 export { EVENTS, runElapsed, updateEvents } from './events.ts';
 export type { EventDef } from './events.ts';
 export { wakeNoise } from './enemies.ts';
+export {
+  BODY_LIFT, PROJECTILES, ammoCount, fireProjectile, needsAmmo,
+  projectileProfile, projectileSnapshot, takeAmmo, updateProjectiles,
+} from './projectile-runtime.ts';
+export type { ProjectileProfile, ProjectileVisual } from './projectile-runtime.ts';
+export { resolveAttackOrder, fireRangedAt } from './ranged.ts';
+export { weaponSpec, projectileRow, ARROW_ID, MONSTER_ARROW_ID, FIREBALL_ID } from './attack-spec.ts';
+export { advanceProjectiles, makeProjectile, NO_COLLISION } from './projectiles.ts';
+export type { Projectile, ProjectileHit, ProjectileFrame, HitTarget, CollisionQuery } from './projectiles.ts';
+export type { ProjectileStats } from './state.ts';
 export { zoneAt, zoneRect, zonesOf, zoneChannels } from './zones.ts';
 export type { ArenaZone } from './zones.ts';

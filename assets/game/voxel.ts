@@ -702,6 +702,23 @@ function skillThunder(): VoxelModel {
   return b.model();
 }
 
+/**
+ * 火球：一颗带尾巴的橙红球 —— 一眼要和「火墙」区分开（那是一片横着的火）。
+ * 尾巴朝左下、核心偏亮，读成「正在往右上飞」而不是一团静止的火。
+ */
+function skillFireball(): VoxelModel {
+  const b = new Builder('skill-fireball', 4);
+  b.box(-2, 1, 0, 3, 3, 1, C.fire);
+  b.box(-1, 2, 0, 2, 2, 1, C.fireHi);
+  b.box(0, 2, 0, 1, 1, 1, '#fff7d6');
+  b.box(-4, 0, 0, 2, 1, 1, C.ember);
+  b.box(-4, 1, 0, 2, 1, 1, C.fire);
+  b.box(-3, 2, 0, 2, 1, 1, C.fire);
+  b.box(1, 3, 0, 1, 1, 1, C.fireHi);
+  b.box(-1, 4, 0, 1, 1, 1, C.ember);
+  return b.model();
+}
+
 /** 技能 id → 体素图标。`skills.ts::SkillDef.icon` 就用这里的键。 */
 export const SKILL_ICONS: Readonly<Record<string, VoxelModel>> = Object.freeze({
   cleave: skillCleave(),
@@ -711,6 +728,9 @@ export const SKILL_ICONS: Readonly<Record<string, VoxelModel>> = Object.freeze({
   venom_pool: skillVenomPool(),
   water_wave: skillWaterWave(),
   thunder: skillThunder(),
+  // 弹道法术（非指向性）：飞行体本身由 `paint.ts::drawProjectiles` 画，
+  // 这里只是技能栏图标。
+  fireball: skillFireball(),
   // 不是 `SkillDef`：闪避是角色自带的（设计 8.2 不占 7 格），但 HUD 上它和技能并排，
   // 所以图标也放在这里，共用同一套格子画法。
   dodge: skillDodge(),

@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
+import { projectile as projectileRows } from '../../resource/generated/projectile.ts';
+import { weapon as weaponRows } from '../../resource/generated/weapon.ts';
 import {
-  BARE_HANDS, MELEE_WEAPON, PROJECTILE_SPEED, RANGED_WEAPON,
-  SPELL_RESERVED_COST, monsterSpec, weaponSpec,
+  ARROW_ID, BARE_HANDS, MELEE_WEAPON, MONSTER_ARROW_ID, RANGED_WEAPON,
+  SPELL_RESERVED_COST, monsterSpec, projectileRow, weaponSpec,
 } from '../attack-spec.ts';
 import { NO_COST, costKindOf, costPolicyFor, type CostPolicy } from '../cost.ts';
 
 const SWORD_IDS = ['10001', '10002', '10003', '10004', '10005', '10006'];
 const BOW_IDS = ['20001', '20002', '20003', '20004', '20005', '20006'];
+
+const ARROW = projectileRows.find((row) => row.id === ARROW_ID)!;
+const MONSTER_ARROW = projectileRows.find((row) => row.id === MONSTER_ARROW_ID)!;
 
 describe('the active weapon slot decides the attack kind and its cost', () => {
   it('an empty slot is bare-handed melee and costs nothing', () => {
@@ -25,18 +30,32 @@ describe('the active weapon slot decides the attack kind and its cost', () => {
       expect(spec.costKind).toBe('durability');
       expect(spec.damage).toBe(46);
       expect(spec.range).toBe(170);
+      // 近战没有弹道，也不该被误挂上弹药。
+      expect(spec.projectileId).toBeUndefined();
+      expect(spec.ammoId).toBeUndefined();
     }
   });
 
-  it('every 远程 subtype bow is projectile and would consume ammunition', () => {
+  it('every 远程 subtype bow is a LOCKED projectile paying ammunition', () => {
     for (const id of BOW_IDS) {
       const spec = weaponSpec(id);
       expect(spec).toBe(RANGED_WEAPON);
       expect(spec.kind).toBe('projectile');
       expect(spec.costKind).toBe('ammo');
-      expect(spec.range).toBe(Infinity);
-      expect(spec.projectileSpeed).toBe(PROJECTILE_SPEED);
+      // 指向性：点中的那一只就是锁定目标。
+      expect(spec.targeting).toBe('locked');
+      expect(spec.projectileId).toBe(ARROW_ID);
+      expect(spec.ammoId).toBe('30001');
+      // 射程与弹速来自 `projectile.xlsx`，不是代码里的数字。
+      expect(spec.range).toBe(ARROW.range);
+      expect(spec.projectileSpeed).toBe(ARROW.speed);
     }
+  });
+
+  it('the bow is a ranged weapon in the table, not a sword with a long reach', () => {
+    // 回归：远程武器曾经被当成「射程 170 的剑」——点一下怪就贴脸砍。
+    expect(weaponSpec('20003').kind).toBe('projectile');
+    expect(weaponSpec('20003').range).toBeGreaterThan(400);
   });
 
   it('the subtype, not the id prefix, decides: 30001 is ammunition', () => {
@@ -50,10 +69,30 @@ describe('the active weapon slot decides the attack kind and its cost', () => {
     expect(weaponSpec('')).toBe(BARE_HANDS);
   });
 
-  it('spell costs are reserved at the type level without an implementation', () => {
+  it('every authored weapon row resolves without throwing', () => {
+    for (const row of weaponRows) {
+      expect(() => weaponSpec(String(row.id))).not.toThrow();
+    }
+  });
+
+  it('spell costs are reserved at the type level without a weapon implementation', () => {
     expect(SPELL_RESERVED_COST).toBe('mana');
+    // 弹道法术走技能栏（`skills.ts::missile`），不是武器 —— 所以武器里没有 spell。
     expect([BARE_HANDS, MELEE_WEAPON, RANGED_WEAPON].map((s) => s.kind))
       .not.toContain('spell');
+  });
+});
+
+describe('projectile rows are the single authority for flight numbers', () => {
+  it('throws for an id that has no row instead of inventing numbers', () => {
+    expect(() => projectileRow('no_such_shot')).toThrow(/projectile\.xlsx/);
+  });
+
+  it('bow and archer use different rows, so their arrows are not the same arrow', () => {
+    expect(ARROW_ID).not.toBe(MONSTER_ARROW_ID);
+    expect(ARROW.speed).toBeGreaterThan(MONSTER_ARROW.speed);
+    expect(ARROW.homing).toBeGreaterThan(0);          // 玩家箭锁定
+    expect(MONSTER_ARROW.homing).toBe(0);             // 怪箭不锁定
   });
 });
 
@@ -102,11 +141,13 @@ describe('monster specs are keyed by monsterId, not by player weapon slots', () 
     expect(spec.costKind).toBe('none');
   });
 
-  it('200001 archer fires projectiles and pays nothing', () => {
+  it('200001 archer fires a NON-LOCKED arrow and pays nothing', () => {
     const spec = monsterSpec('200001');
     expect(spec.kind).toBe('projectile');
-    expect(spec.range).toBe(Infinity);
-    expect(spec.projectileSpeed).toBe(PROJECTILE_SPEED);
+    expect(spec.targeting).toBe('directional');
+    expect(spec.projectileId).toBe(MONSTER_ARROW_ID);
+    expect(spec.range).toBe(MONSTER_ARROW.range);
+    expect(spec.projectileSpeed).toBe(MONSTER_ARROW.speed);
     expect(spec.costKind).toBe('none');
   });
 });
