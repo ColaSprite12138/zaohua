@@ -51,6 +51,14 @@
 导出的常量等于表值。改值流程：改 xlsx → `python scripts/export_tables.py` → 跑验收。
 **不要**在 TS 里再抄一份数字（护栏会红）。
 
+**发布时表要不要带**（2026-11-15 验证）：**运行时不需要表**。表是开发期源数据，`generated/*.ts`
+才是运行时数据源，构建时被编译进 `program-*.js`；xlsx 没有 `.meta.json`，不是引擎资产，不进
+`pack-index.json`，也不会出现在发布归档（`forgeax-game-web.zip` 里 0 个 `.xlsx` / `.ts`）。
+把整个 `tables/` 移走再 `project build` 仍然成功，"横扫 38 伤害 / 火墙 18 蓝 7 秒 CD" 一个不少。
+所以「表交不上去」不会导致线上读不到数据；**真正会出事的是只改表没导出、或导出后没提交
+`generated/`** —— 两者都会被 `export_tables.py --check`（`verify-all.sh` 第 116 行）拦下。
+表本身仍应纳入版本库：它是唯一权威源，换机器 / 新会话要靠它重建。
+
 **拆表契约（2026-11-12，用户选 A 方案）**：`item.xlsx` 与 `weapon.xlsx` 各为单 Sheet、按 `id`
 严格 1:1 join。`combat/loot.ts::authoredItem()` 是运行时唯一 join 点，
 `scripts/inject-shell.mjs` 是局外目录注入的 join 点；`attack-spec.ts::weaponSpec()` 只读

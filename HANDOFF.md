@@ -52,6 +52,7 @@
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
 | 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **250**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
+| 数值表要一起提交吗 | **提交到 git（已提交），但发布产物里没有表也不需要表**。运行时只读 `assets/resource/generated/*.ts`（TS 常量），构建时被编译进 `program-*.js`；xlsx 是**开发期源数据**，不是引擎资产（没有 `.meta.json`，不进 pack）。实测：把 `assets/resource/tables/` 整个移走再 `project build` 仍然成功，产物里 `cost/cooldown/damage` 一个不少（2026-11-15 验证）。**三层保险**：① 发布归档 `forgeax-game-web.zip` 里 0 个 `.ts`/`.xlsx`（只有 js/json/wasm/html）；② `generated/*.ts` 也在 git 里 → 云端构建不跑 python 也能读到数据；③ `verify-all.sh` 跑 `export_tables.py --check`，表与生成物不同步直接失败 |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
 | 怎么还原 | `git checkout HEAD -- <path>`；整包兜底见「可回滚基线」 |
 
@@ -326,6 +327,7 @@ resource 14（tables 7 + map 7）、**美术 10（`assets/__tests__/voxel.test.t
 | 掉落跑批偶发「偏差 >1%」 | `--samples` 太小（1000）时尾部稀有项因方差本身超标；验收固定 31000 次/池 |
 | 造化插件普通预览后 4174 报 `PlatformClient was not ready before Tian Gong Engine initialize` | Builder 普通预览服务的是 `dist/`（不是发布用的玩家产物），会重建 dist 抹掉壳层，并往 `<head>` 注入 `data-zaohua-platform-init`；该 bootstrap 在 import 引擎前等宿主注入的 `window.PlatformClient`，4174 没有。恢复 4174 需 `forgeax project build` 后重跑 `inject-shell.mjs`。**发布请走 `scripts.package`**（含壳层玩家产物），别拿 4174 的 dist 当发布包 |
 | **普通预览打开只有战斗画面、没有装备界面** | 普通 `preview_start` 走 `project build` 的 `dist/`，壳层注入块被重建抹掉（101460 B / marker=1 → 45123 B / marker=0），且它**不调用** `scripts.package`。要看完整单页必须用 `preview_reload(validate: true)` 或上传后的玩家产物（`.game-builder/artifacts/forgeax-player/`，含壳层 + 平台 bootstrap）。见 feedback 最后一条 |
+| **担心「表交不上去 → 线上读不到数据」** | 不会：线上跑的是编译后的 `program-*.js`，数值已经变成 JS 常量；`tables/` 只是开发期源文件。真会出事的是**另一件事**：只改 xlsx 没跑 `export_tables.py`，或导出了没提交 `generated/` —— 这两件都被 `verify-all` 的 `--check` 拦住 |
 | **改了 xlsx 但游戏里数值没变 / 单测报 `generated/` 过期** | 忘了导出：`python scripts/export_tables.py`（`--check` 会失败）。反过来，在 TS 里直接改了数字也会被 `data-driven.test.ts` 抓出来 —— 数值只允许来自表 |
 | **预览链接给用户后一两分钟变成 `ERR_CONNECTION_REFUSED`** | 给的是造化 `previewUrl`（当次 build-job 的子进程，turn 收尾被回收，端口每次 reload 还变）。**交付地址只用 `http://127.0.0.1:58080/index.html`**，由 `scripts\preview-stable.cmd` 拉起（固定端口、跨会话存活）；造化只做校验旁证 |
 | 想「先注入再打包」让 Web ZIP 带壳层，结果没带上 | `project package` 内部重新 build 覆盖 `dist/` 且无 post-build hook，`verifyDist` 逐字节校验产物；`--html-head` 只在 `project build` 生效、package 调 build 时不传。正解是 `scripts.package` 接管：官方 ZIP → 解包注入 → 同步 manifest → 重打包 |
