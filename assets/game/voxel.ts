@@ -524,6 +524,48 @@ export function itemModel(key: string): VoxelModel {
   return model;
 }
 
+/* ------------------------------------------------- 可破坏物（设计 10.5） */
+
+/**
+ * 三档可破坏物：木箱 / 铜箱 / 舍利匣。
+ *
+ * 和别的模型同一条规矩：一格一个 4px 方块、`z` 只允许 0、没有渐变。
+ * 三档靠**颜色与饰件**区分，不靠尺寸：木箱是棕色板条箱，铜箱加铜箍与锁，
+ * 舍利匣是深色石匣 + 金色包角 + 一颗青色宝珠 —— 远看也要一眼分得出价值。
+ * 尺寸 12×11 格（48×44px），正好塞进 `destructibles.ts` 的点击盒。
+ */
+function crateModel(
+  name: string, body: string, bodyHi: string, dark: string, band: string, glow?: string,
+): VoxelModel {
+  const b = new Builder(name, 4);
+  b.box(-6, 0, 0, 12, 10, 1, body);
+  // 顶面（亮）与左右立边（暗）：立方体读法的最小一套。
+  b.box(-6, 9, 0, 12, 1, 1, bodyHi);
+  b.box(-6, 0, 0, 1, 10, 1, dark);
+  b.box(5, 0, 0, 1, 10, 1, dark);
+  // 横箍
+  b.box(-6, 3, 0, 12, 1, 1, band);
+  b.box(-6, 6, 0, 12, 1, 1, band);
+  if (glow !== undefined) {
+    // 宝珠：匣子正中的一点亮色，也是「这东西值钱」的唯一提示。
+    b.box(-2, 4, 0, 4, 3, 1, glow);
+    b.box(-1, 5, 0, 2, 1, 1, bodyHi);
+  }
+  return b.model();
+}
+
+/** 技能栏 / 掉落 / 场景共用的可破坏物模型表，键 = `destructible.xlsx::id`。 */
+export const DESTRUCTIBLE_MODELS: Readonly<Record<string, VoxelModel>> = Object.freeze({
+  crate: crateModel('crate', C.wood, '#b07a3f', '#5c3a18', '#6b3f0e'),
+  coffer: crateModel('coffer', '#9a6a2f', C.gold, '#5a3a12', C.goldDark),
+  reliquary: crateModel('reliquary', '#3b4a5c', C.steel, '#1a2432', C.gold, C.gem),
+});
+
+/** 未知 kind 返回 null：绘制层画个占位方块，而不是借别人的模型。 */
+export function destructibleModel(kind: string): VoxelModel | null {
+  return DESTRUCTIBLE_MODELS[kind] ?? null;
+}
+
 export const MODELS: Record<string, VoxelModel> = {
   corpse: CORPSE,
   sword: itemModel('blade:steel'),

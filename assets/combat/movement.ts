@@ -17,6 +17,7 @@ import { burst, setTarget } from './effects.ts';
 import {
   clearAttackOrder, dropAtPoint, hitTestEnemy,
 } from './attack.ts';
+import { destructibleAtPoint, orderSmash } from './destructibles.ts';
 import { CLICK_DRAG_PIXELS, PLAYER_DODGE_CD, STRIDE_PIXELS, type GameState, type StepInput } from './state.ts';
 import { lockedFlags, moveMultiplier } from './status.ts';
 import { walkable, type World } from './world.ts';
@@ -54,6 +55,8 @@ export function classifyPointer(s: GameState, input: StepInput): void {
     if (input.pointerHeld && s.press.hold) {
       clearAttackOrder(s);
       s.pickupTarget = null;
+      // 拖动 = 我要走路：放弃之前点出来的「砸这个箱子」意图。
+      s.smashTarget = null;
       if (input.mouse) setTarget(s, input.mouse.x, input.mouse.y);
       s.moveMode = 'follow';
     } else if (s.moveMode === 'follow') {
@@ -71,12 +74,19 @@ export function classifyPointer(s: GameState, input: StepInput): void {
         const cx = s.press.wx;
         const cy = s.press.wy;
         const drop = dropAtPoint(s, cx, cy);
-        const enemy = drop ? null : hitTestEnemy(s, cx, cy);
+        // 可破坏物在敌人之前判：它的点击盒是一个 26×44 的精确矩形，而怪的
+        // 命中盒带 46px 容错。箱子旁边站着一只怪时，指向箱子的那一下必须是
+        // 「砸」，不能被容错吃掉。
+        const crate = drop ? null : destructibleAtPoint(s, cx, cy);
+        const enemy = drop !== null || crate !== null ? null : hitTestEnemy(s, cx, cy);
         clearAttackOrder(s);
         // A short click ON a drop (its name plate or small model) is the ONLY
         // thing that orders a pickup; walking past a drop never collects it.
         s.pickupTarget = drop ? drop.uid : null;
-        if (enemy !== null) {
+        if (crate !== null) {
+          orderSmash(s, crate);
+        } else if (enemy !== null) {
+          s.smashTarget = null;
           s.targetEnemy = enemy;
           s.attackOrder = true;
           const sk = s.skeletons[enemy];
@@ -85,8 +95,10 @@ export function classifyPointer(s: GameState, input: StepInput): void {
           // Walk to the ITEM, not to the plate: the plate floats above the
           // ground, so aiming at its far edge must not send the player to an
           // unwalkable spot behind the drop.
+          s.smashTarget = null;
           setTarget(s, drop.x, drop.y);
         } else {
+          s.smashTarget = null;
           setTarget(s, cx, cy);
         }
         s.moveMode = 'point';

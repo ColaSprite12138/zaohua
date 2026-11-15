@@ -18,6 +18,8 @@
 天赋在战斗内的**效果执行**也归本模块（`modifiers.ts`）：`talent/` 只产出稳定的 `effectIds`，由 combat 解释。
 击杀掉落也归本模块：`loot.ts` 消费 `resource/generated/*.ts` 的「怪物→掉落池→权重」表，产出带 authored `itemId` 的 `Drop`。
 **单局骨架**（900 秒计时 / 三段阶段 / 传送门引导与撤离 / 关卡类型分流）也归本模块：`extraction.ts` + `state.ts`。
+**可破坏物与单局事件**（10.5 的砸开通道 / 10.2 的 7 分钟事件 / 怪的惊醒与守门）同样归本模块：
+`destructibles.ts` + `events.ts` + `enemies.ts` 的 `awake` 模型。
 
 ## 不负责
 
@@ -236,7 +238,10 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
   `dropPlates`（全部牌面 + `index/count/hidden`，屏幕归一化）**；
   `equippedWeapon` **保留旧字段名**，语义＝激活槽是否有武器。
 - `moveMode` 三态：`idle` / `point` / `follow`；`target` / `followingPointer` / `attackOrder` /
-  `attackTarget` / `skeletons`（坐标 / 血量 / 存活）都在投影里，供验收脚本直接断言。
+  `attackTarget` / `skeletons`（坐标 / 血量 / 存活 / **状态 / awake / goal**）都在投影里，供验收脚本直接断言。
+- 可破坏物与事件同样在投影里：`destructibles`（含 `progress / rubble / fromEvent`）、`smash`、
+  `events`（光柱）、`eventLog`（已触发的事件 id）、`hoverDestructible`。**全部屏幕归一化**，
+  和 `portals` / `player` 用同一套坐标，playthrough 直接点。
 
 ### 单局骨架：计时 / 阶段 / 传送门撤离（2026-11-14 新增，设计文档第 10 章）
 
@@ -387,6 +392,20 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 46. **损坏 ≠ 卸下**：耐久 0 的装备留在槽里，靠 `activeWeaponBroken()` 让伤害/距离回落空手。
    禁止在耐久归零时把物品删除或自动卸下 —— 那会让玩家觉得"装备凭空消失了"。
 
+49. **可破坏物位置来自地图**：正式图的箱子只能由 LDtk 的 `Destructible` 实体 + `destructible.xlsx`
+   的 `kind` 决定。`events.ts` 也不许自己编坐标 —— 刷点只认 `ArenaMap.eventSites`，
+   没有事件点才退到地图中心（那只是「别让事件静默消失」，不是布点）。
+50. **砸箱子是站桩，不是 DPS 检查**：进度只由 `updateDestructibles()` 按 `smash_seconds` 推进；
+   受击 / 闪避 / 走开只清进度。**不许**给可破坏物加 HP、加伤害结算、或让技能直接打掉它 ——
+   那会把「2–4 秒的脆弱窗口」变成「多砍两刀」。
+51. **拒绝起手必须免费**：`beginSmash()` 返回 `guarded / gone / busy` 时，进度、玩家状态、
+   箱子状态一律不动；守卫没清就清掉 `smashTarget`，否则每帧重试会把 toast 刷成噪音。
+52. **沉睡是单向的**：`Skeleton.awake` 一旦为 true 就整局不回到 false（`reset()` 才重建）。
+   唤醒来源只有四个：进感知圈、挨伤害、`wakeNoise()`、撤离阶段。别在 AI 里加「脱战回睡」——
+   那会让玩家靠跑位把怪「拉掉」，比任何伤害数值都破坏手感。
+53. **事件只在活着的一局里触发**：`updateEvents()` 遇到 `extracted / timedOut / gameOver` 直接返回；
+   光柱的 `beacon` 照常衰减（画面要收尾）。一行事件一局只触发一次（`firedEvents`），重开一局清空。
+
 ## 目录与依赖方向（单向，禁止反向 import）
 
 ```
@@ -402,9 +421,16 @@ combat/movement.ts         ← state + effects + attack + status(禁移动/减�
 combat/skills.ts           ← state + effects + attack + reactions + status + movement(`canStand`) + modifiers(类型)
 combat/enemies.ts          ← state + effects + status(硬控/减速/迟滞) + loot(monsterRow 取手感) + world
 combat/weapons.ts          ← state + effects
-combat/loot.ts             ← resource/generated/*.ts（只消费生成物，不读 xlsx）
+combat/loot.ts             ← resource/generated/*.ts（只消费生成物，不读 xlsx）；`rollPool()` 是唯一抽样算法
+combat/enemies.ts          ← state + effects + status + loot + world；**惊醒模型**（`wakeNoise()` 也在这里）
+combat/destructibles.ts    ← state + effects(`pinPlayer`) + enemies(`wakeNoise`) + loot(`rollPool`) + world
+combat/events.ts           ← state + destructibles(def) + enemies(wakeNoise) + effects + world
 combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯一对外门面
 ```
+
+**`destructibles.ts → enemies.ts` 是唯一新增的方向**：砸箱子要「喊一声」，而喊话的实现（谁醒、怎么醒）
+属于 AI。**不许反向**（`enemies.ts` 不 import `destructibles.ts`）：那会形成
+「AI ↔ 可破坏物」的环，而 AI 只该读 `state` 上的 `awake` 字段。
 
 **`status.ts` 不许 import `attack.ts` / `reactions.ts`**：它是所有子系统都要读的表，
 一旦反过来 import 就会形成「伤害入口 ↔ 反应结算」的环（`attack.ts` 需要它来上状态）。
@@ -431,7 +457,13 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 `lockedFlags(host)` / `moveMultiplier` / `attackIntervalMultiplier` / `damageTakenMultiplier` /
 `statusSnapshot(host)`（`status.ts` — **状态效果的唯一出口**）/
 `applyElement(s, index, element, opts?)` / `spawnZone(s, element, x, y, radius, life, source)` /
-`growZones(s, x, y, elements)` / `updateZones(s, dt)` / `tickStatuses(s, dt)` / `REACTIONS` / `reactionFor(a, b)`（`reactions.ts`）。
+`growZones(s, x, y, elements)` / `updateZones(s, dt)` / `tickStatuses(s, dt)` / `REACTIONS` / `reactionFor(a, b)`（`reactions.ts`）/
+`destructibleAtPoint(s, x, y)` / `orderSmash(s, obj)` / `beginSmash(s, obj)` / `cancelSmash(s, why?)` /
+`updateDestructibles(s, dt)` / `destructibleDef(id)` / `guardsAround(s, obj)` / `DESTRUCTIBLE_IDS` /
+`DESTRUCTIBLE_HALF_WIDTH` / `DESTRUCTIBLE_TOP` / `DESTRUCTIBLE_BOTTOM`（`destructibles.ts`）/
+`EVENTS` / `updateEvents(s, dt)` / `runElapsed(s)`（`events.ts`）/
+`wakeNoise(s, x, y, radius)`（`enemies.ts`）/
+`spawnDestructibles(map)` / `SMASH_RANGE` / `SMASH_SWING_SECONDS` / `RUBBLE_SECONDS`（`state.ts`）。
 引擎层从 `assets/game/simulation.ts` 门面 import；新代码应直接 import 本模块。
 
 ## 攻击规格与资源预留（架构层，2026-11-12 新增，**尚未接入运行时**）
@@ -476,15 +508,67 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 4. **`reset()` 保留 `fromDeathDrop` 的掉落物**（R 重开是「重玩这张图」，图上的东西还在），
    而 `deployRun()` 会先清空全部掉落再摆新遗物 —— 否则重开一次就复制一份，或者一按 R 就把遗物扫没了。
 
+## 可破坏物与单局事件（设计 10.2 / 10.5，2026-11-16 凌晨）
+
+代码：`combat/destructibles.ts`（砸开通道 / 守卫门槛 / 产出）+ `combat/events.ts`（第 7 分钟事件）
++ `combat/enemies.ts` 的**惊醒模型**（`Skeleton.awake` / `goal`）。这一批把设计 10 章最后两块补上：
+「搜」不再是一个 UI 遮挡，时间轴也不再只有倒计时。
+
+### 可破坏物（10.5「替代搜容器」）
+
+| 项 | 契约 |
+|:--|:--|
+| 数据 | `tables/destructible.xlsx`：`smash_seconds / loot_pool_id / drops / alarm_radius / guard_radius / name / hint`。**形状在代码**（`voxel.ts::DESTRUCTIBLE_MODELS`），数字在表 |
+| 三档 | `crate` 木箱 2s / 池 3 / 抽 1 次 / 声响 260；`coffer` 铜箱 3s / 池 3 / 抽 2 次 / 声响 320；`reliquary` 舍利匣 4s / 池 4 / 抽 2 次 / 声响 380 / **守卫 240** |
+| 位置 | **地图是权威**：LDtk 的 `Destructible` 实体（字段 `kind`）→ `ArenaMap.destructibles`。正式图 8 个（两座厢房各 2、中庭 4，两个舍利匣故意摆在怪的警戒圈里）；夹具 3 个 |
+| 交互 | 点它 → 走过去（`smashTarget`）→ 进 `SMASH_RANGE`=72px **自动起手**。点击优先级：掉落物名字牌 → 可破坏物（精确矩形 26×44）→ 敌人（命中盒 + 46px 容错）→ 地面。箱子排在敌人前面：它的盒子是精确矩形，而怪的命中带容错，反过来「指向箱子」会被容错吃掉 |
+| 站桩 | 起手即 `pinPlayer()`（和引导门、读条共用 `effects.ts::pinPlayer`），`step()` 的 `pinned` 加上 `s.smash !== null`，所以点击移动 / 攻击指令都不生效 |
+| 打断 | 受击（`player.hurt > 0`）/ 闪避 / 走出 108px → **只清进度**，不给硬直（同门引导的 v4 规矩）；闪避是唯一主动退出方式 |
+| 机关 | `guard_radius > 0` 的（舍利匣）在圈内还有活怪时**起不了手**，并清掉 `smashTarget`（否则每帧重试刷屏）。「先清场再破坏」是可执行的规则，不是提示文案 |
+| 声音 | 起手与砸开各一次 `wakeNoise(x, y, alarm_radius)`：惊醒沉睡的怪（见下）。玩家站桩 2–4 秒 = 偷袭窗口 |
+| 动作 | 每 `SMASH_SWING_SECONDS`=0.45s 补一次 `player.attackFx` + 碎屑：读起来就是「一直在砍这个箱子」 |
+| 产出 | `loot.ts::rollPool(poolId, rng)` 抽 `drops` 次，撒成小圈（34×22），走**同一份 `Drop`**（名字牌 / 品质色 / 显式拾取全部复用）。**不进 `lootLog`**（那是「怪物击杀」的账），拾取照样进 `carriedItems` |
+| 残骸 | 砸开 → `rubble = 6s`（画几块散落木板 + 淡出），期间不可交互、不再产出；`reset()` 把箱子全部放回去 |
+| 投影 | `destructibles[{uid,kind,name,x,y,progress,smashing,rubble,fromEvent}]` / `smash{uid,kind,progress}` / `hoverDestructible` |
+
+### 单局事件（10.2 三段式的情绪高点）
+
+| 项 | 契约 |
+|:--|:--|
+| 数据 | `tables/event.xlsx`：`at_seconds / kind / count / alarm_radius / beacon_seconds / name / hint`。当前一行：`high_value` @420s（第 7 分钟）刷 1 个 `reliquary`，声响 560，光柱 25s |
+| 刷点 | **地图是权威**：LDtk `EventSite` → `ArenaMap.eventSites`（正式图 2 处，夹具 1 处）。多个事件按 `firedEvents.length` 轮转不同的点；**没有事件点的图**退到地图中心的可走格（不静默消失） |
+| 触发 | `updateEvents()` 排在 `updateRunClock()` 之后（读刚更新的 `runSeconds`），`elapsed = 900 - runSeconds`；一行只触发一次；**已结束的一局不再刷**（撤离 / 超时 / 阵亡） |
+| 广播 | 刷出的箱子 `fromEvent = true`（金圈 + 呼吸光 + 小地图亮点），`s.events` 记一条（`beacon` 秒数递减），`say()` 一条文案，`wakeNoise(alarm_radius)` 把附近的沉睡怪拉过来 |
+| 抽取距离 | `combat_rule.xlsx::monster_converge_px`=320：撤离阶段离玩家超过它就改去守最近的门，近身的照常打人 |
+
+### 惊醒模型（10.5「破坏会惊醒周围的怪」的前提）
+
+| 项 | 契约 |
+|:--|:--|
+| 字段 | `Skeleton.awake`（沉睡 / 清醒，整局单向）+ `Skeleton.goal`（`player` / `portal` / `none`，本帧目标，纯观测） |
+| 感知 | `monster.xlsx::sense_radius`（剑士 700 / 弓手 760）。玩家走进圈里、被 `damageSkeleton()` 打到、或者附近有东西被砸开 / 事件刷新 → 醒 |
+| 沉睡 | 站着盯人（`face` 仍跟着玩家），**不走路、不绕路、不打人**。这就是「远处那些怪不会千里迢迢来找你」 |
+| 撤离阶段 | `phase === 'extract'` 全员强制唤醒，且离玩家 > `monster_converge_px` 时目标改为最近的门（`goal = 'portal'`）—— 设计 10.2「怪向传送门聚集」 |
+
+**为什么这次才做沉睡**：没有 `awake`，「破坏会惊醒周围的怪」是句空话（怪本来就一直在追你），
+`先清场再破坏` 也就没有代价。反过来，一旦有了沉睡，破坏的声响才真的是代价。
+代价是全局手感变了：**远处的怪不再主动来找你**，所以感知半径必须比夹具里的 482/617px 大
+（`data-driven.test.ts` 有一条断言守着「夹具两只怪开局就在感知圈内」）。
+
+**没做的部分**：可破坏物不挡路（不参与 `canStay` 探针，也不算 `resolveBodyOverlap` 的身体）；
+巡逻 / 视野朝向（沉睡的怪不会背对你，`face` 仍指向玩家）；`drops` 只是「抽几次」，
+真正的高价值池细分要等词条批次；事件只有一行（后续加「补给空投」「精英巡回」照表加行即可）。
+
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 187 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3 / extraction 17 / skills 22 / status 28 / data-driven 11 / **death-drop 10**）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 229 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 9 / modifiers 10 / extraction 17 / skills 22 / status 28 / data-driven 19 / death-drop 10 / **destructibles 17 / events 9**）
 python scripts/export_tables.py --check                                # 数值表与生成物是否同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-death-drop.mjs --json  # 副本遗物：摆点 / 名字牌 / 点回 / 耐久
+./node_modules/.bin/forgeax project play --script scripts/playthrough-destructible.mjs --json # 可破坏物 + 7 分钟事件（夹具 + 真地图）
 ```
 
 `scripts/playthrough*.mjs` 是本模块的浏览器验收（放在工程 `scripts/` 下以兼容 `project play`）。

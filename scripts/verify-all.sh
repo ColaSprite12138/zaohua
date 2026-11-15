@@ -155,6 +155,12 @@ run_json death-drop "$FX" project play \
   --script scripts/playthrough-death-drop.mjs --json
 check_report death-drop artifacts/play/scripts/playthrough-death-drop/play.json 2
 
+# 可破坏物 + 单局事件（设计 10.2 / 10.5）：夹具验守卫门槛 / 站桩砸开 / 掉落，
+# 真地图验第 7 分钟的高价值事件与撤离阶段的「怪向门聚集」（快进 430 秒不用真实时间）。
+run_json destructible "$FX" project play \
+  --script scripts/playthrough-destructible.mjs --json
+check_report destructible artifacts/play/scripts/playthrough-destructible/play.json 6
+
 run_json package node scripts/package-with-shell.mjs --format web-zip --output "$OUT/forgeax-game-web.zip" --json
 ( cd "$OUT" && sha256sum -c forgeax-game-web.zip.sha256 ) >> "$SUMMARY" 2>&1 \
   || die "package：sha256 校验失败"

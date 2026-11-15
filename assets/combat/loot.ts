@@ -124,15 +124,12 @@ export function makeRng(seed: number): () => number {
 }
 
 /**
- * Roll one item for a killed monster.
- * Falls back to the first item of the table only if the authored data is
- * inconsistent (unknown monster / empty pool) — that is a data bug, and the
- * caller records it rather than silently producing `null` drops.
+ * Roll one item from an authored pool. THE sampling algorithm: monster kills and
+ * destructibles both come through here, so "how often does 霜之哀伤 drop" has a
+ * single answer that `loot-report.mjs` can measure.
  */
-export function rollLoot(monsterId: string, rng: () => number): LootRoll | null {
-  const monster = monsterRow(monsterId);
-  if (monster === undefined) return null;
-  const entries = poolEntries(monster.loot_pool_id);
+export function rollPool(poolId: number, rng: () => number): LootRoll | null {
+  const entries = poolEntries(poolId);
   const total = entries.reduce((n, e) => n + e.weight, 0);
   if (total <= 0 || entries.length === 0) return null;
 
@@ -154,7 +151,19 @@ export function rollLoot(monsterId: string, rng: () => number): LootRoll | null 
     quality: row.quality,
     damageMin: row.damage_min,
     damageMax: row.damage_max,
-    poolId: monster.loot_pool_id,
+    poolId,
     draw,
   };
+}
+
+/**
+ * Roll one item for a killed monster.
+ * Falls back to the first item of the table only if the authored data is
+ * inconsistent (unknown monster / empty pool) — that is a data bug, and the
+ * caller records it rather than silently producing `null` drops.
+ */
+export function rollLoot(monsterId: string, rng: () => number): LootRoll | null {
+  const monster = monsterRow(monsterId);
+  if (monster === undefined) return null;
+  return rollPool(monster.loot_pool_id, rng);
 }

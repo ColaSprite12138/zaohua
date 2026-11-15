@@ -447,6 +447,79 @@ export function createPortals(w: World, count = PORTAL_COUNT): Portal[] {
   }));
 }
 
+/* --------------------------------------- 可破坏物与单局事件（设计 10.2 / 10.5） */
+
+/**
+ * 一个可破坏物（设计 10.5「替代搜容器」）。
+ *
+ * 它**不是**血条怪：砸开是一段**站桩的引导**（`smash_seconds` 2–4 秒），
+ * 期间不能移动、被挨打就断，砸完还会发出声响惊醒周围的怪 —— 三个要素
+ * （背身、站桩、声音）凑齐，偷袭玩法才成立。
+ *
+ * 位置来自地图（LDtk `Destructible` / `EventSite`），运行时只做吸附，不布点。
+ */
+export interface DestructibleObj {
+  /** 稳定 id：地图实体 id（`destructible_c_r`）或事件刷出来的 `event_<id>_<n>`。 */
+  readonly uid: string;
+  /** `destructible.xlsx` 的行 id（crate / coffer / reliquary），不是显示名。 */
+  readonly kind: string;
+  x: number;
+  y: number;
+  /** 0..1 砸开进度；1 = 已破坏。 */
+  progress: number;
+  /** 破坏后残骸剩余秒数；> 0 时不可再交互（但还画在地上）。 */
+  rubble: number;
+  /** 本帧是否正在被砸（纯表现：挥砍动作 / 尘土 / 进度条）。 */
+  smashing: boolean;
+  /** 高价值事件刷新出来的（画得更亮，验收据此区分）。 */
+  fromEvent: boolean;
+}
+
+/**
+ * 正在砸的那一个。`total` 在起手时按表算好，之后不再重算 ——
+ * 中途换武器 / 换乘区不该让已经砸了一半的箱子变长。
+ */
+export interface SmashState {
+  readonly uid: string;
+  readonly kind: string;
+  t: number;
+  readonly total: number;
+}
+
+/** 本局已经触发的事件（表现用：光柱剩余秒数）。 */
+export interface RunEventRecord {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
+  /** 光柱 / 光效剩余秒数。 */
+  beacon: number;
+}
+
+/** 可破坏物：站位半径（世界像素）—— 站不到这里就得先走过去。 */
+export const SMASH_RANGE = 72;
+/** 砸开时每 `SMASH_SWING_SECONDS` 秒补一次挥砍动作（「有挥砍音效」的动作侧等价物）。 */
+export const SMASH_SWING_SECONDS = 0.45;
+/** 残骸留在地上的秒数：砸完还能读出「这里被我砸过」。 */
+export const RUBBLE_SECONDS = 6;
+
+/**
+ * 从地图生成这一局的可破坏物。`reset()` 每次都重建，所以重开一局（R）会把
+ * 砸掉的箱子放回去 —— 那是「重玩这张图」，不是「这一局的战果」。
+ */
+export function spawnDestructibles(map: ArenaMap): DestructibleObj[] {
+  return (map.destructibles ?? []).map((entry) => ({
+    uid: entry.id,
+    kind: entry.kind,
+    x: entry.x,
+    y: entry.y,
+    progress: 0,
+    rubble: 0,
+    smashing: false,
+    fromEvent: false,
+  }));
+}
+
 export interface Particle {
   x: number;
   y: number;
@@ -486,6 +559,16 @@ export interface Skeleton {
   repath: number;
   /** 身上挂着的状态（硬控 / DOT / 元素附着），规则见 `status.ts`。 */
   statuses: StatusInstance[];
+  /**
+   * 是否已经被惊醒（设计 10.5「破坏会惊醒周围的怪」）。
+   *
+   * 感知半径是**每只怪**的 `monster.xlsx::sense_radius`：玩家走进圈里、
+   * 挨了一刀、或者附近有东西被砸开，它就醒了，之后整局保持清醒。
+   * 没醒的怪只站着盯人 —— 这就是「先清场再破坏」能成立的前提。
+   */
+  awake: boolean;
+  /** 本帧的移动目标：追人 / 守门（撤离阶段）/ 原地。纯观测，AI 用它算路。 */
+  goal: 'player' | 'portal' | 'none';
 }
 
 export interface Drop {
@@ -687,6 +770,11 @@ export interface GameState {
    * move cursor, not the sword, even though a monster stands on the same spot.
    */
   hoverDrop: string | null;
+  /**
+   * 指针下的可破坏物 uid（设计 10.5）。和 `hoverDrop` 一样只是反馈：
+   * 它让箱子亮一圈、并告诉玩家「这一下会砸而不是走」。
+   */
+  hoverDestructible: string | null;
   attackOrder: boolean;
   /**
    * The button currently down. `vx/vy` are the press point in VIEW space (used
@@ -770,6 +858,17 @@ export interface GameState {
   extracted: boolean;
   /** 时间耗尽没撤离：本局失败，整份丢失。 */
   timedOut: boolean;
+  /* ------------------------------------------- 可破坏物与单局事件（10.2 / 10.5） */
+  /** 本图的可破坏物（`reset()` 按地图重建；事件刷出来的追加在末尾）。 */
+  destructibles: DestructibleObj[];
+  /** 正在砸的那一个；null = 没在砸。 */
+  smash: SmashState | null;
+  /** 玩家点击锁定、正在走过去的可破坏物 uid；null = 没有。 */
+  smashTarget: string | null;
+  /** 本局已触发的事件（光柱 / 广播）。 */
+  events: RunEventRecord[];
+  /** 已触发过的事件 id：一张表一行只触发一次，重开一局清空。 */
+  firedEvents: string[];
 }
 
 export interface RunConfig {
@@ -798,6 +897,7 @@ export function createState(config: RunConfig = {}): GameState {
     targetEnemy: null,
     hoverEnemy: null,
     hoverDrop: null,
+    hoverDestructible: null,
     attackOrder: false,
     press: null,
     skeletons: [],
@@ -836,6 +936,11 @@ export function createState(config: RunConfig = {}): GameState {
     channel: null,
     extracted: false,
     timedOut: false,
+    destructibles: [],
+    smash: null,
+    smashTarget: null,
+    events: [],
+    firedEvents: [],
   };
   reset(state);
   return state;
@@ -863,6 +968,8 @@ export function spawnFromMap(map: ArenaMap): Skeleton[] {
     path: [],
     repath: 0,
     statuses: [],
+    awake: false,
+    goal: 'none',
   }));
 }
 
@@ -915,10 +1022,18 @@ export function reset(s: GameState): void {
   s.channel = null;
   s.extracted = false;
   s.timedOut = false;
+  // 可破坏物是「这张图上的东西」：重开一局全部放回去（砸掉的那一局不算数）。
+  // 事件同理 —— `firedEvents` 清空，7 分钟时该刷的还会刷。
+  s.destructibles = spawnDestructibles(s.map);
+  s.smash = null;
+  s.smashTarget = null;
+  s.events.length = 0;
+  s.firedEvents.length = 0;
   s.moveMode = 'idle';
   s.targetEnemy = null;
   s.hoverEnemy = null;
   s.hoverDrop = null;
+  s.hoverDestructible = null;
   s.attackOrder = false;
   s.press = null;
   const p = s.player;

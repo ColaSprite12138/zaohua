@@ -213,6 +213,13 @@ if [ "$combat_play" -eq 1 ]; then
     > "$OUT/inc-resize.json" 2> "$OUT/inc-resize.err" \
     || { tail -n 20 "$OUT/inc-resize.json" "$OUT/inc-resize.err"; die "resize 非零退出"; }
   check_play resize artifacts/play/scripts/playthrough-resize/play.json 4
+
+  # 可破坏物 + 单局事件（设计 10.2 / 10.5）：夹具验箱子，真地图验 7 分钟事件。
+  log "[RUN ] combat :: playthrough-destructible"
+  "$FX" project play --script scripts/playthrough-destructible.mjs --json \
+    > "$OUT/inc-destructible.json" 2> "$OUT/inc-destructible.err" \
+    || { tail -n 20 "$OUT/inc-destructible.json" "$OUT/inc-destructible.err"; die "destructible 非零退出"; }
+  check_play destructible artifacts/play/scripts/playthrough-destructible/play.json 6
 fi
 
 log "=== INCREMENTAL GREEN $(date '+%Y-%m-%d %H:%M:%S') ==="

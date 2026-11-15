@@ -33,6 +33,21 @@ export const testArena = {
     { id: 'test_m1', monsterId: '100001', col: 27, row: 13, x: 880, y: 430, wave: 1 },
     { id: 'test_m2', monsterId: '100001', col: 31, row: 17, x: 1010, y: 560, wave: 1 },
   ],
+  /**
+   * 可破坏物（设计 10.5）。夹具也走地图数据，所以浏览器验收点的是真实体：
+   *   crate      (656,272)  —— 无门槛，2 秒砸开
+   *   coffer     (976,144)  —— 3 秒，两次抽奖
+   *   reliquary  (1104,592) —— **有守卫**：m2 就在 98px 内，不先清场砸不开
+   */
+  destructibles: [
+    { id: 'test_crate', kind: 'crate', col: 20, row: 8, x: 656, y: 272 },
+    { id: 'test_coffer', kind: 'coffer', col: 30, row: 4, x: 976, y: 144 },
+    { id: 'test_reliquary', kind: 'reliquary', col: 34, row: 18, x: 1104, y: 592 },
+  ],
+  /** 单局事件点：第 7 分钟的高价值物刷在这里。 */
+  eventSites: [
+    { id: 'test_event', col: 6, row: 4, x: 208, y: 144 },
+  ],
 } as const;
 
 export type TestArenaMap = typeof testArena;

@@ -39,7 +39,7 @@ function stage(s: GameState, spots: [number, number][]): void {
     x, y, hp: 66, maxHp: 66, alive: true,
     attackCd: 999, hit: 0, bob: 0, face: Math.PI / 2, swing: 0,
     stride: 0, moving: false, monsterId: '100001', path: [], repath: 999,
-    statuses: [],
+    statuses: [], awake: true, goal: 'none',
   }));
 }
 

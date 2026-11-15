@@ -46,6 +46,24 @@ export function setTarget(s: GameState, x: number, y: number): void {
   }
 }
 
+/**
+ * 站桩：清掉落点 / 攻击指令、速度归零。
+ *
+ * 三处「站桩」共用它 —— 引导传送门（`extraction.ts`）、读条技能、砸可破坏物
+ * （`destructibles.ts`）。抽在这里是因为规则完全一样：站桩期间玩家既不能走、
+ * 也不能攻击，只能等或者挨打。
+ */
+export function pinPlayer(s: GameState): void {
+  s.moveMode = 'idle';
+  s.path = [];
+  s.target = { x: s.player.x, y: s.player.y };
+  s.attackOrder = false;
+  s.targetEnemy = null;
+  s.pickupTarget = null;
+  s.player.vx = 0;
+  s.player.vy = 0;
+}
+
 export function tickToast(s: GameState, dt: number): void {
   if (!s.toast) return;
   s.toast.life -= dt;

@@ -20,6 +20,8 @@ import { updateExtraction, updateRunClock } from './extraction.ts';
 import { spawnDeathDrop, type DeathDropPayload } from './death-drop.ts';
 import { tickStatuses, updateZones } from './reactions.ts';
 import { statusSnapshot } from './status.ts';
+import { updateDestructibles, destructibleDef, destructibleAtPoint } from './destructibles.ts';
+import { updateEvents } from './events.ts';
 import {
   advanceCast, beginSkill, skillDef, skillReady, tickSkills, updateDash,
 } from './skills.ts';
@@ -73,6 +75,8 @@ export function step(
   tickTimers(s, dt);
   // 单局骨架：倒计时 / 阶段推进。本帧之后的所有系统读的都是这一份时间。
   updateRunClock(s, dt);
+  // 单局事件：第 7 分钟的高价值物刷新（读的是刚更新的 `runSeconds`）。
+  updateEvents(s, dt);
 
   // 技能起手排在最前面：瞬发技能这一帧就结算，读条技能这一帧就把玩家钉住，
   // 所以下面的移动 / 攻击分支必须看到最新的 `s.cast`。
@@ -82,9 +86,9 @@ export function step(
     beginSkill(s, input.skill, input.mouse ?? null, modifiers);
   }
 
-  // 引导传送门时玩家被钉在门口，读条技能同理：点击移动与攻击指令都不生效
-  // （updateExtraction / advanceCast 负责开始、打断与结算；这里只负责「这一帧能不能动」）。
-  const pinned = s.channel !== null || s.cast !== null;
+  // 引导传送门 / 砸可破坏物 / 读条技能：三种「站桩」共用同一条判定 ——
+  // 点击移动与攻击指令都不生效（各自负责开始、打断与结算；这里只负责「这一帧能不能动」）。
+  const pinned = s.channel !== null || s.cast !== null || s.smash !== null;
   // 冲锋进行中：位移由 `updateDash()` 接管，普通走位与普攻让位（不能一边冲一边砍）。
   const dashing = s.player.dash !== null;
 
@@ -96,6 +100,9 @@ export function step(
   applyDodge(s, input.dodge);
   if (!pinned && !dashing) walk(s, dt);
   if (dashing) updateDash(s, dt, modifiers);
+  // 可破坏物：走到就起手、站桩进度、挨打 / 闪避 / 走开就断。排在怪之前，
+  // 所以「这一帧被砍」与「这一帧继续砸」不会同时成立。
+  updateDestructibles(s, dt);
   if (!pinned && !dashing) resolveAttackOrder(s, modifiers);
   updateSkeletons(s, dt);
   // Nobody may stand inside anybody. Runs after both sides moved AND after
@@ -126,7 +133,12 @@ export function step(
     ? dropAtPoint(s, pointer.x, pointer.y)
     : null;
   s.hoverDrop = hoveredDrop ? hoveredDrop.uid : null;
-  s.hoverEnemy = pointer === undefined || noHover || hoveredDrop !== null
+  // 可破坏物和敌人抢指针：箱子的点击盒是精确矩形，所以先判箱子（点箱子=砸）。
+  const hoveredCrate = pointer !== undefined && !noHover && hoveredDrop === null
+    ? destructibleAtPoint(s, pointer.x, pointer.y)
+    : null;
+  s.hoverDestructible = hoveredCrate ? hoveredCrate.uid : null;
+  s.hoverEnemy = pointer === undefined || noHover || hoveredDrop !== null || hoveredCrate !== null
     ? null
     : hitTestEnemy(s, pointer.x, pointer.y);
   // Camera is the single authority for input and painting. Updating it AFTER
@@ -238,6 +250,10 @@ export function projection(s: GameState) {
         alive: sk.alive,
         // 状态（硬控 / DOT / 元素附着）：验收脚本据此断言「冻住了 / 中毒叠了几层」。
         statuses: statusSnapshot(sk),
+        /** 是否已被惊醒（设计 10.5）；沉睡的怪站着盯人，不会来打你。 */
+        awake: sk.awake,
+        /** 本帧目标：追人 / 撤离阶段守门。 */
+        goal: sk.goal,
       };
     }),
     attackTarget: s.targetEnemy,
@@ -246,6 +262,8 @@ export function projection(s: GameState) {
     hoverEnemy: s.hoverEnemy,
     /** Drop uid under the free cursor (name plate wins over the enemy). */
     hoverDrop: s.hoverDrop,
+    /** 指针下的可破坏物 uid（点它就是砸）。 */
+    hoverDestructible: s.hoverDestructible,
     drops: s.drops.map((drop) => drop.kind),
     dropAt: dropScreen ? { x: dropScreen.x / VIEW_W, y: dropScreen.y / VIEW_H } : null,
     dropLabel: labelScreen ? { x: labelScreen.x / VIEW_W, y: labelScreen.y / VIEW_H } : null,
@@ -408,6 +426,45 @@ export function projection(s: GameState) {
         inRange: portal.inRange,
       };
     }),
+    /**
+     * 可破坏物（设计 10.5）：坐标屏幕归一化，验收脚本直接点它开砸。
+     * `rubble > 0` = 已砸开、只剩残骸；`progress` 是 0..1 的站桩进度。
+     */
+    destructibles: s.destructibles.map((obj) => {
+      const v = scr(obj.x, obj.y);
+      return {
+        uid: obj.uid,
+        kind: obj.kind,
+        name: destructibleDef(obj.kind).name,
+        x: v.x / VIEW_W,
+        y: v.y / VIEW_H,
+        progress: Math.round(obj.progress * 100) / 100,
+        smashing: obj.smashing,
+        rubble: Math.round(obj.rubble * 100) / 100,
+        fromEvent: obj.fromEvent,
+      };
+    }),
+    /** 正在砸的那一个；null = 没在砸。 */
+    smash: s.smash === null
+      ? null
+      : {
+        uid: s.smash.uid,
+        kind: s.smash.kind,
+        progress: s.smash.total > 0 ? Math.min(1, s.smash.t / s.smash.total) : 1,
+      },
+    /** 本局已触发的事件（`beacon` 是光柱剩余秒数）。 */
+    events: s.events.map((record) => {
+      const v = scr(record.x, record.y);
+      return {
+        id: record.id,
+        name: record.name,
+        x: v.x / VIEW_W,
+        y: v.y / VIEW_H,
+        beacon: Math.round(record.beacon * 10) / 10,
+      };
+    }),
+    /** 已触发过的事件 id（一张表一行只触发一次）。 */
+    eventLog: [...s.firedEvents],
   };
 }
 
@@ -426,11 +483,13 @@ export {
   PHASE_EXTRACT_AT, PHASE_FIGHT_AT, PORTAL_COUNT, PORTAL_GUIDE_SECONDS,
   PORTAL_RADIUS, PORTAL_STAGE_COUNT, PORTAL_USES, RUN_SECONDS,
   DOT_TICK_SECONDS, ZONE_TICK_SECONDS, REACTION_CHAIN_RADIUS, ZONE_RADIUS_MAX,
-  createPortals, createSkillBar, nextZoneUid, applyStarMods,
+  createPortals, createSkillBar, nextZoneUid, applyStarMods, spawnDestructibles,
+  SMASH_RANGE, SMASH_SWING_SECONDS, RUBBLE_SECONDS,
 } from './state.ts';
 export type {
   CastState, DashState, Portal, ReactionId, ReactionRecord, RunKind, RunPhase,
   SkillFx, SkillFxKind, SkillSlot, StatusHost, StatusId, StatusInstance, Zone, ElementId,
+  DestructibleObj, SmashState, RunEventRecord,
 } from './state.ts';
 export { phaseAt, runFinished } from './extraction.ts';
 export {
@@ -459,3 +518,12 @@ export type { ReactionDef } from './reactions.ts';
 export type { ArenaMap } from './world.ts';
 export type { CombatModifiers } from './modifiers.ts';
 export { createModifiers, NO_MODIFIERS } from './modifiers.ts';
+export {
+  DESTRUCTIBLE_BOTTOM, DESTRUCTIBLE_HALF_WIDTH, DESTRUCTIBLE_IDS, DESTRUCTIBLE_TOP,
+  beginSmash, cancelSmash, destructibleAtPoint, destructibleDef, guardsAround,
+  intactDestructibles, orderSmash, updateDestructibles,
+} from './destructibles.ts';
+export type { DestructibleDef } from './destructibles.ts';
+export { EVENTS, runElapsed, updateEvents } from './events.ts';
+export type { EventDef } from './events.ts';
+export { wakeNoise } from './enemies.ts';

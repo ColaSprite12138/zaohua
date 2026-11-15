@@ -82,6 +82,15 @@ export {
   statusDef,
   statusSnapshot,
   lockedFlags,
+  // 可破坏物与单局事件（设计 10.2 / 10.5）：绘制层读定义画箱子、进度与光柱。
+  destructibleDef,
+  destructibleAtPoint,
+  DESTRUCTIBLE_HALF_WIDTH,
+  DESTRUCTIBLE_TOP,
+  DESTRUCTIBLE_BOTTOM,
+  SMASH_RANGE,
+  EVENTS,
+  runElapsed,
 } from '../combat/simulation.ts';
 export type { RunLoadout } from '../meta/inventory.ts';
 export {
@@ -108,4 +117,9 @@ export type {
   ElementId,
   ReactionId,
   Zone,
+  DestructibleObj,
+  SmashState,
+  RunEventRecord,
+  DestructibleDef,
+  EventDef,
 } from '../combat/simulation.ts';

@@ -56,6 +56,30 @@ export interface ArenaMap {
     readonly x: number;
     readonly y: number;
   }[];
+  /**
+   * 可破坏物（设计 10.5）：位置同样是**地图的一部分**（LDtk 的 `Destructible`
+   * 实体，编辑器里可拖动），`kind` 对应 `destructible.xlsx` 的行。
+   * 没有这个字段的地图（夹具 / 旧图）就是「一张没有容器的图」，不是错误。
+   */
+  readonly destructibles?: readonly {
+    readonly id: string;
+    readonly kind: string;
+    readonly col: number;
+    readonly row: number;
+    readonly x: number;
+    readonly y: number;
+  }[];
+  /**
+   * 单局事件点（设计 10.2）：7–8 分钟的高价值物刷在这里。
+   * 由 LDtk 的 `EventSite` 实体决定；没有就是「这张图不开事件」。
+   */
+  readonly eventSites?: readonly {
+    readonly id: string;
+    readonly col: number;
+    readonly row: number;
+    readonly x: number;
+    readonly y: number;
+  }[];
 }
 
 export interface World {

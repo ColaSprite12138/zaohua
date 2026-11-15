@@ -105,7 +105,9 @@ describe('resource table contract', () => {
     expect(item).toHaveLength(15);
     expect(weapon).toHaveLength(13);
     expect(monster).toHaveLength(2);
-    expect(loot_pool).toHaveLength(16);
+    // 16 行怪物池 + 14 行可破坏物池（2026-11-16，设计 10.5：木箱/铜箱走池 3，
+    // 舍利匣走池 4 —— 可破坏物不能只有剑池那点收益）。
+    expect(loot_pool).toHaveLength(30);
     expect(new Set(item.map((r) => r.id)).size).toBe(15);
     expect(new Set(weapon.map((r) => r.id)).size).toBe(13);
     // 武器阶梯仍是 10/8/6/4/2/1；药各有固定权重，两个池子都能刷到。

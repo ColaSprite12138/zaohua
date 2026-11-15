@@ -22,6 +22,10 @@ import { weapon as weaponRows } from '../../resource/generated/weapon.ts';
 import { item as itemRows } from '../../resource/generated/item.ts';
 import { loot_pool as lootRows } from '../../resource/generated/loot_pool.ts';
 import { consumable as consumableRows } from '../../resource/generated/consumable.ts';
+import { destructible as destructibleRows } from '../../resource/generated/destructible.ts';
+import { event as eventRows } from '../../resource/generated/event.ts';
+import { DESTRUCTIBLE_IDS, destructibleDef } from '../destructibles.ts';
+import { EVENTS } from '../events.ts';
 import {
   DASH_SPEED, DOT_TICK_SECONDS, PLAYER_ATTACK_CD, PLAYER_DODGE_CD, PLAYER_MANA_MAX,
   POTION_COUNT, POTION_MANA, POTION_SECONDS, REACTION_CHAIN_RADIUS, ZONE_RADIUS_MAX,
@@ -196,5 +200,66 @@ describe('monster.xlsx owns the monster feel', () => {
     expect(sk?.attack_damage).toBe(6);
     expect(sk?.attack_interval).toBe(1.15);
     expect(sk?.walk_speed).toBe(62);
+  });
+
+  it('gives every monster a sense radius, and the fixture ones wake at spawn', () => {
+    // 「破坏会惊醒周围的怪」的前提是「有沉睡的怪」：感知半径进表，夹具的两只
+    // 必须落在开局就能醒的距离里，否则既有的「等它走过来」验收会全部超时。
+    for (const row of monsterRows) {
+      expect(row.sense_radius, `${row.id} 没配感知半径`).toBeGreaterThan(0);
+    }
+    const s = createState();
+    for (const sk of s.skeletons) {
+      const d = Math.hypot(sk.x - s.player.x, sk.y - s.player.y);
+      const row = monsterRows.find((r) => r.id === sk.monsterId)!;
+      expect(d).toBeLessThan(row.sense_radius);
+    }
+  });
+});
+
+describe('destructible.xlsx / event.xlsx own the run content (10.2 / 10.5)', () => {
+  it('has exactly one table row per destructible kind, with sane numbers', () => {
+    const ids = destructibleRows.map((row) => row.id).sort();
+    expect(ids).toEqual([...DESTRUCTIBLE_IDS].sort());
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const row of destructibleRows) {
+      // 设计 10.5：高价值物持续攻击 2–4 秒。
+      expect(row.smash_seconds).toBeGreaterThanOrEqual(2);
+      expect(row.smash_seconds).toBeLessThanOrEqual(4);
+      expect(row.drops).toBeGreaterThan(0);
+      expect(row.alarm_radius).toBeGreaterThan(0);
+      // 每档的产出池都必须真的有东西。
+      expect(lootRows.some((p) => p.loot_pool_id === row.loot_pool_id)).toBe(true);
+    }
+  });
+
+  it('copies every destructible column into the runtime definition verbatim', () => {
+    for (const row of destructibleRows) {
+      const def = destructibleDef(row.id);
+      expect(def.name).toBe(row.name);
+      expect(def.smashSeconds).toBe(row.smash_seconds);
+      expect(def.lootPoolId).toBe(row.loot_pool_id);
+      expect(def.drops).toBe(row.drops);
+      expect(def.alarmRadius).toBe(row.alarm_radius);
+      expect(def.guardRadius).toBe(row.guard_radius);
+      expect(def.hint).toBe(row.hint);
+    }
+  });
+
+  it('keeps event times on the design timeline and its kind playable', () => {
+    const ids = eventRows.map((row) => row.id).sort();
+    expect(ids).toEqual(EVENTS.map((e) => e.id).sort());
+    for (const row of eventRows) {
+      // 设计 10.2：7–8 分钟刷新（900 秒的一局）。
+      expect(row.at_seconds).toBeGreaterThanOrEqual(360);
+      expect(row.at_seconds).toBeLessThanOrEqual(480);
+      expect(destructibleRows.some((d) => d.id === row.kind)).toBe(true);
+      expect(row.count).toBeGreaterThan(0);
+      expect(row.beacon_seconds).toBeGreaterThan(0);
+    }
+  });
+
+  it('exposes the converge distance as global tuning', () => {
+    expect(combat_rule[0].monster_converge_px).toBeGreaterThan(0);
   });
 });

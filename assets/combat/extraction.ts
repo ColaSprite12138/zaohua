@@ -13,7 +13,7 @@
  * 计时、阶段与门状态。
  */
 
-import { burst, say } from './effects.ts';
+import { burst, pinPlayer, say } from './effects.ts';
 import {
   PHASE_EXTRACT_AT, PHASE_FIGHT_AT, PORTAL_GUIDE_SECONDS, PORTAL_RADIUS,
   PORTAL_STAGE_COUNT, RUN_SECONDS, type GameState, type Portal, type RunPhase,
@@ -69,16 +69,6 @@ export function portalInReach(s: GameState): Portal | null {
 }
 
 /** 引导中禁止移动 / 攻击：把玩家钉在门口，让「站桩」真的成立。 */
-function pinPlayer(s: GameState): void {
-  s.moveMode = 'idle';
-  s.path = [];
-  s.target = { x: s.player.x, y: s.player.y };
-  s.attackOrder = false;
-  s.targetEnemy = null;
-  s.player.vx = 0;
-  s.player.vy = 0;
-}
-
 function startChannel(s: GameState, portal: Portal): void {
   s.channel = portal.id;
   portal.progress = 0;

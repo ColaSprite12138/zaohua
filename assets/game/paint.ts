@@ -34,7 +34,9 @@ import {
   POTION_MP_ID,
   skillDef,
   statusDef,
+  destructibleDef,
   type StatusId,
+  type DestructibleObj,
   type Drop,
   type GameState,
   type Portal,
@@ -70,6 +72,7 @@ import {
   drawShadow,
   drawVoxel,
   drawWallBlock,
+  destructibleModel,
   itemModel,
   modelBounds,
   prepareScene,
@@ -287,6 +290,15 @@ function drawMinimap(g: Painter, s: GameState): void {
     g.fillRect(Math.round(ox + wx * sx - size / 2), Math.round(oy + wy * sy - size / 2), size, size);
   };
   for (const sk of s.skeletons) if (sk.alive) dot(sk.x, sk.y, '#ff6b6b', 4);
+  // 可破坏物：金色方块。高价值事件刷出来的更亮 —— 小地图上也要能看出「值钱的那个在哪」。
+  for (const obj of s.destructibles) {
+    if (obj.rubble > 0) continue;
+    dot(obj.x, obj.y, obj.fromEvent ? '#fff3c4' : '#f59e0b', obj.fromEvent ? 5 : 4);
+  }
+  for (const record of s.events) {
+    if (record.beacon <= 0) continue;
+    dot(record.x, record.y, '#fcd34d', 6);
+  }
   for (const drop of s.drops) dot(drop.x, drop.y, '#ffd166', 4);
   // 传送门：小地图是玩家找门的唯一线索（不再弹任务提示），所以必须画。
   for (const portal of s.portals) {
@@ -781,6 +793,112 @@ function drawPortal(g: Painter, portal: Portal): void {
     // 填满一段就点亮一段：三段 = 音效 / 光效的三个节点。
     g.fillStyle = sw >= seg - 2 ? '#67e8f9' : '#2b6d80';
     g.fillRect(Math.round(x + i * seg + 1), y, Math.max(2, Math.round(sw)), h);
+  }
+}
+
+/**
+ * 可破坏物（设计 10.5）。
+ *
+ * 三件事必须在画面里读出来：① 这是个能砸的东西（模型 + 悬停白圈 + 名字）；
+ * ② 砸到哪儿了（头顶进度条，和读条 / 引导门同一套画法）；
+ * ③ 已经砸过了（残骸，随时间淡出）。
+ */
+function drawDestructible(g: Painter, s: GameState, obj: DestructibleObj): void {
+  const def = destructibleDef(obj.kind);
+  if (obj.rubble > 0) {
+    // 残骸：几块散落的木板，2 秒内淡出。留在地上就是为了「这里被我砸过」这一步可读。
+    const alpha = Math.min(1, obj.rubble / 2);
+    g.globalAlpha = alpha;
+    shadow(g, obj.x, obj.y + 2, 16, 6, 0.28);
+    const bits: readonly (readonly [number, number, number, number, string])[] = [
+      [-15, -3, 8, 4, '#5c3a18'], [6, -5, 9, 5, '#8a5a2b'],
+      [-6, 1, 10, 3, '#6b3f0e'], [2, -12, 5, 4, '#b07a3f'],
+    ];
+    for (const [dx, dy, bw, bh, color] of bits) {
+      g.fillStyle = color;
+      g.fillRect(Math.round(obj.x + dx), Math.round(obj.y + dy), bw, bh);
+    }
+    g.globalAlpha = 1;
+    return;
+  }
+
+  const hovered = s.hoverDestructible === obj.uid;
+  shadow(g, obj.x, obj.y + 2, 18, 7, 0.34);
+  // 事件刷出来的高价值物：脚下一圈金色 + 呼吸光，隔着半个院子也看得见。
+  if (obj.fromEvent) {
+    drawPixelRing(g, obj.x, obj.y + 2, 30, 13, '#ffd166', { alpha: 0.55, fill: 0.10 });
+    drawPixelGlow(g, obj.x, obj.y - 16, 34, 30, '#ffd166', 0.20);
+  }
+  if (hovered || obj.smashing) {
+    drawPixelRing(g, obj.x, obj.y + 2, 26, 11, '#f8fafc', { alpha: 0.7, lineWidth: 1 });
+  }
+  const model = destructibleModel(obj.kind);
+  if (model !== null) {
+    drawVoxel(g, model, obj.x, obj.y, { alpha: 1 });
+  } else {
+    // 没登记模型的 kind：画个占位方块，而不是借别人的模型（骗人比不画更糟）。
+    g.fillStyle = '#8a5a2b';
+    g.fillRect(Math.round(obj.x) - 20, Math.round(obj.y) - 34, 40, 34);
+  }
+
+  if (obj.smashing && obj.progress > 0) {
+    const w = 62;
+    const h = 7;
+    const x = Math.round(obj.x - w / 2);
+    const y = Math.round(obj.y - 58);
+    g.fillStyle = 'rgba(8,16,24,0.88)';
+    g.fillRect(x - 2, y - 2, w + 4, h + 4);
+    g.fillStyle = '#ffd166';
+    g.fillRect(x, y, Math.round(w * Math.min(1, obj.progress)), h);
+    text(g, `${def.name} ${Math.round(obj.progress * 100)}%`, obj.x, y - 10, 11, '#ffd166', 'center', '700');
+  } else if (hovered) {
+    text(g, def.name, obj.x, obj.y - 48, 11, '#f8fafc', 'center', '700');
+  }
+}
+
+/**
+ * 事件光柱（设计 10.2）：第 7 分钟的高价值物刷新时，全图能看见一根光柱。
+ * 它是「抢或收手」那个决定的唯一提示 —— 所以画得远比别的表现张扬：
+ * 190px 高、三档宽度、方块之间有缝（一眼看出是体素光，不是 UI 条）。
+ */
+function drawEventBeacons(g: Painter, s: GameState): void {
+  for (const record of s.events) {
+    if (record.beacon <= 0) continue;
+    const fade = Math.min(1, record.beacon / 3);
+    const pulse = 0.6 + Math.sin(record.beacon * 6) * 0.22;
+    const height = 190;
+    const layers: readonly [number, number, string][] = [
+      [22, 0.30, '#ffd166'],   // 外层光晕
+      [14, 0.62, '#ffd166'],   // 中层
+      [8, 1.00, '#fff3c4'],    // 核心
+    ];
+    for (const [w, strength, color] of layers) {
+      g.fillStyle = color;
+      g.globalAlpha = Math.min(1, fade * strength * pulse);
+      const x = Math.round(record.x - w / 2);
+      for (let dy = 0; dy < height; dy += 8) {
+        // 越往上越碎：光柱顶端散成点，读起来才是「光」而不是一根柱子。
+        const gap = dy > height * 0.6 ? 8 : 6;
+        g.fillRect(x, Math.round(record.y - 14 - dy), w, gap);
+      }
+      g.globalAlpha = 1;
+    }
+    drawPixelRing(g, record.x, record.y + 2, 36, 16, '#ffd166', {
+      alpha: fade * 0.7, fill: 0.16, lineWidth: 2,
+    });
+    // 名字挂在光柱顶上，配一块暗底：院子里什么颜色都有，纯文字会糊。
+    const label = record.name;
+    const w = Math.max(72, Array.from(label).length * 13 + 18);
+    const lx = Math.round(record.x - w / 2);
+    const ly = Math.round(record.y - 14 - height - 18);
+    g.globalAlpha = fade;
+    g.fillStyle = 'rgba(8,16,24,0.82)';
+    g.fillRect(lx, ly, w, 18);
+    g.strokeStyle = 'rgba(255,209,102,0.55)';
+    g.lineWidth = 1;
+    g.strokeRect(lx + 0.5, ly + 0.5, w - 1, 17);
+    text(g, label, record.x, ly + 9, 12, '#fff3c4', 'center', '700');
+    g.globalAlpha = 1;
   }
 }
 
@@ -1548,6 +1666,8 @@ export function paint(g: Painter, s: GameState): void {
   drawMoveTarget(g, s);
   drawTargetLock(g, s);
   drawHoverMark(g, s);
+  // 事件光柱压在实体之下、地面之上：它是一根从地面升起来的光，不是 UI。
+  drawEventBeacons(g, s);
 
   // Depth sort: everything standing on the ground shares one y order. Raised
   // wall blocks join the same list, so they cover the bodies behind them.
@@ -1578,6 +1698,10 @@ export function paint(g: Painter, s: GameState): void {
   // 传送门是「站在地上的建筑」：和角色共用一套深度排序，玩家走到门后会被门挡住。
   for (const portal of s.portals) {
     items.push({ y: portal.y, draw: () => drawPortal(g, portal) });
+  }
+  // 可破坏物也是「站在地上的东西」：和角色、门共用一个深度排序。
+  for (const obj of s.destructibles) {
+    items.push({ y: obj.y, draw: () => drawDestructible(g, s, obj) });
   }
   for (const drop of s.drops) {
     // A drop sits in FRONT of a corpse at the same spot, but behind a body

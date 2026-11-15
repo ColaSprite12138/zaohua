@@ -168,7 +168,18 @@ def layout():
         (38, 86),    # 南院西侧
         (86, 62),    # 中庭东侧
     ]
-    return t, props, spawn, monsters, portals
+
+    # --- destructibles / event sites (设计 10.2 / 10.5) ---------------------
+    # 与 `add_destructible_entities.py` 的列表保持一致：那个脚本只往已存在的
+    # .ldtk 里**追加**（不覆盖人工编辑），这里是整图重新生成时的同一份数据。
+    destructibles = [
+        ('crate', 16, 24), ('coffer', 28, 36),
+        ('crate', 100, 24), ('coffer', 110, 36),
+        ('crate', 58, 50), ('coffer', 70, 58),
+        ('reliquary', 40, 44), ('reliquary', 96, 44),
+    ]
+    event_sites = [(64, 32), (100, 72)]
+    return t, props, spawn, monsters, portals, destructibles, event_sites
 
 
 def build():
@@ -183,7 +194,7 @@ def build():
     level['pxWid'] = COLS * GRID
     level['pxHei'] = ROWS * GRID
 
-    terrain, props, spawn, monsters, portals = layout()
+    terrain, props, spawn, monsters, portals, destructibles, event_sites = layout()
 
     # --- defs: tileset + one entity def per prop kind ------------------------
     defs = project['defs']
@@ -196,7 +207,7 @@ def build():
     defs['layers'] = [l for l in defs['layers'] if l.get('identifier') != 'Props']
     defs['entities'] = [e for e in defs['entities']
                         if not str(e.get('identifier', '')).startswith('Prop_')
-                        and e.get('identifier') != 'Portal']
+                        and e.get('identifier') not in ('Portal', 'Destructible', 'EventSite')]
 
     tileset_uid = 100
     next_uid = max(next_uid, tileset_uid + 1)
@@ -304,6 +315,43 @@ def build():
     defs['entities'].append(portal_def)
     project['nextUid'] = max(project.get('nextUid') or 0, next_uid)
 
+    # --- Destructible / EventSite defs (设计 10.2 / 10.5) -------------------
+    # 和 Portal 同一个套路：复用 Monster 的 def 形状，只换颜色与字段。
+    # uid 与 `add_destructible_entities.py` 对齐（106 / 107 / 108），
+    # 这样「重新生成」与「在已有文件上追加」得到同一份数据。
+    kind_field_uid = 108
+    next_uid = max(next_uid, kind_field_uid + 1)
+    monster_field_template = dict(
+        next(e for e in defs['entities'] if e['identifier'] == 'Monster')['fieldDefs'][0])
+    kind_field = dict(monster_field_template)
+    kind_field.update({
+        'identifier': 'kind',
+        'uid': kind_field_uid,
+        'defaultOverride': {'id': 'V_String', 'params': ['crate']},
+    })
+    destructible_def = dict(monster_def)
+    destructible_def.update({
+        'identifier': 'Destructible',
+        'uid': 106,
+        'color': '#F59E0B',
+        'showName': True,
+        'fieldDefs': [kind_field],
+        'doc': '可破坏物（设计 10.5）：站在旁边按左键砸开。kind 必须是 '
+               'tables/destructible.xlsx 的行。',
+    })
+    event_site_def = dict(monster_def)
+    event_site_def.update({
+        'identifier': 'EventSite',
+        'uid': 107,
+        'color': '#FCD34D',
+        'showName': True,
+        'fieldDefs': [],
+        'doc': '单局事件点（设计 10.2）：第 7 分钟的高价值物刷在这里。',
+    })
+    defs['entities'].append(destructible_def)
+    defs['entities'].append(event_site_def)
+    project['nextUid'] = max(project.get('nextUid') or 0, next_uid)
+
     # --- layer instances ----------------------------------------------------
     # 按 __identifier 取，不按数组下标：本脚本重跑后图层顺序会变，下标会取错层。
     def find_layer(name):
@@ -372,6 +420,20 @@ def build():
     # 传送门实例与出生点 / 怪同层：一次遍历就能读到本局的全部「点位」。
     for col, row in portals:
         spawns.append(entity('Portal', portal_uid, col, row, GRID, GRID,
+                             [col * GRID + GRID // 2, (row + 1) * GRID]))
+    destructible_uid = 106
+    event_site_uid = 107
+    kind_def_uid = 108
+    for kind, col, row in destructibles:
+        field = {
+            '__identifier': 'kind', '__type': 'String', '__value': kind, '__tile': None,
+            'defUid': kind_def_uid,
+            'realEditorValues': [{'id': 'V_String', 'params': [kind]}],
+        }
+        spawns.append(entity('Destructible', destructible_uid, col, row, GRID, GRID,
+                             [col * GRID + GRID // 2, (row + 1) * GRID], [field]))
+    for col, row in event_sites:
+        spawns.append(entity('EventSite', event_site_uid, col, row, GRID, GRID,
                              [col * GRID + GRID // 2, (row + 1) * GRID]))
     entities_inst.update({'entityInstances': spawns})
 
