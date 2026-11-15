@@ -780,6 +780,24 @@
   端口固定，地址不再变；浏览器缓存时加 `?v=N`。**build / play / package 都会重建 dist 并抹掉壳层，
   所以每次改完代码都要重跑 inject-shell 并换 `?v`。**
 - 说明：这条路只适合开发时自己看。要「带云存档的正式预览 / 发布」仍然走造化那条（②）。
+- **2026-11-15 19:00 追加（用户第 N 次投诉「你给的界面打不开」，这次定位到底）**：
+  - 现象：造化 `preview_start/reload(validate:true)` 报「校验已通过」，把 `previewUrl`
+    （`http://127.0.0.1:<随机端口>/__zaohua/preview`）交给用户，**一两分钟后 Chrome 报
+    `ERR_CONNECTION_REFUSED`**；重新预览端口又变（63194 → …）。
+  - 根因：`previewUrl` 背后是当次 build-job 派生的 `offline-preview.js` 宿主进程，**任务/Turn
+    收尾即被回收**（feedback 本条开头说的同一件事）。所以「校验通过」只证明那一瞬间能跑，
+    **不能当交付地址**。加上每次 reload 端口随机，用户手里的旧链接 100% 失效。
+  - 另一层坑：造化预览 / `project build` / `play` / `package` 都会**重建 `dist/` 并抹掉注入的
+    单页壳层**。所以「先 inject-shell 再 build」等于白做；必须 **build → inject → serve**，
+    判据用 `node scripts/inject-shell.mjs --check`（有壳层时 `dist/index.html` 约 139–142KB，
+    没壳层约 45KB —— 只看 HTTP 200 会被这个坑骗过去）。
+  - 现行交付方式（固定端口，跨会话存活，实测上一会话起的进程到现在仍在监听）：
+    `scripts\preview-stable.cmd` = `forgeax project build` → `inject-shell` → 复用/启动
+    `python -m http.server 58080 --bind 127.0.0.1`（cwd = `dist`）→ 开 Chrome
+    `http://127.0.0.1:58080/index.html?v=<随机>`。
+  - **自证可渲染**（避免再交付死链）：`chrome --headless=new --window-size=1600,900
+    --virtual-time-budget=9000 --screenshot=<绝对路径> <url>`，打开截图看到「局外系统 · 装备栏 /
+    背包 / 仓库 / 出征」才算通过。只 curl 200 不够 —— 壳层缺失时也是 200。
 
 ## 31. 状态与反应链第一批：三个「先想清楚再写」的地方
 
