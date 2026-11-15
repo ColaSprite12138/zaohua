@@ -38,12 +38,14 @@
 > 1920×1080 实测：文字区锐度 +10~18%、地面与角色 +16%，FPS 145 不变。**这条是「提高分辨率」的第
 > 一步（只去糊、不去粗）**；体素格子仍是 4px，要让动作/模型更精细必须动 `unit`，见 `docs/art-style.md`
 > 与本次讨论的三条路线（A 缓冲 / B 网格 / C 占屏比）。
-> ⑦ **星图 + 等级（第四批，2026-11-15 20:40）** —— 设计 6.1–6.4 落地：
-> `tables/level.xlsx`（18 级封顶）+ `tables/starmap.xlsx`（16 节点）+ `monster.xlsx::xp`；
-> 击杀给经验 → 结算时主窗口 `talent/grantXp()` 升级 → 星图点；路径约束 / 免费洗点 /
+> ⑦ **星图 + 等级（第四批，2026-11-15 22:20 修订为亲和版）** —— 设计 6.1–6.4 / **6.3 v7** 落地：
+> `tables/level.xlsx`（18 级封顶）+ `tables/constellation.xlsx`（8 星座，**按颜色亲和开锁**）+
+> `tables/starmap.xlsx`（23 节点，每个节点产亲和；**没有节点前置、面板不画连线**）+ `monster.xlsx::xp`；
+> 击杀给经验 → 结算时主窗口 `talent/grantXp()` 升级 → 星图点；亲和门槛 / 免费洗点 /
 > 存档 v2（`{schemaVersion:2, state, progress}`，v1 老存档照常读）；局外 `#star-panel` 可点可洗；
-> 出征把 `stars:{skills,nodes}` 快照进战局，**没点技能就是空手**（`PRE_EQUIPPED_SKILLS` 降级为夹具兜底）。
-> 验收基线：**270 条单测 / 45 条单页壳层 / 14 条独立页 / playthrough 97 steps**。
+> 被动只做通用乘区（**不绑定任何主动技能**）；出征把 `stars:{skills,nodes}` 快照进战局，
+> **没点技能就是空手**（`PRE_EQUIPPED_SKILLS` 降级为夹具兜底）。
+> 验收基线：**278 条单测 / 45 条单页壳层 / 14 条独立页 / playthrough 97 steps**。
 > **下一步按设计文档 15 章的建议顺序：耐久 / 消耗品 / 保险格**（5.2 / 7.1–7.4）。
 
 > 这份文件记录**跨模块红线、保护清单、验收基线与回滚方案**；**模块功能契约的正本在
@@ -61,7 +63,7 @@
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html`。**③ 2026-11-15 定为默认交付链路**（`scripts\preview-stable.cmd` 一条命令包办：`forgeax project build` → `node scripts/inject-shell.mjs` → 复用/启动 58080 → 开 Chrome）：造化预览宿主是每次构建任务的子进程，**turn 结束就被回收**（表现为「刚说能开、一分钟后就打不开」，端口每次还会变）。要一个稳定地址就直接静态托管 `dist/`：`forgeax project build` → `node scripts/inject-shell.mjs` → `cd dist && python -m http.server 58080 --bind 127.0.0.1`，打开 `http://127.0.0.1:58080/index.html`（浏览器缓存时加 `?v=N`）。这条路走壳层的 hostless 分支：**能玩、不写云存档**。**造化的 `previewUrl` 不要交给用户**：它是当次构建任务的子进程，turn 收尾即被回收（用户实测「刚说能开、一分钟就 `ERR_CONNECTION_REFUSED`」，端口每次还变），只当「代码能跑」的旁证；而且 `preview_reload` 会重建 `dist/` 抹掉壳层，跑完必须重新 `inject-shell`。交付前用 `node scripts/inject-shell.mjs --check`（有壳层 `dist/index.html` ≈139–142KB，没壳层 ≈45KB —— 只看 HTTP 200 会被骗）或 headless 截图自证。注意**不要**直接静态托管 `.game-builder/artifacts/forgeax-player`：那是造化产物，缺宿主注入的 provider，页面会卡在初始化 |
 | 地图 | 正式地图 `128×96` 格 @32px = **4096×3072** 世界像素（仙侠院落：北侧高台、东西厢房、院墙残段 + 香炉）。三个图层：`Terrain`(IntGrid=碰撞权威) / `Entities`(出生点 + 7 只怪 + **传送门**，数量由 LDtk 决定，当前 6 扇) / `Props`(纯装饰，贴素材库图集)。生成链：`bake-voxel-atlas.mjs` → 图集；`gen_arena_map.py` → `arena.ldtk`（之后人工在 LDtk 里改）；`import_map.py` → `arena.generated.ts` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **270**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **278**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
 | 数值表要一起提交吗 | **提交到 git（已提交），但发布产物里没有表也不需要表**。运行时只读 `assets/resource/generated/*.ts`（TS 常量），构建时被编译进 `program-*.js`；xlsx 是**开发期源数据**，不是引擎资产（没有 `.meta.json`，不进 pack）。实测：把 `assets/resource/tables/` 整个移走再 `project build` 仍然成功，产物里 `cost/cooldown/damage` 一个不少（2026-11-15 验证）。**三层保险**：① 发布归档 `forgeax-game-web.zip` 里 0 个 `.ts`/`.xlsx`（只有 js/json/wasm/html）；② `generated/*.ts` 也在 git 里 → 云端构建不跑 python 也能读到数据；③ `verify-all.sh` 跑 `export_tables.py --check`，表与生成物不同步直接失败 |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
@@ -81,7 +83,7 @@
 实现内核是 `assets/game/voxel.ts`。改任何画面相关代码先读这两处，不要在 `paint.ts` 里新造一套画法。
 
 工程分五个模块：`combat/`（战斗，最重）/ `battle/`（局内关卡）/ `meta/`（局外系统）/
-`talent/`（**星图**：等级 / 点数 / 路径约束 / 免费洗点，零 import，转译成 `meta-ui/talent.js`）/ `resource/`（人工 Excel 数据表），另有 `shared/`（常量）与
+`talent/`（**星图**：等级 / 点数 / 亲和门槛 / 免费洗点，零 import，转译成 `meta-ui/talent.js`）/ `resource/`（人工 Excel 数据表），另有 `shared/`（常量）与
 `game/`（引擎装配）。目录图与依赖方向见 `README.md`「工程结构」。
 
 **combat 里两个新文件**（2026-11-15）：`status.ts`（状态注册表 + 纯查询，**不 import 任何 combat 运行时**）、

@@ -71,16 +71,16 @@ describe('star nodes are interpreted from starmap.xlsx (design 6.3)', () => {
   const row = (id: string) => starmap.find((r) => r.id === id)!;
 
   it('sums additive percentages and flat range over the picked nodes', () => {
-    const mods = createModifiers(['star_core', 'might', 'reach']);
-    const dmg = 1 + row('star_core').magnitude + row('might').magnitude;
+    const mods = createModifiers(['ember_dmg', 'venom_dmg', 'venom_range']);
+    const dmg = 1 + row('ember_dmg').magnitude + row('venom_dmg').magnitude;
     expect(mods.damageMultiplier(100)).toBeCloseTo(100 * dmg, 6);
-    expect(mods.meleeRangeBonus()).toBe(row('reach').magnitude);
+    expect(mods.meleeRangeBonus()).toBe(row('venom_range').magnitude);
     expect(mods.maxHpMultiplier()).toBe(1);
     expect(mods.maxManaMultiplier()).toBe(1);
   });
 
   it('ignores unknown node ids and skill nodes (magnitude 0)', () => {
-    const mods = createModifiers(['cleave', 'ghost']);
+    const mods = createModifiers(['ember_wall', 'ghost']);
     expect(mods.damageMultiplier(50)).toBe(50);
     expect(mods.maxHpMultiplier()).toBe(1);
     expect(createModifiers([])).toBe(NO_MODIFIERS);
@@ -89,10 +89,10 @@ describe('star nodes are interpreted from starmap.xlsx (design 6.3)', () => {
   it('deploy applies HP / mana multipliers and the star skill bar', () => {
     const s = createState();
     deployRun(s, {
-      stars: { skills: ['cleave', 'thunder'], nodes: ['star_core', 'tough', 'focus'] },
+      stars: { skills: ['cleave', 'thunder'], nodes: ['ember_hp', 'frost_mana'] },
     });
-    const hp = 1 + row('tough').magnitude;
-    const mana = 1 + row('focus').magnitude;
+    const hp = 1 + row('ember_hp').magnitude;
+    const mana = 1 + row('frost_mana').magnitude;
     expect(s.maxHp).toBe(Math.round(100 * hp));
     expect(s.hp).toBe(s.maxHp);
     expect(s.maxMana).toBe(Math.round(100 * mana));

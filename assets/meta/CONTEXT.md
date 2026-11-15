@@ -143,8 +143,8 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 | 项 | 权威 |
 |:--|:--|
 | 规则 | `assets/talent/index.ts`（零 import）→ `meta-ui/talent.js`（`build-meta-ui.mjs` 生成）；页面只调用，不复制规则 |
-| 数据 | `tables/starmap.xlsx` / `level.xlsx` / `combat_rule.xlsx` 的生成物由 `inject-shell.mjs` 注入成 `MetaShell.starmap / levels / starRule`；**页面里没有第二份数值** |
-| 面板 | `meta-ui/index.html` 的 `#star-panel`（**在 `#fx-bag-content` 之外**）：节点按表里的 `x/y` 绝对定位、连线用 SVG；显示等级 / 经验条 / 点数余额 / 免费洗点 |
+| 数据 | `tables/constellation.xlsx` / `starmap.xlsx` / `level.xlsx` / `combat_rule.xlsx` 的生成物由 `inject-shell.mjs` 注入成 `MetaShell.constellations / starmap / levels / starRule`；**页面里没有第二份数值** |
+| 面板 | `meta-ui/index.html` 的 `#star-panel`（**在 `#fx-bag-content` 之外**）：**星座卡片**按表里的 `x/y` 排布、**不画任何连线**；上方是六色亲和条；显示等级 / 经验条 / 点数余额 / 免费洗点 |
 | 只能在局外 | 战斗态下 `#fx-shell.fx-in-battle > *:not(.fx-bar):not(#fx-bag-content)` 直接隐藏面板；`pickStar()` / 洗点按钮也各自拦一次 `host.isRun()` |
 | 出征 | `deploy.stars = { skills: unlockedSkills(), nodes: effectsOf() }` —— 点亮顺序即技能栏顺序 |
 | 结算 | `grantRunProgress()`：`grantXp(progress, result.xp)` → 升级；成功则 `awardClear(progress, result.stage)` 记主线首通；随后 `host.renderStar()` 并写回存档 |

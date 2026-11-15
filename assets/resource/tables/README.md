@@ -43,9 +43,10 @@ sharedStrings，**不读 `styles.xml`**。曾有两张表的 `styles.xml` 把 `<
 | `status.xlsx` | `id, name, category, duration, max_stacks, dot, move_mul, attack_interval_mul, damage_taken_mul, no_move, no_attack, no_skill, no_dodge, hint` | `combat`（状态数值） |
 | `combat_rule.xlsx` | 单行全局常量 + `mainline_star_points, explore_star_points` | `combat` / `talent`（手感 + 星图一次性点数） |
 | `level.xlsx` | `id, level, xp_to_next, star_points` | `talent`（升级曲线，18 级封顶） |
-| `starmap.xlsx` | `id, name, tier, requires, kind, effect, magnitude, cost, x, y, skill_id, hint` | `talent`（规则/UI）+ `combat`（乘区） |
+| `constellation.xlsx` | `id, name, color, requirement, x, y, hint` | `talent`（亲和门槛 + 面板布局） |
+| `starmap.xlsx` | `id, constellation, name, kind, effect, magnitude, cost, aff_fire…aff_wind, skill_id, hint` | `talent`（规则）+ `combat`（乘区） |
 
-`level.xlsx` 与 `starmap.xlsx` 的初版由 `scripts/make_starmap_tables.py` 生成（本机没有 openpyxl，
+`level.xlsx` / `constellation.xlsx` / `starmap.xlsx` 的初版由 `scripts/make_starmap_tables.py` 生成（本机没有 openpyxl，
 而工程禁止手写 OOXML 部件）。**生成后请直接用 Excel 改，不要再跑那个脚本** —— 它会覆盖。
 
 **`item` / `weapon` 必须按 `id` join**：`item.xlsx` 只放物品通用信息，`weapon.xlsx` 只放武器

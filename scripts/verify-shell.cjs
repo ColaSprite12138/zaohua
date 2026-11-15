@@ -247,22 +247,36 @@ const SELFTEST = `
       var T = window.MetaTalent;
       out.star = { defaultLevel: H.getProgress().level };
       var starPanel = document.getElementById('star-panel');
+      var SM = H.starTree; // 只读诊断：星图对象本身
       out.star.panelVisible = !!starPanel && starPanel.hidden === false;
-      out.star.nodes = starPanel ? starPanel.querySelectorAll('.star-node').length : 0;
-      document.querySelector('.star-node[data-node="star_core"]').click();
-      out.star.picked = H.getProgress().picks.indexOf('star_core') >= 0;
-      // 前置未满足的高阶节点点不动（战意需要锋锐 + 铁骨）。
-      document.querySelector('.star-node[data-node="warlord"]').click();
-      out.star.blockedByPrereq = H.getProgress().picks.indexOf('warlord') < 0;
-      // 1 级只有 1 点：点完星核就不够点技能了，这正是路径 + 预算约束。
-      document.querySelector('.star-node[data-node="cleave"]').click();
-      out.star.budgetBlocked = H.getProgress().picks.indexOf('cleave') < 0;
+      out.star.nodes = starPanel ? starPanel.querySelectorAll('.star-chip').length : 0;
+      out.star.constellations = starPanel ? starPanel.querySelectorAll('.constellation').length : 0;
+      // 设计 6.3 v7：星座之间没有连线（旧版画过 SVG 线，这里守着别再画回去）。
+      out.star.noLines = starPanel ? starPanel.querySelectorAll('svg, line').length : -1;
+      // 注入层会把「紧跟在 CSS 注释后面的规则」吞掉（2026-11-15 踩过，星座因此全飘到
+      // #fx-shell 上）。这里断言定位样式真的进了页面，而不是只看 DOM 存在。
+      var starMapEl = document.getElementById('star-map');
+      out.star.mapPosition = starMapEl ? getComputedStyle(starMapEl).position : 'missing';
+
+      // 点火墙（余烬 = 起点星座，产出 火2 + 毒1）
+      document.querySelector('.star-chip[data-node="ember_wall"]').click();
+      out.star.picked = H.getProgress().picks.indexOf('ember_wall') >= 0;
+      out.star.affinityFire = T.affinityOf(H.getProgress(), SM).fire;
+      // 战意要 5 点火亲和：此时只有 2，点不动（亲和是门槛，不是点数）
+      document.querySelector('.star-chip[data-node="warlord_dmg"]').click();
+      out.star.blockedByAffinity = H.getProgress().picks.indexOf('warlord_dmg') < 0;
+      // 1 级只有 1 点：再点燎原会栽在点数上
+      document.querySelector('.star-chip[data-node="ember_dmg"]').click();
+      out.star.budgetBlocked = H.getProgress().picks.indexOf('ember_dmg') < 0;
+      // 免费洗点：点数退回、亲和归零（亲和是算出来的）
       document.getElementById('star-respec').click();
       out.star.respec = H.getProgress().picks.length === 0;
-      // 换成一个 3 级的角色（3 点）继续测「技能进技能栏 + 乘区进战局」。
+      out.star.affinityAfterRespec = T.affinityOf(H.getProgress(), SM).fire;
+
+      // 换成一个 3 级角色（3 点）继续测「技能进技能栏 + 乘区进战局」。
       H.setProgress(T.createStarState(3));
-      document.querySelector('.star-node[data-node="star_core"]').click();
-      document.querySelector('.star-node[data-node="cleave"]').click();
+      document.querySelector('.star-chip[data-node="ember_wall"]').click();
+      document.querySelector('.star-chip[data-node="ember_dmg"]').click();
       out.star.deployPicks = H.getProgress().picks.slice();
 
       out.sharedState = H.state === H.getState() && H.getLobbyState() === H.state;
@@ -581,16 +595,19 @@ const checks = [
       && S.deployed.lobbyWorn === 0 && S.deployed.lobbyStash === 3, S.deployed],
   ['the run holds a DIFFERENT state object from the lobby',
     result.differentStates === true && S.deployed.isRun === true, result.differentStates],
-  ['星图面板在局外画出全部节点（坐标来自 starmap.xlsx）',
-    result.star.panelVisible === true && result.star.nodes >= 15, result.star],
-  ['点节点扣点、前置不满足点不动、点数不够也点不动',
-    result.star.picked === true && result.star.blockedByPrereq === true
+  ['星图面板在局外画出全部星座，且没有连线（定位样式没被注入层吞掉）',
+    result.star.panelVisible === true && result.star.nodes >= 20
+      && result.star.constellations >= 6 && result.star.noLines === 0
+      && result.star.mapPosition === 'relative', result.star],
+  ['亲和是门槛：点节点涨亲和、亲和不足点不动、点数不足也点不动',
+    result.star.picked === true && result.star.affinityFire === 2
+      && result.star.blockedByAffinity === true
       && result.star.budgetBlocked === true, result.star],
-  ['免费洗点退回全部点数',
-    result.star.respec === true, result.star],
+  ['免费洗点：点数退回，亲和归零',
+    result.star.respec === true && result.star.affinityAfterRespec === 0, result.star],
   ['出征把星图技能与乘区快照给 Worker，局内星图面板隐藏',
-    !!d.stars && d.stars.skills.indexOf('cleave') >= 0
-      && d.stars.nodes.indexOf('star_core') >= 0
+    !!d.stars && d.stars.skills.indexOf('fire_wall') >= 0
+      && d.stars.nodes.indexOf('ember_wall') >= 0
       && result.star.hiddenInBattle === true, result.star],
   ['结算把本局经验换成等级，并记下主线首通',
     result.star.levelAfterRun > result.star.levelBeforeRun

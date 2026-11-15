@@ -63,10 +63,10 @@
    * 星图（设计 6.3 / 6.4）：局外唯一权威在 `host.progress`（meta-ui/index.html 持有）。
    * 出征时只把「点亮了什么」快照给 Worker —— 局内没有改 build 的接口。
    */
-  var starTree = null;
-  if (T && host.starmap) {
+  var starMap = null;
+  if (T && host.starmap && host.constellations) {
     try {
-      starTree = T.createStarTree(host.starmap);
+      starMap = T.createStarMap(host.starmap, host.constellations);
     } catch (err) {
       console.error('[shell] 星图数据接线错误', err);
     }
@@ -76,8 +76,8 @@
   };
   var starDeployment = function () {
     var p = progress();
-    if (!T || !starTree || !p) return { skills: [], nodes: [] };
-    return { skills: T.unlockedSkills(p, starTree), nodes: T.effectsOf(p) };
+    if (!T || !starMap || !p) return { skills: [], nodes: [] };
+    return { skills: T.unlockedSkills(p, starMap), nodes: T.effectsOf(p) };
   };
 
   var countItems = function (loadout) {

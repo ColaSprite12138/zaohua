@@ -8,8 +8,9 @@ rerun -- it overwrites them.
 
 It also patches two existing tables so the new economy has its sources:
 
-  level.xlsx        level -> xp_to_next + star_points      (NEW)
-  starmap.xlsx      16 nodes: id/requires/kind/effect/...  (NEW)
+  level.xlsx           level -> xp_to_next + star_points        (NEW)
+  constellation.xlsx   8 constellations: color + requirement     (NEW)
+  starmap.xlsx         23 nodes: constellation + affinity grants (NEW)
   monster.xlsx      + xp          (kills are the only XP source, design 6.1)
   combat_rule.xlsx  + mainline_star_points / explore_star_points (design 6.3)
 
@@ -130,52 +131,121 @@ LEVELS = [(1, 60), (2, 90), (3, 120), (4, 170), (5, 220), (6, 280),
           (13, 1000), (14, 1160), (15, 1340), (16, 1540), (17, 1760), (18, 0)]
 
 # --------------------------------------------------------------- star map
-# kind: skill = 解锁主动技能 / attribute = 属性乘区 / passive = 大点
-# effect: dmg_pct / hp_pct / mana_pct / range_px（combat/modifiers.ts 解释）
-# 坐标是星图面板上的布局坐标（0..720 × 0..440），UI 直接读，不在前端写死。
-CORE = 'star_core'
-SKILLS = [
-    ('cleave', '横扫', 60), ('charge', '冲锋', 160), ('ice_shard', '冰锥', 260),
-    ('fire_wall', '火墙', 360), ('venom_pool', '毒池', 460),
-    ('water_wave', '水浪', 560), ('thunder', '落雷', 660),
+#
+# 设计 6.3（v7 重做，2026-11-15）：**亲和（affinity）是唯一门槛**，对标 Grim Dawn 星座。
+#   * 每个节点给「亲和」，亲和**只累积不消耗**；
+#   * 星座按自己的颜色亲和开锁（`requirement`），**没有节点间的连线 / 前置**；
+#   * 想开高阶星座，就得先在不那么想要的星座里拿够亲和 —— 这是取舍的来源；
+#   * 被动一律是通用乘区（伤害 / 生命 / 法力 / 距离），**不为某个主动技能加成**。
+#
+# 六种亲和＝六种元素（combat 的 ElementId），技能节点给本色 2 点，被动给本色 1 点 + 邻色 1 点。
+# 邻色是设计的核心：跨色产出让「绕路」有意义，否则每个星座只能开自己。
+CONSTELLATIONS = [
+    # id, name, color, requirement, x, y, hint
+    ('ember', '余烬', 'fire', 0, 90, 60, '火。起点星座，不需要亲和'),
+    ('frost', '霜牙', 'ice', 0, 330, 60, '冰。起点星座，不需要亲和'),
+    ('tide', '潮汐', 'water', 2, 570, 60, '水。需要 2 点水亲和'),
+    ('venom', '腐沼', 'poison', 2, 810, 60, '毒。需要 2 点毒亲和'),
+    ('gale', '疾风', 'wind', 3, 210, 275, '风。需要 3 点风亲和'),
+    ('storm', '怒雷', 'shock', 3, 560, 275, '雷。需要 3 点雷亲和'),
+    ('warlord', '战意', 'fire', 5, 260, 450, '火之巅。需要 5 点火亲和'),
+    ('archon', '奥能', 'shock', 5, 640, 450, '雷之巅。需要 5 点雷亲和'),
 ]
-ATTRIBUTES = [
-    ('might', '锋锐', 'cleave', 'dmg_pct', 0.08, 60, '横扫后的近身伤害 +8%'),
-    ('tough', '铁骨', 'charge', 'hp_pct', 0.12, 160, '冲锋后的生命上限 +12%'),
-    ('focus', '静心', 'ice_shard', 'mana_pct', 0.15, 260, '冰锥后的法力上限 +15%'),
-    ('reach', '远袭', 'fire_wall', 'range_px', 18, 360, '火墙后的近战距离 +18px'),
-    ('venom_edge', '蚀骨', 'venom_pool', 'dmg_pct', 0.06, 460, '毒池后的伤害 +6%'),
-    ('tide', '潮涌', 'water_wave', 'mana_pct', 0.10, 560, '水浪后的法力上限 +10%'),
-    ('storm', '雷引', 'thunder', 'range_px', 20, 660, '落雷后的近战距离 +20px'),
+
+# id, constellation, name, kind, effect, magnitude, cost, (affinities), skill_id, hint
+# affinities 用 dict：{'fire': 2} 之类；缺省色为 0。
+NODES = [
+    # 技能节点：本色 2 点 + 邻色 1 点（技能本身也产出亲和，这是 GD 的核心手感：
+    # 你想开的那条线，往往要靠「顺手点的一个技能」把颜色推上去）。
+    ('ember_wall', 'ember', '火墙', 'skill', '', 0, 1, {'fire': 2, 'poison': 1}, 'fire_wall',
+     '解锁主动技能「火墙」'),
+    ('ember_dmg', 'ember', '燎原', 'attribute', 'dmg_pct', 0.05, 1, {'fire': 1, 'poison': 1},
+     '', '所有伤害 +5%'),
+    ('ember_hp', 'ember', '炭壳', 'attribute', 'hp_pct', 0.06, 1, {'fire': 1, 'wind': 1},
+     '', '生命上限 +6%'),
+
+    ('frost_shard', 'frost', '冰锥', 'skill', '', 0, 1, {'ice': 2, 'water': 1}, 'ice_shard',
+     '解锁主动技能「冰锥」'),
+    ('frost_mana', 'frost', '静流', 'attribute', 'mana_pct', 0.10, 1, {'ice': 1, 'water': 1},
+     '', '法力上限 +10%'),
+    ('frost_dmg', 'frost', '砭骨', 'attribute', 'dmg_pct', 0.04, 1, {'ice': 1, 'shock': 1},
+     '', '所有伤害 +4%'),
+
+    ('tide_wave', 'tide', '水浪', 'skill', '', 0, 1, {'water': 2, 'shock': 1}, 'water_wave',
+     '解锁主动技能「水浪」'),
+    ('tide_hp', 'tide', '潮息', 'attribute', 'hp_pct', 0.10, 1, {'water': 1, 'wind': 1},
+     '', '生命上限 +10%'),
+    ('tide_mana', 'tide', '深潭', 'attribute', 'mana_pct', 0.08, 1, {'water': 1, 'poison': 1},
+     '', '法力上限 +8%'),
+
+    ('venom_pool', 'venom', '毒池', 'skill', '', 0, 1, {'poison': 2, 'wind': 1}, 'venom_pool',
+     '解锁主动技能「毒池」'),
+    ('venom_dmg', 'venom', '蚀骨', 'attribute', 'dmg_pct', 0.06, 1, {'poison': 1, 'wind': 1},
+     '', '所有伤害 +6%'),
+    ('venom_range', 'venom', '蔓延', 'attribute', 'range_px', 12, 1, {'poison': 1, 'shock': 1},
+     '', '近战距离 +12px'),
+
+    ('gale_charge', 'gale', '冲锋', 'skill', '', 0, 1, {'wind': 2, 'fire': 1}, 'charge',
+     '解锁主动技能「冲锋」'),
+    ('gale_cleave', 'gale', '横扫', 'skill', '', 0, 1, {'wind': 2, 'ice': 1}, 'cleave',
+     '解锁主动技能「横扫」'),
+    ('gale_range', 'gale', '疾行', 'attribute', 'range_px', 16, 1, {'wind': 1, 'fire': 1},
+     '', '近战距离 +16px'),
+    ('gale_dmg', 'gale', '割裂', 'attribute', 'dmg_pct', 0.05, 1, {'wind': 1, 'shock': 1},
+     '', '所有伤害 +5%'),
+
+    ('storm_thunder', 'storm', '落雷', 'skill', '', 0, 1, {'shock': 2, 'fire': 1}, 'thunder',
+     '解锁主动技能「落雷」'),
+    ('storm_mana', 'storm', '雷鸣', 'attribute', 'mana_pct', 0.15, 1, {'shock': 1, 'fire': 1},
+     '', '法力上限 +15%'),
+    ('storm_dmg', 'storm', '电弧', 'attribute', 'dmg_pct', 0.08, 1, {'shock': 1, 'wind': 1},
+     '', '所有伤害 +8%'),
+
+    ('warlord_dmg', 'warlord', '破军', 'passive', 'dmg_pct', 0.12, 2, {'fire': 1},
+     '', '所有伤害 +12%（大点）'),
+    ('warlord_hp', 'warlord', '铁壁', 'passive', 'hp_pct', 0.15, 2, {'fire': 1},
+     '', '生命上限 +15%（大点）'),
+
+    ('archon_mana', 'archon', '洪流', 'passive', 'mana_pct', 0.20, 2, {'shock': 1},
+     '', '法力上限 +20%（大点）'),
+    ('archon_range', 'archon', '远见', 'passive', 'range_px', 20, 2, {'shock': 1},
+     '', '近战距离 +20px（大点）'),
 ]
-PASSIVES = [
-    ('warlord', '战意', 'might,tough', 'dmg_pct', 0.12, 160, '伤害 +12%（需锋锐 + 铁骨）'),
-    ('archmage', '奥能', 'focus,storm', 'mana_pct', 0.20, 560, '法力上限 +20%（需静心 + 雷引）'),
-]
+
+AFFINITIES = ('fire', 'ice', 'water', 'poison', 'shock', 'wind')
+
+
+def constellation_rows():
+    return (['id', 'name', 'color', 'requirement', 'x', 'y', 'hint'],
+            [list(row) for row in CONSTELLATIONS])
 
 
 def starmap_rows():
-    header = ['id', 'name', 'tier', 'requires', 'kind', 'effect', 'magnitude',
-              'cost', 'x', 'y', 'skill_id', 'hint']
-    rows = [['star_core', '星核', 0, '', 'attribute', 'dmg_pct', 0.05, 1, 360, 30,
-             '', '一切星图的起点：伤害 +5%']]
-    for skill_id, name, x in SKILLS:
-        rows.append([skill_id, name, 1, CORE, 'skill', '', 0, 1, x, 130, skill_id,
-                     '解锁主动技能「%s」（带进战局才用得上）' % name])
-    for node_id, name, req, effect, magnitude, x, hint in ATTRIBUTES:
-        rows.append([node_id, name, 2, req, 'attribute', effect, magnitude, 1, x, 240,
-                     '', hint])
-    for node_id, name, req, effect, magnitude, x, hint in PASSIVES:
-        rows.append([node_id, name, 3, req, 'passive', effect, magnitude, 3, x, 350,
-                     '', hint])
+    header = ['id', 'constellation', 'name', 'kind', 'effect', 'magnitude', 'cost']
+    header += ['aff_' + color for color in AFFINITIES]
+    header += ['skill_id', 'hint']
+    rows = []
+    for node_id, constellation, name, kind, effect, magnitude, cost, aff, skill_id, hint in NODES:
+        row = [node_id, constellation, name, kind, effect, magnitude, cost]
+        row += [aff.get(color, 0) for color in AFFINITIES]
+        row += [skill_id, hint]
+        rows.append(row)
     return header, rows
 
 
 def patch_table(name, extra_header, extra_values):
-    """Append columns to an existing table, preserving every authored row."""
+    """Append columns to an existing table, preserving every authored row.
+
+    Idempotent: if the column is already there the table is left alone, so this
+    script can be re-run after a partial failure without duplicating headers.
+    """
     path = os.path.join(TABLES, name + '.xlsx')
     fields, records = export_tables.parse_table(path)
-    header = list(fields) + list(extra_header)
+    if all(field in fields for field in extra_header):
+        print('[skip] %s already has %s' % (name, ', '.join(extra_header)))
+        return None
+    missing = [field for field in extra_header if field not in fields]
+    header = list(fields) + missing
     rows = []
     for rec in records:
         row = [rec[f] for f in fields]
@@ -188,7 +258,7 @@ def patch_table(name, extra_header, extra_values):
 def main():
     check = '--check' in sys.argv[1:]
     if check:
-        for name in ('level', 'starmap', 'monster', 'combat_rule'):
+        for name in ('level', 'starmap', 'constellation', 'monster', 'combat_rule'):
             export_tables.validate_package(os.path.join(TABLES, name + '.xlsx'))
             print('[ OK ] %s.xlsx package is valid' % name)
         return 0
@@ -196,6 +266,9 @@ def main():
     write_xlsx(os.path.join(TABLES, 'level.xlsx'),
                ['id', 'level', 'xp_to_next', 'star_points'],
                [['lv%d' % lv, lv, xp, 1] for lv, xp in LEVELS])
+
+    header, rows = constellation_rows()
+    write_xlsx(os.path.join(TABLES, 'constellation.xlsx'), header, rows)
 
     header, rows = starmap_rows()
     write_xlsx(os.path.join(TABLES, 'starmap.xlsx'), header, rows)

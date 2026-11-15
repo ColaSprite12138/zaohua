@@ -42,7 +42,8 @@
 | `skill.xlsx` | `combat/skills.ts` | **7 个主动技能的数值**：`cost / cooldown / cast_time / damage / reach / width / zone_radius / zone_life / name / hint`。机制列（`kind` / `element` / `status` / `icon`）留在代码 |
 | `status.xlsx` | `combat/status.ts` | **18 条状态的数值**：`duration / max_stacks / dot / move_mul / attack_interval_mul / damage_taken_mul / no_move / no_attack / no_skill / no_dodge / name / hint`。视觉色与元素归属留在代码 |
 | `level.xlsx` | `talent/`（局外页面经 `MetaShell.levels` 注入） | **升级曲线 18 行**：`level / xp_to_next / star_points`；最后一行 `xp_to_next = 0` ＝等级上限。改这里就改了「多少击杀升一级」 |
-| `starmap.xlsx` | `combat/modifiers.ts`（数值）+ `talent/`（规则与 UI 坐标） | **星图 16 个节点**：`tier / requires / kind / effect / magnitude / cost / x / y / skill_id / hint`。`kind=skill` 解锁主动技能；`effect` 只允许 `dmg_pct / hp_pct / mana_pct / range_px`；`x/y` 是局外面板上的布局坐标 |
+| `constellation.xlsx` | `talent/`（规则 + 局外面板布局） | **8 个星座**：`color`（六种亲和之一）/ `requirement`（该色亲和下限）/ `x,y`（卡片坐标）/ `hint`。亲和只累积不消耗，星座只按自己的颜色开锁 |
+| `starmap.xlsx` | `combat/modifiers.ts`（数值）+ `talent/`（规则） | **23 个节点**：`constellation / kind / effect / magnitude / cost / aff_fire…aff_wind / skill_id / hint`。`kind=skill` 解锁主动技能并产本色 2 + 邻色 1；被动产本色 1 + 邻色 1；`effect` 只允许 `dmg_pct / hp_pct / mana_pct / range_px`。**没有 `requires` 列**（v7 去掉了节点前置） |
 | `combat_rule.xlsx` | `combat/state.ts`、`combat/enemies.ts`、`combat/attack.ts`、`combat/reactions.ts`、`talent/` | **单行全局手感常量**（`id=combat`）：普攻 CD、闪避 CD、法力上限、蓝药三件套、冲锋速度、怪物攻击距离、DOT / 区域 tick、区域半径上限、反应传导半径、撞墙伤害与击退阈值、引爆每层伤害，以及星图的一次性点数（`mainline_star_points` / `explore_star_points`） |
 
 **数值表化（2026-11-15，用户要求）**：技能 / 状态 / 怪物 / 全局常量原本写死在 TS 里，改一个 CD

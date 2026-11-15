@@ -1,37 +1,80 @@
 /**
- * TALENT — 星图（设计文档 6.1 / 6.3 / 6.4）：
- * 点数从哪来、点哪个节点、路径约束、免费洗点。
+ * TALENT — 星图（设计文档 6.3 v7，2026-11-15 重做）
  *
- * 三条硬规则（改之前先读设计 6.3，别在这里发明）：
+ * ## 一句话规则
+ * **亲和（affinity）只累积、不消耗；星座按自己的颜色亲和开锁；节点之间没有前置、
+ * 没有连线。** 想开高阶星座，就得先在不那么想要的星座里攒够颜色 —— 取舍来自这里。
  *
- * 1. **只有一种成长货币**：星图点。等级不给基础属性，只给点；主动技能只来自星图。
- * 2. **路径约束**：高阶节点要求前置已点亮（没有约束的星图 = 一堆自由选项 = 没有 build 感）。
- * 3. **免费洗点，而且只能在局外**。本模块只管规则；「局内不能洗」由壳层在出征时把
- *    `picks` 快照进战局实现 —— Engine Worker 里根本拿不到本模块。
+ * 四条硬规则（改之前先读设计 6.3，别在这里发明）：
  *
- * 本模块**零 import**：
- * - 它不读数值表，节点表 / 等级表由调用方（局外页面 / 注入壳层 / 单测）传进来，
- *   所以 `scripts/build-meta-ui.mjs` 能把它转译成普通脚本 `meta-ui/talent.js`，
- *   让可双击的独立页与 4174 注入壳层共用同一份规则。
- * - 它与 `combat/` 的关系是单向的：星图只输出「点亮了哪些节点」（id），
- *   数值（伤害 % / 生命 % / 法力 % / 距离）由 `combat/modifiers.ts` 读同一份
- *   `resource/generated/starmap.ts` 解释。**这里永远不出现伤害数字。**
+ * 1. **只有一种成长货币**：星图点（等级 / 主线首通 / 探索事件给）。亲和不是货币，是门槛。
+ * 2. **没有节点前置**：`canPick()` 只看「星座开没开 + 点数够不够」。星座里先点哪个都一样 ——
+ *    这是与 Grim Dawn 一致的读法：GD 星座内部的连线只是排布，真正卡人的是颜色亲和。
+ * 3. **被动不为某个主动技能服务**：`effect` 只有四种通用乘区（伤害 / 生命 / 法力 / 距离），
+ *    技能节点只负责「解锁这个技能」。数值由 `combat/modifiers.ts` 读同一张表解释，
+ *    本模块**永远不出现伤害数字**。
+ * 4. **免费洗点，而且只能在局外**：`respec()` 只清 `picks`；局内 Worker 根本没有本模块。
+ *
+ * ## 为什么零 import
+ * 节点表 / 星座表 / 等级表都由调用方传进来（局外页面从 `MetaShell` 注入），
+ * 所以 `scripts/build-meta-ui.mjs` 能把它转译成普通脚本 `meta-ui/talent.js`，
+ * 可双击的独立页与 4174 注入壳层共用同一份规则；它也因此在结构上无法私藏一份数值。
  */
 
-/** `tables/starmap.xlsx` 的一行（`requires` 是逗号分隔的原始字符串）。 */
-export interface StarNodeRow {
+/** 六种亲和＝六种元素（与 `combat/state.ts::ElementId` 同名）。 */
+export const AFFINITIES = ['fire', 'ice', 'water', 'poison', 'shock', 'wind'] as const;
+export type Affinity = (typeof AFFINITIES)[number];
+export type AffinityMap = Record<Affinity, number>;
+
+/** `tables/constellation.xlsx` 的一行。`requirement` 是**该星座颜色的亲和下限**。 */
+export interface ConstellationRow {
   id: string;
   name: string;
-  tier: number;
-  requires: string;
+  color: string;
+  requirement: number;
+  x: number;
+  y: number;
+  hint: string;
+}
+
+/**
+ * `tables/starmap.xlsx` 的一行。
+ * `aff_<color>` 是该节点产出的亲和（技能 2 点本色，被动 1 点本色 + 1 点邻色）。
+ */
+export interface StarNodeRow {
+  id: string;
+  constellation: string;
+  name: string;
   kind: string;
   effect: string;
   magnitude: number;
   cost: number;
-  x: number;
-  y: number;
+  aff_fire: number;
+  aff_ice: number;
+  aff_water: number;
+  aff_poison: number;
+  aff_shock: number;
+  aff_wind: number;
   skill_id: string;
   hint: string;
+}
+
+export interface StarNode extends StarNodeRow {
+  /** 解析后的亲和产出，只含 > 0 的色。UI 画色点用。 */
+  grants: Partial<AffinityMap>;
+}
+
+export interface Constellation extends ConstellationRow {
+  /** 归一化后的亲和色（表里写错色名会在这里抛错，而不是悄悄不开锁）。 */
+  color: Affinity;
+  nodes: StarNode[];
+}
+
+export interface StarMap {
+  nodes: StarNode[];
+  byId: Record<string, StarNode>;
+  constellations: Constellation[];
+  constellationById: Record<string, Constellation>;
 }
 
 /** `tables/level.xlsx` 的一行。`xp_to_next = 0` 表示等级上限。 */
@@ -46,16 +89,6 @@ export interface LevelRow {
 export interface StarRule {
   mainline_star_points: number;
   explore_star_points: number;
-}
-
-/** 解析后的节点：`requires` 变成数组。 */
-export interface StarNode extends Omit<StarNodeRow, 'requires'> {
-  requires: string[];
-}
-
-export interface StarTree {
-  nodes: StarNode[];
-  byId: Record<string, StarNode>;
 }
 
 /** 跨局持久的星图进度。**存档里除背包以外只有这一份东西。** */
@@ -74,35 +107,92 @@ export function createStarState(level = 1): StarState {
   return { level, xp: 0, picks: [], cleared: [], explored: [] };
 }
 
-/* ------------------------------- 节点树 -------------------------------- */
+/* ------------------------------ 星座 / 节点 ----------------------------- */
 
-/**
- * 表 → 节点树。未知前置、重复 id、空技能 id 都是**接线错误**，直接抛错：
- * 静默跳过会让「点不到的高阶节点」变成上线才发现的死星图。
- */
-export function createStarTree(rows: readonly StarNodeRow[]): StarTree {
-  const byId: Record<string, StarNode> = {};
-  const nodes: StarNode[] = [];
-  for (const row of rows) {
-    const requires = row.requires === '' ? [] : row.requires.split(',').map((s) => s.trim());
-    const node: StarNode = { ...row, requires };
-    if (byId[node.id] !== undefined) throw new Error(`starmap: duplicate node ${node.id}`);
-    if (node.kind === 'skill' && node.skill_id === '') {
-      throw new Error(`starmap: node ${node.id} is a skill without skill_id`);
-    }
-    byId[node.id] = node;
-    nodes.push(node);
-  }
-  for (const node of nodes) {
-    for (const req of node.requires) {
-      if (byId[req] === undefined) throw new Error(`starmap: ${node.id} requires unknown ${req}`);
-    }
-  }
-  return { nodes, byId };
+export function emptyAffinity(): AffinityMap {
+  return { fire: 0, ice: 0, water: 0, poison: 0, shock: 0, wind: 0 };
 }
 
-export function starNode(tree: StarTree, id: string): StarNode | null {
-  return tree.byId[id] ?? null;
+function isAffinity(value: string): value is Affinity {
+  return (AFFINITIES as readonly string[]).includes(value);
+}
+
+/** 表 → 星图。未知星座、未知亲和色、重复 id、技能缺 `skill_id` 都直接抛错。 */
+export function createStarMap(
+  nodeRows: readonly StarNodeRow[],
+  constellationRows: readonly ConstellationRow[],
+): StarMap {
+  const constellationById: Record<string, Constellation> = {};
+  const constellations: Constellation[] = [];
+  for (const row of constellationRows) {
+    if (constellationById[row.id] !== undefined) {
+      throw new Error(`starmap: duplicate constellation ${row.id}`);
+    }
+    if (!isAffinity(row.color)) {
+      throw new Error(`starmap: constellation ${row.id} has unknown color ${row.color}`);
+    }
+    const constellation: Constellation = { ...row, color: row.color, nodes: [] };
+    constellationById[row.id] = constellation;
+    constellations.push(constellation);
+  }
+
+  const byId: Record<string, StarNode> = {};
+  const nodes: StarNode[] = [];
+  for (const row of nodeRows) {
+    if (byId[row.id] !== undefined) throw new Error(`starmap: duplicate node ${row.id}`);
+    const constellation = constellationById[row.constellation];
+    if (constellation === undefined) {
+      throw new Error(`starmap: node ${row.id} belongs to unknown constellation ${row.constellation}`);
+    }
+    if (row.kind === 'skill' && row.skill_id === '') {
+      throw new Error(`starmap: node ${row.id} is a skill without skill_id`);
+    }
+    const grants: Partial<AffinityMap> = {};
+    for (const color of AFFINITIES) {
+      const amount = row[`aff_${color}` as keyof StarNodeRow] as number;
+      if (amount > 0) grants[color] = amount;
+    }
+    const node: StarNode = { ...row, grants };
+    byId[node.id] = node;
+    nodes.push(node);
+    constellation.nodes.push(node);
+  }
+  if (nodes.length === 0) throw new Error('starmap: no nodes');
+  return { nodes, byId, constellations, constellationById };
+}
+
+/** 当前亲和（只由已点亮的节点决定，**不随洗点外的任何东西变化**）。 */
+export function affinityOf(state: StarState, map: StarMap): AffinityMap {
+  const affinity = emptyAffinity();
+  for (const id of state.picks) {
+    const node = map.byId[id];
+    if (node === undefined) continue;
+    for (const color of AFFINITIES) {
+      const amount = node.grants[color];
+      if (amount !== undefined) affinity[color] += amount;
+    }
+  }
+  return affinity;
+}
+
+/** 星座开没开：只看它自己的颜色亲和（设计 6.3，没有节点前置）。 */
+export function constellationOpen(
+  state: StarState, map: StarMap, constellationId: string,
+): boolean {
+  const constellation = map.constellationById[constellationId];
+  if (constellation === undefined) return false;
+  if (constellation.requirement <= 0) return true;
+  return affinityOf(state, map)[constellation.color] >= constellation.requirement;
+}
+
+/** 还差多少亲和才开（0 = 已开）。UI 用来显示「还差 N 点火亲和」。 */
+export function affinityMissing(
+  state: StarState, map: StarMap, constellationId: string,
+): number {
+  const constellation = map.constellationById[constellationId];
+  if (constellation === undefined) return 0;
+  const have = affinityOf(state, map)[constellation.color];
+  return Math.max(0, constellation.requirement - have);
 }
 
 /* -------------------------------- 点数 --------------------------------- */
@@ -139,50 +229,43 @@ export function pointsEarned(
   return pointsFromLevel(levels, state.level) + pointsFromClears(state, rule);
 }
 
-export function pointsSpent(state: StarState, tree: StarTree): number {
+export function pointsSpent(state: StarState, map: StarMap): number {
   let total = 0;
-  for (const id of state.picks) total += tree.byId[id]?.cost ?? 0;
+  for (const id of state.picks) total += map.byId[id]?.cost ?? 0;
   return total;
 }
 
 export function pointsLeft(
-  state: StarState, tree: StarTree, levels: readonly LevelRow[], rule: StarRule,
+  state: StarState, map: StarMap, levels: readonly LevelRow[], rule: StarRule,
 ): number {
-  return Math.max(0, pointsEarned(state, levels, rule) - pointsSpent(state, tree));
+  return Math.max(0, pointsEarned(state, levels, rule) - pointsSpent(state, map));
 }
 
 /* ------------------------------- 选点 ---------------------------------- */
 
-/** 前置是否已全部点亮（顺序敏感：先点前置，才能点后继）。 */
-export function prerequisitesMet(state: StarState, tree: StarTree, id: string): boolean {
-  const node = tree.byId[id];
-  if (node === undefined) return false;
-  return node.requires.every((req) => state.picks.includes(req));
-}
-
-/** 能不能点这个节点（未知 / 重复 / 前置未满 / 点数不够 → 一律 false）。 */
+/** 能不能点：未知 / 重复 / 星座未开 / 点数不够 → 一律 false。 */
 export function canPick(
-  state: StarState, tree: StarTree, levels: readonly LevelRow[], rule: StarRule, id: string,
+  state: StarState, map: StarMap, levels: readonly LevelRow[], rule: StarRule, id: string,
 ): boolean {
-  const node = tree.byId[id];
+  const node = map.byId[id];
   if (node === undefined) return false;
   if (state.picks.includes(id)) return false;
-  if (!prerequisitesMet(state, tree, id)) return false;
-  return pointsLeft(state, tree, levels, rule) >= node.cost;
+  if (!constellationOpen(state, map, node.constellation)) return false;
+  return pointsLeft(state, map, levels, rule) >= node.cost;
 }
 
 /** 点亮一个节点。失败时状态完全不变（局外 UI 直接按返回值提示）。 */
 export function pickNode(
-  state: StarState, tree: StarTree, levels: readonly LevelRow[], rule: StarRule, id: string,
+  state: StarState, map: StarMap, levels: readonly LevelRow[], rule: StarRule, id: string,
 ): boolean {
-  if (!canPick(state, tree, levels, rule, id)) return false;
+  if (!canPick(state, map, levels, rule, id)) return false;
   state.picks.push(id);
   return true;
 }
 
 /**
  * 免费洗点（设计 6.4：完全免费、无消耗、无冷却）。
- * 只清 `picks`，等级 / 经验 / 首通记录都不动 —— 洗点不是「重开角色」。
+ * 只清 `picks`，等级 / 经验 / 首通记录都不动 —— 亲和自然归零，因为它是算出来的。
  */
 export function respec(state: StarState): number {
   const refunded = state.picks.length;
@@ -193,10 +276,10 @@ export function respec(state: StarState): number {
 /* ------------------------------ 输出给战斗 ------------------------------ */
 
 /** 点亮顺序的技能 id（技能栏前几格）。没点技能就是空手 —— 不再有「预置技能」。 */
-export function unlockedSkills(state: StarState, tree: StarTree): string[] {
+export function unlockedSkills(state: StarState, map: StarMap): string[] {
   const out: string[] = [];
   for (const id of state.picks) {
-    const node = tree.byId[id];
+    const node = map.byId[id];
     if (node === undefined || node.kind !== 'skill') continue;
     if (node.skill_id !== '' && !out.includes(node.skill_id)) out.push(node.skill_id);
   }
@@ -211,11 +294,8 @@ export function effectsOf(state: StarState): string[] {
 /* ------------------------------- 进度 ---------------------------------- */
 
 export interface XpResult {
-  /** 这一次加经验升了几级。 */
   levelUps: number;
-  /** 升完之后的等级。 */
   level: number;
-  /** 升完之后的经验（满级后恒为 0）。 */
   xp: number;
 }
 
@@ -269,15 +349,12 @@ function stringList(raw: unknown): string[] {
 }
 
 /**
- * 存档里的 progress 可能是旧版 / 手改 / 未来版本。能修就修（丢掉未知节点、
- * 丢掉前置不成立的节点、等级夹到表里的范围），修不了返回 null 让调用方回退默认。
- * **绝不抛错**：一份坏存档不该让局外页面白屏。
- *
- * 点数预算按「等级 + 首通 + 探索」重新算，所以手改存档多点的节点会被丢弃，
- * 而不是让玩家凭空多出点数。
+ * 存档里的 progress 可能是旧版 / 手改 / 未来版本。能修就修，修不了返回 null。
+ * **顺序重放**：每一条按当时的亲和与预算校验，所以手改存档里「跳过星座门槛」的
+ * 节点会被丢掉，而不是让人凭空多出亲和。坏存档绝不该让局外页面白屏。
  */
 export function sanitizeProgress(
-  raw: unknown, tree: StarTree, levels: readonly LevelRow[], rule: StarRule,
+  raw: unknown, map: StarMap, levels: readonly LevelRow[], rule: StarRule,
 ): StarState | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const src = raw as Record<string, unknown>;
@@ -291,14 +368,10 @@ export function sanitizeProgress(
     : 0;
   state.cleared = stringList(src.cleared);
   state.explored = stringList(src.explored);
-  let budget = pointsEarned(state, levels, rule);
+  // 顺序重放：亲和与点数都按「当时」的账算，所以跳过门槛或超预算的节点会被丢掉。
   for (const id of stringList(src.picks)) {
-    const node = tree.byId[id];
-    if (node === undefined) continue;
-    if (!node.requires.every((req) => state.picks.includes(req))) continue;
-    if (node.cost > budget) continue;
+    if (!canPick(state, map, levels, rule, id)) continue;
     state.picks.push(id);
-    budget -= node.cost;
   }
   return state;
 }

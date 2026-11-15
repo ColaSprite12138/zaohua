@@ -37,10 +37,10 @@
   var identity = { id: '', name: '', mode: 'off' };
   var applying = false;
   var progressBlob = null;
-  var tree = null;
-  if (T && host.starmap) {
+  var starMap = null;
+  if (T && host.starmap && host.constellations) {
     try {
-      tree = T.createStarTree(host.starmap);
+      starMap = T.createStarMap(host.starmap, host.constellations);
     } catch (err) {
       console.error('[store] 星图数据接线错误', err);
     }
@@ -53,8 +53,8 @@
       host.setState(state);
       // 星图进度和背包同属一份 blob（v2）。坏数据 / 旧存档回退初始星图，
       // 绝不让存档把局外页面弄白屏（`sanitizeProgress` 内部逐条校验）。
-      if (T && tree && host.levels && host.setProgress) {
-        var repaired = T.sanitizeProgress(progressBlob, tree, host.levels, host.starRule || {
+      if (T && starMap && host.levels && host.setProgress) {
+        var repaired = T.sanitizeProgress(progressBlob, starMap, host.levels, host.starRule || {
           mainline_star_points: 0, explore_star_points: 0,
         });
         host.setProgress(repaired || T.createStarState());

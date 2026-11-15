@@ -61,9 +61,14 @@ function scopeCss(css) {
   if (/@media|@supports|@keyframes|@container/i.test(css)) {
     throw new Error('meta-ui/index.html CSS gained an at-rule; update scopeCss()');
   }
-  return css.replace(/([^{}]+)\{([^{}]*)\}/g, (_all, rawSelectors, body) => {
+  // Strip comments FIRST. Otherwise the rule right after a `/* ... */` comment
+  // is parsed with the comment glued to its selector list and silently dropped
+  // (2026-11-15: that ate `#star-panel` and `.star-map { position: relative }`,
+  // which made every constellation position against #fx-shell instead of the map).
+  const source = css.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  return source.replace(/([^{}]+)\{([^{}]*)\}/g, (_all, rawSelectors, body) => {
     const selectors = rawSelectors.trim();
-    if (!selectors || selectors.startsWith('/*')) return '';
+    if (!selectors) return '';
     const scoped = selectors.split(',').map((raw) => {
       const sel = raw.trim();
       if (sel === ':root' || sel === 'body' || sel === 'html') return '#fx-shell';
@@ -111,6 +116,7 @@ function buildBlock() {
   // 由壳层注入给局外页面，`meta-ui/index.html` 里没有第二份数值副本。
   const levelRows = generatedRows('level.ts', 'level');
   const starRows = generatedRows('starmap.ts', 'starmap');
+  const constellationRows = generatedRows('constellation.ts', 'constellation');
   const ruleRow = generatedRows('combat_rule.ts', 'combat_rule')[0];
   const starRule = {
     mainline_star_points: ruleRow.mainline_star_points,
@@ -124,6 +130,7 @@ function buildBlock() {
     'assets/resource/generated/weapon.ts',
     'assets/resource/generated/level.ts',
     'assets/resource/generated/starmap.ts',
+    'assets/resource/generated/constellation.ts',
     'assets/resource/generated/combat_rule.ts',
   ];
   const digest = createHash('sha256')
@@ -142,6 +149,7 @@ ${read('meta-ui/shell.css')}
   authoredItems: ${JSON.stringify(rows)},
   levels: ${JSON.stringify(levelRows)},
   starmap: ${JSON.stringify(starRows)},
+  constellations: ${JSON.stringify(constellationRows)},
   starRule: ${JSON.stringify(starRule)}
 };</script>
 <div id="fx-shell">
