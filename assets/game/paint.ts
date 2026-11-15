@@ -35,6 +35,9 @@ import {
   skillDef,
   statusDef,
   destructibleDef,
+  zonesOf,
+  zoneAt,
+  zoneRect,
   type StatusId,
   type DestructibleObj,
   type Drop,
@@ -247,6 +250,173 @@ function drawZones(g: Painter, s: GameState): void {
 }
 
 /**
+ * 地形底图（缓存）：把墙 / 虚空烘成一张小画布，小地图与大地图共用。
+ *
+ * 为什么要缓存：地图从 128×96 扩到 256×160 之后是 **40960 格**，每帧逐格
+ * `fillRect` 会把 60fps 吃掉一半。地形是静态的，按「地图 id + 目标像素尺寸」
+ * 缓存一次就够；换图 / 换尺寸自然会重新烘。
+ */
+const terrainCache = new Map<string, OffscreenCanvas>();
+
+function terrainRaster(s: GameState, pxW: number, pxH: number): OffscreenCanvas {
+  const key = `${s.map.id}:${s.world.cols}x${s.world.rows}:${pxW}x${pxH}`;
+  const hit = terrainCache.get(key);
+  if (hit !== undefined) return hit;
+  const canvas = new OffscreenCanvas(Math.max(1, pxW), Math.max(1, pxH));
+  const layer = canvas.getContext('2d');
+  if (layer === null) return canvas;
+  layer.fillStyle = '#16232e';
+  layer.fillRect(0, 0, pxW, pxH);
+  const wd = s.world;
+  const sx = pxW / s.map.pxWid;
+  const sy = pxH / s.map.pxHei;
+  const cellW = Math.max(1, wd.grid * sx);
+  const cellH = Math.max(1, wd.grid * sy);
+  for (let r = 0; r < wd.rows; r += 1) {
+    for (let c = 0; c < wd.cols; c += 1) {
+      const tile = wd.tiles[r * wd.cols + c] ?? 1;
+      if (tile !== 1 && tile !== 3) continue;
+      layer.fillStyle = tile === 1 ? '#5a7080' : '#04090f';
+      layer.fillRect(c * wd.grid * sx, r * wd.grid * sy, cellW, cellH);
+    }
+  }
+  // 缓存别无限长：换图 / 换尺寸只会有几份。
+  if (terrainCache.size > 6) terrainCache.clear();
+  terrainCache.set(key, canvas);
+  return canvas;
+}
+
+/**
+ * 大地图（M，设计 11「需要大地图查看功能」）。
+ *
+ * 只读覆盖层：地形 + 四个分区（名字 + 描边）+ 传送门 + 未砸开的可破坏物 +
+ * 事件光柱 + 玩家位置与朝向。**不暂停世界**（时间与怪照常走），打开时点击落在
+ * 覆盖层上会被引擎当成 HUD 而丢掉 —— 看地图不是一次误操作。
+ */
+function drawBigMap(g: Painter, s: GameState): void {
+  g.save();
+  g.fillStyle = 'rgba(4,9,15,0.86)';
+  g.fillRect(0, 0, VIEW_W, VIEW_H);
+
+  // 面板：1280×600 的可见区只到 y≈704，所以底部留白按 HUD_BOTTOM 算。
+  const px = 40;
+  const py = 36;
+  const pw = VIEW_W - px * 2;
+  const ph = VIEW_H - HUD_BOTTOM - 20 - py;
+  g.fillStyle = 'rgba(10,20,30,0.96)';
+  roundRect(g, px, py, pw, ph, 14);
+  g.fill();
+  g.strokeStyle = 'rgba(150,180,205,0.5)';
+  g.lineWidth = 2;
+  roundRect(g, px, py, pw, ph, 14);
+  g.stroke();
+
+  text(g, '大地图 · 四区环形', px + 20, py + 26, 16, '#e8f4ff', 'left', '800');
+  const zones = zonesOf(s.map);
+  text(g, zones.length > 0
+    ? `${zones.map((z) => z.name).join(' → ')} → ${zones[0]!.name}`
+    : '这张图没有分区', px + 190, py + 25, 12, '#8fb3c9', 'left', '600');
+  text(g, 'M 关闭 · 世界不会暂停', px + pw - 20, py + 25, 12, '#ffd166', 'right', '700');
+
+  // 地图区：按世界长宽比塞进面板，居中。
+  const areaX = px + 18;
+  const areaY = py + 44;
+  const areaW = pw - 36;
+  const areaH = ph - 44 - 46;
+  const scale = Math.min(areaW / s.map.pxWid, areaH / s.map.pxHei);
+  const mapW = Math.round(s.map.pxWid * scale);
+  const mapH = Math.round(s.map.pxHei * scale);
+  const ox = Math.round(areaX + (areaW - mapW) / 2);
+  const oy = Math.round(areaY + (areaH - mapH) / 2);
+
+  g.drawImage(terrainRaster(s, mapW, mapH), ox, oy);
+  g.strokeStyle = 'rgba(103,232,249,0.55)';
+  g.lineWidth = 1;
+  g.strokeRect(ox + 0.5, oy + 0.5, mapW - 1, mapH - 1);
+
+  const toMap = (wx: number, wy: number) => ({
+    x: ox + wx * scale,
+    y: oy + wy * scale,
+  });
+
+  // 分区：描边 + 名字（名字压在每区中心）。
+  for (const zone of zones) {
+    const r = zoneRect(zone, s.map.gridSize);
+    const p0 = toMap(r.x, r.y);
+    const w = r.w * scale;
+    const h = r.h * scale;
+    g.strokeStyle = zone.id === (zoneAt(s.map, s.player.x, s.player.y)?.id ?? '')
+      ? 'rgba(255,209,102,0.9)'
+      : 'rgba(167,139,250,0.55)';
+    g.lineWidth = 2;
+    g.strokeRect(p0.x + 1, p0.y + 1, w - 2, h - 2);
+    const label = zone.name;
+    const tw = Math.max(52, Array.from(label).length * 14 + 16);
+    const lx = Math.round(p0.x + w / 2 - tw / 2);
+    const ly = Math.round(p0.y + 8);
+    g.fillStyle = 'rgba(8,16,24,0.82)';
+    g.fillRect(lx, ly, tw, 20);
+    g.strokeStyle = 'rgba(150,180,205,0.4)';
+    g.lineWidth = 1;
+    g.strokeRect(lx + 0.5, ly + 0.5, tw - 1, 19);
+    text(g, label, p0.x + w / 2, ly + 10, 12, '#dbeafe', 'center', '700');
+  }
+
+  // 传送门（门 = 出口，是大地图最重要的信息）
+  for (const portal of s.portals) {
+    const p = toMap(portal.x, portal.y);
+    g.fillStyle = portal.state === 'spent' ? '#5a7080' : '#f0abfc';
+    const size = portal.state === 'spent' ? 6 : 9;
+    g.fillRect(Math.round(p.x - size / 2), Math.round(p.y - size / 2), size, size);
+    if (portal.state !== 'spent') {
+      g.strokeStyle = 'rgba(240,171,252,0.55)';
+      g.lineWidth = 1;
+      g.strokeRect(Math.round(p.x - size), Math.round(p.y - size), size * 2, size * 2);
+    }
+  }
+  // 可破坏物（未砸开的）
+  for (const obj of s.destructibles) {
+    if (obj.broken) continue;
+    const p = toMap(obj.x, obj.y);
+    g.fillStyle = obj.fromEvent ? '#fff3c4' : '#f59e0b';
+    g.fillRect(Math.round(p.x - 2), Math.round(p.y - 2), obj.fromEvent ? 6 : 4, obj.fromEvent ? 6 : 4);
+  }
+  // 事件光柱
+  for (const record of s.events) {
+    if (record.beacon <= 0) continue;
+    const p = toMap(record.x, record.y);
+    g.fillStyle = '#fcd34d';
+    g.fillRect(Math.round(p.x - 3), Math.round(p.y - 3), 7, 7);
+  }
+
+  // 玩家：白点 + 朝向短线（俯视角里"面朝哪"是玩家最常问的一句）
+  const me = toMap(s.player.x, s.player.y);
+  g.fillStyle = '#67e8f9';
+  g.fillRect(Math.round(me.x - 3), Math.round(me.y - 3), 7, 7);
+  g.strokeStyle = '#67e8f9';
+  g.lineWidth = 2;
+  g.beginPath();
+  g.moveTo(me.x, me.y);
+  g.lineTo(me.x + Math.cos(s.player.face) * 12, me.y + Math.sin(s.player.face) * 12);
+  g.stroke();
+
+  // 底部图例
+  const legendY = py + ph - 26;
+  const legend: readonly (readonly [string, string])[] = [
+    ['#67e8f9', '你'], ['#f0abfc', '传送门'], ['#f59e0b', '可破坏物'],
+    ['#fcd34d', '事件'], ['#5a7080', '墙'], ['#04090f', '深水 / 虚空'],
+  ];
+  let lx = areaX;
+  for (const [color, label] of legend) {
+    g.fillStyle = color;
+    g.fillRect(lx, legendY - 6, 8, 8);
+    text(g, label, lx + 14, legendY, 11, '#a9c4d6', 'left', '600');
+    lx += 14 + Array.from(label).length * 12 + 22;
+  }
+  g.restore();
+}
+
+/**
  * Read-only minimap, top-right. It shows terrain, entities and the camera
  * viewport but consumes NO pointer input: the engine drops clicks inside
  * MINIMAP before they ever reach the simulation.
@@ -263,24 +433,12 @@ function drawMinimap(g: Painter, s: GameState): void {
   g.stroke();
   text(g, '地图 · 只读', x + 12, y + 15, 11, '#a9c4d6', 'left', '600');
 
-  const wd = s.world;
   const sx = (w - 16) / s.map.pxWid;
   const sy = (h - 32) / s.map.pxHei;
   const ox = x + 8;
   const oy = y + 24;
-  g.fillStyle = '#16232e';
-  g.fillRect(ox, oy, w - 16, h - 32);
-  for (let r = 0; r < wd.rows; r += 1) {
-    for (let c = 0; c < wd.cols; c += 1) {
-      const tile = wd.tiles[r * wd.cols + c] ?? 1;
-      if (tile !== 1 && tile !== 3) continue;
-      g.fillStyle = tile === 1 ? '#5a7080' : '#04090f';
-      g.fillRect(
-        ox + c * wd.grid * sx, oy + r * wd.grid * sy,
-        Math.max(1, wd.grid * sx), Math.max(1, wd.grid * sy),
-      );
-    }
-  }
+  // 地形走缓存（40960 格逐帧重画会把帧率吃穿），实体仍然每帧画。
+  g.drawImage(terrainRaster(s, w - 16, h - 32), ox, oy);
   g.strokeStyle = 'rgba(103,232,249,0.85)';
   g.lineWidth = 1;
   g.strokeRect(ox + s.camera.x * sx, oy + s.camera.y * sy, VIEW_W * sx, VIEW_H * sy);
@@ -1549,6 +1707,25 @@ function hud(g: Painter, s: GameState): void {
   text(g, phaseText, clockX + 14, 37, 12, phaseColor, 'left', '700');
   text(g, clock, clockX + clockW - 14, 37, 15, secs <= 60 ? '#ff9b9b' : '#e8f4ff', 'right', '800');
 
+  /**
+   * 区域名 + 「M 地图」提示（设计 11）：一局只走 1/3 张图，玩家必须随时知道自己在哪。
+   * 位置紧贴计时胶囊右侧，两者同一条 y 带 —— 1280×600 下这一带不会撞到底部留白。
+   */
+  const zone = zoneAt(s.map, s.player.x, s.player.y);
+  const zoneLabel = zone?.name ?? '未分区';
+  const zoneW = Math.max(86, Array.from(zoneLabel).length * 13 + 44);
+  // 紧贴"当前意图"面板右侧：胶囊(→548) | 意图面板(548..732) | 区域名(740..) | 小地图(1036..)
+  const zoneX = VIEW_W / 2 + 92 + 8;
+  g.fillStyle = 'rgba(8,16,24,0.78)';
+  roundRect(g, zoneX, 22, zoneW, 30, 15);
+  g.fill();
+  g.strokeStyle = 'rgba(167,139,250,0.45)';
+  g.lineWidth = 1;
+  roundRect(g, zoneX, 22, zoneW, 30, 15);
+  g.stroke();
+  text(g, zoneLabel, zoneX + 12, 37, 12, '#dbeafe', 'left', '700');
+  text(g, 'M', zoneX + zoneW - 12, 37, 11, '#a9c4d6', 'right', '700');
+
   // Current intent: hover / move / hold / locked attack are distinguishable.
   const mode = s.attackOrder
     ? '锁定目标 · 接近中'
@@ -1727,4 +1904,6 @@ export function paint(g: Painter, s: GameState): void {
   g.restore();
   hud(g, s);
   drawMinimap(g, s);
+  // 大地图**盖在最上层**（包括 HUD 与小地图）：它是模态查看层。
+  if (s.bigMap) drawBigMap(g, s);
 }

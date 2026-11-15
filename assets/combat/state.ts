@@ -54,11 +54,16 @@ export interface StepInput {
    */
   readonly extractChannel?: boolean;
   /**
-   * True while the pointer sits on a HUD panel (the read-only minimap). Hover
-   * feedback is pure presentation, so it must not light up under the pointer
+   * True while the pointer sits on a HUD panel (the read-only minimap / 大地图).
+   * Hover feedback is pure presentation, so it must not light up under the pointer
    * when the pointer is not over the world.
    */
   readonly pointerOnHud?: boolean;
+  /**
+   * M（justPressed）：切换大地图。设计 11「需要大地图查看功能」。
+   * 它是一层**查看**用的覆盖层，不暂停世界 —— 打开时点地面不会走（指针在 HUD 上）。
+   */
+  readonly bigMap?: boolean;
 }
 
 /**
@@ -866,6 +871,8 @@ export interface GameState {
   portals: Portal[];
   /** 正在引导的传送门 id；null = 没在引导。 */
   channel: number | null;
+  /** 大地图是否打开（纯查看，不暂停世界）。 */
+  bigMap: boolean;
   /** 已从传送门撤离：本局成功，整份带回。 */
   extracted: boolean;
   /** 时间耗尽没撤离：本局失败，整份丢失。 */
@@ -946,6 +953,7 @@ export function createState(config: RunConfig = {}): GameState {
     phase: 'explore',
     portals: [],
     channel: null,
+    bigMap: false,
     extracted: false,
     timedOut: false,
     destructibles: [],
@@ -1034,6 +1042,8 @@ export function reset(s: GameState): void {
   s.channel = null;
   s.extracted = false;
   s.timedOut = false;
+  // 大地图是「玩家正在看」的临时状态，重开一局 / 出征都从关着的状态开始。
+  s.bigMap = false;
   // 可破坏物是「这张图上的东西」：重开一局全部放回去（砸掉的那一局不算数）。
   // 事件同理 —— `firedEvents` 清空，7 分钟时该刷的还会刷。
   s.destructibles = spawnDestructibles(s.map);

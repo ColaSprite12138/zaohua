@@ -36,24 +36,12 @@ DESTRUCTIBLE_UID = 106
 EVENT_SITE_UID = 107
 KIND_FIELD_UID = 108
 
-# 三档可破坏物分布：两座厢房里各一只低/中价值物（绕路进去的奖励），
-# 中庭散两只，两个高价值舍利匣都**故意**摆在怪的警戒圈里 —— 想开它就得先清场。
-DESTRUCTIBLES = [
-    ('crate', 16, 24),      # 西厢房内
-    ('coffer', 28, 36),     # 西厢房内南
-    ('crate', 100, 24),     # 东厢房内
-    ('coffer', 110, 36),    # 东厢房内南
-    ('crate', 58, 50),      # 中庭北
-    ('coffer', 70, 58),     # 中庭中
-    ('reliquary', 40, 44),  # 中庭西（(44,46) 有怪 → 有守卫）
-    ('reliquary', 96, 44),  # 中庭东（(106,58) 有怪 → 有守卫）
-]
-
-# 事件点：第 7 分钟的高价值物刷在这里（设计 10.2）。两处，轮转使用。
-EVENT_SITES = [
-    (64, 32),    # 中庭北（高台台阶前）
-    (100, 72),   # 中庭东南
-]
+# 点位**不在这个脚本里**：一律从 `gen_arena_map.layout()` 取（那是整张图的唯一布局）。
+# 曾经在这里抄过一份 8 个箱子的列表，扩成四区之后立刻对不上 —— 两份数据必然漂移。
+_TERRAIN, _PROPS, _SPAWN, _MONSTERS, _PORTALS, _DESTRUCTIBLES, _EVENT_SITES = (
+    gen_arena_map.layout())
+DESTRUCTIBLES = _DESTRUCTIBLES
+EVENT_SITES = _EVENT_SITES
 
 
 def entity_instance(identifier, def_uid, col, row, fields=()):
@@ -200,6 +188,12 @@ def main():
     if not check:
         project = patch(project)
     problems = gen_arena_map.validate(project) + check_placement(project)
+    if check:
+        have = {e['identifier'] for e in project['defs']['entities']}
+        for name in ('Destructible', 'EventSite'):
+            if name not in have:
+                problems.append('arena.ldtk 缺少 %s 实体定义（运行 python '
+                                'scripts/add_destructible_entities.py）' % name)
     if problems:
         for problem in problems:
             print('[FAIL] %s' % problem)

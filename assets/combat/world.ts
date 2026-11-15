@@ -70,6 +70,20 @@ export interface ArenaMap {
     readonly y: number;
   }[];
   /**
+   * 分区（设计 11）：环形动线由 4 个矩形组成，**每区两条以上出入通道**。
+   * 由 `gen_arena_map.py::ZONES` 定义、`import_map.py` 导出并校验（面积铺满 / 通道数 /
+   * 每区有门），所以运行时只有这一份权威：HUD 区域名、大地图、验收都读它。
+   * 没有这个字段的地图（自动验收夹具）就是「一张没分区的图」。
+   */
+  readonly zones?: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly col: number;
+    readonly row: number;
+    readonly cols: number;
+    readonly rows: number;
+  }[];
+  /**
    * 单局事件点（设计 10.2）：7–8 分钟的高价值物刷在这里。
    * 由 LDtk 的 `EventSite` 实体决定；没有就是「这张图不开事件」。
    */

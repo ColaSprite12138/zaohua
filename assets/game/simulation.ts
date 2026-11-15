@@ -91,6 +91,11 @@ export {
   SMASH_RANGE,
   EVENTS,
   runElapsed,
+  // 分区（设计 11）：绘制层画区域名 / 大地图，验收读玩家所在区。
+  zonesOf,
+  zoneAt,
+  zoneRect,
+  zoneChannels,
 } from '../combat/simulation.ts';
 export type { RunLoadout } from '../meta/inventory.ts';
 export {
@@ -122,4 +127,5 @@ export type {
   RunEventRecord,
   DestructibleDef,
   EventDef,
+  ArenaZone,
 } from '../combat/simulation.ts';

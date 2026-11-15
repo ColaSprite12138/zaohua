@@ -22,6 +22,7 @@ import { tickStatuses, updateZones } from './reactions.ts';
 import { statusSnapshot } from './status.ts';
 import { updateDestructibles, destructibleDef, destructibleAtPoint } from './destructibles.ts';
 import { updateEvents } from './events.ts';
+import { zoneAt, zonesOf } from './zones.ts';
 import {
   advanceCast, beginSkill, skillDef, skillReady, tickSkills, updateDash,
 } from './skills.ts';
@@ -70,6 +71,9 @@ export function step(
     s.cast = null;
     return;
   }
+
+  // M 切换大地图：纯查看层，不暂停世界（时间、怪、DOT 照常走）。
+  if (input.bigMap === true) s.bigMap = !s.bigMap;
 
   s.t += dt;
   tickTimers(s, dt);
@@ -409,6 +413,28 @@ export function projection(s: GameState) {
     // 单局骨架（搜打撤）：剩余时间 / 阶段 / 传送门。坐标同样屏幕归一化，
     // 所以 playthrough 可以直接点门的屏幕位置走过去。
     runKind: s.runKind,
+    /** 大地图开着（M）。 */
+    bigMap: s.bigMap,
+    /** 玩家所在分区（设计 11）；没分区的图是 null。 */
+    zone: (() => {
+      const z = zoneAt(s.map, s.player.x, s.player.y);
+      return z === null ? null : { id: z.id, name: z.name };
+    })(),
+    /**
+     * 全部分区的**中心点**（屏幕归一化，和 `player` / `portals` 同一套坐标）。
+     * 验收脚本靠它「走进下一个区」，UI 也能直接拿来画标签。
+     *
+     * 注意命名：`zones` 这个名字**已经被地面区域**（火墙 / 毒池）占用了，
+     * 「分区」在投影里叫 `regions` —— 两个都是"区域"，但一个是地形、一个是地面效果。
+     */
+    regions: zonesOf(s.map).map((zone) => {
+      const grid = s.map.gridSize;
+      const v = scr(
+        zone.col * grid + (zone.cols * grid) / 2,
+        zone.row * grid + (zone.rows * grid) / 2,
+      );
+      return { id: zone.id, name: zone.name, x: v.x / VIEW_W, y: v.y / VIEW_H };
+    }),
     runSeconds: s.runSeconds,
     phase: s.phase,
     extracted: s.extracted,
@@ -529,3 +555,5 @@ export type { DestructibleDef } from './destructibles.ts';
 export { EVENTS, runElapsed, updateEvents } from './events.ts';
 export type { EventDef } from './events.ts';
 export { wakeNoise } from './enemies.ts';
+export { zoneAt, zoneRect, zonesOf, zoneChannels } from './zones.ts';
+export type { ArenaZone } from './zones.ts';

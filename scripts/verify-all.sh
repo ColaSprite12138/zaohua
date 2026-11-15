@@ -161,6 +161,12 @@ run_json destructible "$FX" project play \
   --script scripts/playthrough-destructible.mjs --json
 check_report destructible artifacts/play/scripts/playthrough-destructible/play.json 6
 
+# 分区 / 大地图（设计 11）：四区走一圈 + M 开关 + 1280x600。真地图（8192x5120），
+# 夹具验不了分区 —— 所以这一支必须跑真图，并且**必须走腿**（不靠传送）。
+run_json worldmap "$FX" project play \
+  --script scripts/playthrough-worldmap.mjs --json
+check_report worldmap artifacts/play/scripts/playthrough-worldmap/play.json 6
+
 run_json package node scripts/package-with-shell.mjs --format web-zip --output "$OUT/forgeax-game-web.zip" --json
 ( cd "$OUT" && sha256sum -c forgeax-game-web.zip.sha256 ) >> "$SUMMARY" 2>&1 \
   || die "package：sha256 校验失败"

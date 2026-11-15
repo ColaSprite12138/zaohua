@@ -19,7 +19,7 @@
 > 第 1 版**明确不做组队**（设计文档 2.1），别提前为联机做同步层。
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-16 全套验收通过**（350 条单测 / 独立页 16 条 / 单页 53 条 / playthrough 98 steps + death-drop 2 steps + destructible 132 steps / resize 4 steps；**单局骨架已按设计文档第 10 章落地**；**技能两批已落地（设计 8.2/8.3/9.3）**；**状态与反应链第一批已落地（设计 8.4 / 8.5）：18 条状态注册表 + 6 元素 5 条反应 + 地面区域（火墙/毒池/冰面）+ 8.8 的视觉语言，技能从 3 个扩到 7 个以覆盖全部元素**；**技能 / 状态 / 怪物 / 全局手感数值已全部表化（`skill.xlsx` / `status.xlsx` / `monster.xlsx` / `combat_rule.xlsx`），改数值不用改代码**；**角色/怪物已有走路与转身动画**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；**画面已全量体素化，正式地图是 128×96 的仙侠院落**）。**steps 会浮动**：23 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 92–100 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-16 全套验收通过**（358 条单测 / 独立页 16 条 / 单页 53 条 / playthrough 98 steps + death-drop 2 steps + destructible 132 steps + worldmap 40 steps / resize 4 steps；**单局骨架已按设计文档第 10 章落地**；**技能两批已落地（设计 8.2/8.3/9.3）**；**状态与反应链第一批已落地（设计 8.4 / 8.5）：18 条状态注册表 + 6 元素 5 条反应 + 地面区域（火墙/毒池/冰面）+ 8.8 的视觉语言，技能从 3 个扩到 7 个以覆盖全部元素**；**技能 / 状态 / 怪物 / 全局手感数值已全部表化（`skill.xlsx` / `status.xlsx` / `monster.xlsx` / `combat_rule.xlsx`），改数值不用改代码**；**角色/怪物已有走路与转身动画**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；**画面已全量体素化，正式地图是 256×160（四区环形）的仙侠院落**；**大地图 / 分区第一批已落地（设计 11）：四区环形 + `M` 大地图 + HUD 区域名**）。**steps 会浮动**：23 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 92–100 间变化，`verify-all.sh` 下限固定 35。
 > **2026-11-15 一天做了什么（新会话速读，三分钟对齐）**：
 > ① **技能两批** —— 7 格技能栏 / 法力（不自动恢复）/ 读条与打断 / 蓝药；第二批补表现：
 > **冲锋改成 0.23 秒的分帧位移**、读条举杖 + 法力球、每个技能一套方块特效 + 3.2 秒地面残留。
@@ -68,13 +68,27 @@
 > 撤离阶段离玩家 > `monster_converge_px`(320) 的怪改去守最近的门 —— 设计 10.2「怪向传送门聚集」。
 > 地图：`arena.ldtk` 新增 `Destructible`（8 个）与 `EventSite`（2 处）实体，`import_map.py` 导出。
 > 验收：**350 单测 / 53 壳层 / 16 独立页 / playthrough 98 + death-drop 2 + destructible 132**。
+> ⑫ **大地图 / 分区（2026-11-16 凌晨，设计 11 第一批）** —— 地图从 128×96 扩成
+> **256×160 = 8192×5120px 四区环形**：`院落(0,0,128,96) → 东廊(128,0,128,96) → 石窟(128,96,128,64) → 水榭(0,96,128,64) → 院落`。
+> `gen_arena_map.py::ZONES` 是唯一坐标源，`import_map.py` 四道构建期校验（**铺满不重叠 / 每区 ≥2 条出入通道 /
+> 每区至少一扇门 / 每只怪每扇门每个箱子每个事件点都在分区内**），不合规直接不生成。
+> 运行时 `combat/zones.ts` 只做查询（`zonesOf` / `zoneAt` / `zoneRect` / `zoneChannels`），**没有任何坐标常量**；
+> 通道数在 Python 与 TS 各算一份，改坏一份另一份会红。
+> **`M` 开大地图**：地形 + 四区（当前区金框）+ 12 扇门 + 未砸箱子 + 事件光柱 + 玩家朝向 + 图例；
+> **不暂停世界**（看地图本身是风险）、整块画布算 HUD（点击不穿透去走路）。HUD 顶部加**区域名胶囊**。
+> 地形烘成 `OffscreenCanvas` 缓存（40960 格逐帧 `fillRect` 会把 60fps 吃穿），小地图与大地图共用。
+> 正式图现在是 **12 扇门 / 17 个可破坏物 / 20 只怪**（LDtk 实体决定，不是代码）。
+> 投影新增 `bigMap` / `zone{id,name}` / `regions[{id,name,x,y}]`（屏幕归一化，x 除 VIEW_W、y 除 VIEW_H）；
+> **`zones` 这个字段名早被地面区域（火墙/毒池）占用，分区必须叫 `regions`**。
+> 验收：**358 单测**（+8 `zones.test.ts`）/ 新增 `scripts/playthrough-worldmap.mjs` 8 步 + 8 张截图
+> （四区各一张 + 大地图 + 1280x600）。
 ⑨ **装备规则与药水配置（2026-11-15 23:00）** —— 红蓝药的效果搬进 `tables/consumable.xlsx`（每瓶一行）；
 > **只有武器能进武器槽**（`collectDrop` 不再把药塞进空槽 + `normalizeEquipped()` 兜底 + 3 条测试）；
 > 修「局内背包开着按 1/2 道具整批消失」：页面与 Worker 都在写武器槽（一帧两条快照），改成
 > **局内只由 Worker 处理**，并给 `updateRun()` 加空快照兜底（`host.emptySnapshotSkips` 计数）。
 > 验收基线：**298 条单测 / 47 条单页壳层 / 15 条独立页 / playthrough 98 steps**。
-> **下一步按设计文档 15 章：大地图 / 分区**（11：128×96 扩成 4–5 区环形 + 大地图查看 UI）。
-> 可破坏物 / 单局事件 / 惊醒模型已完成，见 ⑪。
+> **下一步按设计文档 15 章：各系统的「第二批」**（技能库跟着星图长 / 怪物技能给状态找施加来源 /
+> 词条与重铸 / 收藏品）。**大地图 / 分区已完成，见 ⑫**；组队第 1 版不做。
 
 > 这份文件记录**跨模块红线、保护清单、验收基线与回滚方案**；**模块功能契约的正本在
 > `assets/<模块>/CONTEXT.md`**（2026-11-14 拆分，见下节「模块契约在哪」）。
@@ -89,9 +103,9 @@
 |:--|:--|
 | 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad。**画风是体素/立体积素（Voxel）**：所有实体/地形/反馈都由 `assets/game/voxel.ts` 的方块模型烘焙成精灵后绘制，规格见 `docs/art-style.md` |
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html`。**③ 2026-11-15 定为默认交付链路**（`scripts\preview-stable.cmd` 一条命令包办：`forgeax project build` → `node scripts/inject-shell.mjs` → 复用/启动 58080 → 开 Chrome）：造化预览宿主是每次构建任务的子进程，**turn 结束就被回收**（表现为「刚说能开、一分钟后就打不开」，端口每次还会变）。要一个稳定地址就直接静态托管 `dist/`：`forgeax project build` → `node scripts/inject-shell.mjs` → `cd dist && python -m http.server 58080 --bind 127.0.0.1`，打开 `http://127.0.0.1:58080/index.html`（浏览器缓存时加 `?v=N`）。这条路走壳层的 hostless 分支：**能玩、不写云存档**。**造化的 `previewUrl` 不要交给用户**：它是当次构建任务的子进程，turn 收尾即被回收（用户实测「刚说能开、一分钟就 `ERR_CONNECTION_REFUSED`」，端口每次还变），只当「代码能跑」的旁证；而且 `preview_reload` 会重建 `dist/` 抹掉壳层，跑完必须重新 `inject-shell`。交付前用 `node scripts/inject-shell.mjs --check`（有壳层 `dist/index.html` ≈139–142KB，没壳层 ≈45KB —— 只看 HTTP 200 会被骗）或 headless 截图自证。注意**不要**直接静态托管 `.game-builder/artifacts/forgeax-player`：那是造化产物，缺宿主注入的 provider，页面会卡在初始化 |
-| 地图 | 正式地图 `128×96` 格 @32px = **4096×3072** 世界像素（仙侠院落：北侧高台、东西厢房、院墙残段 + 香炉）。三个图层：`Terrain`(IntGrid=碰撞权威) / `Entities`(出生点 + 7 只怪 + **传送门**，数量由 LDtk 决定，当前 6 扇) / `Props`(纯装饰，贴素材库图集)。生成链：`bake-voxel-atlas.mjs` → 图集；`gen_arena_map.py` → `arena.ldtk`（之后人工在 LDtk 里改）；`import_map.py` → `arena.generated.ts` |
+| 地图 | 正式地图 **`256×160` 格 @32px = 8192×5120 世界像素**，**四区环形**（院落 → 东廊 → 石窟 → 水榭 → 院落；分区矩形由 `gen_arena_map.py::ZONES` 定，`import_map.py` 校验铺满 / 每区 ≥2 通道 / 每区有门）。三个图层不变：`Terrain`(IntGrid=碰撞权威) / `Entities`(出生点 + **20 只怪** + **12 扇传送门** + **17 个可破坏物** + **2 个事件点**，数量全由 LDtk 决定) / `Props`(纯装饰，贴素材库图集)。生成链：`bake-voxel-atlas.mjs` → 图集；`gen_arena_map.py` → `arena.ldtk`（之后人工在 LDtk 里改）；`import_map.py` → `arena.generated.ts`（含 `zones`）。**改分区只能改 `ZONES` 并重跑导入**，代码里没有第二份坐标 |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
-| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **318**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
+| 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **358**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
 | 数值表要一起提交吗 | **提交到 git（已提交），但发布产物里没有表也不需要表**。运行时只读 `assets/resource/generated/*.ts`（TS 常量），构建时被编译进 `program-*.js`；xlsx 是**开发期源数据**，不是引擎资产（没有 `.meta.json`，不进 pack）。实测：把 `assets/resource/tables/` 整个移走再 `project build` 仍然成功，产物里 `cost/cooldown/damage` 一个不少（2026-11-15 验证）。**三层保险**：① 发布归档 `forgeax-game-web.zip` 里 0 个 `.ts`/`.xlsx`（只有 js/json/wasm/html）；② `generated/*.ts` 也在 git 里 → 云端构建不跑 python 也能读到数据；③ `verify-all.sh` 跑 `export_tables.py --check`，表与生成物不同步直接失败 |
 | 怎么看漂移 | `bash scripts/check-drift.sh`（相对 git 基线的改动，重点标出受保护文件） |
@@ -270,7 +284,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **350** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-16 可破坏物批次 +32：`combat/__tests__/destructibles.test.ts` 18 条（表驱动 / 站桩 / 打断 / 机关 / 产出 / 声响 / 沉睡不动 / **砸开后不复活**）+ `events.test.ts` 9 条（第 7 分钟 / 只触发一次 / 画在事件点 / 光柱衰减 / 惊动 / 结束不刷 / 重开复位 / 守门）+ `data-driven.test.ts` +5；2026-11-15 深夜保险格批次 +20：`combat/__tests__/death-drop.test.ts` 10 条（摆点 / R 重开保留 / 耐久跟着走 / 遗留回传 / 三套规则）+ `meta/__tests__/insurance.test.ts` 9 条（独立容器 2 格 / 老存档补空容器 / 尺寸门槛 / 背包↔保险格移动 / 自动拾取碰不到它 / 分割 / 载荷往返 / 拖放保耐久）+ `account.test.ts` +1（v3 遗物槽）+ `run-inventory.test.ts` +1（局内命令带 container）） |
+| `test` | **358** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-16 分区批次 +8：`combat/__tests__/zones.test.ts` 8 条（四区 id / 铺满不重叠 / 世界 256×160 / **每区 ≥2 通道** / 每区有门有怪有箱有事件点 / 出生点可达四区中心 / 图外返回 null / 无分区夹具不崩）；2026-11-16 可破坏物批次 +32：`combat/__tests__/destructibles.test.ts` 18 条（表驱动 / 站桩 / 打断 / 机关 / 产出 / 声响 / 沉睡不动 / **砸开后不复活**）+ `events.test.ts` 9 条（第 7 分钟 / 只触发一次 / 画在事件点 / 光柱衰减 / 惊动 / 结束不刷 / 重开复位 / 守门）+ `data-driven.test.ts` +5；2026-11-15 深夜保险格批次 +20：`combat/__tests__/death-drop.test.ts` 10 条（摆点 / R 重开保留 / 耐久跟着走 / 遗留回传 / 三套规则）+ `meta/__tests__/insurance.test.ts` 9 条（独立容器 2 格 / 老存档补空容器 / 尺寸门槛 / 背包↔保险格移动 / 自动拾取碰不到它 / 分割 / 载荷往返 / 拖放保耐久）+ `account.test.ts` +1（v3 遗物槽）+ `run-inventory.test.ts` +1（局内命令带 container）） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` **十六**张表与 `generated/*.ts` 一致，且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
@@ -281,6 +295,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 | `playthrough-resize` 1700x1000 | `passed:true`、4 steps、0 errors |
 | `death-drop` 1600x900 | `passed:true`、2 steps、0 errors（遗物摆点 + 名字牌 + 点回 + 耐久；截图 `corpse-loot` / `corpse-recovered`） |
 | `destructible` | `passed:true`、**130–133 steps**、0 errors（夹具：三档箱子 / 舍利匣守卫拒绝 / 站桩砸开（玩家零位移）/ 掉落与拾取 / 铜箱两次产出；真地图：**第 7 分钟事件** + 光柱 + `fromEvent` 舍利匣 + 撤离阶段 `goal='portal'`；截图 `destructibles-spawn` / `reliquary-guarded` / `crate-smashing` / `crate-broken` / `crate-loot-picked` / `coffer-broken` / `event-beacon` / `extract-converge`） |
+| `worldmap`（新增，设计 11） | `passed:true`、**40 steps**（下限 6；8 个命名场景 + `advance` 子步展开）、0 errors：真地图是 **8192×5120 四区**、出生在院落、`M` 开关并吞掉点击、靠腿依次走进东廊 / 石窟 / 水榭 / 回到院落（每区用 `regions` 中心点导航）、1280x600 不裁切；截图 `world-zone-court` / `worldmap-open` / `world-zone-corridor` / `world-zone-cavern` / `world-zone-wateryard` / `world-zone-back-to-court` / `final` / `viewport-1280x600` |
 | `package` | sha256 校验通过，包内 README + feedback 齐全 |
 | `web-zip shell`（发布产物） | `verify-all.sh` 的 `package` 步骤产出 `artifacts/verify/forgeax-game-web.zip`：`sha256sum -c` 通过、`index.html` 含 `FORGEAX_META_SHELL_BEGIN`、`forgeax-dist.json` 的 `bytes`/`sha256` 与实际一致；Builder 玩家产物同时含壳层与平台 bootstrap |
 
@@ -290,15 +305,15 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 
 下表把**各模块 `CONTEXT.md`「功能契约（正文）」**逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 350 条＝combat 244（loot 14 + movement **33** + attack-spec 10 +
-projectiles 10 + weapons 10 + world 11 + modifiers 10 + 单局骨架 extraction 17 + 技能 skills 22 +
-状态与反应 status 28 + **数值表驱动 data-driven 19** + 耐久 durability 14 + **死亡掉落 death-drop 10** +
-**可破坏物 destructibles 18 / 单局事件 events 9**，含 `run-inventory` 9）、meta 52（inventory 19 + platform-KV account 14 + run-settlement 10 + meta 3 +
+删断言不会让这张表悄悄失效。单测 **358** 条＝combat **252**（17 个文件：loot / movement / attack-spec /
+projectiles / weapons / world / modifiers / 单局骨架 extraction 17 / 技能 skills 22 / 状态与反应 status 28 /
+数值表驱动 data-driven / 耐久 durability / 死亡掉落 death-drop 10 / 可破坏物 destructibles 18 / 单局事件 events 9 /
+`run-inventory` 9 / **分区 zones 8**）、meta **54**（inventory / platform-KV account / run-settlement / meta 3 /
 **保险格 insurance 9**）、battle 4、talent 22（talent 15 + starmap-data 7）、
-resource 14（tables 7 + map 7）、**美术 10（`assets/__tests__/voxel.test.ts`）**、模板 2；
+resource 14（tables 7 + map 7）、**美术 12（`assets/__tests__/voxel.test.ts`）**；
 全量下限 83 条（下限不随新增断言抬高）。
 浏览器验收：playthrough 23 个命名场景（展开 92–100 steps，下限 35）、death-drop 2 步
-（遗物摆点 / 点回 / 耐久）、独立页 15 条、4174 单页 51 条（含 7 条平台身份 / KV 存档 +
+（遗物摆点 / 点回 / 耐久）、**worldmap 8 个命名场景（展开 40 steps，下限 6）**、独立页 16 条、4174 单页 53 条（含 7 条平台身份 / KV 存档 +
 1 条「无宿主不写盘」+ 2 条平台 lifecycle + 2 条光标反馈 + 3 条保险格 / 遗物 / 关卡类型）。
 真实硬件 WebGPU 冒烟（历史一次性脚本）：`node artifacts/smoke-login-bag.mjs` 曾覆盖「强制登录 / 刷新后存档」，
 **该脚本按已删除的本地登录 + 本地存盘流程编写，现已不适用**；现行契约里无宿主不写盘、刷新不恢复，

@@ -6,6 +6,7 @@ import {
   type ArenaMap,
 } from '../world.ts';
 import { createState, setArena, spawnFromMap } from '../state.ts';
+import { VIEW_H, VIEW_W } from '../../shared/constants.ts';
 import { projection, step } from '../simulation.ts';
 import { testArena } from '../../resource/maps/arena-test.ts';
 import { arena } from '../../resource/maps/arena.generated.ts';
@@ -35,9 +36,12 @@ const wallMap = {
 describe('LDtk world runtime', () => {
   it('reads IntGrid values and treats walls, void and out-of-bounds as blocking', () => {
     const w = makeWorld(arena);
-    // 2026-11-14：正式地图换成 128x96 的仙侠院落（4096x3072px）。
-    expect(w.cols).toBe(128);
-    expect(w.rows).toBe(96);
+    // 2026-11-16：正式地图扩成 256x160 的四区环形（8192x5120px）。
+    // 断言对着**地图数据**算，不在测试里再抄一份尺寸；下面的地板值防止缩回去。
+    expect(w.cols).toBe(arena.cols);
+    expect(w.rows).toBe(arena.rows);
+    expect(w.cols * w.grid).toBe(arena.pxWid);
+    expect(w.rows).toBeGreaterThanOrEqual(160);
     expect(walkable(w, arena.spawn.x, arena.spawn.y)).toBe(true);
     expect(blocks(w, -10, -10)).toBe(true);
     expect(inBounds(w, -1, 0)).toBe(false);
@@ -61,11 +65,15 @@ describe('LDtk world runtime', () => {
 
   it('camera centres on the player and clamps to the world edges', () => {
     const w = makeWorld(arena);
-    // 出生点 (69,20) → 2224,656（2026-11-15 在 LDtk 里挪过）；居中不触发 clamp。
-    expect(cameraFor(w, arena.spawn.x, arena.spawn.y)).toEqual({ x: 1584, y: 296 });
-    expect(cameraFor(w, 3900, 3000)).toEqual({
-      x: arena.pxWid - 1280,
-      y: arena.pxHei - 720,
+    // 出生点 (69,20) → 2224,672（2026-11-15 在 LDtk 里挪过）；离左上角超过半屏，居中不 clamp。
+    expect(cameraFor(w, arena.spawn.x, arena.spawn.y)).toEqual({
+      x: arena.spawn.x - VIEW_W / 2,
+      y: arena.spawn.y - VIEW_H / 2,
+    });
+    // 世界右下角附近必须 clamp 到边缘（扩图后不能再用"3900 就算右边"这种旧假设）。
+    expect(cameraFor(w, arena.pxWid - 100, arena.pxHei - 100)).toEqual({
+      x: arena.pxWid - VIEW_W,
+      y: arena.pxHei - VIEW_H,
     });
     expect(cameraFor(w, 0, 0)).toEqual({ x: 0, y: 0 });
     // The acceptance fixture is exactly one viewport big: camera never moves.
@@ -127,7 +135,9 @@ describe('acceptance fixture vs playable arena', () => {
 
     setArena(s, arena);
     expect(s.map.id).toBe(arena.id);
-    expect(s.skeletons).toHaveLength(7);
+    // 数量只由地图决定；扩成四区后正式图至少 20 只（地板值防缩回去）。
+    expect(s.skeletons).toHaveLength(arena.monsters.length);
+    expect(arena.monsters.length).toBeGreaterThanOrEqual(20);
     expect(s.camera).toEqual({ x: 1584, y: 296 });
     expect(spawnFromMap(arena).map((sk) => sk.monsterId))
       .toEqual(arena.monsters.map((m) => m.monsterId));

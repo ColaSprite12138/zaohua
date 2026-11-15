@@ -276,7 +276,7 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 
 | 项 | 契约 |
 |:--|:--|
-| 权威源 | `resource/maps/arena.ldtk`（64×48 格 @32px = **2048×1536** 世界像素）→ `arena.generated.ts`（`import_map.py` 生成，禁止手改） |
+| 权威源 | `resource/maps/arena.ldtk`（**256×160 格 @32px = 8192×5120 世界像素**，四区环形，见下节「分区与大地图」）→ `arena.generated.ts`（`import_map.py` 生成，禁止手改） |
 | 逻辑层 | `world.ts`：`makeWorld()` / `walkable()` / `blocks()` / `nearestWalkable()` / `cameraFor()` / `screenToWorld()` / `worldToScreen()` / `findPath()`（8 邻域 A*，禁止对角穿角）/ `lineOfSight()`。只 import `shared/` |
 | 地形 | IntGrid `0` 地面 / `2` 道路可走；`1` 墙 / `3` 深渊挡走 + 挡视线；越界视作阻挡 |
 | 坐标 | `GameState` 一律**世界像素**；`game.pack.ts` 每帧 `screenToWorld(state.camera, ...)`；`paint.ts` 一次 `translate(-cam.x,-cam.y)` 画世界，HUD / 小地图留在屏幕空间 |
@@ -405,6 +405,16 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
    那会让玩家靠跑位把怪「拉掉」，比任何伤害数值都破坏手感。
 53. **事件只在活着的一局里触发**：`updateEvents()` 遇到 `extracted / timedOut / gameOver` 直接返回；
    光柱的 `beacon` 照常衰减（画面要收尾）。一行事件一局只触发一次（`firedEvents`），重开一局清空。
+
+54. **分区坐标只有一个来源**：`gen_arena_map.py::ZONES` → `arena.generated.ts::zones`。
+    `zones.ts` / `paint.ts` / 验收脚本都不得写死分区矩形；改分区只改生成器并重跑
+    `import_map.py`（`--check` 会拦住「改了 ldtk 没重新导出」）。
+55. **大地图不暂停**：`s.bigMap` 只是个绘制开关，不得让 `step()` 提前返回、不得冻结 `s.t` / `runSeconds` /
+    怪 / DOT。**也不许给它加「打开时清空输入队列」之外的副作用** —— 它是查看层，不是菜单。
+56. **大地图吃掉指针**：`bigMap` 为真时整块画布按 HUD 处理（`pointerDown / pointerHeld / pointerUp /
+    pointerOnHud` 全部为假）。否则「按 M 看一眼地图」会变成朝地图左边的地面走过去。
+57. **分区与地面区域不能混名**：`projection().zones` 是地面效果（火墙 / 毒池），
+    `projection().regions` 才是地图分区。新增「区域」相关字段前先确认不会覆盖这两个。
 
 ## 目录与依赖方向（单向，禁止反向 import）
 
@@ -559,16 +569,43 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 巡逻 / 视野朝向（沉睡的怪不会背对你，`face` 仍指向玩家）；`drops` 只是「抽几次」，
 真正的高价值池细分要等词条批次；事件只有一行（后续加「补给空投」「精英巡回」照表加行即可）。
 
+## 分区与大地图（设计 11，2026-11-16）
+
+代码：`combat/zones.ts`（纯查询，只 import `world.ts`）+ `assets/game/paint.ts::drawBigMap()`
++ `game.pack.ts` 的 `KeyM`。地图从 128×96 扩成 **256×160（8192×5120px）四区环形**。
+
+| 项 | 契约 |
+|:--|:--|
+| 分区是**地图数据** | `gen_arena_map.py::ZONES` 定义矩形（id / 显示名 / col,row,cols,rows），`import_map.py` 导出成 `ArenaMap.zones`。**代码里不许写死任何分区坐标** —— 扩图、挪墙、调分区都只改这两处脚本 |
+| 四区 | `court` 院落（0,0,128,96）→ `corridor` 东廊（128,0,128,96）→ `cavern` 石窟（128,96,128,64）→ `wateryard` 水榭（0,96,128,64）→ 回到院落。2×2 矩形围出的内环就是「环形动线」，一局按路线只走其中 1–3 个区 |
+| 构建期校验 | `import_map.py` 四道闸：**铺满且不重叠**（面积之和 == 地图面积）、**每区 ≥2 条出入通道**（按地形数连续可走缺口）、**每区至少一扇门**（否则走到那儿没有出口）、**每只怪 / 每扇门 / 每个箱子 / 每个事件点都落在某个区里**。不合规直接失败，不生成 `arena.generated.ts` |
+| 通道计数 | `zoneChannels(map, world)`：沿四条边逐格看「区内格可走 **且** 区外邻格也可走」，连续一段算 1 条。`import_map.py` 有一份 Python 实现，`zones.ts` 这份是运行时的第二份 —— 两份独立算，改坏一份另一份会红 |
+| 查询 | `zonesOf(map)` / `zoneAt(map, x, y)`（世界像素 → 分区，图外或没分区返回 null）/ `zoneRect(zone, grid)`。**没分区的图**（`arena-test.ts` 夹具）返回空数组 / null，不许抛错 |
+| 大地图 | `M` 切换 `GameState.bigMap`。**纯查看层，不暂停世界**（时间、怪、DOT 照常走）—— 看地图本身就是风险，等于把「停下来读图」做成代价。打开时整块画布算 HUD（`onHud = onMinimap || state.bigMap`），点击不会穿透去移动 / 攻击 |
+| 大地图内容 | 地形底图 + 四区描边与名字（**当前所在区高亮金色**）+ 传送门（已耗尽变灰、变小）+ 未砸开的可破坏物（事件刷的金色）+ 事件光柱 + 玩家点与朝向短线 + 图例 |
+| 地形缓存 | `paint.ts::terrainRaster()`：按「地图 id + 世界格数 + 目标像素尺寸」缓存 `OffscreenCanvas`。256×160 = **40960 格**，每帧逐格 `fillRect` 会把 60fps 吃穿，所以小地图与大地图共用这一张，最多留 6 份 |
+| HUD 区域名 | 计时胶囊右侧一枚胶囊：区域名 + `M`。位置 `VIEW_W/2 + 100`，与「当前意图」面板、小地图同一条 y 带，1280×600 下不撞底部留白（`playthrough-worldmap` 的 `layout` 为空） |
+| 投影 | `bigMap`（bool）/ `zone{id,name}`（null = 没分区）/ `regions[{id,name,x,y}]`（**屏幕归一化**，x 除 `VIEW_W`、y 除 `VIEW_H`，和 `player` / `portals` 同一套）。验收脚本靠 `regions` 的中心点「走进下一个区」 |
+
+**命名坑**：`projection().zones` 早就被**地面区域**（火墙 / 毒池 / 冰面）占用了。
+地图分区在投影里叫 `regions`，代码里叫 `ArenaZone` / `zones.ts`。两个都是"区域"，但一个是地形、一个是地面效果 ——
+新增字段前先看这个撞名。
+
+**为什么分区要放在地图数据里而不是代码里**：设计 11 的「每区 2 条通道」是**地形事实**，
+不是常量。写成 JSON 表或 TS 数组，改完谁都不知道它跟实际地形脱节了；放进生成链，
+`import_map.py` 会拿真实地形数一遍通道 —— 人把墙砌死一条路，导入就失败。
+
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 229 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 9 / modifiers 10 / extraction 17 / skills 22 / status 28 / data-driven 19 / death-drop 10 / **destructibles 17 / events 9**）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 252 条（17 个文件；zones 8 条是本批新增，其余见各文件）
 python scripts/export_tables.py --check                                # 数值表与生成物是否同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-death-drop.mjs --json  # 副本遗物：摆点 / 名字牌 / 点回 / 耐久
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-destructible.mjs --json # 可破坏物 + 7 分钟事件（夹具 + 真地图）
+./node_modules/.bin/forgeax project play --script scripts/playthrough-worldmap.mjs --json # 分区 / 大地图：四区走一圈 + M 开关 + 1280x600
 ```
 
 `scripts/playthrough*.mjs` 是本模块的浏览器验收（放在工程 `scripts/` 下以兼容 `project play`）。

@@ -369,6 +369,9 @@ export const game: Plugin = {
               && screenX <= MINIMAP.x + MINIMAP.w
               && screenY >= MINIMAP.y
               && screenY <= MINIMAP.y + MINIMAP.h;
+            // 大地图（M）铺满整个画布：指针落在它上面就等同于落在 HUD 上，
+            // 点击不能穿透去移动 / 攻击（否则「看地图」会变成一次误操作）。
+            const onHud = onMinimap || state.bigMap;
             const worldMouse = pointer
               ? screenToWorld(state.camera, screenX, screenY)
               : undefined;
@@ -387,9 +390,9 @@ export const game: Plugin = {
             if (!locked && !paused) {
               step(state, dt, {
                 mouse: worldMouse,
-                pointerDown: !onMinimap && (mouse?.justPressed(0) ?? false),
-                pointerHeld: !onMinimap && (mouse?.button(0) ?? false),
-                pointerUp: !onMinimap && (mouse?.justReleased(0) ?? false),
+                pointerDown: !onHud && (mouse?.justPressed(0) ?? false),
+                pointerHeld: !onHud && (mouse?.button(0) ?? false),
+                pointerUp: !onHud && (mouse?.justReleased(0) ?? false),
                 switchWeapon: snapshot?.keyboard?.justPressedCode('Digit1') ?? false
                   ? 0
                   : (snapshot?.keyboard?.justPressedCode('Digit2') ?? false) ? 1 : null,
@@ -402,8 +405,10 @@ export const game: Plugin = {
                 extractChannel: snapshot?.keyboard?.justPressedCode('KeyE') ?? false,
                 restart,
                 // Hover feedback must not light up while the pointer sits on
-                // the read-only minimap: that rectangle is not world space.
-                pointerOnHud: onMinimap,
+                // the read-only minimap / 大地图: those rectangles are not world space.
+                pointerOnHud: onHud,
+                // M = 大地图（设计 11）。
+                bigMap: snapshot?.keyboard?.justPressedCode('KeyM') ?? false,
               }, modifiers);
               // An in-run restart (R) starts a fresh settlement window.
               if (restart) {

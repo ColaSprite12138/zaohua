@@ -133,10 +133,11 @@ describe('arena population and loot settlement', () => {
     // The real arena keeps all seven authored monsters untouched.
     const real = spawnFromMap(arena);
     expect(real).toHaveLength(arena.monsters.length);
-    expect(real).toHaveLength(7);
+    // 扩成四区后正式图至少 20 只（地板值：地图被改小会红）。
+    expect(arena.monsters.length).toBeGreaterThanOrEqual(20);
     expect(real.map((sk) => sk.monsterId))
       .toEqual(arena.monsters.map((m) => m.monsterId));
-    expect(new Set(real.map((sk) => `${sk.x},${sk.y}`)).size).toBe(7);
+    expect(new Set(real.map((sk) => `${sk.x},${sk.y}`)).size).toBe(arena.monsters.length);
     expect(new Set(real.map((sk) => sk.monsterId)).size).toBe(2);
   });
 

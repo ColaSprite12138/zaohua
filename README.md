@@ -19,6 +19,7 @@ engine root 的全屏 quad，因此 `project play` 采样到的 engine canvas �
 | **Q / W / T**（技能栏 7 格另配 F / G / V / C） | 释放主动技能：`Q` 横扫（自身半径 170，瞬发）/ `W` 冲锋（沿光标方向 220px，撞墙即停）/ `T` 冰锥（读条 0.8 秒，直线 260）。**一次按键 = 一次起手**，冷却中 / 蓝不够 / 读条中被按都是一次免费拒绝 |
 | **X** | 喝蓝药：一局 3 瓶，5 秒内回 60 点法力（**法力不自动恢复**） |
 | **E** | 站在传送门圈内**引导撤离**（8 秒 3 段）；引导中再按 E 取消 |
+| **M** | 打开 / 关闭**大地图**：地形 + 四区（当前区金框）+ 门 + 未砸开的箱子 + 事件光柱 + 你的位置与朝向。**不暂停世界**（怪照常走），打开时点击落在图上不会去走路 |
 | R | 重新开始 |
 | **单击掉落物** | 下一条**显式拾取指令**：走过去、到达才拾取；**走过不自动捡**。优先装进空武器槽，两槽满则放进背包并占真实格子，背包也满则掉落物留在地上 |
 | **B / I** | 战斗中打开 / 关闭**局内背包**（不暂停战斗，ESC 关闭） |
@@ -63,12 +64,14 @@ Worker 发 `pickup { uid, itemId, name }` → 主窗口 `shell-bridge.js` 调 `M
 
 | 项 | 说明 |
 |:--|:--|
-| 正式地图 | `assets/resource/maps/arena.ldtk` → `arena.generated.ts`，128×96 格 @32px = **4096×3072** 世界像素（仙侠院落：北侧高台、东西厢房、院墙残段）；`Terrain` IntGrid 决定可走格，`Entities` 决定出生点与 7 只怪，`Props` 是纯装饰层（院墙段/香炉/高台，贴 `tilesets/xianxia.png`） |
+| 正式地图 | `assets/resource/maps/arena.ldtk` → `arena.generated.ts`，**256×160 格 @32px = 8192×5120** 世界像素，**四区环形**（院落 / 东廊 / 石窟 / 水榭，矩形由 `gen_arena_map.py::ZONES` 定义、`import_map.py` 校验铺满且每区 ≥2 条通道）；`Terrain` IntGrid 决定可走格，`Entities` 决定出生点、20 只怪、12 扇门、17 个可破坏物、2 个事件点，`Props` 是纯装饰层（院墙段/香炉/高台，贴 `tilesets/xianxia.png`） |
 | 地图生成链 | `gen_arena_map.py`（首次布局）→ `arena.ldtk`（人工在 LDtk 里改的权威源）→ `import_map.py` → `arena.generated.ts`；`bake-voxel-atlas.mjs` → `tilesets/xianxia.png` + `tileset.generated.ts`。产物都提交，`verify.sh` 会逐字节校验是否过期 |
 | 逻辑 | `assets/combat/world.ts`：`makeWorld()` / `walkable()` / `blocks()` / `nearestWalkable()` / `cameraFor()` / `screenToWorld()` / `worldToScreen()` / `findPath()`（8 邻域 A*，禁止对角穿角）/ `lineOfSight()` |
 | 相机 | 居中跟随玩家、clamp 到世界边界；`step()` 末尾更新，是输入与渲染唯一权威。`paint.ts` 用一次 `translate(-cam.x,-cam.y)` 画世界，HUD 与小地图在屏幕空间 |
 | 碰撞 / 寻路 | 玩家点击落点先 `nearestWalkable()` 吸附再走 A* 路径；玩家与怪物移动都做分轴滑动碰撞，墙 / 深渊挡走也挡视线 |
 | 小地图 | 右上角 `MINIMAP`（220×165），**只能看不能点**：引擎层丢弃落在矩形内的全部指针指令；画阻挡格、怪物 / 掉落 / 玩家点与相机视口框。原「击杀 / 剩余骷髅 / 状态」面板已删除 |
+| 大地图 | **`M`** 打开覆盖层（`s.bigMap`）：四区描边与名字（当前区金框）、门、未砸开的箱子、事件光柱、玩家点与朝向线、图例。**纯查看、不暂停世界**，打开时整块画布按 HUD 处理（点击不穿透）。地形走 `terrainRaster()` 的 `OffscreenCanvas` 缓存（40960 格逐帧重画会吃穿帧率），和小地图共用 |
+| 分区 | `assets/combat/zones.ts` 只做查询：`zonesOf` / `zoneAt(map,x,y)` / `zoneRect` / `zoneChannels`（数每区出入通道，Python 与 TS 各一份）。**没有任何坐标常量** —— 四区矩形来自 `gen_arena_map.py::ZONES`，经 `import_map.py` 导出进 `arena.generated.ts::zones` |
 | 怪物 | `spawnFromMap(map.monsters)` 是唯一生成入口；运行时没有怪数字段，数量只能改 LDtk 实体层 |
 | 自动验收夹具 | `assets/resource/maps/arena-test.ts`：40×22 格 = **1280×704**，全可走、spawn `(400,470)`、2 只近战怪。尺寸 ≤ 视口 ⇒ 相机恒 `(0,0)` ⇒ 投影屏幕归一化不变，浏览器验收无需改坐标。**不是 LDtk 源，不入 `import_map.py` 链** |
 | 切换 | `createState()` 默认夹具；局外 `deploy` 时 `game.pack.ts` 调 `setArena(state, arena)` 切到正式地图。真正玩必经出征，自动验收（`project play`）不出征 |
