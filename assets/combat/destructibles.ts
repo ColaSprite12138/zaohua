@@ -79,7 +79,7 @@ export const DESTRUCTIBLE_IDS: readonly string[] = Object.freeze([...DEFS.keys()
 
 /**
  * 指针下的可破坏物 —— 点击与悬停共用的唯一命中入口（和 `hitTestEnemy()` 同理）。
- * 已经砸开（`rubble > 0`）的不再响应：那不是目标，是一堆木头。
+ * 已经砸开（`broken`）的不再响应：那不是目标，是一堆木头（或者连木头都散了）。
  */
 export function destructibleAtPoint(
   s: GameState, x: number, y: number,
@@ -87,7 +87,7 @@ export function destructibleAtPoint(
   let hit: DestructibleObj | null = null;
   let best = Infinity;
   for (const obj of s.destructibles) {
-    if (obj.rubble > 0) continue;
+    if (obj.broken) continue;
     if (Math.abs(x - obj.x) > DESTRUCTIBLE_HALF_WIDTH) continue;
     if (y < obj.y + DESTRUCTIBLE_TOP || y > obj.y + DESTRUCTIBLE_BOTTOM) continue;
     const d = Math.hypot(x - obj.x, y - (obj.y + DESTRUCTIBLE_TOP / 2));
@@ -140,7 +140,7 @@ export function orderSmash(s: GameState, obj: DestructibleObj): void {
  * 但也**清掉 `smashTarget`** —— 否则守卫一直在，每一帧都会重试并刷屏。
  */
 export function beginSmash(s: GameState, obj: DestructibleObj): 'ok' | 'guarded' | 'gone' | 'busy' {
-  if (obj.rubble > 0) {
+  if (obj.broken) {
     s.smashTarget = null;
     return 'gone';
   }
@@ -188,6 +188,8 @@ export function cancelSmash(s: GameState, reason?: string): void {
 function breakOpen(s: GameState, obj: DestructibleObj): void {
   const def = destructibleDef(obj.kind);
   obj.progress = 1;
+  // 状态先落定（`broken` 是唯一判据），残骸只是表现还剩几秒。
+  obj.broken = true;
   obj.rubble = RUBBLE_SECONDS;
   obj.smashing = false;
   s.smash = null;
@@ -234,6 +236,7 @@ function breakOpen(s: GameState, obj: DestructibleObj): void {
  */
 export function updateDestructibles(s: GameState, dt: number): void {
   for (const obj of s.destructibles) {
+    // 残骸只衰减表现；`broken` 不会被它改回去（曾经就是这么"复活"的）。
     if (obj.rubble > 0) obj.rubble = Math.max(0, obj.rubble - dt);
     obj.smashing = false;
   }
@@ -241,7 +244,7 @@ export function updateDestructibles(s: GameState, dt: number): void {
   // 还没起手：走过去到了就自动起手（点击已经是明确的意图，不需要再点一次）。
   if (s.smash === null && s.smashTarget !== null) {
     const target = find(s, s.smashTarget);
-    if (target === null || target.rubble > 0) {
+    if (target === null || target.broken) {
       s.smashTarget = null;
     } else if (Math.hypot(target.x - s.player.x, target.y - s.player.y) <= SMASH_RANGE) {
       beginSmash(s, target);
@@ -251,7 +254,7 @@ export function updateDestructibles(s: GameState, dt: number): void {
   const smash = s.smash;
   if (smash === null) return;
   const obj = find(s, smash.uid);
-  if (obj === null || obj.rubble > 0) {
+  if (obj === null || obj.broken) {
     s.smash = null;
     return;
   }
@@ -286,7 +289,7 @@ export function updateDestructibles(s: GameState, dt: number): void {
   if (smash.t >= smash.total) breakOpen(s, obj);
 }
 
-/** 小地图 / 验收用：还完好的可破坏物。 */
+/** 小地图 / 验收用：还完好的可破坏物（**不看残骸倒计时**，只看 `broken`）。 */
 export function intactDestructibles(s: GameState): DestructibleObj[] {
-  return s.destructibles.filter((obj) => obj.rubble <= 0);
+  return s.destructibles.filter((obj) => !obj.broken);
 }

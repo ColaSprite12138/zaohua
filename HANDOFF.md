@@ -19,7 +19,7 @@
 > 第 1 版**明确不做组队**（设计文档 2.1），别提前为联机做同步层。
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-16 全套验收通过**（349 条单测 / 独立页 16 条 / 单页 53 条 / playthrough 98 steps + death-drop 2 steps + destructible 129 steps / resize 4 steps；**单局骨架已按设计文档第 10 章落地**；**技能两批已落地（设计 8.2/8.3/9.3）**；**状态与反应链第一批已落地（设计 8.4 / 8.5）：18 条状态注册表 + 6 元素 5 条反应 + 地面区域（火墙/毒池/冰面）+ 8.8 的视觉语言，技能从 3 个扩到 7 个以覆盖全部元素**；**技能 / 状态 / 怪物 / 全局手感数值已全部表化（`skill.xlsx` / `status.xlsx` / `monster.xlsx` / `combat_rule.xlsx`），改数值不用改代码**；**角色/怪物已有走路与转身动画**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；**画面已全量体素化，正式地图是 128×96 的仙侠院落**）。**steps 会浮动**：23 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 92–100 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-16 全套验收通过**（350 条单测 / 独立页 16 条 / 单页 53 条 / playthrough 98 steps + death-drop 2 steps + destructible 132 steps / resize 4 steps；**单局骨架已按设计文档第 10 章落地**；**技能两批已落地（设计 8.2/8.3/9.3）**；**状态与反应链第一批已落地（设计 8.4 / 8.5）：18 条状态注册表 + 6 元素 5 条反应 + 地面区域（火墙/毒池/冰面）+ 8.8 的视觉语言，技能从 3 个扩到 7 个以覆盖全部元素**；**技能 / 状态 / 怪物 / 全局手感数值已全部表化（`skill.xlsx` / `status.xlsx` / `monster.xlsx` / `combat_rule.xlsx`），改数值不用改代码**；**角色/怪物已有走路与转身动画**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；**画面已全量体素化，正式地图是 128×96 的仙侠院落**）。**steps 会浮动**：23 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 92–100 间变化，`verify-all.sh` 下限固定 35。
 > **2026-11-15 一天做了什么（新会话速读，三分钟对齐）**：
 > ① **技能两批** —— 7 格技能栏 / 法力（不自动恢复）/ 读条与打断 / 蓝药；第二批补表现：
 > **冲锋改成 0.23 秒的分帧位移**、读条举杖 + 法力球、每个技能一套方块特效 + 3.2 秒地面残留。
@@ -59,7 +59,7 @@
 > 副本回收在正式链路里根本走不到）。遗物带冷白环、点名字牌捡回、**耐久跟着走**。
 > 顺手修两个真 bug：`projection().dropPlates` 用世界坐标（相机一偏移，脚本点到的就是空地）、
 > `detach()` 丢耐久（拖一次装备就自动修满）。新增浏览器验收 `scripts/playthrough-death-drop.mjs`。
-> 验收基线：**349 条单测 / 53 条单页壳层 / 16 条独立页 / playthrough 98 + death-drop 2 + destructible 129 steps**。
+> 验收基线：**350 条单测 / 53 条单页壳层 / 16 条独立页 / playthrough 98 + death-drop 2 + destructible 132 steps**。
 > ⑪ **可破坏物 + 单局事件 + 惊醒模型（2026-11-16 凌晨，设计 10.2 / 10.5 第一批）** ——
 > `combat/destructibles.ts`（三档：木箱 2s / 铜箱 3s / 舍利匣 4s，**站桩砸开**、受击/闪避/走开只清进度、
 > 舍利匣有机关 `guard_radius=240`、起手与砸开各一次声响、产出走 `loot.ts::rollPool` 池 3/4）+ 
@@ -67,7 +67,7 @@
 > **沉睡模型** `Skeleton.awake`（`monster.xlsx::sense_radius`；玩家进圈 / 挨打 / 附近被砸开 / 撤离阶段才醒）。
 > 撤离阶段离玩家 > `monster_converge_px`(320) 的怪改去守最近的门 —— 设计 10.2「怪向传送门聚集」。
 > 地图：`arena.ldtk` 新增 `Destructible`（8 个）与 `EventSite`（2 处）实体，`import_map.py` 导出。
-> 验收：**349 单测 / 53 壳层 / 16 独立页 / playthrough 98 + death-drop 2 + destructible 129**。
+> 验收：**350 单测 / 53 壳层 / 16 独立页 / playthrough 98 + death-drop 2 + destructible 132**。
 ⑨ **装备规则与药水配置（2026-11-15 23:00）** —— 红蓝药的效果搬进 `tables/consumable.xlsx`（每瓶一行）；
 > **只有武器能进武器槽**（`collectDrop` 不再把药塞进空槽 + `normalizeEquipped()` 兜底 + 3 条测试）；
 > 修「局内背包开着按 1/2 道具整批消失」：页面与 Worker 都在写武器槽（一帧两条快照），改成
@@ -103,7 +103,7 @@
 2. **`assets/<模块>/CONTEXT.md`** — 该模块的**功能契约正本**、不变量、对外接口、依赖方向、独立验收；
    配套 `EXPERIENCE.md` 是该模块独立经验库（踩坑按模块追加，不混进全局 feedback 编号）
 3. `README.md` — 工程结构、交互契约、点击分类、验收脚本逐条说明、坐标映射原理
-4. `docs/feedback.md` — **42** 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**（按条追加，不改写历史条目；第 18 / 19 条是 Builder 产物链，第 38 / 39 条是投影坐标空间与「拖放丢耐久」，最后两条（41 / 42）是「没有沉睡模型就没有惊醒」与「别为测试给游戏开后门」）
+4. `docs/feedback.md` — **43** 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**（按条追加，不改写历史条目；第 18 / 19 条是 Builder 产物链，第 38 / 39 条是投影坐标空间与「拖放丢耐久」，最后三条（41 / 42 / 43）是「没有沉睡模型就没有惊醒」「别为测试给游戏开后门」「残骸秒数不能当状态」）
 5. `.workbuddy/memory/YYYY-MM-DD.md` — 工作流水账，只作线索，不是规范
 6. `AGENTS.md` — ForgeAX 引擎模板自带的**通用** SDK 规范（顶部另有本工程的 Git 提交纪律）；查引擎 API 时才读
 
@@ -270,7 +270,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **349** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-16 可破坏物批次 +31：`combat/__tests__/destructibles.test.ts` 17 条（表驱动 / 站桩 / 打断 / 机关 / 产出 / 声响 / 沉睡不动）+ `events.test.ts` 9 条（第 7 分钟 / 只触发一次 / 画在事件点 / 光柱衰减 / 惊动 / 结束不刷 / 重开复位 / 守门）+ `data-driven.test.ts` +5；2026-11-15 深夜保险格批次 +20：`combat/__tests__/death-drop.test.ts` 10 条（摆点 / R 重开保留 / 耐久跟着走 / 遗留回传 / 三套规则）+ `meta/__tests__/insurance.test.ts` 9 条（独立容器 2 格 / 老存档补空容器 / 尺寸门槛 / 背包↔保险格移动 / 自动拾取碰不到它 / 分割 / 载荷往返 / 拖放保耐久）+ `account.test.ts` +1（v3 遗物槽）+ `run-inventory.test.ts` +1（局内命令带 container）） |
+| `test` | **350** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-16 可破坏物批次 +32：`combat/__tests__/destructibles.test.ts` 18 条（表驱动 / 站桩 / 打断 / 机关 / 产出 / 声响 / 沉睡不动 / **砸开后不复活**）+ `events.test.ts` 9 条（第 7 分钟 / 只触发一次 / 画在事件点 / 光柱衰减 / 惊动 / 结束不刷 / 重开复位 / 守门）+ `data-driven.test.ts` +5；2026-11-15 深夜保险格批次 +20：`combat/__tests__/death-drop.test.ts` 10 条（摆点 / R 重开保留 / 耐久跟着走 / 遗留回传 / 三套规则）+ `meta/__tests__/insurance.test.ts` 9 条（独立容器 2 格 / 老存档补空容器 / 尺寸门槛 / 背包↔保险格移动 / 自动拾取碰不到它 / 分割 / 载荷往返 / 拖放保耐久）+ `account.test.ts` +1（v3 遗物槽）+ `run-inventory.test.ts` +1（局内命令带 container）） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` **十六**张表与 `generated/*.ts` 一致，且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
@@ -280,7 +280,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 | `playthrough` 1600x900 | `passed:true`、92–100 steps（下限 35；技能三步 + 反应链两步各含 `advance` 轮询，所以比 44 步多得多）、0 errors |
 | `playthrough-resize` 1700x1000 | `passed:true`、4 steps、0 errors |
 | `death-drop` 1600x900 | `passed:true`、2 steps、0 errors（遗物摆点 + 名字牌 + 点回 + 耐久；截图 `corpse-loot` / `corpse-recovered`） |
-| `destructible` | `passed:true`、**127–130 steps**、0 errors（夹具：三档箱子 / 舍利匣守卫拒绝 / 站桩砸开（玩家零位移）/ 掉落与拾取 / 铜箱两次产出；真地图：**第 7 分钟事件** + 光柱 + `fromEvent` 舍利匣 + 撤离阶段 `goal='portal'`；截图 `destructibles-spawn` / `reliquary-guarded` / `crate-smashing` / `crate-broken` / `crate-loot-picked` / `coffer-broken` / `event-beacon` / `extract-converge`） |
+| `destructible` | `passed:true`、**130–133 steps**、0 errors（夹具：三档箱子 / 舍利匣守卫拒绝 / 站桩砸开（玩家零位移）/ 掉落与拾取 / 铜箱两次产出；真地图：**第 7 分钟事件** + 光柱 + `fromEvent` 舍利匣 + 撤离阶段 `goal='portal'`；截图 `destructibles-spawn` / `reliquary-guarded` / `crate-smashing` / `crate-broken` / `crate-loot-picked` / `coffer-broken` / `event-beacon` / `extract-converge`） |
 | `package` | sha256 校验通过，包内 README + feedback 齐全 |
 | `web-zip shell`（发布产物） | `verify-all.sh` 的 `package` 步骤产出 `artifacts/verify/forgeax-game-web.zip`：`sha256sum -c` 通过、`index.html` 含 `FORGEAX_META_SHELL_BEGIN`、`forgeax-dist.json` 的 `bytes`/`sha256` 与实际一致；Builder 玩家产物同时含壳层与平台 bootstrap |
 
@@ -290,10 +290,10 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 
 下表把**各模块 `CONTEXT.md`「功能契约（正文）」**逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 349 条＝combat 243（loot 14 + movement **33** + attack-spec 10 +
+删断言不会让这张表悄悄失效。单测 350 条＝combat 244（loot 14 + movement **33** + attack-spec 10 +
 projectiles 10 + weapons 10 + world 11 + modifiers 10 + 单局骨架 extraction 17 + 技能 skills 22 +
 状态与反应 status 28 + **数值表驱动 data-driven 19** + 耐久 durability 14 + **死亡掉落 death-drop 10** +
-**可破坏物 destructibles 17 / 单局事件 events 9**，含 `run-inventory` 9）、meta 52（inventory 19 + platform-KV account 14 + run-settlement 10 + meta 3 +
+**可破坏物 destructibles 18 / 单局事件 events 9**，含 `run-inventory` 9）、meta 52（inventory 19 + platform-KV account 14 + run-settlement 10 + meta 3 +
 **保险格 insurance 9**）、battle 4、talent 22（talent 15 + starmap-data 7）、
 resource 14（tables 7 + map 7）、**美术 10（`assets/__tests__/voxel.test.ts`）**、模板 2；
 全量下限 83 条（下限不随新增断言抬高）。
@@ -402,6 +402,7 @@ resource 14（tables 7 + map 7）、**美术 10（`assets/__tests__/voxel.test.t
 | 砸箱子被拒绝后 toast 刷屏 | `beginSmash()` 返回 `guarded` 时必须清 `smashTarget`；不清就会每帧重试一次（守卫还在，条件一直成立） |
 | 远处的怪不来打你了 | 不是 bug：`Skeleton.awake` 的沉睡模型。感知半径在 `monster.xlsx::sense_radius`，只在玩家进圈 / 挨伤害 / 附近被砸开 / 撤离阶段才醒。**改小它会让既有 playthrough 的「等它走过来」步骤超时** |
 | 快进到第 7 分钟却什么都没发生 | 先看 `runFinished()`：`story` 清场（`cleared`）会**停表**，所以夹具里杀光怪之后 `runSeconds` 不再减、事件永远不触发。事件验收要用真地图（远处的怪沉睡，不会被围死） |
+| 砸掉的可破坏物过一会儿又回来了 | `rubble`（残骸倒计时，纯表现）曾被当成「已破坏」的判据，6 秒后归零就开始重新绘制 / 可交互。判「砸开没有」**只认 `DestructibleObj.broken`**；改这块时记得把时间推过 `RUBBLE_SECONDS` 再断言（feedback 43） |
 | 改了 `assets/game/voxel.ts` 后 `verify-all` 在 meta-ui 步骤红 | `meta-ui/voxel.js` 是转译产物，改模型要重跑 `node scripts/build-meta-ui.mjs`（`--check` 会拦，但报错写的是「inventory.js 不同步」，容易看错） |
 | 站在墙后仍被画在墙上面 | 墙块没进 `paint.ts` 的 `items` 深度排序；地形层只画地板，墙块按 `y+grid` 进排序 |
 | 换画风后整屏发糊 / 斜边有锯齿 | `imageSmoothingEnabled` 被判 true，或坐标/缩放不是整数；每帧首行 `prepareScene()`，精灵用整数 `drawImage` |

@@ -528,8 +528,8 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 | 声音 | 起手与砸开各一次 `wakeNoise(x, y, alarm_radius)`：惊醒沉睡的怪（见下）。玩家站桩 2–4 秒 = 偷袭窗口 |
 | 动作 | 每 `SMASH_SWING_SECONDS`=0.45s 补一次 `player.attackFx` + 碎屑：读起来就是「一直在砍这个箱子」 |
 | 产出 | `loot.ts::rollPool(poolId, rng)` 抽 `drops` 次，撒成小圈（34×22），走**同一份 `Drop`**（名字牌 / 品质色 / 显式拾取全部复用）。**不进 `lootLog`**（那是「怪物击杀」的账），拾取照样进 `carriedItems` |
-| 残骸 | 砸开 → `rubble = 6s`（画几块散落木板 + 淡出），期间不可交互、不再产出；`reset()` 把箱子全部放回去 |
-| 投影 | `destructibles[{uid,kind,name,x,y,progress,smashing,rubble,fromEvent}]` / `smash{uid,kind,progress}` / `hoverDestructible` |
+| 砸开状态 | **`DestructibleObj.broken` 是唯一判据**（整局不可逆）：命中、起手、绘制、小地图、投影全认它。`rubble = 6s` **只是表现**（画几块散落木板并淡出），归零后地上什么都不画 —— 但箱子不会「复活」。（2026-11-16 用户实测的 bug：残骸秒数曾被当成状态，6 秒后木箱原地长回来、还能再砸一次。）`reset()` 才把箱子全部放回去 |
+| 投影 | `destructibles[{uid,kind,name,x,y,progress,broken,smashing,rubble,fromEvent}]` / `smash{uid,kind,progress}` / `hoverDestructible`。**脚本判「砸开没有」只认 `broken`**，别再用 `rubble` |
 
 ### 单局事件（10.2 三段式的情绪高点）
 

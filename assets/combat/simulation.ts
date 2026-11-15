@@ -428,7 +428,8 @@ export function projection(s: GameState) {
     }),
     /**
      * 可破坏物（设计 10.5）：坐标屏幕归一化，验收脚本直接点它开砸。
-     * `rubble > 0` = 已砸开、只剩残骸；`progress` 是 0..1 的站桩进度。
+     * `broken` = 已砸开（**唯一判据**，整局不可逆）；`rubble` 只是残骸外观还剩几秒；
+     * `progress` 是 0..1 的站桩进度。
      */
     destructibles: s.destructibles.map((obj) => {
       const v = scr(obj.x, obj.y);
@@ -439,6 +440,7 @@ export function projection(s: GameState) {
         x: v.x / VIEW_W,
         y: v.y / VIEW_H,
         progress: Math.round(obj.progress * 100) / 100,
+        broken: obj.broken,
         smashing: obj.smashing,
         rubble: Math.round(obj.rubble * 100) / 100,
         fromEvent: obj.fromEvent,

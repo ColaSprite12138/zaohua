@@ -292,7 +292,7 @@ function drawMinimap(g: Painter, s: GameState): void {
   for (const sk of s.skeletons) if (sk.alive) dot(sk.x, sk.y, '#ff6b6b', 4);
   // 可破坏物：金色方块。高价值事件刷出来的更亮 —— 小地图上也要能看出「值钱的那个在哪」。
   for (const obj of s.destructibles) {
-    if (obj.rubble > 0) continue;
+    if (obj.broken) continue;
     dot(obj.x, obj.y, obj.fromEvent ? '#fff3c4' : '#f59e0b', obj.fromEvent ? 5 : 4);
   }
   for (const record of s.events) {
@@ -801,11 +801,15 @@ function drawPortal(g: Painter, portal: Portal): void {
  *
  * 三件事必须在画面里读出来：① 这是个能砸的东西（模型 + 悬停白圈 + 名字）；
  * ② 砸到哪儿了（头顶进度条，和读条 / 引导门同一套画法）；
- * ③ 已经砸过了（残骸，随时间淡出）。
+ * ③ 已经砸过了（残骸，随时间淡出；淡完就什么都不画）。
+ *
+ * 判「砸开没有」只看 `obj.broken`：残骸倒计时归零**不代表**箱子回来了
+ * （2026-11-16 的 bug 就是拿残骸秒数当状态，6 秒后木箱原地复活）。
  */
 function drawDestructible(g: Painter, s: GameState, obj: DestructibleObj): void {
   const def = destructibleDef(obj.kind);
-  if (obj.rubble > 0) {
+  if (obj.broken) {
+    if (obj.rubble <= 0) return;   // 残骸已经散尽：地上什么都没有
     // 残骸：几块散落的木板，2 秒内淡出。留在地上就是为了「这里被我砸过」这一步可读。
     const alpha = Math.min(1, obj.rubble / 2);
     g.globalAlpha = alpha;

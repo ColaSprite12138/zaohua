@@ -31,8 +31,9 @@ async function deploy(play, kind) {
 }
 
 export default async function destructibles(play) {
+  // 「还完好的」只看 `broken`：残骸倒计时归零不代表箱子回来了（2026-11-16 的 bug）。
   const crateOf = (s, kind, fromEvent = false) => s.destructibles
-    .find((it) => it.kind === kind && it.fromEvent === fromEvent && it.rubble === 0);
+    .find((it) => it.kind === kind && it.fromEvent === fromEvent && it.broken === false);
 
   await play.step('three destructibles wait on the fixture, all intact', async () => {
     const s = await play.state('game.state');
@@ -42,7 +43,7 @@ export default async function destructibles(play) {
     for (const kind of ['crate', 'coffer', 'reliquary']) {
       const it = crateOf(s, kind);
       if (!it) throw new Error(`夹具缺少 ${kind}`);
-      if (it.progress !== 0 || it.rubble !== 0) throw new Error(`${kind} 开局应该完好`);
+      if (it.progress !== 0 || it.broken !== false) throw new Error(`${kind} 开局应该完好`);
     }
     await play.screenshot('destructibles-spawn');
   });
@@ -118,13 +119,33 @@ export default async function destructibles(play) {
       await play.advance(0.3);
       const s = await play.state('game.state');
       const it = s.destructibles.find((d) => d.uid === crate.uid);
-      if (it && it.progress === 1) broken = { s, it };
+      if (it && it.broken === true) broken = { s, it };
     }
     if (!broken) throw new Error('2 秒应该足够砸开木箱');
     if (broken.it.rubble <= 0) throw new Error('砸开之后应该留下残骸');
     if (broken.s.smash !== null) throw new Error('砸开之后不该还在砸');
     if (broken.s.drops.length < 1) throw new Error('木箱应该掉至少一件战利品');
     await play.screenshot('crate-broken');
+  });
+
+  await play.step('a smashed crate stays gone after its rubble fades (no revival)', async () => {
+    // 用户实测的 bug：砸完 6 秒，木箱原地又长出来了。这里用「残骸散尽 + 相机不动」复现那一幕。
+    const before = await play.state('game.state');
+    const uid = before.destructibles.find((it) => it.kind === 'crate')?.uid;
+    if (!uid) throw new Error('找不到木箱');
+    await play.advance(9);   // 残骸 6 秒 + 余量
+    const after = await play.state('game.state');
+    const it = after.destructibles.find((d) => d.uid === uid);
+    if (!it) throw new Error('箱子记录不该消失');
+    if (it.broken !== true) throw new Error('残骸散尽后箱子必须仍然是「已砸开」');
+    if (it.rubble !== 0) throw new Error(`残骸应该已经散尽，实际 ${it.rubble}`);
+    // 再点它一下：既不能起手，也不能再产出第二份战利品。
+    await play.mouse.click([it.x, it.y - 20 / VIEW_H]);
+    await play.advance(1.5);
+    const afterClick = await play.state('game.state');
+    if (afterClick.smash !== null) throw new Error('已砸开的箱子不能再起手');
+    if (afterClick.drops.length > after.drops.length) throw new Error('已砸开的箱子不该再掉东西');
+    await play.screenshot('crate-stays-gone');
   });
 
   await play.step('the loot it dropped is picked up like any other drop', async () => {
@@ -160,7 +181,7 @@ export default async function destructibles(play) {
       await play.advance(0.3);
       const s = await play.state('game.state');
       const it = s.destructibles.find((d) => d.uid === coffer.uid);
-      if (it && it.progress === 1) broken = s;
+      if (it && it.broken === true) broken = s;
     }
     if (!broken) throw new Error('3 秒应该足够砸开铜箱');
     // 铜箱`drops = 2`：至少两件新掉落（池子里有药，可能被背包吃掉，所以看总数）。

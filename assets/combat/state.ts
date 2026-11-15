@@ -465,9 +465,20 @@ export interface DestructibleObj {
   readonly kind: string;
   x: number;
   y: number;
-  /** 0..1 砸开进度；1 = 已破坏。 */
+  /** 0..1 砸开进度；`broken` 为 true 时恒为 1。 */
   progress: number;
-  /** 破坏后残骸剩余秒数；> 0 时不可再交互（但还画在地上）。 */
+  /**
+   * **已经砸开**：整局不可逆的唯一判据（命中、起手、绘制、小地图全都只认它）。
+   *
+   * 曾经把这个信息塞在 `rubble > 0` 里 —— 结果残骸 6 秒后倒计时归零，
+   * 箱子就在地图上"复活"了（2026-11-16 用户实测）。`broken` 与残骸倒计时
+   * 必须分开：前者是**状态**，后者只是**表现还剩几秒**。
+   */
+  broken: boolean;
+  /**
+   * 残骸剩余秒数（**纯表现**）：> 0 时画几块散落木板并淡出，归零后地上什么都不画。
+   * 它不参与任何玩法判定 —— 判「砸开没有」永远看 `broken`。
+   */
   rubble: number;
   /** 本帧是否正在被砸（纯表现：挥砍动作 / 尘土 / 进度条）。 */
   smashing: boolean;
@@ -514,6 +525,7 @@ export function spawnDestructibles(map: ArenaMap): DestructibleObj[] {
     x: entry.x,
     y: entry.y,
     progress: 0,
+    broken: false,
     rubble: 0,
     smashing: false,
     fromEvent: false,

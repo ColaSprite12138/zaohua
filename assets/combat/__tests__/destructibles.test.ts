@@ -192,7 +192,7 @@ describe('砸开与产出', () => {
     expect(destructibleAtPoint(s, obj.x, obj.y - 20)).toBeNull();
   });
 
-  it('残骸会自己消失', () => {
+  it('残骸会自己消失，但箱子不会"复活"（2026-11-16 用户实测的 bug）', () => {
     const s = createState();
     s.skeletons = [];
     const obj = crate(s, 'crate');
@@ -200,8 +200,41 @@ describe('砸开与产出', () => {
     orderSmash(s, obj);
     tick(s, destructibleDef(obj.kind).smashSeconds + 0.3);
     expect(obj.rubble).toBeGreaterThan(0);
+    const drops = s.drops.length;
+
+    // 残骸倒计时走完：外观上什么都不剩……
     updateDestructibles(s, RUBBLE_SECONDS);
     expect(obj.rubble).toBe(0);
+    // ……但状态仍然是「已砸开」：不可交互、不重新出现、不能再产出。
+    expect(obj.broken).toBe(true);
+    expect(obj.progress).toBe(1);
+    expect(destructibleAtPoint(s, obj.x, obj.y - 20)).toBeNull();
+    expect(beginSmash(s, obj)).toBe('gone');
+    tick(s, 3);
+    expect(s.drops.length).toBe(drops);
+    // 投影里也必须读得出来（脚本与绘制层都靠它）。
+    const view = projection(s).destructibles.find((it) => it.uid === obj.uid);
+    expect(view!.broken).toBe(true);
+    expect(view!.rubble).toBe(0);
+  });
+
+  it('沉睡 10 秒之后重新点它还是砸不开（同一个 bug 的时间维度）', () => {
+    const s = createState();
+    s.skeletons = [];
+    const obj = crate(s, 'crate');
+    standNextTo(s, obj);
+    orderSmash(s, obj);
+    tick(s, destructibleDef(obj.kind).smashSeconds + 0.3);
+    const drops = s.drops.length;
+    // 站远一点再走回来，模拟玩家「过一会儿又看见它」的那一幕。
+    s.player.x = obj.x - 400;
+    tick(s, 10);
+    s.player.x = obj.x;
+    s.player.y = obj.y + 40;
+    orderSmash(s, obj);
+    tick(s, 1);
+    expect(s.smash).toBeNull();
+    expect(s.drops.length).toBe(drops);
   });
 
   it('同一个箱子砸开一次就够（不会重复产出）', () => {

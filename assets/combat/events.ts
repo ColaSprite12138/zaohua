@@ -91,6 +91,7 @@ function fire(s: GameState, def: EventDef): void {
       x: spot.x,
       y: spot.y,
       progress: 0,
+      broken: false,
       rubble: 0,
       smashing: false,
       fromEvent: true,
