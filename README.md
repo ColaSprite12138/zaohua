@@ -265,15 +265,16 @@ IPv6 `[::1]` 回环与内置预览面板的已知问题见 `docs/feedback.md` �
 node scripts/build-meta-ui.mjs --check     # 局外页面生成物与源码同步
 python scripts/export_tables.py --check     # xlsx 与 generated/*.ts 同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000   # 真实 rollLoot 跑批
-node scripts/verify-meta-ui.cjs            # 局外页面 13 条真实拖放断言
+node scripts/verify-meta-ui.cjs            # 局外页面 15 条真实拖放断言
 node scripts/inject-shell.mjs --check      # dist 单页注入块与源同步
-node scripts/verify-shell.cjs              # 4174 单页 40 条（出征/局内拾取镜像/撤离与通关/阵亡清 10 槽/超时/返回/平台 lifecycle/KV 存档/光标反馈）
+node scripts/verify-shell.cjs              # 4174 单页 51 条（出征/局内拾取镜像/撤离与通关/阵亡只留保险格/副本遗物/超时/返回/平台 lifecycle/KV 存档/光标反馈）
 ./node_modules/.bin/forgeax project check --json
 ./node_modules/.bin/forgeax project test --json
 ./node_modules/.bin/tsc --noEmit
 ./node_modules/.bin/forgeax project build --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json
+./node_modules/.bin/forgeax project play --script scripts/playthrough-death-drop.mjs --json
 ./node_modules/.bin/forgeax project package --output release/forgeax-game-web.zip --json
 node scripts/inject-shell.mjs              # 最后一步：build/play/package 都会重建 dist
 ./node_modules/.bin/forgeax project preview --port 4174 --json
@@ -300,14 +301,15 @@ node scripts/inject-shell.mjs              # 最后一步：build/play/package �
 `scripts/verify-meta-ui.cjs` 是独立页面的浏览器验收：把 `index.html` 复制成临时页并注入
 真实 `DragEvent` 序列，用无头 Chrome `--dump-dom` 读回结果，断言 40/160 格渲染、10 装备槽、
 **三把长剑起步在仓库且无待分配托盘**、从仓库拖入背包、重叠与越界拒绝、背包↔仓库移动、
-穿戴、1/2 切换、类型不匹配穿戴拒绝共 13 条。
+穿戴、1/2 切换、类型不匹配穿戴拒绝、物品悬停信息卡共 15 条。
 必须带独立 `--user-data-dir`，否则 Windows 复用日常 Chrome 会 dump 到执行前的 DOM。
 
 `scripts/verify-shell.cjs` 是 4174 单页壳层的浏览器验收：从 `dist/index.html` 抽出注入块，构造
 **只含壳层的最小骨架页**（不能保留整份引擎页——启动遮罩会在 window 捕获阶段拦截所有 `click`），
 用 `BroadcastChannel` 模拟 Engine Worker（它持有自己的局内 `InventoryState`），断言出征 `takeIntoRun()` 清空局外、
 镜像到装备栏、通关保留穿戴战利品 + 背包战利品不重复入库、二次出征、**阵亡清空全部 10 个装备槽**、
-返回局外、平台身份 / KV 存档、平台 lifecycle、光标反馈共 **40 条**（含超时未撤离）。结算用例改用
+返回局外、平台身份 / KV 存档、平台 lifecycle、光标反馈共 **51 条**（含超时未撤离、
+阵亡只留保险格、副本遗物进存档并下次摆回地图、关卡类型选择器）。结算用例改用
 `slotLootItemIds` / `bagLootUids` 字段，损坏存档探针用 `{ bag: null }`；`snap()` 记 `noLoose`
 供取证但**未挂断言**，记 `worn` 供「阵亡 10 槽清空」断言使用。浏览器层已模拟 `pickup` 消息
 并断言 uid 落进背包，`pickupAck` 回包本身仍未挂断言。
@@ -316,6 +318,12 @@ node scripts/inject-shell.mjs              # 最后一步：build/play/package �
 > 移动类步骤前会按 R 重开隔离敌人：骷髅会主动追击，大视口上耗时较长时可能走到地面落点
 > 上，把「点地面」误判成「点敌人」。点敌人时用投影里的实时骷髅坐标（身体中心 `y-30`），
 > 并在点击后等一帧真实时间，让 `justReleased` 释放沿被引擎消费。
+
+`scripts/playthrough-death-drop.mjs` 验证**副本死亡掉落回收**（设计 4）：主 playthrough 跑的是
+自动验收夹具、没有 `deploy`，而遗物只可能出现在「带 `deathDrop` 的出征」里，所以这一支在页面里
+直接 `BroadcastChannel` 播一条与壳层同格式的 `deploy`（走 `game.pack.ts` 真正的 deploy 分支），
+断言遗物摆点 / 名字牌 / 点名字牌走过去捡回 / **耐久跟着走**，并留两张截图
+（`corpse-loot` / `corpse-recovered`）。
 
 `scripts/playthrough-resize.mjs` 单独验证**运行中缩放窗口**：把视口放大到
 `1700x1000`，先断言 canvas drawing buffer 确实随之变大与「悬停仍不移动」，再点击人物左

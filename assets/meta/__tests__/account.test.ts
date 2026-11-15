@@ -23,12 +23,12 @@ describe('platform KV envelope', () => {
     expect(Object.keys(env).sort()).toEqual(['schemaVersion', 'state']);
   });
 
-  it('v2 stores the star map progress next to the inventory, still one blob', () => {
+  it('v2+ stores the star map progress next to the inventory, still one blob', () => {
     const state = createInventoryState(3);
     const progress = { level: 4, xp: 20, picks: ['star_core'], cleared: [], explored: [] };
     const env = A.encodeSave(state, progress);
     expect(Object.keys(env).sort()).toEqual(['progress', 'schemaVersion', 'state']);
-    expect(env.schemaVersion).toBe(2);
+    expect(env.schemaVersion).toBe(A.SCHEMA_VERSION);
     expect(env.progress).toEqual(progress);
     expect(env.progress).not.toBe(progress);
     expect(A.decodeProgress(env)).toEqual(progress);
@@ -36,6 +36,27 @@ describe('platform KV envelope', () => {
     expect(A.decodeProgress({ schemaVersion: 1, state })).toBeNull();
     expect(A.decodeProgress(null)).toBeNull();
     expect(A.decodeProgress('nope')).toBeNull();
+  });
+
+  it('v3 stores the dungeon corpse slot in the SAME blob (design 4)', () => {
+    const state = createInventoryState(3);
+    const progress = { level: 2, xp: 0, picks: [], cleared: [], explored: [] };
+    const extra = {
+      deathDrop: { stage: 'arena', x: 512, y: 384, items: [{ defId: '10006', durability: 9 }] },
+    };
+    const env = A.encodeSave(state, progress, extra);
+    expect(Object.keys(env).sort()).toEqual(['extra', 'progress', 'schemaVersion', 'state']);
+    expect(A.decodeExtra(env)).toEqual(extra);
+    // 空遗物槽不写字段（没有遗留时信封与 v2 长得一样，回滚比对不用改）
+    expect('extra' in A.encodeSave(state, progress, {})).toBe(false);
+    // v2 存档：星图照常读回来，遗物槽没有 → null
+    const v2 = { schemaVersion: 2, state: JSON.parse(JSON.stringify(state)), progress };
+    expect(A.decodeProgress(v2)).toEqual(progress);
+    expect(A.decodeExtra(v2)).toBeNull();
+    expect(A.decodeSave(v2, fallback, slots)).toEqual(state);
+    // 未来版本 / 垃圾数据不猜
+    expect(A.decodeExtra({ schemaVersion: 99, extra })).toBeNull();
+    expect(A.decodeExtra(null)).toBeNull();
   });
 
   it('migrates a v1 save: the inventory still loads, progress starts empty', () => {

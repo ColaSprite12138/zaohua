@@ -457,14 +457,34 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 - 当前消费方：`assets/combat/__tests__/{attack-spec,projectiles}.test.ts`（20 条：10 + 10）。
   **`step()` / `attack.ts` / `enemies.ts` / `paint.ts` 尚未引用**，playthrough 不受影响。
 
+## 死亡掉落与保险格（设计 4 / 5.2，2026-11-15 深夜）
+
+`combat/death-drop.ts` 是**唯一**负责「死了以后东西去哪」的文件。
+
+| 函数 | 契约 |
+|:--|:--|
+| `settleOnDeath(s, survived)` | 成功的局 / 主线阵亡 → `kept` 是整份 `RunLoadout`、`lost` 为空；副本 / 搜打撤阵亡 → `splitOnDeath(s.runInventory)`（`meta/inventory.ts`，两个堆共用） |
+| `spawnDeathDrop(s, payload)` | 出征时把上一局遗物摆回地图：间距 44×30、每件过 `nearestWalkable()`（否则 50px 拾取半径够不到）、`Drop.fromDeathDrop = true`、耐久落在 `Drop.durability` |
+| `leftoverDeathDrops(s)` | 本局还没捡走的遗物（结算时交回壳层写进遗物槽，下次进本还在原地） |
+
+四条不变量：
+
+1. **死亡规则只有三套**（设计 4）：主线全不掉 / 副本掉在原地可捡回一次 / 搜打撤全丢。
+   别在 `game.pack.ts` 里再写一套「if kind」分支 —— 一律走 `settleOnDeath()`。
+2. **保险格只保背包格**（穿戴中的 10 槽永远掉）。判定是「整件覆盖」，见 `meta/inventory.ts::isInsuredItem()`。
+3. **遗物不产生伤害、不参与击杀计数**：`death-drop.ts` 不 import `attack.ts`，它只往 `s.drops` 里放东西。
+4. **`reset()` 保留 `fromDeathDrop` 的掉落物**（R 重开是「重玩这张图」，图上的东西还在），
+   而 `deployRun()` 会先清空全部掉落再摆新遗物 —— 否则重开一次就复制一份，或者一按 R 就把遗物扫没了。
+
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 177 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3 / extraction 17 / skills 22 / status 28 / **data-driven 11**）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 187 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3 / extraction 17 / skills 22 / status 28 / data-driven 11 / **death-drop 10**）
 python scripts/export_tables.py --check                                # 数值表与生成物是否同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json
+./node_modules/.bin/forgeax project play --script scripts/playthrough-death-drop.mjs --json  # 副本遗物：摆点 / 名字牌 / 点回 / 耐久
 ```
 
 `scripts/playthrough*.mjs` 是本模块的浏览器验收（放在工程 `scripts/` 下以兼容 `project play`）。

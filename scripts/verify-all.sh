@@ -149,6 +149,12 @@ run_json resize "$FX" project play \
   --script scripts/playthrough-resize.mjs --json
 check_report resize artifacts/play/scripts/playthrough-resize/play.json 4
 
+# 副本死亡掉落回收（设计 4）：主 playthrough 走的是夹具、没有 deploy，
+# 遗物只可能出现在「带 deathDrop 的出征」里，所以单独一支（含截图 corpse-loot）。
+run_json death-drop "$FX" project play \
+  --script scripts/playthrough-death-drop.mjs --json
+check_report death-drop artifacts/play/scripts/playthrough-death-drop/play.json 2
+
 run_json package node scripts/package-with-shell.mjs --format web-zip --output "$OUT/forgeax-game-web.zip" --json
 ( cd "$OUT" && sha256sum -c forgeax-game-web.zip.sha256 ) >> "$SUMMARY" 2>&1 \
   || die "package：sha256 校验失败"

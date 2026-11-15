@@ -21,10 +21,14 @@ export const SAVE_KEY = 'forgeax.save.v1';
 
 /**
  * v2 把「星图进度」和背包一起存进同一个 blob（设计 6.1 / 6.3：等级、经验、
- * 点数、点亮节点都是跨局进度，掉线不该清零）。v1 存档仍然能读：
- * `decodeSave()` 接受 1..SCHEMA_VERSION，缺 `progress` 时由调用方回退初始星图。
+ * 点数、点亮节点都是跨局进度，掉线不该清零）。
+ *
+ * v3 再加一个 `extra`（设计 4）：**副本死亡掉落槽** —— 上一局阵亡遗落在副本里的
+ * 东西必须跨局保存，否则「下次进本捡回一次」根本无从谈起。
+ * 老存档照常读：`decodeSave()` 接受 1..SCHEMA_VERSION，`decodeProgress()` 接受 ≥2，
+ * `decodeExtra()` 只认 ≥3（v1/v2 没有这一格，由调用方回退空的遗物槽）。
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export interface SaveEnvelope {
   schemaVersion: number;
@@ -32,6 +36,8 @@ export interface SaveEnvelope {
   state: unknown;
   /** v2: plain-JSON star map progress. Absent in a v1 blob. */
   progress?: unknown;
+  /** v3: plain-JSON cross-run leftovers (`{ deathDrop }`). Absent before v3. */
+  extra?: unknown;
 }
 
 export interface SaveAdapter {
@@ -53,11 +59,20 @@ export interface SaveQueue {
  * `structuredClone` while the platform/devStub path uses `JSON.stringify`, so
  * Date / Map / class instances would silently change shape between envs.
  */
-export function encodeSave(state: unknown, progress?: unknown): SaveEnvelope {
+export function encodeSave(
+  state: unknown,
+  progress?: unknown,
+  extra?: unknown,
+): SaveEnvelope {
   const env: SaveEnvelope = { schemaVersion: SCHEMA_VERSION, state: plainJson(state) };
   // `undefined` keeps the envelope byte-identical to v1 for callers that have
   // no star map yet (standalone page, unit tests, verify-shell probes).
   if (progress !== undefined && progress !== null) env.progress = plainJson(progress);
+  // v3: 空的遗物槽不写字段 —— 没有遗留时信封与 v2 长得一样，便于回滚比对。
+  if (extra !== undefined && extra !== null) {
+    const value = plainJson(extra) as Record<string, unknown>;
+    if (Object.keys(value).length > 0) env.extra = value;
+  }
   return env;
 }
 
@@ -99,8 +114,22 @@ export function decodeSave(
 export function decodeProgress(raw: unknown): unknown | null {
   if (!raw || typeof raw !== 'object') return null;
   const env = raw as Partial<SaveEnvelope>;
-  if (env.schemaVersion !== SCHEMA_VERSION) return null;
+  // `>= 2`（而不是 `=== SCHEMA_VERSION`）：v3 加了遗物槽之后，v2 的星图仍然要读得回来。
+  if (typeof env.schemaVersion !== 'number' || env.schemaVersion < 2) return null;
   return env.progress ?? null;
+}
+
+/**
+ * v3 的跨局遗留（`{ deathDrop }`）。v1/v2 没有这一格 → null，
+ * 调用方把它当成「没有遗物」处理，不能让老存档因此被判损坏。
+ */
+export function decodeExtra(raw: unknown): unknown | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const env = raw as Partial<SaveEnvelope>;
+  // 只认 3..SCHEMA_VERSION：更早的存档没有这一格，更新的存档我们读不懂（和 decodeSave 同一条线）。
+  if (typeof env.schemaVersion !== 'number' || env.schemaVersion < 3
+    || env.schemaVersion > SCHEMA_VERSION) return null;
+  return env.extra ?? null;
 }
 
 export function readSave(
@@ -149,9 +178,9 @@ export function createSaveQueue(
 
 /** One save point: encode the current state and hand it to the queue. */
 export function writeSave(
-  queue: SaveQueue, state: unknown, progress?: unknown,
+  queue: SaveQueue, state: unknown, progress?: unknown, extra?: unknown,
 ): SaveEnvelope {
-  const envelope = encodeSave(state, progress);
+  const envelope = encodeSave(state, progress, extra);
   queue.push(envelope);
   return envelope;
 }

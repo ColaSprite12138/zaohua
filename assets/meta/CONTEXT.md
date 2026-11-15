@@ -5,7 +5,8 @@
 > 跨堆边界：局外 `InventoryState` **只在主窗口**，局内 `InventoryState` **只在 Engine Worker**，
 > 两份状态**不共享对象**，只经 `BroadcastChannel('forgeax-arena-run')` 传结构化克隆快照。
 > 现行接口：`takeIntoRun(lobby)` / `bringBack(lobby, loadout)` / `runInventoryFrom(loadout)` /
-> `loadoutFromRun(state)`；`RunLoadout = { bag, equipped, activeWeaponSlot }`，仓库 `stash` 永不进战局。
+> `loadoutFromRun(state)`；`RunLoadout = { bag, equipped, activeWeaponSlot, insured? }`，仓库 `stash` 永不进战局。
+> **阵亡结算**用 `splitOnDeath(state)`（设计 4）：返回 `{ kept, lost }`，两个堆共用同一份规则。
 
 > 权威顺序：**本文件 = 本模块契约正本**；跨模块红线与验收基线以 `HANDOFF.md` 为准。经验库：本目录 `EXPERIENCE.md`。
 
@@ -72,7 +73,7 @@
 | 表目录注入 | `inject-shell.mjs` 把 `generated/item.ts` + `generated/weapon.ts` **按 id join** 成 `authoredItems` 写入 `MetaShell`（品质 / 伤害来自 weapon 表）；`meta-ui/index.html` 在 `registerItemDefs` 可用时注册 |
 | 出征 | `takeIntoRun(lobby)` 复制 `bag + equipped` 成 `RunLoadout` 并**清空局外**，经 `BroadcastChannel('forgeax-arena-run')` 发 `deploy { seed, loadout }` |
 | 局内拾取 | **完全在 Engine Worker 堆内**：`combat/run-inventory.ts::collectDrop()` 优先写 `equipped` 空武器槽，其次 `addToBag()` 占局内背包格子；满则掉落物留地上。Worker 回 `runState` 快照给只读面板 |
-| 结算 | `result.loadout`（通关整份）→ `bringBack(lobby, loadout)` 覆盖回局外；阵亡 / 中途退出 `loadout: null`，主窗口不写回，**全部丢失**，`stash` 保留 |
+| 结算 | `result.loadout`（通关整份）→ `bringBack(lobby, loadout)` 覆盖回局外；阵亡时主窗口改用 `result.kept`（**保险格里的背包物品**，主线阵亡是整份），其余由 `result.lost` 进副本遗物槽；中途退出走同一条 `splitOnDeath()` 规则但**不形成遗物**。`stash` 永远保留 |
 | 报告 | 没有 `SettlementReport` / `unregistered` / `overflow`：物品不是「找回来的」，搬入时整份复制、通关整份搬回、失败整份丢弃 |
 
 ### 出征 / 战斗 / 结算的阶段表（2026-11-14 由 HANDOFF 迁入）
@@ -88,11 +89,27 @@
 | 战斗拾取 | 显式点击掉落物 → 走近才拾取；`combat/run-inventory.ts::collectDrop()` 在 **Worker 堆内**优先写 `equipped` 空武器槽，其次 `addToBag()` 占真实 2×3 格，背包满则留在地上。Worker 每帧比签名，变化才发 `runState` |
 | 局内换装 | 仓库面板隐藏且拖放被拦截；拖放与 1/2 一律走 `runCommand { action: place / equip / unequip / active }`，Worker 校验后回 `runState`；**局内快照永不写平台 KV** |
 | 撤离 / 通关 | `result { outcome:'extracted' \| 'cleared', loadout }` 带**整份局内状态**，主窗口 `M.bringBack(lobby, loadout)` 整份覆盖回局外；不找格子、不新建实例、不统计 overflow。`extracted` = 从传送门走掉（正式玩法），`cleared` = 主线清场；**两者都算成功**，壳层文案不同（`撤离成功` / `通关`） |
-| 阵亡 / 超时 | `result { outcome:'gameOver', loadout: null }`，`reason:'dead'` 或 `'timedOut'`；主窗口不写回任何东西。局外在出征时已清空 ⇒ **带入物品与本局战利品全部丢失**，`stash` 保留。900 秒没撤离与被打死同罚，但日志文案不同（`阵亡` / `超时未撤离`） |
-| 中途退出 / 刷新 / 关预览 | 发 `abort`，Worker 丢弃局内状态，**按阵亡处理**；无宿主不写盘，刷新恢复不了局内物品 |
+| 阵亡 / 超时 | `result { outcome:'gameOver', loadout: null, kept, lost, deathAt, deathDropLeft }`，`reason:'dead'` 或 `'timedOut'`。主窗口 `bringBack(lobby, kept)`：**保险格里的背包物品（主线阵亡是整份）**；其余按关卡类型处理 —— 副本写进遗物槽（下次进本捡回一次），搜打撤直接消失。`stash` 保留。900 秒没撤离与被打死同罚，日志文案不同（`阵亡` / `超时未撤离`） |
+| 中途退出 / 刷新 / 关预览 | 发 `abort`，Worker 丢弃局内状态；主窗口用最后一个 `runState` 快照按 `splitOnDeath()` 结算**保险格**（不用等 Worker 回消息 → 不形成遗物）。无宿主不写盘，刷新恢复不了局内物品 |
 
 `RunLoadout = { bag, equipped, activeWeaponSlot }` 是**唯一**跨堆载荷：没有 `borrowed`、
 没有 `carriedUids` / `lootItemIds` / `findFirstFit` 还原式入库，也没有 `overflow` / `unregistered`。
+
+## 保险格与遗物槽（设计 4 / 5.2，2026-11-15 深夜）
+
+| 项 | 契约 |
+|:--|:--|
+| 保险格形状 | `InventoryState.insured = { col, row, cols, rows }`，**初始赠送 1 列 × 2 行**放在背包左上角（`INSURED_GIFT`）。缺字段时 `insuredRect()` 回落成赠送值，所以 v1/v2 存档与旧夹具都不用改 |
+| 判定 | `isInsuredItem(state, item)`：物品占的**每一格**都在区域内才算保住（半截露在外的 2×3 巨剑不算）。`insuredCells()` 给 UI 高亮 |
+| 只保背包格 | 穿戴中的 10 个槽**永远算风险**，不参与保险 —— 这是设计 4「带什么下场」的核心取舍 |
+| 阵亡分割 | `splitOnDeath(state) -> { kept: RunLoadout, lost: ItemInstance[] }`。纯函数、不改传入状态；两个堆共用。**主线不调用它**（`combat/death-drop.ts::settleOnDeath()` 直接整份带回） |
+| 遗物槽 | 主窗口 `window.MetaShell.deathDrop = { stage, x, y, items: [{ defId, durability? }] }`，随存档 v3 的 `envelope.extra` 落盘（`account.ts::encodeSave(state, progress, extra)` / `decodeExtra()`）。空槽不写字段 |
+| 摆回地图 | 出征时 `deploy.deathDrop` → `combat/death-drop.ts::spawnDeathDrop()`（间距 44×30、过 `nearestWalkable`、带冷白环）。只有 `kind:'dungeon'` 会发送 |
+| 一致性 | 遗物的耐久跟着 `Drop.durability` 走到 `collectDrop(..., durability)`，**捡回来还是磨过的那把**（5.2 的出口） |
+
+- **中途退出也结算保险格**（用页面里最后一份 `runState` 快照），否则「主动退出比战死更亏」会逼玩家去送死；
+  但退出**不形成遗物**（没死就没有尸体）。
+- **再死一次 = 新遗物覆盖旧的**；PVPVE / 主线阵亡同样清空旧遗物槽（一人一具尸体）。
 
 `file://` 双击页仍走 `createInventoryState()` 缺省路径，`MetaShell` 钩子只在 4174 注入页生效；
 两条入口共用 `meta-ui/inventory.js` 生成物与 `inventory.ts` 唯一逻辑源。

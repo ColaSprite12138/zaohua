@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: a5fa75d4f6e1c10207c5e1d3e6d9637e8c6b5b88aaf8267a89bae7ede88b2959
+ * Source SHA-256: 8aa4d7325ca9d6cfb18ed31ec14ac8feb7578d906d49799e3770af618816001b
  */
 (function (root) {
 "use strict";
@@ -29,7 +29,11 @@ var exports = module.exports;
  * NOT shared is the state object itself — see the transfer section at the end.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.moveItem = exports.WEAPON_SLOT_INDICES = exports.EQUIP_SLOTS = exports.ITEM_DEFS = exports.CONTAINERS = exports.STASH = exports.BAG = void 0;
+exports.moveItem = exports.WEAPON_SLOT_INDICES = exports.EQUIP_SLOTS = exports.ITEM_DEFS = exports.INSURED_MAX_COLS = exports.INSURED_GIFT = exports.CONTAINERS = exports.STASH = exports.BAG = void 0;
+exports.insuredRect = insuredRect;
+exports.normalizeInsured = normalizeInsured;
+exports.insuredCells = insuredCells;
+exports.isInsuredItem = isInsuredItem;
 exports.itemArtShape = itemArtShape;
 exports.itemArtKey = itemArtKey;
 exports.registerItemDefs = registerItemDefs;
@@ -51,12 +55,53 @@ exports.takeIntoRun = takeIntoRun;
 exports.bringBack = bringBack;
 exports.runInventoryFrom = runInventoryFrom;
 exports.loadoutFromRun = loadoutFromRun;
+exports.splitOnDeath = splitOnDeath;
 exports.BAG = { cols: 5, rows: 8, label: '背包' };
 exports.STASH = { cols: 16, rows: 10, label: '仓库' };
 exports.CONTAINERS = {
     bag: exports.BAG,
     stash: exports.STASH,
 };
+/** 初始赠送的保险格：1 列 × 2 行（占 2 格）。 */
+exports.INSURED_GIFT = Object.freeze({ col: 0, row: 0, cols: 1, rows: 2 });
+/** 扩容上限（商店批次用；当前没有购买入口，只在存档里预留了这个字段）。 */
+exports.INSURED_MAX_COLS = 3;
+/** 只读：夹进背包边界、尺寸取整；缺字段回落到赠送那一份。不改状态。 */
+function insuredRect(state) {
+    const raw = state.insured ?? exports.INSURED_GIFT;
+    const cols = Math.max(1, Math.min(exports.BAG.cols, Math.floor(raw.cols || exports.INSURED_GIFT.cols)));
+    const rows = Math.max(1, Math.min(exports.BAG.rows, Math.floor(raw.rows || exports.INSURED_GIFT.rows)));
+    const col = Math.max(0, Math.min(exports.BAG.cols - cols, Math.floor(raw.col || 0)));
+    const row = Math.max(0, Math.min(exports.BAG.rows - rows, Math.floor(raw.row || 0)));
+    return { col, row, cols, rows };
+}
+/** 写回一份规范化后的保险格（读存档 / 出征 / 存档写入前调用）。 */
+function normalizeInsured(state) {
+    const rect = insuredRect(state);
+    state.insured = rect;
+    return rect;
+}
+/** 保险格覆盖的格子（UI 高亮 / 单测断言用）。 */
+function insuredCells(state) {
+    const rect = insuredRect(state);
+    const cells = [];
+    for (let r = 0; r < rect.rows; r += 1) {
+        for (let c = 0; c < rect.cols; c += 1)
+            cells.push({ col: rect.col + c, row: rect.row + r });
+    }
+    return cells;
+}
+/** 这件背包物品是否整件落在保险格里。 */
+function isInsuredItem(state, item) {
+    const rect = insuredRect(state);
+    for (const cell of coveredCells(item)) {
+        if (cell.col < rect.col || cell.col >= rect.col + rect.cols)
+            return false;
+        if (cell.row < rect.row || cell.row >= rect.row + rect.rows)
+            return false;
+    }
+    return true;
+}
 /**
  * Code-side fallback catalog. The authored `item.xlsx` rows are injected at
  * boot via `registerItemDefs()` (single-page shell) so battle loot ids such as
@@ -201,6 +246,7 @@ function createInventoryState(seedSwords = 3) {
         stash,
         equipped: exports.EQUIP_SLOTS.map(() => null),
         activeWeaponSlot: 0,
+        insured: { ...exports.INSURED_GIFT },
     };
 }
 function listOf(state, container) {
@@ -238,13 +284,32 @@ function findItem(state, uid) {
         return { where: 'equipped', item: state.equipped[e], index: e };
     return null;
 }
+/**
+ * Strip grid coordinates, keep EVERY other field with the item.
+ *
+ * 2026-11-15：以前这里只留 `{ uid, defId }`，于是「把磨损的武器拖进背包再拖回来」
+ * 会顺手把耐久修满 —— 设计 5.2 的耐久出口被一次拖放抹掉。物品的属性必须跟物品走。
+ */
+function instanceOf(item) {
+    const out = { uid: item.uid, defId: item.defId };
+    for (const [key, value] of Object.entries(item)) {
+        if (key === 'uid' || key === 'defId')
+            continue;
+        if (key === 'container' || key === 'col' || key === 'row')
+            continue;
+        if (value !== undefined)
+            out[key] = value;
+    }
+    return out;
+}
 function detach(state, loc) {
     if (loc.where === 'grid') {
         listOf(state, loc.container).splice(loc.index, 1);
-        return { uid: loc.item.uid, defId: loc.item.defId };
     }
-    state.equipped[loc.index] = null;
-    return loc.item;
+    else {
+        state.equipped[loc.index] = null;
+    }
+    return instanceOf(loc.item);
 }
 /**
  * Move any grid or equipped item to a grid cell.
@@ -257,7 +322,7 @@ function placeItem(state, uid, container, col, row) {
     if (!canPlace(state, container, loc.item.defId, col, row, uid))
         return false;
     const item = detach(state, loc);
-    listOf(state, container).push({ uid: item.uid, defId: item.defId, container, col, row });
+    listOf(state, container).push({ ...item, container, col, row });
     return true;
 }
 /** Alias with clearer intent for cross-container dragging. */
@@ -295,7 +360,7 @@ function equipItem(state, uid, slotIndex, containers = ['bag', 'stash']) {
     state.equipped[slotIndex] = item;
     if (displaced !== null && displacedSpot !== null) {
         listOf(state, displacedSpot.container).push({
-            uid: displaced.uid, defId: displaced.defId,
+            ...instanceOf(displaced),
             container: displacedSpot.container, col: displacedSpot.col, row: displacedSpot.row,
         });
     }
@@ -309,9 +374,7 @@ function unequipItem(state, slotIndex, container, col, row) {
     if (!canPlace(state, container, current.defId, col, row))
         return false;
     state.equipped[slotIndex] = null;
-    listOf(state, container).push({
-        uid: current.uid, defId: current.defId, container, col, row,
-    });
+    listOf(state, container).push({ ...instanceOf(current), container, col, row });
     return true;
 }
 function setActiveWeapon(state, slot) {
@@ -356,14 +419,19 @@ function findFirstFit(state, defId, ignoreUid, containers = ['bag', 'stash']) {
  * storage and never participates in a battle pickup. Returns null (and does
  * not mutate state) when the bag has no free footprint for the item.
  */
-function addToBag(state, uid, defId) {
+function addToBag(state, uid, defId, 
+/** 从尸体上捡回来的武器带着它磨过的耐久（普通掉落没有这个字段）。 */
+durability) {
     if (exports.ITEM_DEFS[defId] === undefined)
         return null;
     const def = itemDef(defId);
     for (let row = 0; row <= exports.BAG.rows - def.rows; row += 1) {
         for (let col = 0; col <= exports.BAG.cols - def.cols; col += 1) {
             if (canPlace(state, 'bag', defId, col, row)) {
-                const placed = { uid, defId, container: 'bag', col, row };
+                const placed = {
+                    uid, defId, container: 'bag', col, row,
+                    ...(durability === undefined ? {} : { durability }),
+                };
                 state.bag.push(placed);
                 return placed;
             }
@@ -422,7 +490,7 @@ function normalizeEquipped(state) {
         const spot = findFirstFit(state, item.defId, item.uid, ['bag']);
         if (spot !== null) {
             listOf(state, spot.container).push({
-                uid: item.uid, defId: item.defId,
+                ...instanceOf(item),
                 container: spot.container, col: spot.col, row: spot.row,
             });
         }
@@ -455,6 +523,7 @@ function takeIntoRun(lobby) {
         bag: clonePlaced(lobby.bag),
         equipped: cloneEquipped(lobby.equipped),
         activeWeaponSlot: lobby.activeWeaponSlot === 1 ? 1 : 0,
+        insured: insuredRect(lobby),
     };
     lobby.bag = [];
     lobby.equipped = exports.EQUIP_SLOTS.map(() => null);
@@ -476,6 +545,7 @@ function runInventoryFrom(loadout) {
         stash: [],
         equipped: cloneEquipped(loadout.equipped),
         activeWeaponSlot: loadout.activeWeaponSlot === 1 ? 1 : 0,
+        insured: { ...(loadout.insured ?? exports.INSURED_GIFT) },
     };
     // 进战局前最后一道闸：非法穿戴挪回背包（存档篡改 / 旧协议遗留）。
     normalizeEquipped(state);
@@ -487,6 +557,39 @@ function loadoutFromRun(state) {
         bag: clonePlaced(state.bag),
         equipped: cloneEquipped(state.equipped),
         activeWeaponSlot: state.activeWeaponSlot === 1 ? 1 : 0,
+        insured: insuredRect(state),
+    };
+}
+/**
+ * **阵亡分割**（设计 4）：把局内状态切成「带得回家的」和「丢下的」。
+ *
+ * - `kept` = 整件落在保险格里的背包物品（穿戴中的 10 个槽永远是风险）。
+ * - `lost` = 其余背包物品 + 全部穿戴，顺序稳定（先背包后槽位）便于存档与断言。
+ *
+ * 主线（`story`）不调用它 —— 那条规则是「身上 + 背包全不掉」，由战斗层直接整份带回。
+ * 本函数是纯函数：不改传入的 state，返回的都是副本。
+ */
+function splitOnDeath(state) {
+    const keptBag = [];
+    const lost = [];
+    for (const item of state.bag) {
+        if (isInsuredItem(state, item))
+            keptBag.push({ ...item });
+        else
+            lost.push(instanceOf(item));
+    }
+    for (const item of state.equipped) {
+        if (item)
+            lost.push(instanceOf(item));
+    }
+    return {
+        kept: {
+            bag: keptBag,
+            equipped: exports.EQUIP_SLOTS.map(() => null),
+            activeWeaponSlot: 0,
+            insured: insuredRect(state),
+        },
+        lost,
     };
 }
 

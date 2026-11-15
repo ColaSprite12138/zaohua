@@ -789,6 +789,11 @@ function drawDrop(g: Painter, drop: Drop, hovered: boolean): void {
   const float = Math.round(Math.sin(drop.t * 3) * 3);
   const color = qualityColor(drop.quality);
   shadow(g, drop.x, drop.y + 2, hovered ? 13 : 10, hovered ? 5 : 4, 0.34);
+  // 尸体遗物（设计 4）：脚下一圈冷白虚线。普通战利品没有这圈，
+  // 所以「地上这堆是我上一局掉的」一眼就能读出来 —— 不用靠名字牌去猜。
+  if (drop.fromDeathDrop === true) {
+    drawPixelRing(g, drop.x, drop.y + 2, 22, 10, '#dff1ff', { alpha: hovered ? 0.75 : 0.45, lineWidth: 1 });
+  }
   // Blocky aura instead of a radial gradient: same read, same grid.
   drawPixelGlow(g, drop.x, drop.y - 8 + float, hovered ? 26 : 20, hovered ? 22 : 17, color,
     hovered ? 0.34 : 0.22);

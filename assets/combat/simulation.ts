@@ -17,6 +17,7 @@ import { makeRng } from './loot.ts';
 import { say } from './effects.ts';
 import { makeRunInventory } from './run-inventory.ts';
 import { updateExtraction, updateRunClock } from './extraction.ts';
+import { spawnDeathDrop, type DeathDropPayload } from './death-drop.ts';
 import { tickStatuses, updateZones } from './reactions.ts';
 import { statusSnapshot } from './status.ts';
 import {
@@ -161,6 +162,11 @@ export interface Deployment {
     readonly skills?: readonly string[];
     readonly nodes?: readonly string[];
   };
+  /**
+   * 上一局阵亡遗落在副本里的东西（设计 4）。只有 `dungeon` 会产出它；
+   * 摆点规则在 `combat/death-drop.ts`，这里只负责转发。
+   */
+  readonly deathDrop?: DeathDropPayload;
 }
 
 const EMPTY_LOADOUT: RunLoadout = {
@@ -175,8 +181,12 @@ export function deployRun(s: GameState, config: Deployment = {}): void {
   s.runKind = config.kind ?? 'story';
   // 星图技能先落到 state 上，`reset()` 重建技能栏时读它 —— 重开一局也不会
   // 把玩家的配置换回夹具兜底表。没点技能就是空手（设计 6.2）。
-  s.starSkills = config.stars?.skills ? [...config.stars.skills] : PRE_EQUIPPED_SKILLS;  s.runInventory = makeRunInventory(config.loadout ?? EMPTY_LOADOUT);
+  s.starSkills = config.stars?.skills ? [...config.stars.skills] : PRE_EQUIPPED_SKILLS;
+  s.runInventory = makeRunInventory(config.loadout ?? EMPTY_LOADOUT);
   reset(s);
+  // 出征是「一张干净的新图」：`reset()` 会保留尸体遗物（R 重开要用），这里才清空。
+  s.drops.length = 0;
+  spawnDeathDrop(s, config.deathDrop);
   // 乘区在 reset 之后落：reset 会把 hp 拉回 maxHp，而 maxHp 这里才被星图改写。
   applyStarMods(s, createModifiers(config.stars?.nodes ?? []));
   const armed = s.weaponSlots.filter((w) => w !== null).length;
@@ -246,12 +256,15 @@ export function projection(s: GameState) {
      */
     dropPlates: s.drops.map((drop) => {
       const r = dropLabelRect(drop);
+      // **屏幕归一化**（和 `player` / `dropLabel` 同一套坐标）：以前这里直接
+      // 拿世界坐标除 VIEW_W，相机一离开原点，脚本点到的就是世界原点附近的空地。
+      const v = r ? scr(r.x, r.y) : null;
       return {
         uid: drop.uid,
         name: dropLabelName(drop),
         quality: drop.quality ?? null,
-        x: r ? r.x / VIEW_W : null,
-        y: r ? r.y / VIEW_H : null,
+        x: v ? v.x / VIEW_W : null,
+        y: v ? v.y / VIEW_H : null,
         w: r ? r.w / VIEW_W : 0,
         h: r ? r.h / VIEW_H : 0,
         index: r ? r.index : -1,
@@ -270,11 +283,16 @@ export function projection(s: GameState) {
     // interface has no index signature and would not satisfy the projection
     // value type, so build the literal here.
     runInventory: {
+      // 耐久跟着实例走（设计 5.2）：局内面板的耐久条与「尸体遗物捡回来还是磨过的」
+      // 都要读它，所以投影必须带上，不能每帧替玩家修满。
       bag: s.runInventory.bag.map((i) => ({
         uid: i.uid, defId: i.defId, container: i.container, col: i.col, row: i.row,
+        ...(i.durability === undefined ? {} : { durability: i.durability }),
       })),
       equipped: s.runInventory.equipped.map((i) => (
-        i === null ? null : { uid: i.uid, defId: i.defId }
+        i === null
+          ? null
+          : { uid: i.uid, defId: i.defId, ...(i.durability === undefined ? {} : { durability: i.durability }) }
       )),
       activeWeaponSlot: s.runInventory.activeWeaponSlot,
     },

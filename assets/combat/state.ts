@@ -502,6 +502,16 @@ export interface Drop {
   quality?: string;
   monsterId?: string;
   /**
+   * 这一件是**上一局阵亡掉在副本里的遗物**（设计 4）。绘制层据此画一圈冷白边，
+   * 结算时 `leftoverDeathDrops()` 靠它把没捡走的写回死亡掉落槽。
+   */
+  fromDeathDrop?: boolean;
+  /**
+   * 遗物的当前耐久（只有从尸体上捡回的武器带这个字段；普通掉落没有）。
+   * 放在掉落物本身上，而不是 `state` 里再开一张表 —— 掉落物被捡走时它自然消失。
+   */
+  durability?: number;
+  /**
    * Result of `layoutDrops()` for the CURRENT frame. `undefined` means "not
    * laid out yet" (a drop created this frame, or a unit-test fixture), which
    * falls back to the single-item anchor. `null` means "deliberately hidden by
@@ -874,7 +884,10 @@ export function reset(s: GameState): void {
   syncWeaponSlots(s);
   s.gameOver = false;
   s.cleared = false;
-  s.drops.length = 0;
+  // 尸体遗物（`fromDeathDrop`）是**这张图上本来就有的东西**，重开一局（R）不能把它
+  // 一起扫掉 —— 否则玩家一按 R 就把自己的遗物「扫」没了，而存档里还记着它们。
+  // 已经捡走的不在 `drops` 里，所以这里也不会造出复制品。`deployRun()` 才清空全部。
+  s.drops = s.drops.filter((d) => d.fromDeathDrop === true);
   s.particles.length = 0;
   // A run restart must reproduce the same loot sequence for the same seed.
   s.rng = makeRng(s.runSeed);

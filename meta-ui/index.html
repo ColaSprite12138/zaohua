@@ -67,7 +67,18 @@
   }
   /* Cells draw their own 1px separator so every cell is EXACTLY size x size:
      an item's pixel origin is col*size / row*size with zero accumulated drift. */
-  .grid .cell { background: var(--cell); box-shadow: inset -1px -1px 0 var(--line); }
+  .grid .cell { position: relative; background: var(--cell); box-shadow: inset -1px -1px 0 var(--line); }
+  /* 保险格（设计 4）：背包左上角那块，阵亡时这里的物品跟着回家。 */
+  .grid .cell.insured {
+    background: #101f2b;
+    box-shadow: inset -1px -1px 0 var(--line), inset 0 0 0 1px rgba(103, 232, 249, .45);
+  }
+  .grid .cell.insured::after {
+    content: ""; position: absolute; inset: 3px; border: 1px dashed rgba(103, 232, 249, .35);
+    border-radius: 4px; pointer-events: none;
+  }
+  .insured-note { color: var(--cyan); font-size: 11px; margin-top: 6px; max-width: 300px; }
+  .insured-note b { color: var(--gold); font-weight: 700; }
   .grid.dragover { box-shadow: 0 0 0 2px var(--cyan); }
   .item {
     position: absolute; border-radius: 7px; border: 1px solid var(--sword);
@@ -204,6 +215,9 @@
       <div class="grid-wrap" id="wrap-bag">
         <div class="grid" id="grid-bag"></div>
         <div class="preview" id="preview-bag"></div>
+      </div>
+      <div class="insured-note" id="insured-note">
+        左上角 <b>1 × 2</b> 是<b>保险格</b>：阵亡时这里的物品跟着回家（穿戴中的装备永远是风险）。
       </div>
     </section>
 
@@ -383,9 +397,15 @@
     el.style.gridTemplateColumns = 'repeat(' + spec.cols + ', ' + size + 'px)';
     el.style.gridTemplateRows = 'repeat(' + spec.rows + ', ' + size + 'px)';
     el.innerHTML = '';
+    // 保险格只在背包上存在（仓库是局外存储，永不进战局，也就没有风险）。
+    const insured = container === 'bag' ? M.insuredRect(state) : null;
     for (let i = 0; i < spec.cols * spec.rows; i += 1) {
       const cell = document.createElement('div');
-      cell.className = 'cell';
+      const col = i % spec.cols;
+      const row = Math.floor(i / spec.cols);
+      const inside = !!insured && col >= insured.col && col < insured.col + insured.cols
+        && row >= insured.row && row < insured.row + insured.rows;
+      cell.className = 'cell' + (inside ? ' insured' : '');
       el.appendChild(cell);
     }
     wrap.querySelectorAll('.grid-item').forEach((n) => n.remove());

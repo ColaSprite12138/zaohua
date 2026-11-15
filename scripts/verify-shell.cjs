@@ -226,7 +226,9 @@ const SELFTEST = `
         && written.state.stash.length === 5;
       out.store.platformKvWrite = platformWrites.length === 1
         && !!written
-        && JSON.stringify(written) === JSON.stringify(A.encodeSave(H.getState(), H.getProgress()));
+        && written.schemaVersion === A.SCHEMA_VERSION
+        && JSON.stringify(written.state) === JSON.stringify(H.getState())
+        && JSON.stringify(written.progress) === JSON.stringify(H.getProgress());
 
       // Restore the known 4-item lobby state for the deploy flow below.
       platformWrites.length = 0;
@@ -240,6 +242,9 @@ const SELFTEST = `
       out.gridCells = {
         bag: document.querySelectorAll('#grid-bag .cell').length,
         stash: document.querySelectorAll('#grid-stash .cell').length,
+        // 保险格（设计 4）：背包左上角 1×2 必须真的画出来，而不是只存在于规则里
+        insured: document.querySelectorAll('#grid-bag .cell.insured').length,
+        note: !!document.getElementById('insured-note'),
       };
       out.equipSlots = document.querySelectorAll('.equip-slot').length;
 
@@ -467,8 +472,14 @@ const SELFTEST = `
       document.getElementById('fx-deploy').click();
       await waitFor(function () { return inBattle() && /出征中/.test(logText()); });
       snap('secondDeploy');
+      // 真 Worker 在阵亡时会一并给出 kept / lost / deathAt（设计 4）；
+      // 假 Worker 用同一份 M.splitOnDeath() 算，才是在测壳层而不是测假数据。
+      var lostSplit = M.splitOnDeath(workerState);
       sendResult({
         outcome: 'gameOver', loadout: null,
+        kept: lostSplit.kept,
+        lost: lostSplit.lost.map(function (i) { return { defId: i.defId }; }),
+        deathAt: { x: 300, y: 200 }, deathDropLeft: [],
         lootLog: [{ name: '巨剑', quality: '白' }], kills: 2, xp: 70,
       });
       await waitFor(function () { return !inBattle() && /阵亡/.test(logText()); });
@@ -481,18 +492,75 @@ const SELFTEST = `
       await waitFor(function () {
         return !inBattle() && /中途退出/.test(logText()) && out.abortMessages.length >= 1;
       });
+      // 记下这一跑的 abort 次数：后面副本那次「返回局外」还会再发一条，
+      // 断言必须钉在「点一次返回 = 一条 abort」上，而不是最终总数。
+      out.abortAfterReturn = out.abortMessages.length;
       snap('aborted');
 
       // Fourth run: the 900 s clock ran out without an extraction. Same loss
       // rule as death, but the log must say WHY (超时), not "阵亡".
       document.getElementById('fx-deploy').click();
       await waitFor(function () { return inBattle() && /出征中/.test(logText()); });
+      var timeoutSplit = M.splitOnDeath(workerState);
       sendResult({
         outcome: 'gameOver', reason: 'timedOut', loadout: null,
+        kept: timeoutSplit.kept,
+        lost: timeoutSplit.lost.map(function (i) { return { defId: i.defId }; }),
+        deathAt: { x: 320, y: 210 }, deathDropLeft: [],
         lootLog: [{ name: '长剑', quality: '白' }], kills: 1,
       });
       await waitFor(function () { return !inBattle() && /超时未撤离/.test(logText()); });
       snap('timedOut');
+
+      // ---- 副本死亡掉落槽（设计 4）：战死留下遗物，下次进本摆回地图 ----
+      var kindSel = document.getElementById('fx-kind');
+      out.kind = {
+        exists: !!kindSel,
+        initial: kindSel ? kindSel.value : null,
+        options: kindSel
+          ? Array.prototype.map.call(kindSel.options, function (o) { return o.value; })
+          : [],
+      };
+      // 局外现在只剩保险格里那一瓶药（上一局带回来的），再装一把剑下去。
+      out.equipForDungeon = equipFromStash(0);
+      kindSel.value = 'dungeon';
+      kindSel.dispatchEvent(new Event('change', { bubbles: true }));
+      document.getElementById('fx-deploy').click();
+      await waitFor(function () { return inBattle() && /出征中/.test(logText()); });
+      out.deployKind = seenDeploy ? seenDeploy.kind : null;
+      out.firstDungeonHasNoCorpse = !!seenDeploy && !seenDeploy.deathDrop;
+
+      // 假 Worker 按真 Worker 的口径结算：只有保险格里的背包物品回家。
+      var corpseSplit = M.splitOnDeath(workerState);
+      sendResult({
+        outcome: 'gameOver', loadout: null, kept: corpseSplit.kept,
+        lost: corpseSplit.lost.map(function (i) { return { defId: i.defId }; }),
+        deathAt: { x: 420, y: 260 },
+        deathDropLeft: [],
+        lootLog: [], kills: 1, xp: 10, stage: 'arena',
+      });
+      await waitFor(function () { return !inBattle() && /遗落/.test(logText()); });
+      snap('dungeonDeath');
+      var savedEnvelope = Store.lastSaved ? Store.lastSaved() : null;
+      out.corpse = {
+        keptInsured: H.getLobbyState().bag.length,
+        worn: H.getLobbyState().equipped.filter(Boolean).length,
+        saved: H.deathDrop && H.deathDrop.items ? H.deathDrop.items.length : 0,
+        savedDef: H.deathDrop && H.deathDrop.items[0] ? H.deathDrop.items[0].defId : null,
+        kv: savedEnvelope && savedEnvelope.extra && savedEnvelope.extra.deathDrop
+          ? savedEnvelope.extra.deathDrop.items.length : 0,
+        badge: (document.getElementById('fx-leftovers') || {}).textContent || '',
+        log: logText(),
+      };
+      // 下次进本：遗物跟着 deployment 摆回地图
+      document.getElementById('fx-deploy').click();
+      await waitFor(function () { return inBattle() && /出征中/.test(logText()); });
+      out.corpse.deployed = !!seenDeploy && !!seenDeploy.deathDrop
+        && seenDeploy.deathDrop.items.length === 1
+        && seenDeploy.deathDrop.items[0].defId === 'longsword'
+        && seenDeploy.deathDrop.x === 420 && seenDeploy.deathDrop.y === 260;
+      document.getElementById('fx-back').click();
+      await waitFor(function () { return !inBattle() && /中途退出/.test(logText()); });
 
       // ---- platform lifecycle: real pause/resume over the run channel ----
       var adapter = H.platformAdapter;
@@ -538,10 +606,11 @@ ${SELFTEST}
 const profile = path.join(outDir, 'shell-chrome-' + process.pid);
 const run = spawnSync(chrome, [
   '--headless=new', '--disable-gpu', '--no-sandbox',
-  // 25 s of virtual time: the page now runs four deploys (cleared / gameOver /
-  // abort / timedOut) plus the bag + cursor checks. 15 s left the last steps
-  // racing the budget, which surfaced as random one-assertion failures.
-  '--allow-file-access-from-files', '--virtual-time-budget=25000',
+  // 40 s of virtual time: the page now runs SIX deploys (cleared / gameOver /
+  // abort / timedOut / dungeon death / dungeon corpse) plus the bag, star-map
+  // and cursor checks. 25 s started racing the budget again (the run reported
+  // `PENDING`, i.e. the page never published), which reads as a random failure.
+  '--allow-file-access-from-files', '--virtual-time-budget=40000',
   '--user-data-dir=' + profile,
   '--dump-dom', 'file:///' + testPage.replace(/\\/g, '/'),
 ], { encoding: 'utf8', maxBuffer: 24 * 1024 * 1024, timeout: 90000 });
@@ -612,6 +681,12 @@ const checks = [
     result.authoredRegistered === true, result.authoredRegistered],
   ['bag 5x8 = 40 cells, stash 16x10 = 160 cells',
     result.gridCells.bag === 40 && result.gridCells.stash === 160, result.gridCells],
+  ['保险格在背包里画成左上 1×2，并带一条图例说明',
+    result.gridCells.insured === 2 && result.gridCells.note === true, result.gridCells],
+  ['关卡类型可选（主线 / 副本 / 搜打撤），出征按选中的类型发',
+    result.kind.exists === true && result.kind.initial === 'pvpve'
+      && result.kind.options.join(',') === 'pvpve,dungeon,story'
+      && result.deployKind === 'dungeon', result.kind],
   ['ten equipment slots', result.equipSlots === 10, result.equipSlots],
   ['shell and meta UI share ONE LOBBY state object',
     result.sharedState === true, result.sharedState],
@@ -676,16 +751,26 @@ const checks = [
   ['a second deploy empties the lobby again',
     S.secondDeploy.lobbyBag === 0 && S.secondDeploy.lobbyWorn === 0
       && S.secondDeploy.lobbyStash === 3, S.secondDeploy],
-  ['gameOver permanently loses every carried item',
-    S.gameOver.bag === 0 && S.gameOver.worn === 0
+  ['阵亡只留下保险格里的东西：其余穿戴与背包全丢',
+    S.gameOver.bag === 1 && S.gameOver.worn === 0
+      && S.gameOver.bagDefs[0] === '30002'
       && S.gameOver.weapon0 === null && S.gameOver.isRun === false, S.gameOver],
-  ['gameOver keeps the stash and reports the loss',
-    S.gameOver.lobbyStash === 3 && /阵亡/.test(S.gameOver.log), S.gameOver],
+  ['阵亡保住了仓库，并在日志里说明保险格救回了几件',
+    S.gameOver.lobbyStash === 3 && /阵亡/.test(S.gameOver.log)
+      && /保险格保住 1 件/.test(S.gameOver.log), S.gameOver.log],
+  ['副本阵亡：保险格回家，遗物进存档并提示待捡回',
+    result.corpse.keptInsured === 1 && result.corpse.worn === 0
+      && result.corpse.saved === 1 && result.corpse.savedDef === 'longsword'
+      && result.corpse.kv === 1 && /遗物 1 件/.test(result.corpse.badge)
+      && /遗落在副本/.test(result.corpse.log), result.corpse],
+  ['第一次进副本时遗物槽是空的，下一次才把遗物摆回死亡地点',
+    result.firstDungeonHasNoCorpse === true && result.corpse.deployed === true, result.corpse],
   ['running out of time without extracting loses the run and says so',
-    S.timedOut.isRun === false && S.timedOut.bag === 0 && S.timedOut.worn === 0
+    // 背包里那 1 件是保险格里的药：超时与战死同罚，保险格照旧生效。
+    S.timedOut.isRun === false && S.timedOut.bag === 1 && S.timedOut.worn === 0
       && /超时未撤离/.test(S.timedOut.log), S.timedOut],
-  ['a mid-run return sends abort and discards the whole run',
-    result.abortMessages.length === 1 && S.aborted.lobbyBag === 0
+  ['a mid-run return sends exactly one abort and discards the run',
+    result.abortAfterReturn === 1 && S.aborted.lobbyBag === 1
       && S.aborted.lobbyWorn === 0 && S.aborted.lobbyStash === 3
       && /中途退出/.test(S.aborted.log), S.aborted],
   ['returning to meta keeps the inventory usable',

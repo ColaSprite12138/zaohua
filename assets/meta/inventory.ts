@@ -35,6 +35,67 @@ export const CONTAINERS: Record<ContainerId, GridSpec> = {
   stash: STASH,
 };
 
+/* ---------------------------------- 保险格 --------------------------------- *
+ * 设计 4 / 5.2：死亡掉落范围是「已穿戴 10 个装备槽 + 背包全部」，**保险格除外**。
+ * 保险格是背包里的一块矩形区域（占格子，初始赠送 1 列 × 2 行 = 2 格），
+ * 阵亡时**格子里的物品跟着回家**，其余全掉。
+ *
+ * 三条规则（别在这里发明第四条）：
+ * 1. **只保背包格**。穿戴中的装备永远是风险，否则「带什么下场」这个决定就没了。
+ * 2. **整件覆盖才算保住**：物品占的每一格都必须落在区域内。半截露在外面的
+ *    2×3 巨剑不享受保险 —— 否则 2 格就能保住 6 格，保险格立刻失去意义。
+ * 3. **位置固定**在背包左上角（col 0 / row 0）。扩容是付费消耗品（商店批次，
+ *    当前只有赠送那一份），扩容时只改 `insured.cols/rows`，规则不动。
+ */
+export interface InsuredRect {
+  readonly col: number;
+  readonly row: number;
+  readonly cols: number;
+  readonly rows: number;
+}
+
+/** 初始赠送的保险格：1 列 × 2 行（占 2 格）。 */
+export const INSURED_GIFT: InsuredRect = Object.freeze({ col: 0, row: 0, cols: 1, rows: 2 });
+/** 扩容上限（商店批次用；当前没有购买入口，只在存档里预留了这个字段）。 */
+export const INSURED_MAX_COLS = 3;
+
+/** 只读：夹进背包边界、尺寸取整；缺字段回落到赠送那一份。不改状态。 */
+export function insuredRect(state: InventoryState): InsuredRect {
+  const raw = state.insured ?? INSURED_GIFT;
+  const cols = Math.max(1, Math.min(BAG.cols, Math.floor(raw.cols || INSURED_GIFT.cols)));
+  const rows = Math.max(1, Math.min(BAG.rows, Math.floor(raw.rows || INSURED_GIFT.rows)));
+  const col = Math.max(0, Math.min(BAG.cols - cols, Math.floor(raw.col || 0)));
+  const row = Math.max(0, Math.min(BAG.rows - rows, Math.floor(raw.row || 0)));
+  return { col, row, cols, rows };
+}
+
+/** 写回一份规范化后的保险格（读存档 / 出征 / 存档写入前调用）。 */
+export function normalizeInsured(state: InventoryState): InsuredRect {
+  const rect = insuredRect(state);
+  state.insured = rect;
+  return rect;
+}
+
+/** 保险格覆盖的格子（UI 高亮 / 单测断言用）。 */
+export function insuredCells(state: InventoryState): { col: number; row: number }[] {
+  const rect = insuredRect(state);
+  const cells: { col: number; row: number }[] = [];
+  for (let r = 0; r < rect.rows; r += 1) {
+    for (let c = 0; c < rect.cols; c += 1) cells.push({ col: rect.col + c, row: rect.row + r });
+  }
+  return cells;
+}
+
+/** 这件背包物品是否整件落在保险格里。 */
+export function isInsuredItem(state: InventoryState, item: PlacedItem): boolean {
+  const rect = insuredRect(state);
+  for (const cell of coveredCells(item)) {
+    if (cell.col < rect.col || cell.col >= rect.col + rect.cols) return false;
+    if (cell.row < rect.row || cell.row >= rect.row + rect.rows) return false;
+  }
+  return true;
+}
+
 export type EquipKind =
   | 'weapon'
   | 'ring'
@@ -276,6 +337,11 @@ export interface InventoryState {
   equipped: (ItemInstance | null)[];
   /** Which of the two weapon slots is currently in use in battle. */
   activeWeaponSlot: 0 | 1;
+  /**
+   * 保险格（设计 4）：背包里阵亡不被清空的矩形。缺省 = 赠送的 1×2，
+   * 所以 v1/v2 老存档与所有旧夹具都不用改（`normalizeInsured()` 兜底）。
+   */
+  insured?: InsuredRect;
 }
 
 export function itemDef(defId: string): ItemDef {
@@ -300,6 +366,7 @@ export function createInventoryState(seedSwords = 3): InventoryState {
     stash,
     equipped: EQUIP_SLOTS.map(() => null),
     activeWeaponSlot: 0,
+    insured: { ...INSURED_GIFT },
   };
 }
 
@@ -348,13 +415,29 @@ export function findItem(state: InventoryState, uid: string): ItemLocation | nul
   return null;
 }
 
+/**
+ * Strip grid coordinates, keep EVERY other field with the item.
+ *
+ * 2026-11-15：以前这里只留 `{ uid, defId }`，于是「把磨损的武器拖进背包再拖回来」
+ * 会顺手把耐久修满 —— 设计 5.2 的耐久出口被一次拖放抹掉。物品的属性必须跟物品走。
+ */
+function instanceOf(item: ItemInstance | PlacedItem): ItemInstance {
+  const out: Record<string, unknown> = { uid: item.uid, defId: item.defId };
+  for (const [key, value] of Object.entries(item)) {
+    if (key === 'uid' || key === 'defId') continue;
+    if (key === 'container' || key === 'col' || key === 'row') continue;
+    if (value !== undefined) out[key] = value;
+  }
+  return out as unknown as ItemInstance;
+}
+
 function detach(state: InventoryState, loc: ItemLocation): ItemInstance {
   if (loc.where === 'grid') {
     listOf(state, loc.container).splice(loc.index, 1);
-    return { uid: loc.item.uid, defId: loc.item.defId };
+  } else {
+    state.equipped[loc.index] = null;
   }
-  state.equipped[loc.index] = null;
-  return loc.item;
+  return instanceOf(loc.item);
 }
 
 /**
@@ -372,7 +455,7 @@ export function placeItem(
   if (loc === null) return false;
   if (!canPlace(state, container, loc.item.defId, col, row, uid)) return false;
   const item = detach(state, loc);
-  listOf(state, container).push({ uid: item.uid, defId: item.defId, container, col, row });
+  listOf(state, container).push({ ...item, container, col, row });
   return true;
 }
 
@@ -414,7 +497,7 @@ export function equipItem(
   state.equipped[slotIndex] = item;
   if (displaced !== null && displacedSpot !== null) {
     listOf(state, displacedSpot.container).push({
-      uid: displaced.uid, defId: displaced.defId,
+      ...instanceOf(displaced),
       container: displacedSpot.container, col: displacedSpot.col, row: displacedSpot.row,
     });
   }
@@ -433,9 +516,7 @@ export function unequipItem(
   if (current === undefined || current === null) return false;
   if (!canPlace(state, container, current.defId, col, row)) return false;
   state.equipped[slotIndex] = null;
-  listOf(state, container).push({
-    uid: current.uid, defId: current.defId, container, col, row,
-  });
+  listOf(state, container).push({ ...instanceOf(current), container, col, row });
   return true;
 }
 
@@ -499,13 +580,18 @@ export function addToBag(
   state: InventoryState,
   uid: string,
   defId: string,
+  /** 从尸体上捡回来的武器带着它磨过的耐久（普通掉落没有这个字段）。 */
+  durability?: number,
 ): PlacedItem | null {
   if (ITEM_DEFS[defId] === undefined) return null;
   const def = itemDef(defId);
   for (let row = 0; row <= BAG.rows - def.rows; row += 1) {
     for (let col = 0; col <= BAG.cols - def.cols; col += 1) {
       if (canPlace(state, 'bag', defId, col, row)) {
-        const placed: PlacedItem = { uid, defId, container: 'bag', col, row };
+        const placed: PlacedItem = {
+          uid, defId, container: 'bag', col, row,
+          ...(durability === undefined ? {} : { durability }),
+        };
         state.bag.push(placed);
         return placed;
       }
@@ -562,7 +648,7 @@ export function normalizeEquipped(state: InventoryState): number {
     const spot = findFirstFit(state, item.defId, item.uid, ['bag']);
     if (spot !== null) {
       listOf(state, spot.container).push({
-        uid: item.uid, defId: item.defId,
+        ...instanceOf(item),
         container: spot.container, col: spot.col, row: spot.row,
       });
     }
@@ -576,6 +662,11 @@ export interface RunLoadout {
   readonly bag: PlacedItem[];
   readonly equipped: (ItemInstance | null)[];
   readonly activeWeaponSlot: 0 | 1;
+  /**
+   * 保险格随载荷走：局内要按它判断「死了哪些保住了」，否则两个堆会各算一套。
+   * 缺省 = 赠送的 1×2（旧协议 / 夹具）。
+   */
+  readonly insured?: InsuredRect;
 }
 
 function clonePlaced(items: readonly PlacedItem[]): PlacedItem[] {
@@ -606,6 +697,7 @@ export function takeIntoRun(lobby: InventoryState): RunLoadout {
     bag: clonePlaced(lobby.bag),
     equipped: cloneEquipped(lobby.equipped),
     activeWeaponSlot: lobby.activeWeaponSlot === 1 ? 1 : 0,
+    insured: insuredRect(lobby),
   };
   lobby.bag = [];
   lobby.equipped = EQUIP_SLOTS.map(() => null);
@@ -629,6 +721,7 @@ export function runInventoryFrom(loadout: RunLoadout): InventoryState {
     stash: [],
     equipped: cloneEquipped(loadout.equipped),
     activeWeaponSlot: loadout.activeWeaponSlot === 1 ? 1 : 0,
+    insured: { ...(loadout.insured ?? INSURED_GIFT) },
   };
   // 进战局前最后一道闸：非法穿戴挪回背包（存档篡改 / 旧协议遗留）。
   normalizeEquipped(state);
@@ -641,5 +734,36 @@ export function loadoutFromRun(state: InventoryState): RunLoadout {
     bag: clonePlaced(state.bag),
     equipped: cloneEquipped(state.equipped),
     activeWeaponSlot: state.activeWeaponSlot === 1 ? 1 : 0,
+    insured: insuredRect(state),
+  };
+}
+
+/**
+ * **阵亡分割**（设计 4）：把局内状态切成「带得回家的」和「丢下的」。
+ *
+ * - `kept` = 整件落在保险格里的背包物品（穿戴中的 10 个槽永远是风险）。
+ * - `lost` = 其余背包物品 + 全部穿戴，顺序稳定（先背包后槽位）便于存档与断言。
+ *
+ * 主线（`story`）不调用它 —— 那条规则是「身上 + 背包全不掉」，由战斗层直接整份带回。
+ * 本函数是纯函数：不改传入的 state，返回的都是副本。
+ */
+export function splitOnDeath(state: InventoryState): { kept: RunLoadout; lost: ItemInstance[] } {
+  const keptBag: PlacedItem[] = [];
+  const lost: ItemInstance[] = [];
+  for (const item of state.bag) {
+    if (isInsuredItem(state, item)) keptBag.push({ ...item });
+    else lost.push(instanceOf(item));
+  }
+  for (const item of state.equipped) {
+    if (item) lost.push(instanceOf(item));
+  }
+  return {
+    kept: {
+      bag: keptBag,
+      equipped: EQUIP_SLOTS.map(() => null),
+      activeWeaponSlot: 0,
+      insured: insuredRect(state),
+    },
+    lost,
   };
 }

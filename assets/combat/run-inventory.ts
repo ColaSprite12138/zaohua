@@ -108,6 +108,8 @@ export function collectDrop(
   run: InventoryState,
   uid: string,
   defId: string,
+  /** 尸体遗物带着它原来的耐久；普通掉落为 undefined（捡起来就是新的）。 */
+  durability?: number,
 ): PickupResult {
   ensureItemCatalog();
   // **只有武器能进武器槽**（设计 7.4）。掉落池里现在有药，以前这里无条件塞空槽，
@@ -116,10 +118,10 @@ export function collectDrop(
   const empty = !equippable ? -1
     : run.equipped[0] === null ? 0 : (run.equipped[1] === null ? 1 : -1);
   if (empty >= 0) {
-    run.equipped[empty] = { uid, defId };
+    run.equipped[empty] = { uid, defId, ...(durability === undefined ? {} : { durability }) };
     return { where: 'weapon', slot: empty as 0 | 1 };
   }
-  return addToBag(run, uid, defId) !== null
+  return addToBag(run, uid, defId, durability) !== null
     ? { where: 'bag' }
     : { where: 'full' };
 }

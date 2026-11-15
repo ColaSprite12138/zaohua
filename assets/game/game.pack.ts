@@ -30,6 +30,7 @@ import {
   syncWeaponSlots, applyRunCommand, snapshotRun, makeRunInventory,
   type Deployment, type RunLoadout, type RunCommand,
 } from './simulation.ts';
+import { leftoverDeathDrops, settleOnDeath } from '../combat/death-drop.ts';
 import { paint } from './paint.ts';
 import { HEAL_KEY, POTION_KEY, SKILL_KEYS } from '../shared/constants.ts';
 import { arena } from '../resource/maps/arena.generated.ts';
@@ -63,6 +64,20 @@ export type RunResult = {
   stage: string;
   /** The WHOLE run inventory; present only on a clear, null on a loss. */
   loadout: RunLoadout | null;
+  /**
+   * 失败时**仍然带回家**的部分（设计 4）：保险格里的背包物品；主线阵亡是整份。
+   * 副本 / 搜打撤阵亡时它是 `{ 空背包 + 十个空槽 }` 或只有几瓶药。
+   */
+  kept?: RunLoadout | null;
+  /**
+   * 失败时**丢下**的部分。副本把它写进死亡掉落槽（下次进本捡回一次），
+   * 搜打撤直接消失。主线阵亡为空数组。
+   */
+  lost?: { defId: string; durability?: number }[];
+  /** 阵亡位置（世界像素）；副本用它决定遗物落在哪。 */
+  deathAt?: { x: number; y: number } | null;
+  /** 地上还没捡走的遗物（撤离时仍留在副本里，下次进来还在）。 */
+  deathDropLeft?: { defId: string; x: number; y: number; durability?: number }[];
 };
 
 /** A discarded / not-yet-deployed run owns nothing. */
@@ -257,6 +272,9 @@ export const game: Plugin = {
       if (!state.cleared && !state.extracted && !state.timedOut && !state.gameOver) return;
       resultSent = true;
       const lost = state.gameOver || state.timedOut;
+      // 死亡结算（设计 4）：主线整份带回；副本 / 搜打撤只带回保险格里的东西。
+      // 分割规则是 `meta/inventory.ts::splitOnDeath()`，两个堆共用一份。
+      const settlement = settleOnDeath(state, !lost);
       lastResult = {
         outcome: lost ? 'gameOver' : state.extracted ? 'extracted' : 'cleared',
         ...(lost ? { reason: state.timedOut ? 'timedOut' as const : 'dead' as const } : {}),
@@ -269,6 +287,14 @@ export const game: Plugin = {
         // A clear / extraction brings the WHOLE run home; a loss discards it.
         // There is no per-uid reconciliation, no findFirstFit banking, no overflow.
         loadout: lost ? null : snapshotRun(state.runInventory),
+        kept: lost ? settlement.kept : null,
+        lost: lost ? settlement.lost.map((it) => ({
+          defId: it.defId,
+          ...(it.durability === undefined ? {} : { durability: it.durability }),
+        })) : [],
+        // 阵亡点：副本遗物落在这里。玩家被冻结后不再移动，所以结算时读到的就是死点。
+        deathAt: lost ? { x: state.player.x, y: state.player.y } : null,
+        deathDropLeft: leftoverDeathDrops(state),
       };
       channel?.postMessage({ type: 'result', result: lastResult });
     };

@@ -8,7 +8,9 @@
  *
  *   deploy  takeIntoRun(): copy lobby bag + equipped into the run, EMPTY lobby
  *   cleared bringBack():   the WHOLE run state comes home
- *   gameOver / abort:      discard the run; the lobby is already empty
+ *   gameOver:              kept (保险格 / 主线整份) comes home, the rest is LOST;
+ *                          dungeon 把它写进死亡掉落槽，下次进本捡回一次
+ *   abort:                 discard the run; the lobby is already empty
  *   stash:                 never enters a run, never touched
  *
  * The in-run character panel is a READ-ONLY view of the Worker snapshot. Its
@@ -32,6 +34,19 @@
   var inRun = false;
   var bagOpen = false;
   var channel = null;
+  /**
+   * 本局关卡类型（设计 2 / 4）。三条死亡规则完全不同，所以出征前必须选定：
+   *   story  主线 —— 身上 + 背包全不掉
+   *   dungeon 副本 —— 死亡掉落，下次进本捡回一次（第二次死亡永久消失）
+   *   pvpve  搜打撤 —— 无二次机会，全部丢失
+   * 以前这里写死 'pvpve'，所以「副本回收」在正式链路里根本走不到。
+   */
+  var KIND_TEXT = {
+    story: '主线 · 阵亡不掉落（身上 + 背包全带回）',
+    dungeon: '副本 · 阵亡掉在死亡地点，下次进本可捡回一次（再死就永久消失）',
+    pvpve: '搜打撤 · 阵亡全部丢失，没有第二次机会',
+  };
+  var currentKind = 'pvpve';
 
   /* ------------------------------- DOM -------------------------------- */
   var root = document.getElementById('fx-shell');
@@ -46,11 +61,18 @@
     '<span class="fx-account">玩家 <b id="fx-account-name">—</b>' +
     '  <span id="fx-save-mode" class="fx-save-mode" style="display:none">平台云存档</span></span></div>' +
     '<div class="fx-controls">' +
+    '  <label for="fx-kind">关卡</label>' +
+    '  <select id="fx-kind" title="三条死亡规则不同：主线不掉、副本可捡回一次、搜打撤全丢">' +
+    '    <option value="pvpve">搜打撤</option>' +
+    '    <option value="dungeon">副本</option>' +
+    '    <option value="story">主线</option>' +
+    '  </select>' +
     '  <button id="fx-deploy" type="button">出征 →</button>' +
     '  <button id="fx-back" type="button" disabled>← 返回局外</button>' +
     '  <button id="fx-bag" type="button" disabled>背包 B/I</button>' +
+    '  <span id="fx-leftovers" class="fx-leftovers"></span>' +
     '</div>' +
-    '<div id="fx-log" class="fx-log">配好装备后点「出征」；通关带回全部物品，阵亡或中途退出全部丢失。</div>';
+    '<div id="fx-log" class="fx-log">配好装备后点「出征」；撤离带回全部物品，保险格里的东西阵亡也不会丢。</div>';
   root.insertBefore(bar, root.firstChild);
 
   var $ = function (id) { return document.getElementById(id); };
@@ -85,6 +107,23 @@
     return loadout.bag.length + loadout.equipped.filter(Boolean).length;
   };
 
+  /**
+   * 副本死亡掉落槽（设计 4）：`{ stage, x, y, items }`。
+   * 只挂在 `host` 上、随存档 v3 的 `extra` 一起落盘 —— 局内 Worker 拿不到它，
+   * 也不该拿：遗物是**跨局**的东西，属于主窗口。
+   */
+  if (host.deathDrop === undefined) host.deathDrop = null;
+
+  /** 顶栏「副本遗物 N 件」提示：只提示，不提供任何传送按钮。 */
+  function syncLeftovers() {
+    var el = $('fx-leftovers');
+    if (!el) return;
+    var drop = host.deathDrop;
+    var n = drop && drop.items ? drop.items.length : 0;
+    el.textContent = n > 0 ? '副本遗物 ' + n + ' 件待捡回' : '';
+    el.title = n > 0 ? '在「副本」模式下出征，遗物会掉在死亡地点，点名字牌捡回' : '';
+  }
+
   /* --------------------------- phase control --------------------------- */
   function setRunBag(open) {
     if (!inRun) open = false;
@@ -104,6 +143,8 @@
     $('fx-deploy').disabled = on;
     $('fx-back').disabled = !on;
     $('fx-bag').disabled = !on;
+    // 关卡类型只能在出征前选：局内换类型等于中途改死亡规则。
+    $('fx-kind').disabled = on;
     $('fx-phase').textContent = on ? '阶段：战斗' : '阶段：局外配装';
   }
 
@@ -215,37 +256,70 @@
   }
 
   /* ------------------------------ deploy ------------------------------- */
+  $('fx-kind').addEventListener('change', function () {
+    if (inRun) return;
+    currentKind = $('fx-kind').value;
+    log(KIND_TEXT[currentKind] || '');
+  });
+
   $('fx-deploy').addEventListener('click', function () {
     if (inRun) return;
     var lobby = host.getLobbyState();
     // takeIntoRun() returns a copy and EMPTIES the lobby's bag + equipment.
-    // Losing the run therefore loses everything carried; only a clear returns
-    // it. The stash stays in the lobby and never crosses the heap boundary.
+    // Losing the run therefore loses everything carried except the insured
+    // cells. The stash stays in the lobby and never crosses the heap boundary.
     var loadout = M.takeIntoRun(lobby);
     host.setState(lobby);
     inRun = true;
     host.enterRun(loadout);
     showBattle(true);
-    if (channel) channel.postMessage({
-      type: 'deploy',
-      // kind = pvpve：正式出征是搜打撤 —— 杀光怪不算结束，必须从传送门撤离。
-      deployment: {
-        seed: SEED, loadout: loadout, kind: 'pvpve', stars: starDeployment(),
-      },
-    });
-    log('出征 · 带入 ' + countItems(loadout) + ' 件物品；从传送门撤离才带回，阵亡或超时全部丢失');
+    var deployment = {
+      seed: SEED, loadout: loadout, kind: currentKind, stars: starDeployment(),
+    };
+    // 副本遗物（设计 4）：只有「副本」把上一局掉落的东西摆回地图。
+    // 只有一张地图，所以不按 stage 过滤；多了分区之后这里要加 stage gate。
+    var drop = host.deathDrop;
+    if (currentKind === 'dungeon' && drop && drop.items && drop.items.length > 0) {
+      deployment.deathDrop = {
+        x: drop.x,
+        y: drop.y,
+        items: drop.items.map(function (it) {
+          return it.durability === undefined
+            ? { defId: it.defId }
+            : { defId: it.defId, durability: it.durability };
+        }),
+      };
+    }
+    if (channel) channel.postMessage({ type: 'deploy', deployment: deployment });
+    var corpse = deployment.deathDrop ? '；上一局遗物 ' + deployment.deathDrop.items.length + ' 件掉在原地' : '';
+    log('出征 · 带入 ' + countItems(loadout) + ' 件物品；' + KIND_TEXT[currentKind] + corpse);
   });
 
   $('fx-back').addEventListener('click', function () {
     if (!inRun) return;
-    // A mid-run return is a LOSS: throw away the whole run state. No result
-    // message is expected, so clear the phase here instead of in settle().
+    // A mid-run return is a LOSS: the Worker throws the run away (no result
+    // message), so the phase is cleared here instead of in settle().
+    // 保险格（设计 4）仍然救回它那几件 —— 否则「主动退出比战死更亏」会逼玩家去送死。
+    // 规则与死亡共用 `meta/inventory.ts::splitOnDeath()`，只是**不形成遗物**。
+    var lobby = host.getLobbyState();
+    var keptNote = '';
+    var runState = host.isRun && host.isRun() ? host.getState() : null;
+    if (runState) {
+      var kept = currentKind === 'story'
+        ? M.loadoutFromRun(runState)
+        : M.splitOnDeath(runState).kept;
+      var keptCount = countItems(kept);
+      if (keptCount > 0) {
+        M.bringBack(lobby, kept);
+        keptNote = ' · 保险格带回 ' + keptCount + ' 件';
+      }
+    }
     if (channel) channel.postMessage({ type: 'abort' });
     host.leaveRun();
     inRun = false;
     showBattle(false);
-    host.setState(host.getLobbyState());
-    log('中途退出 · 本局带入物品与战利品全部丢失', true);
+    host.setState(lobby);
+    log('中途退出 · 本局战利品全部丢失' + keptNote + '（不形成遗物）', true);
   });
 
   $('fx-bag').addEventListener('click', function () {
@@ -288,6 +362,7 @@
     if (!inRun || !result) return;
     var lobby = host.getLobbyState();
     var cleared = result.outcome !== 'gameOver';
+    var kind = currentKind;
     // 经验与首通在**局外**结算：任务失败照样给经验（死在半路不该连成长都没），
     // 星图点只能来自升级 + 主线首通 + 探索事件（设计 6.3）。
     var progressNote = grantRunProgress(result, cleared);
@@ -297,30 +372,86 @@
       // findFirstFit banking, no overflow, no duplicate instance creation.
       M.bringBack(lobby, result.loadout);
       brought = countItems(result.loadout);
+    } else if (!cleared && result.kept) {
+      // 保险格（设计 4）：阵亡也把这块区域里的背包物品带回家；主线是整份。
+      // 分割规则在 Worker 侧（`meta/inventory.ts::splitOnDeath`），这里只搬。
+      M.bringBack(lobby, result.kept);
+      brought = countItems(result.kept);
+    }
+    // 遗物槽（设计 4）：只有副本有「捡回一次」。搜打撤 / 主线阵亡会把旧遗物一起清掉 ——
+      // 一人一具尸体，新的死覆盖旧的，这就是「第二次死亡永久消失」的落点。
+    var left = result.deathDropLeft || [];
+    if (cleared) {
+      host.deathDrop = kind === 'dungeon' && left.length > 0
+        ? {
+          stage: result.stage || '',
+          x: left[0].x,
+          y: left[0].y,
+          items: left.map(function (it) {
+            return it.durability === undefined
+              ? { defId: it.defId }
+              : { defId: it.defId, durability: it.durability };
+          }),
+        }
+        : null;
+    } else if (kind === 'dungeon' && result.deathAt && (result.lost || []).length > 0) {
+      host.deathDrop = {
+        stage: result.stage || '',
+        x: result.deathAt.x,
+        y: result.deathAt.y,
+        items: result.lost.map(function (it) {
+          return it.durability === undefined
+            ? { defId: it.defId }
+            : { defId: it.defId, durability: it.durability };
+        }),
+      };
+    } else {
+      host.deathDrop = null;
     }
     host.leaveRun();
     inRun = false;
     setRunBag(false);
     host.setState(lobby);
     showBattle(false);
+    syncLeftovers();
 
     var lootNames = (result.lootLog || []).map(function (r) {
       return r.name + '(' + r.quality + ')';
     });
     if (!cleared) {
-      var lostText = result.reason === 'timedOut'
-        ? '超时未撤离 · 本局带入物品与战利品全部丢失（击杀 ' + result.kills + '）'
-        : '阵亡 · 本局带入物品与战利品全部丢失（击杀 ' + result.kills + '）';
+      var why = result.reason === 'timedOut' ? '超时未撤离' : '阵亡';
+      var lostCount = (result.lost || []).length;
+      var lostText;
+      if (kind === 'story') {
+        lostText = why + ' · 主线不掉落：' + brought + ' 件全部带回（击杀 ' + result.kills + '）';
+      } else if (kind === 'dungeon') {
+        lostText = why + ' · 保险格保住 ' + brought + ' 件，其余 ' + lostCount
+          + ' 件遗落在副本（下次进本可捡回一次，再死就永久消失）（击杀 ' + result.kills + '）';
+      } else {
+        lostText = why + ' · 本局带入物品与战利品全部丢失'
+          + (brought > 0 ? '（保险格保住 ' + brought + ' 件）' : '')
+          + '（击杀 ' + result.kills + '）';
+      }
       log(lostText + progressNote, true);
       return;
     }
     var head = result.outcome === 'extracted' ? '撤离成功 · 带回 ' : '通关 · 带回 ';
     var text = head + brought + ' 件物品（击杀 ' + result.kills + '）';
+    if (host.deathDrop && host.deathDrop.items) {
+      text += ' · 副本里还剩 ' + host.deathDrop.items.length + ' 件遗物没捡';
+    }
     if (lootNames.length) text += ' · 掉落：' + lootNames.join('、');
     log(text + progressNote);
   }
 
+  // 平台存档读完遗物槽之后要刷新顶栏提示（platform-store.js 调用）。
+  host.syncLeftovers = function () {
+    syncLeftovers();
+    if (host.onRender) host.onRender();
+  };
+
   // The engine may already be running when this script is injected.
   if (channel) channel.postMessage({ type: 'hello' });
   syncBadge();
+  syncLeftovers();
 })();

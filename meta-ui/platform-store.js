@@ -50,6 +50,9 @@
   function apply(state) {
     applying = true;
     try {
+      // 保险格（设计 4）：v1/v2 存档没有这个字段，读进来先补成赠送的 1×2，
+      // 否则旧存档的背包里会没有「阵亡不掉」的那块区域。
+      if (state && typeof M.normalizeInsured === 'function') M.normalizeInsured(state);
       host.setState(state);
       // 星图进度和背包同属一份 blob（v2）。坏数据 / 旧存档回退初始星图，
       // 绝不让存档把局外页面弄白屏（`sanitizeProgress` 内部逐条校验）。
@@ -74,7 +77,11 @@
       // 4174 preview can play the game without persisting anything.
       if (applying || !queue) return null;
       var p = host.getProgress ? host.getProgress() : null;
-      return A.writeSave(queue, host.getState(), p || undefined);
+      // v3：副本死亡掉落槽（设计 4）跟背包、星图同一份 blob 落盘，否则
+      // 「下次进本捡回一次」在关掉页面之后就没了。空槽不写字段。
+      var drop = host.deathDrop;
+      var extra = drop && drop.items && drop.items.length > 0 ? { deathDrop: drop } : undefined;
+      return A.writeSave(queue, host.getState(), p || undefined, extra);
     },
     lastSaved: function () { return queue ? queue.last() : null; },
     writeCount: function () { return queue ? queue.calls() : 0; },
@@ -93,6 +100,13 @@
       };
       queue = A.createSaveQueue(function (env) { return bridge.write(env); });
       progressBlob = A.decodeProgress(bridge.initial);
+      // v3 的遗物槽：v1/v2 没有这一格 → 当成「没有遗物」。
+      // **必须在 apply() 之前落位**：apply() 会重建界面并顺手 syncBadge/persist，
+      // 那一次写入才是「载入后的第一份存档」，之后再补写会多出一条重复信封。
+      var extra = A.decodeExtra(bridge.initial);
+      host.deathDrop = extra && extra.deathDrop && Array.isArray(extra.deathDrop.items)
+        ? extra.deathDrop
+        : null;
       apply(A.decodeSave(bridge.initial, fallback, slots));
       return true;
     },

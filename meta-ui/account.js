@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/account.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 906217a57d782630664368e63dfdc61a1a65ba5cc0464ff2adcdafa56bb8c2b4
+ * Source SHA-256: 2a173f4ec3669efb0169bc0b2280a045270a7e2ef15095ea2c7f273af7161f73
  */
 (function (root) {
 "use strict";
@@ -32,28 +32,39 @@ exports.encodeSave = encodeSave;
 exports.isValidInventoryState = isValidInventoryState;
 exports.decodeSave = decodeSave;
 exports.decodeProgress = decodeProgress;
+exports.decodeExtra = decodeExtra;
 exports.readSave = readSave;
 exports.createSaveQueue = createSaveQueue;
 exports.writeSave = writeSave;
 exports.SAVE_KEY = 'forgeax.save.v1';
 /**
  * v2 把「星图进度」和背包一起存进同一个 blob（设计 6.1 / 6.3：等级、经验、
- * 点数、点亮节点都是跨局进度，掉线不该清零）。v1 存档仍然能读：
- * `decodeSave()` 接受 1..SCHEMA_VERSION，缺 `progress` 时由调用方回退初始星图。
+ * 点数、点亮节点都是跨局进度，掉线不该清零）。
+ *
+ * v3 再加一个 `extra`（设计 4）：**副本死亡掉落槽** —— 上一局阵亡遗落在副本里的
+ * 东西必须跨局保存，否则「下次进本捡回一次」根本无从谈起。
+ * 老存档照常读：`decodeSave()` 接受 1..SCHEMA_VERSION，`decodeProgress()` 接受 ≥2，
+ * `decodeExtra()` 只认 ≥3（v1/v2 没有这一格，由调用方回退空的遗物槽）。
  */
-exports.SCHEMA_VERSION = 2;
+exports.SCHEMA_VERSION = 3;
 /* --------------------------- envelope / schema --------------------------- */
 /**
  * Force a plain-JSON round trip. The Builder preview host uses
  * `structuredClone` while the platform/devStub path uses `JSON.stringify`, so
  * Date / Map / class instances would silently change shape between envs.
  */
-function encodeSave(state, progress) {
+function encodeSave(state, progress, extra) {
     const env = { schemaVersion: exports.SCHEMA_VERSION, state: plainJson(state) };
     // `undefined` keeps the envelope byte-identical to v1 for callers that have
     // no star map yet (standalone page, unit tests, verify-shell probes).
     if (progress !== undefined && progress !== null)
         env.progress = plainJson(progress);
+    // v3: 空的遗物槽不写字段 —— 没有遗留时信封与 v2 长得一样，便于回滚比对。
+    if (extra !== undefined && extra !== null) {
+        const value = plainJson(extra);
+        if (Object.keys(value).length > 0)
+            env.extra = value;
+    }
     return env;
 }
 function plainJson(value) {
@@ -93,9 +104,24 @@ function decodeProgress(raw) {
     if (!raw || typeof raw !== 'object')
         return null;
     const env = raw;
-    if (env.schemaVersion !== exports.SCHEMA_VERSION)
+    // `>= 2`（而不是 `=== SCHEMA_VERSION`）：v3 加了遗物槽之后，v2 的星图仍然要读得回来。
+    if (typeof env.schemaVersion !== 'number' || env.schemaVersion < 2)
         return null;
     return env.progress ?? null;
+}
+/**
+ * v3 的跨局遗留（`{ deathDrop }`）。v1/v2 没有这一格 → null，
+ * 调用方把它当成「没有遗物」处理，不能让老存档因此被判损坏。
+ */
+function decodeExtra(raw) {
+    if (!raw || typeof raw !== 'object')
+        return null;
+    const env = raw;
+    // 只认 3..SCHEMA_VERSION：更早的存档没有这一格，更新的存档我们读不懂（和 decodeSave 同一条线）。
+    if (typeof env.schemaVersion !== 'number' || env.schemaVersion < 3
+        || env.schemaVersion > exports.SCHEMA_VERSION)
+        return null;
+    return env.extra ?? null;
 }
 function readSave(adapter, fallback, slotCount) {
     return decodeSave(adapter.read(), fallback, slotCount);
@@ -134,8 +160,8 @@ function createSaveQueue(write) {
     };
 }
 /** One save point: encode the current state and hand it to the queue. */
-function writeSave(queue, state, progress) {
-    const envelope = encodeSave(state, progress);
+function writeSave(queue, state, progress, extra) {
+    const envelope = encodeSave(state, progress, extra);
     queue.push(envelope);
     return envelope;
 }

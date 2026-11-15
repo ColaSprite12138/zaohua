@@ -51,6 +51,14 @@
 #fx-shell .fx-controls button:hover:not(:disabled) { border-color: #67e8f9; color: #67e8f9; }
 #fx-shell .fx-controls button:disabled { opacity: .4; cursor: default; }
 #fx-shell .fx-controls #fx-deploy { border-color: #ffd166; color: #ffd166; }
+/* 关卡类型（设计 2 / 4）：三条死亡规则不同，所以它是出征前的一个显式选择。 */
+#fx-shell .fx-controls select {
+  background: #0e1a25; color: #dbe9f5; border: 1px solid #294055;
+  border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 12px;
+}
+#fx-shell .fx-controls select:disabled { opacity: .4; }
+#fx-shell .fx-leftovers { color: #ff9b7b; font-size: 12px; }
+#fx-shell .fx-leftovers:empty { display: none; }
 #fx-shell .fx-log {
   flex: 1 1 320px; min-width: 260px; color: #ffd166; font-size: 12px;
   text-align: right;
