@@ -762,3 +762,21 @@
 - 顺带：**截图需要删除旧产物**，占位超过 50 个文件会触发安全删除的批量确认。跑 play 前先
   `export CODEBUDDY_SAFE_DELETE_ENABLED=0`（`verify.sh` / `verify-all.sh` 已经这么做了，
   手动单跑容易忘）。
+
+## 30. 造化预览宿主的生命周期，与「稳定预览」的正确做法
+
+- 现象：`preview_start / preview_reload` 校验通过、`previewUrl` 也能 200，但用户一两分钟后再开就
+  「连接被拒」；而且**每次重载端口都会变**（55061 → 53798），旧地址自然失效。
+- 根因：宿主的实际进程是 `offline-preview.js`（`--port 0`），**父进程是当次构建的 `build-job.js`**。
+  任务结束（turn 收尾）后它会被回收；它是 detached 的，但仍是那条进程树的子节点。
+  它运行在独立控制台里（有时看不到窗口），所以「关窗口」并不是唯一死法。
+- 试验结论（都实测过）：
+  - 直接静态托管 `.game-builder/artifacts/forgeax-player`（造化打包产物）**不行**：它等宿主注入的
+    平台 provider，只拉到 `index.html + assets/zaohua-platform-init.js` 就停住，看起来像白屏。
+  - **`dist/` + `node scripts/inject-shell.mjs` + 任意静态服务器**可以：引擎全量 JS / `pack-index.json`
+    / shaders / 游戏 program bundle 全部 200，能进局外界面并出征（壳层 hostless 分支：能玩、不写云存档）。
+- 现行做法：`forgeax project build` → `node scripts/inject-shell.mjs` →
+  `cd dist && python -m http.server 58080 --bind 127.0.0.1` → `http://127.0.0.1:58080/index.html`。
+  端口固定，地址不再变；浏览器缓存时加 `?v=N`。**build / play / package 都会重建 dist 并抹掉壳层，
+  所以每次改完代码都要重跑 inject-shell 并换 `?v`。**
+- 说明：这条路只适合开发时自己看。要「带云存档的正式预览 / 发布」仍然走造化那条（②）。

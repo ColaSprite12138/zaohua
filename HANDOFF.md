@@ -20,6 +20,18 @@
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
 > 状态：**2026-11-15 全套验收通过**（211 条单测 / 独立页 14 条 / 单页 40 条 / playthrough 77 steps / resize 4 steps；**单局骨架已按设计文档第 10 章落地：900 秒倒计时 + 探索/交战/撤离三段 + 传送门 8 秒引导（按 E、受击/离开只清进度、3 次开启）+ 关卡类型分流（story 清场即达成、dungeon/pvpve 必须撤离、超时整份丢失）**；**技能两批已落地（设计 8.2/8.3/9.3）：7 格技能栏 + 法力（不自动恢复）+ 3 个技能（横扫 / 冲锋 / 冰锥）+ 读条与打断 + 蓝药，键位 Q W T F G V C，喝药 X；第二批补表现 —— 冲锋改为分帧位移（0.23 秒，不再瞬移）、读条举杖、每个技能一套方块特效 + 3.2 秒地面残留**；**角色/怪物已有走路与转身动画（4 帧步态 × 正/背面 × 左右镜像，按位移推进）、武器由手臂绕肩关节握在拳头上并带挥击残影，背包/仓库/装备槽/掉落/HUD 全部用体素模型代替文字，底部是「左下角血/法双条 + 居中武器槽与技能栏（首格闪避）」**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**：出征整份搬入并清空局外、撤离或通关整份搬回、阵亡/超时/中途退出整份丢弃；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；穿戴武器按 `weapon.xlsx` 数值生效；**画面已全量体素化，正式地图是 128×96 的仙侠院落，风格与素材管线见 `docs/art-style.md`**）。**steps 会浮动**：21 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 74–80 间变化，`verify-all.sh` 下限固定 35。
+> **2026-11-15 一天做了什么（新会话速读，三分钟对齐）**：
+> ① **技能两批** —— 7 格技能栏 / 法力（不自动恢复）/ 3 个技能（横扫·冲锋·冰锥）/ 读条与打断 / 蓝药；
+> 第二批补表现：**冲锋改成 0.23 秒的分帧位移（不再瞬移）**、读条举杖 + 法力球、每个技能一套方块特效
+> （扇形刀光 / 飞出冰晶 / 起手尘土 / 脚下法阵 / 命中炸点）+ 3.2 秒地面残留（灼痕 / 霜痕）。
+> 契约在 `assets/combat/CONTEXT.md`「技能栏与法力」「技能表现」。**状态与反应链还没做**（8.4 / 8.5）。
+> ② **HUD 定型**（用户两轮改主意后的最终形态）—— 左下角血条 + 法力条（20 段方块），底部居中
+> 武器槽 + 技能栏（**第一格是闪避**，空格键，不占 7 格名额）；左上血条面板、左下冷却面板、
+> 右下操作说明、**壳层 DOM `#fx-battle-hint`** 全部删除。契约在同文件「HUD」两行。
+> ③ **稳定预览链路**（造化宿主会被回收）—— 见「30 秒定位 → 怎么开 ③」。
+> ④ **验收基线**：211 条单测 / playthrough 77 steps / resize 4 / 单页壳层 40 条 / 独立页 14 条。
+> **下一步按设计文档 15 章的建议顺序：状态与反应链**（技能现在只会直接扣血）。
+
 > 这份文件记录**跨模块红线、保护清单、验收基线与回滚方案**；**模块功能契约的正本在
 > `assets/<模块>/CONTEXT.md`**（2026-11-14 拆分，见下节「模块契约在哪」）。
 > 新会话先读本文件与「模块契约在哪」，再按改动模块读对应 `CONTEXT.md`。
@@ -32,7 +44,7 @@
 | 项 | 值 |
 |:--|:--|
 | 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad。**画风是体素/立体积素（Voxel）**：所有实体/地形/反馈都由 `assets/game/voxel.ts` 的方块模型烘焙成精灵后绘制，规格见 `docs/art-style.md` |
-| 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html` |
+| 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html`。**③ 2026-11-15 新增（最省事、地址固定）**：造化预览宿主是每次构建任务的子进程，**turn 结束就被回收**（表现为「刚说能开、一分钟后就打不开」，端口每次还会变）。要一个稳定地址就直接静态托管 `dist/`：`forgeax project build` → `node scripts/inject-shell.mjs` → `cd dist && python -m http.server 58080 --bind 127.0.0.1`，打开 `http://127.0.0.1:58080/index.html`（浏览器缓存时加 `?v=N`）。这条路走壳层的 hostless 分支：**能玩、不写云存档**。注意**不要**直接静态托管 `.game-builder/artifacts/forgeax-player`：那是造化产物，缺宿主注入的 provider，页面会卡在初始化 |
 | 地图 | 正式地图 `128×96` 格 @32px = **4096×3072** 世界像素（仙侠院落：北侧高台、东西厢房、院墙残段 + 香炉）。三个图层：`Terrain`(IntGrid=碰撞权威) / `Entities`(出生点 + 7 只怪 + **传送门**，数量由 LDtk 决定，当前 6 扇) / `Props`(纯装饰，贴素材库图集)。生成链：`bake-voxel-atlas.mjs` → 图集；`gen_arena_map.py` → `arena.ldtk`（之后人工在 LDtk 里改）；`import_map.py` → `arena.generated.ts` |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
 | 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **211**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
@@ -46,7 +58,7 @@
 2. **`assets/<模块>/CONTEXT.md`** — 该模块的**功能契约正本**、不变量、对外接口、依赖方向、独立验收；
    配套 `EXPERIENCE.md` 是该模块独立经验库（踩坑按模块追加，不混进全局 feedback 编号）
 3. `README.md` — 工程结构、交互契约、点击分类、验收脚本逐条说明、坐标映射原理
-4. `docs/feedback.md` — 28 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**（按条追加，不改写历史条目；第 18 / 19 条是 Builder 产物链，最后两条是本次拾取改造与预览链路澄清）
+4. `docs/feedback.md` — 29 条跨模块历史决策与踩坑，每条含根因与证据；**不要重复踩**（按条追加，不改写历史条目；第 18 / 19 条是 Builder 产物链，最后两条是本次拾取改造与预览链路澄清）
 5. `.workbuddy/memory/YYYY-MM-DD.md` — 工作流水账，只作线索，不是规范
 6. `AGENTS.md` — ForgeAX 引擎模板自带的**通用** SDK 规范（顶部另有本工程的 Git 提交纪律）；查引擎 API 时才读
 
@@ -279,6 +291,8 @@ resource 14（tables 7 + map 7）、**美术 10（`assets/__tests__/voxel.test.t
 | 背包已满但战利品凭空消失 / 出现在仓库 | 满仓时 `addToBag()` 返回 `null`、掉落物留在地上；`findFirstFit()`（bag→stash）只在**结算**时用，别在拾取时调用 |
 | 大视口四象限点地面被判成点敌人 | 骷髅会追过来；移动类验收步骤前按 R 隔离 |
 | `pnpm: command not found` / build 被拦 | 用 `./node_modules/.bin/*`；build / package 带 `CODEBUDDY_SAFE_DELETE_ENABLED=0`（**手动单跑 `project play` 也要带**，截图要删旧产物，超过 50 个文件会触发安全删除的批量确认） |
+| 静态托管造化产物 → 页面白屏/转圈 | 那是给宿主用的单页，只拉 `index.html + zaohua-platform-init.js` 就停住。要静态托管就用 `dist/` + `inject-shell.mjs`（走 hostless 分支） |
+| `play.screenshot` 拍不到 0.3 秒的特效 | 截图从调用到成像有 **1~2 秒游戏时间延迟**。短特效要么配地面残留（`sweepMark` / `frostMark`，3.2s），要么只靠单测断言，别指望截图 |
 | HUD 贴着画布底边写字被切一半 | 1280×600 下引擎可见区只到逻辑 y≈704（底部约 16 逻辑像素被吃掉）。底部元素一律按 `paint.ts::HUD_BOTTOM` 留白，别用 `VIEW_H - 个位数` |
 | 重跑 `project play` 一直打印 `waiting for another play of this project (pid NNNN)` | 上一次 play 异常退出留下的陈旧锁 `.forgeax/play/lock.json` + **pid 复用**：新进程读到 `lock.pid === 自己` 就自己等自己。确认没有别的 play 在跑后 `rm -f .forgeax/play/lock.json .forgeax/play/lock.json.takeover`（见 feedback 第 29 条） |
 | 两个窗口同时跑 `verify-all.sh`，汇总和截图互相覆盖 | 已加 `.verify-all.lock`：第二个实例报 `[BUSY]` 并 `exit 2`；别同时开两个验收 |

@@ -292,8 +292,9 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 `AuthoredItemView` / `monsterRow(id)` / `poolEntries(poolId)` / `theoreticalDistribution(poolId)` /
 `updateRunClock(s, dt)` / `updateExtraction(s, dt, channelPressed)` / `phaseAt(runSeconds)` / `runFinished(s)` /
 `createPortals(world, count?)` /
-`beginSkill(s, slot, aim, mods)` / `advanceCast(s, dt, mods)` / `tickSkills(s, dt)` / `drinkPotion(s)` /
-`skillDef(id)` / `skillReady(s, slot)` / `SKILLS` / `createSkillBar()` / `damageSkeleton(s, i, amount, opts?)`。
+`beginSkill(s, slot, aim, mods)` / `advanceCast(s, dt, mods)` / `updateDash(s, dt, mods)` / `tickSkills(s, dt)` / `drinkPotion(s)` /
+`skillDef(id)` / `skillReady(s, slot)` / `SKILLS` / `createSkillBar()` / `damageSkeleton(s, i, amount, opts?)` /
+`DASH_SPEED` / `SkillFx` / `DashState`（类型）。
 引擎层从 `assets/game/simulation.ts` 门面 import；新代码应直接 import 本模块。
 
 ## 攻击规格与资源预留（架构层，2026-11-12 新增，**尚未接入运行时**）
