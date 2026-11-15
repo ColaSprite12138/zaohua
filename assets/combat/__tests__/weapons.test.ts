@@ -87,6 +87,9 @@ describe('two weapon slots (Worker-owned run inventory)', () => {
 
   it('a third sword goes into the run bag INSIDE the Worker', () => {
     const s = createState();
+    // 夹具背包现在带着药（消耗品是物品，`createState` 会给几瓶）—— 这条断言关心的是
+    // 「第三把剑落在哪个格子」，所以先把药清掉，别让格子占用影响结论。
+    s.runInventory.bag = [];
     collectSword(s);
     collectSword(s);
     const uid = collectThirdSword(s);
@@ -100,6 +103,7 @@ describe('two weapon slots (Worker-owned run inventory)', () => {
 
   it('a full run bag leaves the drop on the ground', () => {
     const s = createState();
+    s.runInventory.bag = []; // 同上：先把夹具的药清掉，才会「四把剑刚好塞满」
     collectSword(s);
     collectSword(s);
     // 5x8 bag, 2x3 footprint -> exactly four longswords fill it.

@@ -202,6 +202,23 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 | 落点 | `deployRun()` 里 `reset()` 之后调 `applyStarMods()`：reset 会把 hp 拉回 maxHp，上限必须在它之后改写 |
 | 不投影等级 | `projection()` 只有 `xp`；等级由主窗口算。Worker 里不得出现 `level` 字段（两份等级会立刻漂移） |
 
+### 耐久与消耗品（2026-11-15 第五批，设计文档 5.2 / 7.4 / 8.3）
+
+代码：`combat/durability.ts` + `combat/consumables.ts`。这一批是 5.2「抗通胀四条出口」的前两条。
+
+| 项 | 契约 |
+|:--|:--|
+| 耐久上限 | `weapon.xlsx::durability`（巨剑 160 / 弓 110）。**三类武器都有**；演示用 `longsword` 没有表行 → 不参与耐久 |
+| 扣耐久 | 造成：`damageSkeleton` 之后按「这一下的伤害」扣；承受：怪物出刀与 DOT 掉血各扣一次。比值在 `combat_rule.xlsx::durability_dealt / durability_taken`（0.04 / 0.16 ≈ 3:7） |
+| 只在激活槽 | 副手不磨损（否则玩家要为不用的武器付账）；空手 / 无耐久物品 / 已损坏都是 no-op |
+| 损坏 | 耐久 0 → 装备**仍在槽里**，但伤害回落空手 22、近战距离回落 140、HUD 槽底细条变红并标「坏」 |
+| 不做修理 | 设计原话是「修不如重铸」。修理 / 重铸要等金币经济 + 词条批次；本轮坏了就换（5.3 装备是消耗品） |
+| 耐久跨局 | 耐久写在 `ItemInstance.durability` 上，跟着物品跨堆 / 进存档；**重开一局不会修满** |
+| 药是物品 | 红药 `30002` / 蓝药 `30003` 在 `item.xlsx`，1×1 格、`equip=null`，从两个掉落池都能刷到。`GameState.potions` 计数器**已删除** |
+| 喝药 | `X` 蓝药（缓慢回复，`POTION_SECONDS` 秒内 `POTION_MANA` 点）/ `Z` 红药（一口 `hp_potion_heal`）。都是从**局内背包**取走一件；满蓝 / 满血 / 没有药 → 拒绝且不消耗 |
+| 夹具 | `createState()` 给背包塞 `POTION_COUNT` 蓝 + `FIXTURE_HP_POTIONS` 红，供 playthrough / 单测；正式出征由局外背包决定 |
+| 投影 | `durability[2]`（`{slot,current,max,broken}`）/ `weaponBroken` / `potions` / `hpPotions`（后两个是背包计数） |
+
 ### 本局状态与投影
 
 - **没有得分**：`GameState` 没有 `score`，击杀 / 拾取都不加分；HUD 右上角是**只读小地图**，结算板显示 `击杀 / 拾取`。
@@ -357,6 +374,13 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
     `talent/` 与主窗口存在。`deployment.stars` 是**唯一**从局外进入战斗的星图通道。
 43. **技能栏不是常量**：正式出征的技能来自 `deploy.stars.skills`；`PRE_EQUIPPED_SKILLS` 只做夹具兜底，
     任何地方不得再把它当「玩家默认技能」。
+
+44. **耐久只有一个写入口**：`durability.ts::wearWeapon()`。普攻、技能、怪物出刀、DOT 都必须经过它；
+   别在别处改 `runInventory.equipped[i].durability`（跨局账会立刻算错）。
+45. **药不设第二条来源**：`GameState` 里不得再出现 `potions` 计数器；「还有几瓶」一律
+   `countConsumable(runInventory, ...)` 从背包算。喝药必须真的从背包取走一件。
+46. **损坏 ≠ 卸下**：耐久 0 的装备留在槽里，靠 `activeWeaponBroken()` 让伤害/距离回落空手。
+   禁止在耐久归零时把物品删除或自动卸下 —— 那会让玩家觉得"装备凭空消失了"。
 
 ## 目录与依赖方向（单向，禁止反向 import）
 

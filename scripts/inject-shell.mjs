@@ -110,6 +110,8 @@ function buildBlock() {
       damage_min: w ? w.damage_min : 0,
       damage_max: w ? w.damage_max : 0,
       weapon_subtype: w ? w.weapon_subtype : null,
+      // 耐久上限：局外武器槽下面那条细条要它（当前值在物品实例上）。
+      durability: w ? w.durability : undefined,
     };
   });
   // 星图 / 等级：节点坐标、前置、花费、经验曲线全部来自 Excel 生成物，

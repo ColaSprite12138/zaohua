@@ -101,26 +101,33 @@ describe('resource table contract', () => {
     const { weapon } = await import('../generated/weapon.ts');
     const { monster } = await import('../generated/monster.ts');
     const { loot_pool } = await import('../generated/loot_pool.ts');
-    expect(item).toHaveLength(13);
+    // 13 件武器/弹药 + 2 瓶药（2026-11-15 消耗品落地，见 8.3）。
+    expect(item).toHaveLength(15);
     expect(weapon).toHaveLength(13);
     expect(monster).toHaveLength(2);
-    expect(loot_pool).toHaveLength(12);
-    expect(new Set(item.map((r) => r.id)).size).toBe(13);
+    expect(loot_pool).toHaveLength(16);
+    expect(new Set(item.map((r) => r.id)).size).toBe(15);
     expect(new Set(weapon.map((r) => r.id)).size).toBe(13);
-    // Weight ladder 10/8/6/4/2/1 in both pools = 31 each.
+    // 武器阶梯仍是 10/8/6/4/2/1；药各有固定权重，两个池子都能刷到。
     for (const poolId of [1, 2]) {
       const rows = loot_pool.filter((r) => r.loot_pool_id === poolId);
-      expect(rows.map((r) => r.weight)).toEqual([10, 8, 6, 4, 2, 1]);
-      expect(rows.reduce((n, r) => n + r.weight, 0)).toBe(31);
+      const weapons = rows.filter((r) => /^(1000|2000)/.test(String(r.item_id)));
+      expect(weapons.map((r) => r.weight)).toEqual([10, 8, 6, 4, 2, 1]);
+      const potions = rows.filter((r) => String(r.item_id).startsWith('300'));
+      expect(potions.map((r) => [String(r.item_id), r.weight])).toEqual([
+        ['30002', 5], ['30003', 6],
+      ]);
     }
-    // The two tables are a strict 1:1 join by id, and every droppable item has
-    // BOTH rows (name from item, quality/damage from weapon).
+    // 武器两表严格 1:1 join；药只在 item 表（没有武器属性）。
     const ids = item.map((r) => r.id as string).sort();
     const weaponIds = weapon.map((r) => r.id as string).sort();
-    expect(weaponIds).toEqual(ids);
+    // 30001 是弹药，本来就有 weapon 行；只有两瓶药没有武器属性。
+    expect(weaponIds).toEqual(ids.filter((id) => id !== '30002' && id !== '30003'));
     for (const row of loot_pool) {
       expect(ids).toContain(row.item_id);
-      expect(weaponIds).toContain(row.item_id);
+      if (String(row.item_id).startsWith('3') === false) {
+        expect(weaponIds).toContain(row.item_id);
+      }
     }
   });
 
@@ -131,8 +138,9 @@ describe('resource table contract', () => {
     expect(ammo?.name).toBe('弓箭');
     expect(ammo?.item_type).toBe('弹药');
     expect(ammo?.stack_size).toBe(10);
-    // Every other row is still a weapon, stackable only one at a time.
-    expect(item.filter((r) => r.item_type !== '武器')).toHaveLength(1);
+    // 非武器行只有弹药 1 + 消耗品 2（红药 / 蓝药）。
+    const nonWeapon = item.filter((r) => r.item_type !== '武器');
+    expect(nonWeapon.map((r) => r.item_type).sort()).toEqual(['弹药', '消耗品', '消耗品']);
 
     const subtypes = new Map(weapon.map((r) => [r.id as string, r.weapon_subtype]));
     expect(subtypes.get('10001')).toBe('近战');

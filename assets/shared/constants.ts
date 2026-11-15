@@ -34,6 +34,9 @@ export const SKILL_KEYS: readonly string[] = Object.freeze([
 /** 喝蓝药的键（法力不自动恢复，这是唯一的续航手段）。 */
 export const POTION_KEY = 'KeyX';
 
+/** 喝红药的键（`Z`：挨打后回血，和 `X` 蓝药并排）。 */
+export const HEAL_KEY = 'KeyZ';
+
 /** `KeyQ` → `Q`；HUD 角标只显示字母。 */
 export function keyLabel(code: string): string {
   return code.startsWith('Key') ? code.slice(3) : code;

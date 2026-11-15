@@ -27,6 +27,11 @@ import {
   SKILL_SLOTS,
   VIEW_H,
   VIEW_W,
+  countConsumable,
+  durabilityOf,
+  maxDurability,
+  POTION_HP_ID,
+  POTION_MP_ID,
   skillDef,
   statusDef,
   type StatusId,
@@ -974,9 +979,14 @@ function drawVitalBars(g: Painter, s: GameState, x: number, y: number, w: number
     `${Math.round(s.hp)} / ${s.maxHp}`);
   row(y + 32, cap(s.mana, s.maxMana), s.manaSurge > 0 ? '#8be9fd' : '#60a5fa',
     `${Math.round(s.mana)} / ${s.maxMana}`);
-  // 蓝药：法力不自动恢复，所以「还剩几瓶」必须一直看得见。
+  // 药：消耗品是背包物品（设计 8.3），所以数字直接读局内背包 —— 没有第二份计数器。
+  // 法力不自动恢复，蓝药剩余必须一直看得见；红药同理（不然玩家会忘了自己带没带）。
+  const blue = countConsumable(s.runInventory, POTION_MP_ID);
+  const red = countConsumable(s.runInventory, POTION_HP_ID);
   text(g, 'X 蓝药', x + 16, y + 60, 9, '#8fa9bb', 'left', '700');
-  text(g, `×${s.potions}`, x + 16 + 46, y + 60, 9, '#9fc6ff', 'left', '800');
+  text(g, `×${blue}`, x + 16 + 46, y + 60, 9, '#9fc6ff', 'left', '800');
+  text(g, 'Z 红药', x + 16 + 84, y + 60, 9, '#8fa9bb', 'left', '700');
+  text(g, `×${red}`, x + 16 + 130, y + 60, 9, '#ff9a8d', 'left', '800');
 }
 
 /**
@@ -1112,14 +1122,26 @@ function drawWeaponSlots(g: Painter, s: GameState, x: number, y: number): void {
       text(g, '—', bx + HUD_SLOT / 2, y + HUD_SLOT / 2 + 2, 16, '#41576a', 'center', '700');
     }
     text(g, String(i + 1), bx + 5, y + 9, 9, active ? '#ffd166' : '#6f8798', 'left', '800');
+    const barW = HUD_SLOT - 8;
     if (active) {
-      // 普攻冷却：3px 细条压在槽底（0.4 秒很快，扫一眼就知道下一刀好没好）。
+      // 普攻冷却：3px 细条压在槽顶（0.4 秒很快，扫一眼就知道下一刀好没好）。
       const ready = 1 - Math.max(0, Math.min(1, s.player.attackCd / PLAYER_ATTACK_CD));
-      const barW = HUD_SLOT - 8;
+      g.fillStyle = 'rgba(255,255,255,0.12)';
+      g.fillRect(bx + 4, y + 3, barW, 3);
+      g.fillStyle = '#ffb454';
+      g.fillRect(bx + 4, y + 3, Math.round(barW * ready), 3);
+    }
+    // 耐久（设计 5.2 / 7.4）：3px 细条压在槽底。损坏时整条变红 + 角标「坏」。
+    const item = s.runInventory.equipped[i] ?? null;
+    const dmax = maxDurability(item?.defId ?? '');
+    if (dmax > 0) {
+      const dcur = durabilityOf(item);
+      const ratio = Math.max(0, Math.min(1, dcur / dmax));
       g.fillStyle = 'rgba(255,255,255,0.12)';
       g.fillRect(bx + 4, y + HUD_SLOT - 6, barW, 3);
-      g.fillStyle = '#ffb454';
-      g.fillRect(bx + 4, y + HUD_SLOT - 6, Math.round(barW * ready), 3);
+      g.fillStyle = ratio <= 0 ? '#ff6b6b' : ratio < 0.3 ? '#fbbf24' : '#7ddc7d';
+      g.fillRect(bx + 4, y + HUD_SLOT - 6, Math.round(barW * (ratio <= 0 ? 1 : ratio)), 3);
+      if (ratio <= 0) text(g, '坏', bx + HUD_SLOT - 9, y + HUD_SLOT - 12, 9, '#ff6b6b', 'center', '800');
     }
   }
 }

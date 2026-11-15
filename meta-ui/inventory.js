@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 06371bf60a92ea5fc9c56d11b7ba992d0143efa572239e44b60144f92f913afb
+ * Source SHA-256: f585211a1aef6a758915339d7d22b926de0de870bd3ab18ffe93306547100316
  */
 (function (root) {
 "use strict";
@@ -87,6 +87,9 @@ const QUALITY_ACCENT = {
 function itemArtShape(defId, equip) {
     if (defId === 'longsword')
         return 'blade';
+    // 30002 红药 / 30003 蓝药：同一个药瓶模型，靠配色区分（`itemArtKey`）。
+    if (defId === '30002' || defId === '30003')
+        return 'potion';
     switch (defId.charAt(0)) {
         case '1': return 'greatsword';
         case '2': return 'bow';
@@ -105,9 +108,11 @@ function itemArtShape(defId, equip) {
     }
 }
 /** `"shape:accent"` key understood by `voxel.ts::itemModel()`. */
+/** 药水配色不跟品质走：红药永远是红瓶，蓝药永远是蓝瓶。 */
+const POTION_ACCENT = { 30002: 'hp', 30003: 'mana' };
 function itemArtKey(defId, quality, equip) {
     const shape = itemArtShape(defId, equip ?? null);
-    const accent = QUALITY_ACCENT[quality ?? ''] ?? 'steel';
+    const accent = POTION_ACCENT[defId] ?? QUALITY_ACCENT[quality ?? ''] ?? 'steel';
     return `${shape}:${accent}`;
 }
 /** Palette by quality, used only for the authored catalog. */
@@ -126,16 +131,24 @@ function registerItemDefs(rows) {
         const id = String(row.id);
         if (exports.ITEM_DEFS[id] !== undefined)
             continue;
-        const equip = row.equip === undefined ? 'weapon' : row.equip;
+        // 装备类型与格子大小由 `item_type` 决定，**不再默认成武器**：
+        // 以前弹药 / 消耗品没有 `equip` 就被当成 2x3 的武器（30001 弓箭就中过招）。
+        const consumable = row.item_type === '消耗品';
+        const ammo = row.item_type === '弹药';
+        const equip = row.equip !== undefined
+            ? row.equip
+            : (consumable || ammo ? null : 'weapon');
+        const small = consumable || ammo;
         exports.ITEM_DEFS[id] = {
             id,
             name: row.name,
-            cols: row.cols ?? 2,
-            rows: row.rows ?? 3,
+            cols: row.cols ?? (small ? 1 : 2),
+            rows: row.rows ?? (small ? 1 : 3),
             equip,
             color: row.color ?? QUALITY_COLOR[row.quality ?? ''] ?? '#ffd166',
             glyph: row.glyph ?? (id.startsWith('2') ? '➶' : '⚔'),
             art: itemArtKey(id, row.quality, equip),
+            ...(row.durability === undefined ? {} : { durability: row.durability }),
         };
         added += 1;
     }
@@ -371,7 +384,12 @@ function clonePlaced(items) {
 function cloneEquipped(slots) {
     return exports.EQUIP_SLOTS.map((_, i) => {
         const item = slots[i];
-        return item ? { uid: String(item.uid), defId: String(item.defId) } : null;
+        if (!item)
+            return null;
+        // 耐久必须跟着物品跨堆 / 跨局走，否则每次出征都自动修满（5.2 的出口就没了）。
+        return item.durability === undefined
+            ? { uid: String(item.uid), defId: String(item.defId) }
+            : { uid: String(item.uid), defId: String(item.defId), durability: item.durability };
     });
 }
 /**

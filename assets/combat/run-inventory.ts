@@ -16,7 +16,7 @@
 import { item } from '../resource/generated/item.ts';
 import { weapon } from '../resource/generated/weapon.ts';
 import {
-  addToBag, equipItem, loadoutFromRun, placeItem, registerItemDefs,
+  addToBag, createInventoryState, equipItem, loadoutFromRun, placeItem, registerItemDefs,
   runInventoryFrom, setActiveWeapon, unequipItem,
   type InventoryState, type RunLoadout,
 } from '../meta/inventory.ts';
@@ -37,6 +37,8 @@ export function ensureItemCatalog(): void {
     return {
       id: String(r.id),
       name: String(r.name),
+      // item_type 决定「能不能装备 / 占几格」：消耗品与弹药是 1x1 且不可装备。
+      item_type: String(r.item_type),
       quality: w ? String(w.quality) : '',
     };
   }));
@@ -46,6 +48,21 @@ export function ensureItemCatalog(): void {
 export function makeRunInventory(loadout: RunLoadout): InventoryState {
   ensureItemCatalog();
   return runInventoryFrom(loadout);
+}
+
+/**
+ * 自动验收夹具（playthrough / 单测）的背包：几瓶蓝药 + 几瓶红药。
+ *
+ * **只给夹具用**。正式出征的药来自局外背包（搜刮 / 带药下场），所以这里不读任何
+ * "每局免费发几瓶"的配置 —— 数量由调用方（`state.ts` 的夹具常量）传进来。
+ */
+export function seedFixturePotions(
+  run: InventoryState, blue: number, red: number,
+): InventoryState {
+  ensureItemCatalog();
+  for (let i = 0; i < blue; i += 1) addToBag(run, `potion-mp-${i + 1}`, '30003');
+  for (let i = 0; i < red; i += 1) addToBag(run, `potion-hp-${i + 1}`, '30002');
+  return run;
 }
 
 /** Serialise the whole run state for the clear settlement / panel snapshot. */

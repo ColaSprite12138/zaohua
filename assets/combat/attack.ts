@@ -5,6 +5,7 @@
  */
 
 import { combat_rule } from '../resource/generated/combat_rule.ts';
+import { activeWeaponBroken, weaponUsable, wearWeapon } from './durability.ts';
 import { burst, say, setTarget } from './effects.ts';
 import { monsterXp, rollLoot } from './loot.ts';
 import { weaponDamage } from './run-inventory.ts';
@@ -240,10 +241,12 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   const ddy = sk.y - p.y;
   const d = Math.hypot(ddx, ddy) || 1;
   const weaponId = activeWeapon(s);
-  const armed = weaponId !== null;
+  // 损坏的武器按空手算（设计 5.2：耐久归零 = 这件装备没了），所以 `armed` 也要看它。
+  const broken = activeWeaponBroken(s);
+  const armed = weaponId !== null && !broken;
   // `weapon.xlsx` owns the number. Unknown / demo ids fall back to the legacy
   // baseline rather than inventing a value; bare hands stay at 22.
-  const baseline = weaponId === null ? 22 : (weaponDamage(weaponId) ?? 46);
+  const baseline = !armed ? 22 : (weaponDamage(weaponId) ?? 46);
   const aim = Math.atan2(ddy, ddx);
 
   p.attackCd = PLAYER_ATTACK_CD;
@@ -251,9 +254,12 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   p.face = aim;
   s.attacks += 1;
 
-  damageSkeleton(s, index, mods.damageMultiplier(baseline), {
+  const dealt = mods.damageMultiplier(baseline);
+  damageSkeleton(s, index, dealt, {
     color: armed ? '#ffd166' : '#ffb454',
   });
+  // 造成伤害扣耐久（5.2 / 7.4）。损坏后的那一下不再磨损（已经到底了）。
+  if (armed) wearWeapon(s, dealt);
   burst(s, p.x + Math.cos(aim) * 52, p.y + Math.sin(aim) * 52 - 22, '#cfe8ff', 5, 90);
 }
 
@@ -271,7 +277,9 @@ export function resolveAttackOrder(s: GameState, mods: CombatModifiers): void {
     clearAttackOrder(s);
     return;
   }
-  const baseRange = activeWeapon(s) !== null ? MELEE_RANGE_ARMED : MELEE_RANGE_BARE;
+  // 损坏 = 空手距离（同一条判定，不要只看槽里有没有东西）。
+  const baseRange = activeWeapon(s) !== null && !activeWeaponBroken(s)
+    ? MELEE_RANGE_ARMED : MELEE_RANGE_BARE;
   const range = baseRange + mods.meleeRangeBonus();
   const d = Math.hypot(sk.x - s.player.x, sk.y - s.player.y);
   if (d > range - 8) {

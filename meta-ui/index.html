@@ -52,6 +52,13 @@
   .equip-slot.dragover { border-color: var(--cyan); background: var(--cell-hover); }
   .equip-slot.filled { color: var(--text); border-style: solid; }
   .equip-slot canvas.art { display: block; image-rendering: pixelated; }
+  .slot-dura {
+    position: absolute; bottom: 2px; left: 8px; right: 8px; height: 3px;
+    border-radius: 2px; background: rgba(255,255,255,.14); overflow: hidden;
+  }
+  .slot-dura i { display: block; height: 100%; background: #7ddc7d; }
+  .slot-dura.low i { background: #fbbf24; }
+  .slot-dura.broken i { background: #ff6b6b; }
   .grid-wrap { position: relative; width: max-content; }
   .grid {
     position: relative; display: grid; gap: 0; padding: 0;
@@ -152,6 +159,7 @@
 
   <div class="toolbar">
     <button id="reset">重置演示数据</button>
+    <button id="supply" title="雏形期的免费补给：等金币 / 商店批次上线后改成买">补给药水</button>
     <span class="status" id="status"></span>
   </div>
 
@@ -390,6 +398,18 @@
         label.className = 'slot-label';
         label.textContent = def.name;
         node.appendChild(label);
+        // 耐久（设计 5.2）：扣到 0 的装备还在槽里但伤害回落空手，所以必须看得见。
+        if (def.durability) {
+          const cur = item.durability ?? def.durability;
+          const ratio = Math.max(0, Math.min(1, cur / def.durability));
+          const bar = document.createElement('span');
+          bar.className = 'slot-dura' + (ratio <= 0 ? ' broken' : ratio < 0.3 ? ' low' : '');
+          bar.title = ratio <= 0 ? '已损坏 · 伤害按空手算' : '耐久 ' + Math.round(cur) + ' / ' + def.durability;
+          const fill = document.createElement('i');
+          fill.style.width = Math.round(ratio * 100) + '%';
+          bar.appendChild(fill);
+          node.appendChild(bar);
+        }
         node.draggable = true;
         node.addEventListener('dragstart', (e) => startDrag(e, node, item, 0));
         node.addEventListener('dragend', () => {
@@ -713,6 +733,36 @@
   host.renderStar = renderStar;
   // 旧名字（壳层 / 平台存档按这个读）：现在星图的唯一权威是 `starMap`。
   Object.defineProperty(host, 'starTree', { get: () => starMap, configurable: true });
+
+  /**
+   * 补给药水（**雏形期临时手段**）：药是背包物品（设计 8.3），但金币与商店还没做，
+   * 所以先给一个显式按钮把背包补到 2 红 / 3 蓝，而不是偷偷塞进 `createInventoryState`
+   * （那会让"初始背包是空的"这条既有约定失效）。商店批次上线后这个按钮改成购买。
+   */
+  $('supply').addEventListener('click', () => {
+    if (runMode) {
+      say('局内不能补给：药要自己带下场或在局内搜刮', true);
+      return;
+    }
+    const targets = [['30002', 2], ['30003', 3]];
+    let added = 0;
+    for (const [defId, want] of targets) {
+      try {
+        M.itemDef(defId);
+      } catch (err) {
+        continue; // 独立页没有注入表目录：静默跳过，不炸整页。
+      }
+      let have = state.bag.filter((it) => it.defId === defId).length;
+      while (have < want) {
+        const uid = 'supply-' + defId + '-' + (have + 1) + '-' + Date.now();
+        if (!M.addToBag(state, uid, defId)) break;
+        have += 1;
+        added += 1;
+      }
+    }
+    host.setState(state);
+    say(added > 0 ? '补给 ' + added + ' 瓶药（雏形期免费，等商店）' : '背包里已经有足够的药了', added === 0);
+  });
 
   $('reset').addEventListener('click', () => {
     if (runMode) return;

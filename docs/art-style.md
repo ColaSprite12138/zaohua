@@ -72,7 +72,7 @@
 |:--|:--|:--|
 | `BodyModel` | `bodyOf(name, blocks, pose)`，每方向 3 个姿势 | 角色 / 怪物。**必须同时有 `front` 与 `back`**，`pose(back, leftLift, rightLift, offLift)` 用抬腿一格做走路帧（帧 0/2 同一站姿，1 抬左脚，3 抬右脚） |
 | `Limb` | `armModel(name, sleeve, fist)`，从肩关节向上摆 | 持械手臂。`drawLimb(g, limb, 肩x, 肩y, 角度)`，角度 0=右、+π/2=下；剑柄落在拳头上 |
-| `VoxelModel` | 普通工厂函数 + `itemModel(key)` | 道具（剑 / 弓 / 箭 / 戒指 …）。键是 `"形状:配色"`，配色按品质取 |
+| `VoxelModel` | 普通工厂函数 + `itemModel(key)` | 道具（剑 / 弓 / 箭 / 戒指 / **药瓶** …）。键是 `"形状:配色"`，配色按品质取；药瓶例外 —— 红药固定 `potion:hp`、蓝药 `potion:mana`（不跟品质走，见 `inventory.ts::POTION_ACCENT`） |
 
 在 `voxel.ts` 里写一个工厂函数，用 `Builder` 摆方块（道具记得登记 `SHAPES`）：
 

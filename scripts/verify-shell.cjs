@@ -279,6 +279,18 @@ const SELFTEST = `
       document.querySelector('.star-chip[data-node="ember_dmg"]').click();
       out.star.deployPicks = H.getProgress().picks.slice();
 
+      // ---- 消耗品（设计 8.3）：补给把红 / 蓝药真的放进背包，出征就带得走 ----
+      out.potions = { before: H.getState().bag.filter(function (i) {
+        return i.defId === '30002' || i.defId === '30003';
+      }).length };
+      document.getElementById('supply').click();
+      var bagPots = H.getState().bag.filter(function (i) {
+        return i.defId === '30002' || i.defId === '30003';
+      });
+      out.potions.after = bagPots.length;
+      out.potions.red = bagPots.filter(function (i) { return i.defId === '30002'; }).length;
+      out.potions.blue = bagPots.filter(function (i) { return i.defId === '30003'; }).length;
+
       out.sharedState = H.state === H.getState() && H.getLobbyState() === H.state;
       snap('initial');
 
@@ -376,7 +388,11 @@ const SELFTEST = `
       out.run.filledSlots = document.querySelectorAll('.equip-slot.filled').length;
       M.addToBag(workerState, 'run-bag-loot', '20006');
       chan.postMessage({ type: 'runState', loadout: M.loadoutFromRun(workerState) });
-      await waitFor(function () { return H.getState().bag.length >= 1; });
+      // 等「那件战利品」出现，而不是等「背包非空」——背包里本来就有药（消耗品是物品），
+      // 用长度判断会在 runState 到达之前就提前返回。
+      await waitFor(function () {
+        return H.getState().bag.some(function (i) { return i.uid === 'run-bag-loot'; });
+      });
       out.run.bagLootShown = H.getState().bag.some(function (i) { return i.uid === 'run-bag-loot'; });
       // Snapshots must NEVER be persisted: the KV holds the lobby only.
       out.run.noKvWrites = platformWrites.length === writesAfterDeploy;
@@ -605,6 +621,9 @@ const checks = [
       && result.star.budgetBlocked === true, result.star],
   ['免费洗点：点数退回，亲和归零',
     result.star.respec === true && result.star.affinityAfterRespec === 0, result.star],
+  ['补给把红 / 蓝药放进背包（消耗品是物品，不是计数器）',
+    result.potions.before === 0 && result.potions.after === 5
+      && result.potions.red === 2 && result.potions.blue === 3, result.potions],
   ['出征把星图技能与乘区快照给 Worker，局内星图面板隐藏',
     !!d.stars && d.stars.skills.indexOf('fire_wall') >= 0
       && d.stars.nodes.indexOf('ember_wall') >= 0
@@ -616,10 +635,12 @@ const checks = [
     S.deployed.weapon0 === 'longsword' && S.deployed.stash === 0, S.deployed],
   ['deploy switches the page into battle mode',
     S.deployed.inBattle === true && /战斗/.test(S.deployed.phase), S.deployed],
-  ['cleared brings the WHOLE run state home (worn + bag loot)',
+  ['cleared brings the WHOLE run state home (worn + bag loot + potions)',
     S.cleared.weapon0 === 'longsword' && S.cleared.weapon1 === '10006'
-      && S.cleared.bagDefs.indexOf('20006') >= 0 && S.cleared.bagDefs.length === 1
-      && S.cleared.lobbyBag === 1 && S.cleared.lobbyWorn === 2, S.cleared],
+      && S.cleared.bagDefs.indexOf('20006') >= 0
+      && S.cleared.bagDefs.filter(function (d) { return d === '30003'; }).length === 3
+      && S.cleared.bagDefs.length === 6
+      && S.cleared.lobbyBag === 6 && S.cleared.lobbyWorn === 2, S.cleared],
   ['cleared leaves the stash intact and exits the run view',
     S.cleared.stash === 3 && S.cleared.lobbyStash === 3
       && S.cleared.isRun === false, S.cleared],

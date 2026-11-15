@@ -59,6 +59,8 @@
 | 渲染 | `meta-ui/voxel.js`（由 `build-meta-ui.mjs` 从 `voxel.ts` 转出，全局 `MetaVoxel`）把模型画进每个格子的 `<canvas>`，`modelBounds()` 的 `ax/ay` 用来精确居中 |
 | `ItemDef.glyph` | **降级用**：宿主没加载 `voxel.js` 时页面才回落到文字字形；正常情况下格子里不得出现字形文字 |
 | 名称 | 格子底部保留一行小字名称（品质色），模型是主体；不再显示 `2×3` 尺寸文字 |
+| `ItemDef.durability` | 耐久上限（`weapon.xlsx::durability`）；当前值在物品实例的 `durability` 上（`combat/durability.ts` 写）。局外武器槽底部那条细条读这两个值 |
+| 消耗品 | `item_type=消耗品`（红药 30002 / 蓝药 30003）：`equip=null`、1×1，模型是 `potion:hp` / `potion:mana`。`registerItemDefs` 按 `item_type` 推 equip 与格子，**不再默认成 2×3 武器** |
 
 ## 单页流程与搜打撤契约（2026-11-11）
 

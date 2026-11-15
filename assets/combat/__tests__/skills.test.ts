@@ -14,6 +14,7 @@ import { SKILLS, skillDef } from '../skills.ts';
 import { NO_MODIFIERS } from '../modifiers.ts';
 import {
   PLAYER_MANA_MAX, POTION_COUNT, POTION_SECONDS, PRE_EQUIPPED_SKILLS,
+  POTION_MP_ID, countConsumable,
   SKILL_SLOTS, createState, projection, reset, step,
   type GameState, type StepInput,
 } from '../simulation.ts';
@@ -54,7 +55,7 @@ function tick(s: GameState, seconds: number, over: Partial<StepInput> = {}, dt =
 const SLOT = { cleave: 0, charge: 1, ice_shard: 2 } as const;
 
 describe('skill bar and mana', () => {
-  it('starts with seven slots, three equipped skills, full mana and three potions', () => {
+  it('starts with seven slots, three equipped skills, full mana and the fixture potions', () => {
     const s = createState();
     expect(s.skillBar).toHaveLength(SKILL_SLOTS);
     expect(s.skillBar.map((slot) => slot.id)).toEqual([
@@ -62,7 +63,7 @@ describe('skill bar and mana', () => {
       ...Array.from({ length: SKILL_SLOTS - PRE_EQUIPPED_SKILLS.length }, () => null),
     ]);
     expect(s.mana).toBe(PLAYER_MANA_MAX);
-    expect(s.potions).toBe(POTION_COUNT);
+    expect(countConsumable(s.runInventory, POTION_MP_ID)).toBe(POTION_COUNT);
     expect(s.cast).toBeNull();
     // 每个预置技能都必须有定义（星图接线后这里换成玩家点出来的技能）。
     for (const id of PRE_EQUIPPED_SKILLS) expect(skillDef(id)).not.toBeNull();
@@ -268,12 +269,13 @@ describe('cast time and interruption', () => {
 });
 
 describe('blue potions', () => {
-  it('restore mana slowly, one bottle per drink', () => {
+  it('restore mana slowly and consume one BAG ITEM per drink', () => {
     const s = createState();
     stage(s, []);
     s.mana = 40;
     expect(drinkPotion(s)).toBe(true);
-    expect(s.potions).toBe(POTION_COUNT - 1);
+    // 药是背包物品（8.3）：喝一瓶，背包里就少一瓶（没有第二份计数器）。
+    expect(countConsumable(s.runInventory, POTION_MP_ID)).toBe(POTION_COUNT - 1);
     tick(s, POTION_SECONDS / 2);
     const half = s.mana;
     expect(half).toBeGreaterThan(40);
@@ -284,15 +286,17 @@ describe('blue potions', () => {
     expect(s.manaSurge).toBe(0);
   });
 
-  it('are not wasted at full mana or when the run is out of them', () => {
+  it('are not wasted at full mana or when the bag has none', () => {
     const s = createState();
     stage(s, []);
     expect(drinkPotion(s)).toBe(false);
-    expect(s.potions).toBe(POTION_COUNT);
+    expect(countConsumable(s.runInventory, POTION_MP_ID)).toBe(POTION_COUNT);
     s.mana = 10;
-    s.potions = 0;
+    // 把背包里的蓝药全扔掉：拒绝必须免费，法力与背包都不动。
+    s.runInventory.bag = s.runInventory.bag.filter((it) => it.defId !== POTION_MP_ID);
     expect(drinkPotion(s)).toBe(false);
     expect(s.mana).toBe(10);
+    expect(countConsumable(s.runInventory, POTION_MP_ID)).toBe(0);
   });
 
   it('a second bottle while the first is still working is refused (no stacking)', () => {
@@ -301,18 +305,21 @@ describe('blue potions', () => {
     s.mana = 40;
     expect(drinkPotion(s)).toBe(true);
     expect(drinkPotion(s)).toBe(false);
-    expect(s.potions).toBe(POTION_COUNT - 1);
+    expect(countConsumable(s.runInventory, POTION_MP_ID)).toBe(POTION_COUNT - 1);
   });
 
-  it('a restart refills mana, potions and cooldowns', () => {
+  it('a restart refills mana and cooldowns but NOT the potion bag', () => {
     const s = createState();
     stage(s, []);
     beginSkill(s, SLOT.cleave, null, NO_MODIFIERS);
-    s.mana = 20;
-    s.potions = 1;
+    s.mana = 40;
+    expect(drinkPotion(s)).toBe(true); // 喝掉一瓶
+    const left = countConsumable(s.runInventory, POTION_MP_ID);
+    expect(left).toBe(POTION_COUNT - 1);
     reset(s);
     expect(s.mana).toBe(PLAYER_MANA_MAX);
-    expect(s.potions).toBe(POTION_COUNT);
+    // 药是物品：重开一局不会凭空补满，喝掉的就是喝掉了（5.2 的消耗品出口）。
+    expect(countConsumable(s.runInventory, POTION_MP_ID)).toBe(left);
     expect(s.cast).toBeNull();
     for (const slot of s.skillBar) expect(slot.cooldown).toBe(0);
   });

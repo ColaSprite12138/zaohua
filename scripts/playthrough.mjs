@@ -406,7 +406,9 @@ export default async function playthrough(play) {
     assert.equal(before.skills.length, 7, 'the skill bar has seven slots');
     assert.equal(before.skills[0].id, 'cleave', 'slot Q holds the sweep');
     assert.equal(before.mana, before.maxMana, 'a fresh run starts at full mana');
+    // 药是背包物品（设计 8.3）：数字来自局内背包，不是「每局免费发的瓶数」。
     assert.equal(before.potions, 3, 'a fresh run starts with three blue potions');
+    assert.ok(before.hpPotions >= 1, 'and at least one red potion');
 
     // 横扫以玩家为圆心：等骷髅走到 170px 内再按，比追着跑更确定。
     const staged = await waitUntilNear(60, 150);
@@ -500,13 +502,27 @@ export default async function playthrough(play) {
     assert.ok(after.skillFx >= 0, 'effect records drain on their own');
   });
 
+  await play.step('fighting wears the equipped weapon (design 5.2 / 7.4)', async () => {
+    const s = await play.state('game.state');
+    // 只认**激活槽**、且表里配了耐久上限的武器：伤害/承受都记在它身上。
+    const slot = s.durability[s.activeWeaponSlot];
+    assert.ok(slot && slot.max > 0, 'the active weapon has a durability ceiling');
+    assert.ok(slot.current < slot.max,
+      `combat must wear it (${slot.current}/${slot.max}); skills and hits both count`);
+    assert.equal(slot.broken, false, 'it is worn, not broken');
+    await play.screenshot('weapon-durability');
+  });
+
   await play.step('a blue potion restores mana slowly and is limited', async () => {
     const before = await play.state('game.state');
     assert.ok(before.mana < before.maxMana, 'the skills above spent some mana');
     await play.keyboard.press('KeyX');
     await play.advance(0.2);
     const drunk = await play.state('game.state');
-    assert.equal(drunk.potions, before.potions - 1, 'drinking spends one bottle');
+    assert.equal(drunk.potions, before.potions - 1, 'drinking spends one bottle from the bag');
+    assert.equal(drunk.runInventory.bag.filter((it) => it.defId === '30003').length,
+      before.runInventory.bag.filter((it) => it.defId === '30003').length - 1,
+      'the bottle is really gone from the run bag, not just a counter');
     await play.advance(1.2);
     const later = await play.state('game.state');
     assert.ok(later.mana > drunk.mana, 'the potion keeps restoring mana over time');

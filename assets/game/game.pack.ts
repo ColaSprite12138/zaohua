@@ -31,7 +31,7 @@ import {
   type Deployment, type RunLoadout, type RunCommand,
 } from './simulation.ts';
 import { paint } from './paint.ts';
-import { POTION_KEY, SKILL_KEYS } from '../shared/constants.ts';
+import { HEAL_KEY, POTION_KEY, SKILL_KEYS } from '../shared/constants.ts';
 import { arena } from '../resource/maps/arena.generated.ts';
 import { testArena } from '../resource/maps/arena-test.ts';
 
@@ -371,6 +371,7 @@ export const game: Plugin = {
                 // 主动技能（1..7 格）与蓝药：justPressed 才算，按住不会连发。
                 skill: skillSlot >= 0 ? skillSlot : null,
                 potion: snapshot?.keyboard?.justPressedCode(POTION_KEY) ?? false,
+                healPotion: snapshot?.keyboard?.justPressedCode(HEAL_KEY) ?? false,
                 // E = 起手 / 取消传送门引导（搜打撤的「撤」）。
                 extractChannel: snapshot?.keyboard?.justPressedCode('KeyE') ?? false,
                 restart,

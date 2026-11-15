@@ -16,6 +16,7 @@ import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { skill as skillTable } from '../resource/generated/skill.ts';
 import { createInventoryState, type InventoryState } from '../meta/inventory.ts';
 import { makeRng } from './loot.ts';
+import { seedFixturePotions } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
 import {
   cameraFor, makeWorld, nearestWalkable, type ArenaMap, type Vec, type World,
@@ -44,6 +45,8 @@ export interface StepInput {
   readonly skill?: number | null;
   /** 喝蓝药（justPressed）：法力不自动恢复，靠它续航（设计文档 8.3）。 */
   readonly potion?: boolean;
+  /** 按 `Z`：喝红药（回血）。和蓝药同一套「拒绝必须免费」的规则。 */
+  readonly healPotion?: boolean;
   readonly restart: boolean;
   /**
    * E（justPressed）：起手 / 取消传送门引导。按住不算 —— 引导是一次主动决定，
@@ -137,12 +140,15 @@ export const PLAYER_HP_MAX = 100;
 export const PLAYER_MANA_MAX = RULE.player_mana_max;
 
 /**
- * 蓝药：本局固定瓶数（开发期数值，等消耗品系统上线后改成从背包里取）。
- * 药效是「缓慢回复」而不是一口回满 —— 这是 9.2 里「法术躲着回蓝」的那段空窗期。
+ * **自动验收夹具**开局塞进背包的蓝药瓶数。
+ *
+ * 正式玩法里药是背包物品（`combat/consumables.ts` + `item.xlsx`），带多少用多少；
+ * 这个常量只服务 `createState()` 的夹具（playthrough / 单测需要一个能立刻喝药的起点）。
+ * 不要再把它当「每局免费发的药」——`GameState.potions` 计数器已经删掉了。
  */
 export const POTION_COUNT = RULE.potion_count;
-export const POTION_MANA = RULE.potion_mana;
-export const POTION_SECONDS = RULE.potion_seconds;
+/** 夹具同样给两瓶红药（红药只用于回血，验收里不强行断言）。 */
+export const FIXTURE_HP_POTIONS = 2;
 
 /**
  * 技能视觉事件（2026-11-15 第二批）：**只写不读**。
@@ -731,8 +737,6 @@ export interface GameState {
   starSkills: readonly string[];
   /** 正在读条的技能；null = 没在读条。 */
   cast: CastState | null;
-  /** 本局剩余蓝药瓶数。 */
-  potions: number;
   /** 蓝药剩余生效秒数：> 0 时按每秒速率缓慢回蓝。 */
   manaSurge: number;
   /** 技能视觉事件队列（只写不读，见 `SkillFx`）。 */
@@ -788,9 +792,9 @@ export function createState(config: RunConfig = {}): GameState {
     press: null,
     skeletons: [],
     drops: [],
-    // No run has been deployed yet: the acceptance fixture starts empty and
-    // `deployRun()` replaces this with the lobby's loadout.
-    runInventory: createInventoryState(0),
+    // No run has been deployed yet: the acceptance fixture starts with a couple
+    // of potions in the bag (real deploys replace this with the lobby's loadout).
+    runInventory: seedFixturePotions(createInventoryState(0), POTION_COUNT, FIXTURE_HP_POTIONS),
     weaponSlots: [null, null],
     activeWeaponSlot: 0,
     gameOver: false,
@@ -811,7 +815,6 @@ export function createState(config: RunConfig = {}): GameState {
     skillBar: createSkillBar(),
     starSkills: PRE_EQUIPPED_SKILLS,
     cast: null,
-    potions: POTION_COUNT,
     manaSurge: 0,
     skillFx: [],
     zones: [],
@@ -884,7 +887,6 @@ export function reset(s: GameState): void {
   };
   // 技能与法力是「本局」资源：重开一局 = 满蓝、满药、冷却清零。
   s.mana = s.maxMana;
-  s.potions = POTION_COUNT;
   s.manaSurge = 0;
   s.cast = null;
   s.skillFx.length = 0;

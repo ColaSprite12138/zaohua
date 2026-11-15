@@ -71,6 +71,13 @@ export {
   // 状态与反应链（设计 8.4 / 8.5）：绘制层读状态定义画标记，读区域画地面效果。
   STATUS,
   ELEMENT_LABEL,
+  // 耐久与消耗品（设计 5.2 / 7.4 / 8.3）：绘制层读耐久条与药瓶数。
+  countConsumable,
+  durabilityOf,
+  maxDurability,
+  POTION_HP_ID,
+  POTION_MP_ID,
+  POTION_HP_HEAL,
   DOT_TICK_SECONDS,
   statusDef,
   statusSnapshot,

@@ -35,10 +35,10 @@
 
 | 表 | 消费方 | 用途 |
 |:--|:--|:--|
-| `item.xlsx` | `combat/`、`meta/` | 13 行物品通用信息 `id / name / item_type / stack_size`：12 件武器 + `30001` 弓箭（`item_type=弹药`、堆叠 10） |
-| `weapon.xlsx` | `combat/`、`meta/` | 13 行武器专属信息 `id / quality / weapon_subtype / damage_min / damage_max`；`weapon_subtype` 是攻击方式**唯一权威** |
+| `item.xlsx` | `combat/`、`meta/` | 15 行物品通用信息 `id / name / item_type / stack_size`：12 件武器 + `30001` 弓箭（`弹药`）+ **`30002` 红药 / `30003` 蓝药（`消耗品`，1×1）**；`item_type` 决定能不能装备与占几格 |
+| `weapon.xlsx` | `combat/`、`meta/` | 13 行武器专属信息 `id / quality / weapon_subtype / damage_min / damage_max / **durability**`（2026-11-15 加，消费方 `combat/durability.ts` 与局外武器槽耐久条）；`weapon_subtype` 是攻击方式**唯一权威** |
 | `monster.xlsx` | `combat/`、`battle/`（地图引用校验） | 怪物 id → 掉落池 id（骷髅剑士 → 1，骷髅弓手 → 2）**+ 战斗手感三列 `walk_speed / attack_interval / attack_damage`**（2026-11-15 加，消费方 `combat/enemies.ts::combatOf()`）；2026-11-12 由 `monster_loot.xlsx` 改名，生成物为 `monster.ts` / 常量 `monster` |
-| `loot_pool.xlsx` | `combat/` | 掉落池内各物品的权重（10/8/6/4/2/1） |
+| `loot_pool.xlsx` | `combat/` | 掉落池内各物品的权重：武器阶梯 10/8/6/4/2/1 + 两瓶药（红 5 / 蓝 6） |
 | `skill.xlsx` | `combat/skills.ts` | **7 个主动技能的数值**：`cost / cooldown / cast_time / damage / reach / width / zone_radius / zone_life / name / hint`。机制列（`kind` / `element` / `status` / `icon`）留在代码 |
 | `status.xlsx` | `combat/status.ts` | **18 条状态的数值**：`duration / max_stacks / dot / move_mul / attack_interval_mul / damage_taken_mul / no_move / no_attack / no_skill / no_dodge / name / hint`。视觉色与元素归属留在代码 |
 | `level.xlsx` | `talent/`（局外页面经 `MetaShell.levels` 注入） | **升级曲线 18 行**：`level / xp_to_next / star_points`；最后一行 `xp_to_next = 0` ＝等级上限。改这里就改了「多少击杀升一级」 |

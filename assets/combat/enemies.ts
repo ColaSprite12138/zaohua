@@ -10,6 +10,7 @@
  */
 
 import { combat_rule } from '../resource/generated/combat_rule.ts';
+import { wearWeapon } from './durability.ts';
 import { burst, say } from './effects.ts';
 import { monsterRow } from './loot.ts';
 import {
@@ -123,7 +124,10 @@ export function updateSkeletons(s: GameState, dt: number): void {
         sk.swing = MONSTER_SWING_TIME;
         if (p.invuln <= 0) {
           // 易伤（软控）同样作用于玩家：受到伤害倍率只有一个入口。
-          s.hp = Math.max(0, s.hp - stats.attackDamage * damageTakenMultiplier(p));
+          const taken = stats.attackDamage * damageTakenMultiplier(p);
+          s.hp = Math.max(0, s.hp - taken);
+          // 承受伤害也扣耐久，权重比造成高（7.4 的 7:3）：贴身近战天然更费。
+          wearWeapon(s, 0, taken);
           p.hurt = 0.35;
           p.invuln = 0.7;
           burst(s, p.x, p.y - 26, '#ff6b6b', 8, 120);

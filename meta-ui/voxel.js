@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/game/voxel.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: fe75718f6d0ccd3dac5bab1e02d2f81a480daa7595930b4e6e1a1418be49bd5c
+ * Source SHA-256: 36d08aa8b3fed17c02b97accf9b5d384aacbf0edb5a2a13b185f82d24d7f9fc3
  */
 (function (root) {
 "use strict";
@@ -287,6 +287,9 @@ exports.SKELETON_ARM = {
 /** Accent per authored quality, so the same shape reads at five rarities. */
 exports.ACCENTS = {
     steel: C.steel,
+    // 药水配色（消耗品）：item.ts 用 `potion:hp` / `potion:mana`。
+    hp: '#e2564f',
+    mana: '#5b9dff',
     green: '#4ade80',
     blue: '#60a5fa',
     purple: '#c084fc',
@@ -337,6 +340,20 @@ function arrowShape(name) {
     b.box(-1, 0, 0, 1, 2, 1, C.plume);
     b.box(1, 0, 0, 1, 2, 1, C.plume);
     b.box(0, 6, 0, 1, 1, 1, C.steel);
+    return b.model();
+}
+/**
+ * 药瓶（消耗品，设计 8.3）：小方瓶 + 瓶塞 + 一条高光。
+ * 颜色由 accent 决定 —— 红药靠 `hp` 配色、蓝药靠 `mana`，形状是同一个，
+ * 不给每种药单独建模（与品质配色同一套逻辑）。
+ */
+function potionShape(name, accent) {
+    const b = new Builder(name, 4);
+    const glass = shade(accent, 0.75);
+    b.box(-1, 0, 0, 3, 4, 1, glass);
+    b.box(-1, 1, 1, 3, 2, 1, accent);
+    b.box(0, 4, 0, 1, 1, 1, C.wood);
+    b.box(-1, 2, 0, 1, 1, 1, shade(accent, 1.6));
     return b.model();
 }
 function ringShape(name, accent) {
@@ -409,6 +426,7 @@ const SHAPES = {
     greatsword: (name, accent) => bladeShape(name, accent, true),
     bow: bowShape,
     arrow: (name) => arrowShape(name),
+    potion: potionShape,
     ring: ringShape,
     amulet: amuletShape,
     gloves: glovesShape,

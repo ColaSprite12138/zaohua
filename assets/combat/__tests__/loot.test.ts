@@ -41,13 +41,24 @@ describe('authored tables are wired into combat', () => {
     expect(monsterRow('200001')?.loot_pool_id).toBe(2);
   });
 
-  it('both pools carry the 10/8/6/4/2/1 weight ladder', () => {
+  it('both pools keep the 10/8/6/4/2/1 weapon ladder AND carry potions', () => {
     for (const pool of [1, 2]) {
-      expect(poolEntries(pool).map((e) => e.weight)).toEqual([10, 8, 6, 4, 2, 1]);
+      const entries = poolEntries(pool);
+      // 药是 2026-11-15 加进池子的（5.2 消耗品出口）；武器阶梯本身不许变形。
       const dist = theoreticalDistribution(pool);
       expect(Object.values(dist).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 10);
-      expect(dist[pool === 1 ? '10001' : '20001']).toBeCloseTo(10 / 31, 10);
-      expect(dist[pool === 1 ? '10006' : '20006']).toBeCloseTo(1 / 31, 10);
+      // 权重阶梯：武器行仍是 10/8/6/4/2/1
+      const ladder = entries
+        .filter((e) => /^(1000[1-6]|2000[1-6])$/.test(e.itemId))
+        .map((e) => e.weight);
+      expect(ladder).toEqual([10, 8, 6, 4, 2, 1]);
+      // 药必须在两个池子里都能刷到（否则玩家永远补不上消耗品）
+      expect(dist['30002']).toBeGreaterThan(0);
+      expect(dist['30003']).toBeGreaterThan(0);
+      // 首档仍是白武器，权重按新的总数分摊
+      const total = entries.reduce((sum, e) => sum + e.weight, 0);
+      expect(dist[pool === 1 ? '10001' : '20001']).toBeCloseTo(10 / total, 10);
+      expect(dist[pool === 1 ? '10006' : '20006']).toBeCloseTo(1 / total, 10);
     }
     expect(theoreticalDistribution(999)).toEqual({});
   });
@@ -58,22 +69,34 @@ describe('authored tables are wired into combat', () => {
     for (let i = 0; i < 50; i += 1) expect(a()).toBe(b());
     const rng = makeRng(7);
     const items = new Set<string>();
+    const authored = new Set<string>(poolEntries(1).map((e) => e.itemId));
     for (let i = 0; i < 400; i += 1) {
       const roll = rollLoot('100001', rng);
       expect(roll).not.toBeNull();
-      expect(roll!.itemId).toMatch(/^1000[1-6]$/);
+      // 池子里的 id 必须都是这一池真的配过的（现在包含药）
+      expect(authored.has(roll!.itemId)).toBe(true);
       expect(roll!.poolId).toBe(1);
       items.add(roll!.itemId);
     }
-    // 400 draws must reach the rarest (1/31) tier too.
-    expect(items.size).toBe(6);
+    // 400 draws must reach every authored entry of this pool.
+    expect(items.size).toBe(authored.size);
   });
 
   it('monster type selects its own pool', () => {
     const rng = makeRng(99);
+    const pool1 = new Set(poolEntries(1).map((e) => e.itemId));
+    const pool2 = new Set(poolEntries(2).map((e) => e.itemId));
     for (let i = 0; i < 60; i += 1) {
-      expect(rollLoot('100001', rng)!.itemId).toMatch(/^1000/);
-      expect(rollLoot('200001', rng)!.itemId).toMatch(/^2000/);
+      const sword = rollLoot('100001', rng)!;
+      const bow = rollLoot('200001', rng)!;
+      // 药在两个池子里都有（特意如此），所以"分家"只对武器成立。
+      expect(pool1.has(sword.itemId)).toBe(true);
+      expect(pool2.has(bow.itemId)).toBe(true);
+      if (sword.itemId.startsWith('1')) expect(pool2.has(sword.itemId)).toBe(false);
+      if (bow.itemId.startsWith('2')) expect(pool1.has(bow.itemId)).toBe(false);
+      // 武器本体仍按池子分家：剑士只掉剑，弓手只掉弓。
+      if (sword.itemId.startsWith('1')) expect(sword.itemId).toMatch(/^1000[1-6]$/);
+      if (bow.itemId.startsWith('2')) expect(bow.itemId).toMatch(/^2000[1-6]$/);
     }
     expect(rollLoot('999999', rng)).toBeNull();
   });

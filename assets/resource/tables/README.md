@@ -35,10 +35,10 @@ sharedStrings，**不读 `styles.xml`**。曾有两张表的 `styles.xml` 把 `<
 
 | 表 | 字段 | 消费方 |
 |:--|:--|:--|
-| `item.xlsx` | `id, name, item_type, stack_size` | `combat` / `meta`（身份、类型、堆叠） |
-| `weapon.xlsx` | `id, quality, weapon_subtype, damage_min, damage_max` | `combat`（伤害、攻击方式）、`meta`（品质颜色） |
+| `item.xlsx` | `id, name, item_type, stack_size` | `combat` / `meta`（身份、类型、堆叠；`item_type=消耗品` → 1×1 且不可装备） |
+| `weapon.xlsx` | `id, quality, weapon_subtype, damage_min, damage_max, durability` | `combat`（伤害、攻击方式、耐久上限）、`meta`（品质颜色 / 耐久条） |
 | `monster.xlsx` | `id, name, loot_pool_id` | `combat`（怪物 → 掉落池） |
-| `loot_pool.xlsx` | `id, loot_pool_id, item_id, weight` | `combat`（权重掉落） |
+| `loot_pool.xlsx` | `id, loot_pool_id, item_id, weight` | `combat`（权重掉落；武器阶梯 + 两瓶药） |
 | `skill.xlsx` | `id, name, cost, cooldown, cast_time, damage, reach, width, zone_radius, zone_life, hint` | `combat`（技能数值） |
 | `status.xlsx` | `id, name, category, duration, max_stacks, dot, move_mul, attack_interval_mul, damage_taken_mul, no_move, no_attack, no_skill, no_dodge, hint` | `combat`（状态数值） |
 | `combat_rule.xlsx` | 单行全局常量 + `mainline_star_points, explore_star_points` | `combat` / `talent`（手感 + 星图一次性点数） |
@@ -46,7 +46,7 @@ sharedStrings，**不读 `styles.xml`**。曾有两张表的 `styles.xml` 把 `<
 | `constellation.xlsx` | `id, name, color, requirement, x, y, hint` | `talent`（亲和门槛 + 面板布局） |
 | `starmap.xlsx` | `id, constellation, name, kind, effect, magnitude, cost, aff_fire…aff_wind, skill_id, hint` | `talent`（规则）+ `combat`（乘区） |
 
-`level.xlsx` / `constellation.xlsx` / `starmap.xlsx` 的初版由 `scripts/make_starmap_tables.py` 生成（本机没有 openpyxl，
+`level.xlsx` / `constellation.xlsx` / `starmap.xlsx` 的初版由 `scripts/make_authored_tables.py` 生成（本机没有 openpyxl，
 而工程禁止手写 OOXML 部件）。**生成后请直接用 Excel 改，不要再跑那个脚本** —— 它会覆盖。
 
 **`item` / `weapon` 必须按 `id` join**：`item.xlsx` 只放物品通用信息，`weapon.xlsx` 只放武器

@@ -65,6 +65,11 @@ export interface ItemDef {
    * the same blade model serves a 白 and an 橙 weapon in different colours.
    */
   readonly art: string;
+  /**
+   * 耐久上限（来自 `weapon.xlsx::durability`）。没有 = 不参与耐久（演示长剑 / 消耗品）。
+   * 局外页面用它画武器槽下面那条细条；当前值在物品实例的 `durability` 上。
+   */
+  readonly durability?: number;
 }
 
 /**
@@ -90,7 +95,8 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
 /** Item silhouettes the voxel library can draw (see `voxel.ts::ItemShape`). */
 export type ItemArtShape =
   | 'blade' | 'greatsword' | 'bow' | 'arrow'
-  | 'ring' | 'amulet' | 'gloves' | 'helmet' | 'chest' | 'pants' | 'boots';
+  | 'ring' | 'amulet' | 'gloves' | 'helmet' | 'chest' | 'pants' | 'boots'
+  | 'potion';
 
 /** Quality → voxel accent. Unknown qualities fall back to plain steel. */
 const QUALITY_ACCENT: Record<string, string> = {
@@ -104,6 +110,8 @@ const QUALITY_ACCENT: Record<string, string> = {
  */
 export function itemArtShape(defId: string, equip: EquipKind | null): ItemArtShape {
   if (defId === 'longsword') return 'blade';
+  // 30002 红药 / 30003 蓝药：同一个药瓶模型，靠配色区分（`itemArtKey`）。
+  if (defId === '30002' || defId === '30003') return 'potion';
   switch (defId.charAt(0)) {
     case '1': return 'greatsword';
     case '2': return 'bow';
@@ -123,9 +131,12 @@ export function itemArtShape(defId: string, equip: EquipKind | null): ItemArtSha
 }
 
 /** `"shape:accent"` key understood by `voxel.ts::itemModel()`. */
+/** 药水配色不跟品质走：红药永远是红瓶，蓝药永远是蓝瓶。 */
+const POTION_ACCENT: Record<string, string> = { 30002: 'hp', 30003: 'mana' };
+
 export function itemArtKey(defId: string, quality?: string, equip?: EquipKind | null): string {
   const shape = itemArtShape(defId, equip ?? null);
-  const accent = QUALITY_ACCENT[quality ?? ''] ?? 'steel';
+  const accent = POTION_ACCENT[defId] ?? QUALITY_ACCENT[quality ?? ''] ?? 'steel';
   return `${shape}:${accent}`;
 }
 
@@ -133,9 +144,12 @@ export function itemArtKey(defId: string, quality?: string, equip?: EquipKind | 
 export interface AuthoredItem {
   readonly id: string;
   readonly name: string;
+  /** `item.xlsx::item_type`（武器 / 弹药 / 消耗品）。决定能不能装备、占几格。 */
+  readonly item_type?: string;
   readonly quality?: string;
   readonly damage_min?: number;
   readonly damage_max?: number;
+  readonly durability?: number;
   /** Grid footprint; defaults to the 2x3 weapon footprint. */
   readonly cols?: number;
   readonly rows?: number;
@@ -160,16 +174,24 @@ export function registerItemDefs(rows: readonly AuthoredItem[]): number {
   for (const row of rows) {
     const id = String(row.id);
     if (ITEM_DEFS[id] !== undefined) continue;
-    const equip: EquipKind | null = row.equip === undefined ? 'weapon' : row.equip;
+    // 装备类型与格子大小由 `item_type` 决定，**不再默认成武器**：
+    // 以前弹药 / 消耗品没有 `equip` 就被当成 2x3 的武器（30001 弓箭就中过招）。
+    const consumable = row.item_type === '消耗品';
+    const ammo = row.item_type === '弹药';
+    const equip: EquipKind | null = row.equip !== undefined
+      ? row.equip
+      : (consumable || ammo ? null : 'weapon');
+    const small = consumable || ammo;
     ITEM_DEFS[id] = {
       id,
       name: row.name,
-      cols: row.cols ?? 2,
-      rows: row.rows ?? 3,
+      cols: row.cols ?? (small ? 1 : 2),
+      rows: row.rows ?? (small ? 1 : 3),
       equip,
       color: row.color ?? QUALITY_COLOR[row.quality ?? ''] ?? '#ffd166',
       glyph: row.glyph ?? (id.startsWith('2') ? '➶' : '⚔'),
       art: itemArtKey(id, row.quality, equip),
+      ...(row.durability === undefined ? {} : { durability: row.durability }),
     };
     added += 1;
   }
@@ -207,6 +229,12 @@ export const WEAPON_SLOT_INDICES = [0, 1] as const;
 export interface ItemInstance {
   readonly uid: string;
   readonly defId: string;
+  /**
+   * 当前耐久（设计 5.2 / 7.4）。**只在装备上出现**：捡到时没有这个字段，
+   * 第一次进战斗按 `weapon.xlsx::durability` 取上限；扣到 0 = 损坏，伤害回落空手。
+   * 它跟着物品走，所以两个堆、存档、结算都会带上（`cloneEquipped` 不再丢掉它）。
+   */
+  readonly durability?: number;
 }
 
 export interface PlacedItem extends ItemInstance {
@@ -504,7 +532,11 @@ function cloneEquipped(
 ): (ItemInstance | null)[] {
   return EQUIP_SLOTS.map((_, i) => {
     const item = slots[i];
-    return item ? { uid: String(item.uid), defId: String(item.defId) } : null;
+    if (!item) return null;
+    // 耐久必须跟着物品跨堆 / 跨局走，否则每次出征都自动修满（5.2 的出口就没了）。
+    return item.durability === undefined
+      ? { uid: String(item.uid), defId: String(item.defId) }
+      : { uid: String(item.uid), defId: String(item.defId), durability: item.durability };
   });
 }
 

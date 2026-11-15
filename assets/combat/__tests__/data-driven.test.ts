@@ -18,6 +18,9 @@ import { combat_rule } from '../../resource/generated/combat_rule.ts';
 import { skill as skillRows } from '../../resource/generated/skill.ts';
 import { status as statusRows } from '../../resource/generated/status.ts';
 import { monster as monsterRows } from '../../resource/generated/monster.ts';
+import { weapon as weaponRows } from '../../resource/generated/weapon.ts';
+import { item as itemRows } from '../../resource/generated/item.ts';
+import { loot_pool as lootRows } from '../../resource/generated/loot_pool.ts';
 import {
   DASH_SPEED, DOT_TICK_SECONDS, PLAYER_ATTACK_CD, PLAYER_DODGE_CD, PLAYER_MANA_MAX,
   POTION_COUNT, POTION_MANA, POTION_SECONDS, REACTION_CHAIN_RADIUS, ZONE_RADIUS_MAX,
@@ -134,6 +137,29 @@ describe('combat_rule.xlsx owns the tuning knobs', () => {
     expect(rule.zone_tick_seconds).toBeGreaterThan(0);
     expect(rule.wall_bounce_knockback).toBeGreaterThan(1);
     expect(rule.detonate_per_stack).toBeGreaterThan(0);
+  });
+});
+
+describe('durability / potion tuning lives in the tables (5.2 / 7.4 / 8.3)', () => {
+  it('every weapon has a durability ceiling and the ratios are sane', () => {
+    for (const row of weaponRows) {
+      expect(row.durability, `${row.id} 没配耐久`).toBeGreaterThan(0);
+    }
+    const rule = combat_rule[0];
+    expect(rule.durability_dealt).toBeGreaterThan(0);
+    expect(rule.durability_taken).toBeGreaterThan(rule.durability_dealt); // 承受为主（7:3）
+    expect(rule.hp_potion_heal).toBeGreaterThan(0);
+  });
+
+  it('both potions exist as authored items and drop from both pools', () => {
+    const ids = itemRows.map((row) => String(row.id));
+    expect(ids).toContain('30002');
+    expect(ids).toContain('30003');
+    const pools = lootRows.map((row) => `${row.loot_pool_id}:${row.item_id}`);
+    expect(pools).toContain('1:30002');
+    expect(pools).toContain('1:30003');
+    expect(pools).toContain('2:30002');
+    expect(pools).toContain('2:30003');
   });
 });
 

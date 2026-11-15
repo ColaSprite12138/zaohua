@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
-"""Author the level / star-map tables (one-off generator, like make_sample_map.py).
+"""Author the tables this project added on top of the original loot data.
 
 Why a script instead of hand-edited workbooks: this machine has no openpyxl and
 the project forbids hand-writing OOXML parts (see tables/README.md). Run this
-ONCE to create the initial data; afterwards edit the .xlsx in Excel and do not
-rerun -- it overwrites them.
+ONCE to create the initial data; afterwards edit the .xlsx in Excel -- rerunning
+overwrites them (patches are idempotent: an existing column is left alone).
 
-It also patches two existing tables so the new economy has its sources:
+Creates / patches:
 
-  level.xlsx           level -> xp_to_next + star_points        (NEW)
-  constellation.xlsx   8 constellations: color + requirement     (NEW)
-  starmap.xlsx         23 nodes: constellation + affinity grants (NEW)
-  monster.xlsx      + xp          (kills are the only XP source, design 6.1)
-  combat_rule.xlsx  + mainline_star_points / explore_star_points (design 6.3)
+  level.xlsx           level -> xp_to_next + star_points          (NEW, 6.1)
+  constellation.xlsx   8 constellations: color + requirement       (NEW, 6.3 v7)
+  starmap.xlsx         23 nodes: constellation + affinity grants   (NEW, 6.3 v7)
+  monster.xlsx      + xp                                           (6.1)
+  combat_rule.xlsx  + mainline/explore star points                 (6.3)
+                    + durability_dealt / durability_taken          (5.2 / 7.4)
+                    + hp_potion_heal                               (8.3)
+  weapon.xlsx       + durability                                   (5.2 / 7.4)
+  item.xlsx         + 30002 红药 / 30003 蓝药                       (8.3)
 
-    python scripts/make_starmap_tables.py            write / patch
-    python scripts/make_starmap_tables.py --check    validate packages only
+    python scripts/make_authored_tables.py            write / patch
+    python scripts/make_authored_tables.py --check    validate packages only
 """
 
 import os
@@ -258,7 +262,8 @@ def patch_table(name, extra_header, extra_values):
 def main():
     check = '--check' in sys.argv[1:]
     if check:
-        for name in ('level', 'starmap', 'constellation', 'monster', 'combat_rule'):
+        for name in ('level', 'starmap', 'constellation', 'monster', 'combat_rule',
+                     'weapon', 'item'):
             export_tables.validate_package(os.path.join(TABLES, name + '.xlsx'))
             print('[ OK ] %s.xlsx package is valid' % name)
         return 0
@@ -280,7 +285,65 @@ def main():
     # 主线首通 / 探索事件各给多少星图点（设计 6.3 的三条来源之二）。
     patch_table('combat_rule', ['mainline_star_points', 'explore_star_points'],
                 lambda rec: [2, 1])
+
+    # 耐久（设计 5.2 / 7.4）：三类武器都有耐久，**按造成 / 承受伤害扣**，
+    # 承受 : 造成 ≈ 7 : 3。这里只放"每点伤害扣多少耐久"，上限在 weapon.xlsx。
+    patch_table('combat_rule', ['durability_dealt', 'durability_taken', 'hp_potion_heal'],
+                lambda rec: [0.04, 0.16, 45])
+
+    # 武器耐久上限：巨剑（1xxxx）比弓（2xxxx）更耐用 —— 近战贴身挨打多。
+    patch_table('weapon', ['durability'],
+                lambda rec: [160 if str(rec['id']).startswith('1') else 110])
+
+    add_consumables()
+    add_loot_potions()
     return 0
+
+
+def add_loot_potions():
+    """把红药 / 蓝药放进两个掉落池（5.2：消耗品要在局内真的搜得到）。
+
+    权重刻意不低：药是"每局都要消耗"的东西，掉率太低就等于没有这条系统。
+    """
+    path = os.path.join(TABLES, 'loot_pool.xlsx')
+    fields, records = export_tables.parse_table(path)
+    have = {(str(rec['loot_pool_id']), str(rec['item_id'])) for rec in records}
+    header = list(fields)
+    rows = [[rec[f] for f in fields] for rec in records]
+    added = 0
+    for pool, suffix in ((1, 1), (2, 2)):
+        for item_id, weight, tag in (('30002', 5, 'hp'), ('30003', 6, 'mp')):
+            if (str(pool), item_id) in have:
+                continue
+            rows.append(['%d_potion_%s' % (pool, tag), pool, item_id, weight])
+            added += 1
+    if added == 0:
+        print('[skip] loot_pool already has potions')
+        return
+    write_xlsx(path, header, rows)
+
+
+def add_consumables():
+    """红药 / 蓝药进 item.xlsx（设计 8.3：消耗品是局内资源，不是免费配额）。
+
+    蓝药以前是「每局免费发 3 瓶」的计数器，现在改成背包物品：带多少用多少，
+    死亡一起丢 —— 这才是 5.2「消耗品」这条抗通胀出口。
+    """
+    path = os.path.join(TABLES, 'item.xlsx')
+    fields, records = export_tables.parse_table(path)
+    have = {str(rec['id']) for rec in records}
+    added = []
+    for row in (('30002', '红药', '消耗品', 5), ('30003', '蓝药', '消耗品', 5)):
+        if row[0] not in have:
+            added.append(row)
+    if not added:
+        print('[skip] item already has 红药 / 蓝药')
+        return
+    header = list(fields)
+    rows = [[rec[f] for f in fields] for rec in records]
+    for row in added:
+        rows.append([row[0], row[1], row[2], row[3]])
+    write_xlsx(path, header, rows)
 
 
 if __name__ == '__main__':

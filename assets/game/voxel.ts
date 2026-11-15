@@ -340,11 +340,15 @@ export const SKELETON_ARM: Limb = {
 
 export type ItemShape =
   | 'blade' | 'greatsword' | 'bow' | 'arrow'
-  | 'ring' | 'amulet' | 'gloves' | 'helmet' | 'chest' | 'pants' | 'boots';
+  | 'ring' | 'amulet' | 'gloves' | 'helmet' | 'chest' | 'pants' | 'boots'
+  | 'potion';
 
 /** Accent per authored quality, so the same shape reads at five rarities. */
 export const ACCENTS: Record<string, string> = {
   steel: C.steel,
+  // 药水配色（消耗品）：item.ts 用 `potion:hp` / `potion:mana`。
+  hp: '#e2564f',
+  mana: '#5b9dff',
   green: '#4ade80',
   blue: '#60a5fa',
   purple: '#c084fc',
@@ -398,6 +402,21 @@ function arrowShape(name: string): VoxelModel {
   b.box(-1, 0, 0, 1, 2, 1, C.plume);
   b.box(1, 0, 0, 1, 2, 1, C.plume);
   b.box(0, 6, 0, 1, 1, 1, C.steel);
+  return b.model();
+}
+
+/**
+ * 药瓶（消耗品，设计 8.3）：小方瓶 + 瓶塞 + 一条高光。
+ * 颜色由 accent 决定 —— 红药靠 `hp` 配色、蓝药靠 `mana`，形状是同一个，
+ * 不给每种药单独建模（与品质配色同一套逻辑）。
+ */
+function potionShape(name: string, accent: string): VoxelModel {
+  const b = new Builder(name, 4);
+  const glass = shade(accent, 0.75);
+  b.box(-1, 0, 0, 3, 4, 1, glass);
+  b.box(-1, 1, 1, 3, 2, 1, accent);
+  b.box(0, 4, 0, 1, 1, 1, C.wood);
+  b.box(-1, 2, 0, 1, 1, 1, shade(accent, 1.6));
   return b.model();
 }
 
@@ -478,6 +497,7 @@ const SHAPES: Record<ItemShape, (name: string, accent: string) => VoxelModel> = 
   greatsword: (name, accent) => bladeShape(name, accent, true),
   bow: bowShape,
   arrow: (name) => arrowShape(name),
+  potion: potionShape,
   ring: ringShape,
   amulet: amuletShape,
   gloves: glovesShape,

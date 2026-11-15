@@ -20,8 +20,12 @@ import { updateExtraction, updateRunClock } from './extraction.ts';
 import { tickStatuses, updateZones } from './reactions.ts';
 import { statusSnapshot } from './status.ts';
 import {
-  advanceCast, beginSkill, drinkPotion, skillDef, skillReady, tickSkills, updateDash,
+  advanceCast, beginSkill, skillDef, skillReady, tickSkills, updateDash,
 } from './skills.ts';
+import {
+  countConsumable, drinkPotion, healPotion, POTION_HP_ID, POTION_MP_ID,
+} from './consumables.ts';
+import { activeWeaponBroken, durabilitySnapshot } from './durability.ts';
 import type { RunLoadout } from '../meta/inventory.ts';
 import {
   activeWeapon, applyStarMods, createState, dropLabelName, dropLabelRect,
@@ -72,6 +76,7 @@ export function step(
   // 技能起手排在最前面：瞬发技能这一帧就结算，读条技能这一帧就把玩家钉住，
   // 所以下面的移动 / 攻击分支必须看到最新的 `s.cast`。
   if (input.potion === true) drinkPotion(s);
+  if (input.healPotion === true) healPotion(s);
   if (input.skill !== undefined && input.skill !== null) {
     beginSkill(s, input.skill, input.mouse ?? null, modifiers);
   }
@@ -299,7 +304,9 @@ export function projection(s: GameState) {
     // 验收脚本据此断言「按了就有反应、没钱就按不动」。
     mana: s.mana,
     maxMana: s.maxMana,
-    potions: s.potions,
+    /** 背包里的药（消耗品是物品，不是计数器）。 */
+    potions: countConsumable(s.runInventory, POTION_MP_ID),
+    hpPotions: countConsumable(s.runInventory, POTION_HP_ID),
     skills: s.skillBar.map((slot) => {
       const def = skillDef(slot.id);
       return {
@@ -312,6 +319,13 @@ export function projection(s: GameState) {
         ready: skillReady(s, slot),
       };
     }),
+    /**
+     * 两个武器槽的耐久（设计 5.2 / 7.4）。`broken` = 扣到 0、伤害已回落空手；
+     * HUD 画在武器槽底部，playthrough 用它断言「打怪真的会磨损」。
+     */
+    durability: durabilitySnapshot(s),
+    /** 当前武器是否已损坏（空手判定的唯一读法）。 */
+    weaponBroken: activeWeaponBroken(s),
     /** 冲锋进行中（分帧位移，不是瞬移）；绘制层与验收脚本都读它。 */
     dashing: s.player.dash !== null,
     /** 在场技能特效数量（> 0 说明这一帧有技能表现；只做观测，不参与逻辑）。 */
@@ -384,8 +398,8 @@ export {
   dropLabelAnchor, dropLabelName, dropLabelRect, dropQualityRank,
   MELEE_RANGE_ARMED, MELEE_RANGE_BARE,
   DASH_SPEED, MONSTER_SWING_TIME, PLAYER_ATTACK_CD, PLAYER_DODGE_CD, PLAYER_MANA_MAX,
-  PLAYER_HP_MAX, PLAYER_SWING_TIME, POTION_COUNT,
-  POTION_MANA, POTION_SECONDS, PRE_EQUIPPED_SKILLS, SKILL_SLOTS, STRIDE_PIXELS,
+  PLAYER_HP_MAX, PLAYER_SWING_TIME, POTION_COUNT, FIXTURE_HP_POTIONS,
+  PRE_EQUIPPED_SKILLS, SKILL_SLOTS, STRIDE_PIXELS,
   PHASE_EXTRACT_AT, PHASE_FIGHT_AT, PORTAL_COUNT, PORTAL_GUIDE_SECONDS,
   PORTAL_RADIUS, PORTAL_STAGE_COUNT, PORTAL_USES, RUN_SECONDS,
   DOT_TICK_SECONDS, ZONE_TICK_SECONDS, REACTION_CHAIN_RADIUS, ZONE_RADIUS_MAX,
@@ -400,6 +414,14 @@ export {
   SKILLS, advanceCast, beginSkill, drinkPotion, skillDef, skillReady, tickSkills,
   updateDash,
 } from './skills.ts';
+export {
+  POTION_HP_HEAL, POTION_HP_ID, POTION_MANA, POTION_MP_ID, POTION_SECONDS,
+  countConsumable, healPotion,
+} from './consumables.ts';
+export {
+  activeWeaponBroken, durabilityOf, durabilitySnapshot, maxDurability, weaponUsable,
+  wearWeapon,
+} from './durability.ts';
 export type { SkillDef, SkillKind, SkillZone } from './skills.ts';
 export {
   ELEMENT_LABEL, ELEMENT_STATUS, STATUS, applyStatus, attackIntervalMultiplier,

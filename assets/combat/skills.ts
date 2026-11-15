@@ -16,14 +16,19 @@
  */
 
 import { damageSkeleton } from './attack.ts';
+import { weaponUsable, wearWeapon } from './durability.ts';
 import { burst, say } from './effects.ts';
 import { canStand } from './movement.ts';
 import type { CombatModifiers } from './modifiers.ts';
+import { POTION_MANA, POTION_SECONDS } from './consumables.ts';
+// 蓝药已经是背包物品（`consumables.ts`），这里只做转出，历史 import 路径不变。
+export { drinkPotion } from './consumables.ts';
+export { POTION_MANA, POTION_SECONDS, POTION_HP_HEAL, healPotion, countConsumable } from './consumables.ts';
 import { skill as skillTable } from '../resource/generated/skill.ts';
 import { applyElement, spawnZone } from './reactions.ts';
 import { applyStatus, lockedFlags } from './status.ts';
 import {
-  DASH_SPEED, POTION_MANA, POTION_SECONDS, SKILL_SLOTS, STRIDE_PIXELS,
+  DASH_SPEED, SKILL_SLOTS, STRIDE_PIXELS,
   type CastState, type ElementId, type GameState, type SkillFx, type SkillFxKind,
   type SkillSlot, type StatusId,
 } from './state.ts';
@@ -346,7 +351,10 @@ function hit(
   damage: number,
   options: { dirX?: number; dirY?: number; knockback?: number; color?: string } = {},
 ): void {
+  const aliveBefore = s.skeletons[index]?.alive === true;
   damageSkeleton(s, index, damage, options);
+  // 技能也磨损武器（7.4：三类武器都有耐久，造成为主、速率低）。落空不算。
+  if (aliveBefore) wearWeapon(s, damage);
   const sk = s.skeletons[index];
   if (sk === undefined || !sk.alive) return;
   if (def.status !== undefined) applyStatus(sk, def.status);
@@ -615,28 +623,3 @@ function strike(s: GameState, def: SkillDef, aim: { x: number; y: number }, dama
   if (hits === 0) say(s, `「${def.name}」落空了`);
 }
 
-/**
- * 喝蓝药：本局瓶数有限，效果是「缓慢回复」而不是一口回满。
- * 满蓝 / 没药时不消耗 —— 拒绝必须免费。
- */
-export function drinkPotion(s: GameState): boolean {
-  if (runOver(s)) return false;
-  if (s.potions <= 0) {
-    say(s, '蓝药已用完');
-    return false;
-  }
-  if (s.mana >= s.maxMana) {
-    say(s, '法力已满 · 先留着蓝药');
-    return false;
-  }
-  // 药效不叠加：正在回复时再喝只是把计时重置，等于白扔一瓶。
-  if (s.manaSurge > 0) {
-    say(s, '上一瓶还在回复中');
-    return false;
-  }
-  s.potions -= 1;
-  s.manaSurge = POTION_SECONDS;
-  say(s, `喝下蓝药 · ${POTION_SECONDS} 秒内回复 ${POTION_MANA} 点法力`);
-  burst(s, s.player.x, s.player.y - 30, '#60a5fa', 12, 90);
-  return true;
-}
