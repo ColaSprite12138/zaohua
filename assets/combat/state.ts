@@ -85,6 +85,15 @@ export const STRIDE_PIXELS = 22;
 export const MONSTER_SWING_TIME = 0.34;
 /** Duration of the player's swing animation; `attackFx` counts it down. */
 export const PLAYER_SWING_TIME = 0.26;
+/**
+ * 普攻冷却（秒）：挥完一刀到下一刀能出手。HUD 的细条也读它，别在绘制层重新写 0.4。
+ */
+export const PLAYER_ATTACK_CD = 0.4;
+/**
+ * 闪避冷却（秒）。闪避是**角色自带的小技能**（设计 8.2：不占 7 格主动技能额度），
+ * 但 HUD 上它和技能并排显示（用户 2026-11-15 指定）。
+ */
+export const PLAYER_DODGE_CD = 1.25;
 
 /** idle = no order; point = walking to a waypoint; follow = live cursor tracking. */
 export type MoveMode = 'idle' | 'point' | 'follow';

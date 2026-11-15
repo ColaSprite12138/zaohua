@@ -18,6 +18,8 @@ import {
   dropLabelRect,
   MINIMAP,
   MONSTER_SWING_TIME,
+  PLAYER_ATTACK_CD,
+  PLAYER_DODGE_CD,
   PLAYER_SWING_TIME,
   PORTAL_GUIDE_SECONDS,
   PORTAL_RADIUS,
@@ -366,15 +368,6 @@ function itemArtOf(defId: string | null | undefined, quality?: string): string {
     return itemDef(defId).art;
   } catch {
     return itemArtKey(defId, quality);
-  }
-}
-
-/** Authored display name; an unregistered id degrades to a neutral label. */
-function weaponLabel(defId: string): string {
-  try {
-    return itemDef(defId).name;
-  } catch {
-    return '武器';
   }
 }
 
@@ -734,6 +727,213 @@ function drawHoverMark(g: Painter, s: GameState): void {
 
 /* --------------------------------------------------------------------- hud */
 
+/** 快捷栏格边长 / 间距。技能、闪避、武器槽共用同一套网格（用户 2026-11-15 指定）。 */
+const HUD_SLOT = 46;
+const HUD_GAP = 4;
+/** 双液面球半径；球身用 `ORB_STEP` 的方块拼，和场景里的体素同一个网格。 */
+const ORB_R = 60;
+const ORB_STEP = 4;
+/**
+ * 底部留白：球底 / 格子底都停在 `VIEW_H - HUD_BOTTOM`，下面那一行放蓝药瓶数。
+ * 留 52 而不是贴边：引擎的画布在 1280×600 下会吃掉底部约 16 逻辑像素（实测可见区到
+ * 逻辑 y≈704），贴着底边写字的最后一行会被切掉。
+ */
+const HUD_BOTTOM = 52;
+
+/**
+ * 底部中间的「双液面球」：一个像素圆盘，中间一条竖线，**左半血量、右半法力**，
+ * 各自从球底往上按比例涨（用户 2026-11-15 指定，热血传奇式布局）。
+ *
+ * 为什么不用 `ctx.arc` / 渐变：风格规范禁止圆弧与渐变。球身是 4px 方块拼出来的盘子，
+ * 液面也落在方块边界上，所以它和场景里的体素是同一套网格 —— 放大看能数清方块。
+ */
+function drawVitalOrb(g: Painter, s: GameState, cx: number, cy: number): void {
+  const r = ORB_R;
+  const half = ORB_STEP / 2;
+  const cap = (v: number, max: number): number => (max > 0 ? Math.max(0, Math.min(1, v / max)) : 0);
+  const hp = cap(s.hp, s.maxHp);
+  const mp = cap(s.mana, s.maxMana);
+  const inner = (r - ORB_STEP) * (r - ORB_STEP);
+  for (let gy = -r; gy < r; gy += ORB_STEP) {
+    for (let gx = -r; gx < r; gx += ORB_STEP) {
+      const mx = gx + half;
+      const my = gy + half;
+      const d2 = mx * mx + my * my;
+      if (d2 > r * r) continue; // 圆外：一个方块都不画
+      let color: string;
+      if (d2 > inner) {
+        color = '#050a12'; // 一格厚的深色外框
+      } else if (Math.abs(mx) <= half) {
+        color = '#0c1a24'; // 中缝竖线：一条格方块宽
+      } else {
+        const left = mx < 0;
+        const ratio = left ? hp : mp;
+        // 液面相对圆心的 y：比例为 0 时贴底，为 1 时到顶。
+        const surface = r - 2 * r * ratio;
+        if (my >= surface) {
+          // 液面最上面那一行提亮，读起来是「液面」而不是一整块色板。
+          const top = my - ORB_STEP < surface;
+          color = left
+            ? (top ? '#ff6b6b' : '#e0453f')
+            : (top ? '#7cb4ee' : '#3d7ec9');
+        } else {
+          color = left ? '#241318' : '#0e1c2c'; // 空槽：同一色系的暗版
+        }
+      }
+      g.fillStyle = color;
+      g.fillRect(Math.round(cx + gx), Math.round(cy + gy), ORB_STEP, ORB_STEP);
+    }
+  }
+  // 数字贴在各自半圆中间。容量固定（100 / 100），所以只报当前值，不挤成 "100/100"。
+  text(g, String(Math.round(s.hp)), cx - r / 2, cy, 21, '#fff2f0', 'center', '800');
+  text(g, String(Math.round(s.mana)), cx + r / 2, cy, 21, '#eaf4ff', 'center', '800');
+}
+
+/**
+ * 一格快捷栏：底、框、角标、体素图标、冷却遮罩。技能与闪避共用这一个画法 ——
+ * 用户要求「闪避当成一个人人都有的小技能」，那它在视觉上就不该是另一种控件。
+ */
+function drawActionCell(
+  g: Painter,
+  s: GameState,
+  bx: number,
+  by: number,
+  o: {
+    key: string;
+    icon: VoxelModel | null;
+    /** 蓝耗；null = 这个格子不吃法力（闪避）。 */
+    cost: number | null;
+    cooldown: number;
+    cooldownMax: number;
+    ready: boolean;
+    casting: boolean;
+  },
+): void {
+  const cell = HUD_SLOT;
+  g.fillStyle = o.icon === null
+    ? 'rgba(255,255,255,0.03)'
+    : o.ready ? 'rgba(96,165,250,0.16)' : 'rgba(255,255,255,0.06)';
+  roundRect(g, bx, by, cell, cell, 8);
+  g.fill();
+  g.strokeStyle = o.casting ? '#8be9fd' : o.ready ? 'rgba(150,200,255,0.62)' : 'rgba(150,180,205,0.3)';
+  g.lineWidth = o.casting || o.ready ? 2 : 1;
+  roundRect(g, bx, by, cell, cell, 8);
+  g.stroke();
+  if (o.icon !== null) {
+    // 图标压在中间偏下：顶上一行留给按键角标与蓝耗，文字永远不盖模型。
+    const bounds = modelBounds(o.icon);
+    const scale = fitScale(o.icon, cell - 14, cell - 20);
+    drawVoxel(
+      g,
+      o.icon,
+      bx + cell / 2 + (bounds.ax - bounds.w / 2) * scale,
+      by + cell / 2 + 5 + (bounds.ay - bounds.h / 2) * scale,
+      { scale },
+    );
+  }
+  if (o.cooldown > 0 && o.cooldownMax > 0) {
+    // 冷却遮罩从顶部往下退，秒数盖在遮罩上 —— 和武器槽 / 技能栏读法一致。
+    const ratio = Math.min(1, o.cooldown / o.cooldownMax);
+    g.fillStyle = 'rgba(4,10,16,0.74)';
+    g.fillRect(bx + 1, by + 1, cell - 2, Math.round((cell - 2) * ratio));
+  }
+  // 顶上一行：左按键、右蓝耗。都在图标上方，互不重叠。
+  text(g, o.key, bx + 5, by + 9, 9, o.ready ? '#cfe8ff' : '#6f8798', 'left', '800');
+  if (o.cost !== null) {
+    text(
+      g,
+      String(o.cost),
+      bx + cell - 5, by + 9, 9,
+      s.mana >= o.cost ? '#60a5fa' : '#ff9b9b', 'right', '700',
+    );
+  }
+  if (o.cooldown > 0) {
+    text(g, o.cooldown.toFixed(1), bx + cell / 2, by + cell / 2, 13, '#dbe9f5', 'center', '800');
+  }
+}
+
+/**
+ * 底部的技能栏：**第一格固定是闪避**（空格，角色自带、不占 7 格名额），
+ * 后面 7 格是 `skillBar`（设计 8.2）。用户 2026-11-15：闪避不要和血量放一起，
+ * 当成人人都有的小技能放进技能栏。
+ */
+function drawSkillBar(g: Painter, s: GameState, x: number, y: number): void {
+  const spent = s.gameOver || s.extracted || s.timedOut;
+  const dodgeCd = s.player.dodgeCd;
+  drawActionCell(g, s, x, y, {
+    key: '空格',
+    icon: skillModel('dodge'),
+    cost: null,
+    cooldown: dodgeCd,
+    cooldownMax: PLAYER_DODGE_CD,
+    ready: dodgeCd <= 0 && !spent,
+    casting: false,
+  });
+  for (let i = 0; i < SKILL_SLOTS; i += 1) {
+    const slot = s.skillBar[i];
+    const def = slot === undefined ? null : skillDef(slot.id);
+    const bx = x + (i + 1) * (HUD_SLOT + HUD_GAP);
+    const cooling = slot !== undefined && slot.cooldown > 0;
+    drawActionCell(g, s, bx, y, {
+      key: keyLabel(SKILL_KEYS[i] ?? ''),
+      icon: def === null ? null : skillModel(def.icon),
+      cost: def === null ? null : def.cost,
+      cooldown: cooling ? slot!.cooldown : 0,
+      cooldownMax: def === null ? 0 : def.cooldown,
+      ready: def !== null && !cooling && !spent && s.mana >= def.cost,
+      casting: s.cast !== null && s.cast.slot === i,
+    });
+  }
+}
+
+/**
+ * 底部左侧的武器槽：**只有 1 / 2 角标 + 武器本体图形**，不再写「武器槽 · 长剑」
+ * 这类文字（用户 2026-11-15）。激活槽底部有一条 3px 普攻冷却细条。
+ */
+function drawWeaponSlots(g: Painter, s: GameState, x: number, y: number): void {
+  for (let i = 0; i < 2; i += 1) {
+    const bx = x + i * (HUD_SLOT + HUD_GAP);
+    const active = s.activeWeaponSlot === i;
+    const weapon = s.weaponSlots[i];
+    g.fillStyle = active
+      ? 'rgba(255,209,102,0.16)'
+      : weapon ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)';
+    roundRect(g, bx, y, HUD_SLOT, HUD_SLOT, 8);
+    g.fill();
+    g.strokeStyle = active ? '#ffd166' : 'rgba(150,180,205,0.32)';
+    g.lineWidth = active ? 2 : 1;
+    roundRect(g, bx, y, HUD_SLOT, HUD_SLOT, 8);
+    g.stroke();
+    if (weapon) {
+      // 槽里放的是**物品本身**（形状 + 品质配色），HUD 和背包不可能对不上。
+      // 武器模型都是「窄而高」（巨剑 ~1:2.7），角标又在左上角，所以可以放心用满格高度：
+      // 剑身居中，左上角的 1 / 2 压不到它。
+      const model = itemModel(itemArtOf(weapon));
+      const bounds = modelBounds(model);
+      const scale = fitScale(model, HUD_SLOT - 10, HUD_SLOT - 8);
+      drawVoxel(
+        g,
+        model,
+        bx + HUD_SLOT / 2 + (bounds.ax - bounds.w / 2) * scale,
+        y + HUD_SLOT / 2 + 1 + (bounds.ay - bounds.h / 2) * scale,
+        { scale },
+      );
+    } else {
+      text(g, '—', bx + HUD_SLOT / 2, y + HUD_SLOT / 2 + 2, 16, '#41576a', 'center', '700');
+    }
+    text(g, String(i + 1), bx + 5, y + 9, 9, active ? '#ffd166' : '#6f8798', 'left', '800');
+    if (active) {
+      // 普攻冷却：3px 细条压在槽底（0.4 秒很快，扫一眼就知道下一刀好没好）。
+      const ready = 1 - Math.max(0, Math.min(1, s.player.attackCd / PLAYER_ATTACK_CD));
+      const barW = HUD_SLOT - 8;
+      g.fillStyle = 'rgba(255,255,255,0.12)';
+      g.fillRect(bx + 4, y + HUD_SLOT - 6, barW, 3);
+      g.fillStyle = '#ffb454';
+      g.fillRect(bx + 4, y + HUD_SLOT - 6, Math.round(barW * ready), 3);
+    }
+  }
+}
+
 /**
  * 读条提示（设计 8.4：引导类技能必须有极显眼的引导动作，让对手能反应、能打断）。
  *
@@ -758,176 +958,21 @@ function drawCastBar(g: Painter, s: GameState): void {
 }
 
 function hud(g: Painter, s: GameState): void {
-  // Top-left: title + health.
-  g.fillStyle = 'rgba(8,16,24,0.78)';
-  roundRect(g, 24, 20, 300, 82, 14);
-  g.fill();
-  g.strokeStyle = 'rgba(120,170,200,0.32)';
-  g.lineWidth = 2;
-  roundRect(g, 24, 20, 300, 82, 14);
-  g.stroke();
-  text(g, '2.5D 像素试炼 · 骷髅', 40, 43, 17, '#e8f4ff', 'left', '700');
-  g.fillStyle = 'rgba(255,255,255,0.12)';
-  roundRect(g, 40, 64, 268, 12, 6);
-  g.fill();
-  const hpRatio = s.hp / s.maxHp;
-  const hpColor = hpRatio > 0.5 ? '#4ade80' : hpRatio > 0.25 ? '#fbbf24' : '#ff6b6b';
-  g.fillStyle = hpColor;
-  // Segmented bar: 20 blocks, so HP reads in whole "voxels".
-  const segs = 20;
-  const filled = Math.max(0, Math.ceil(hpRatio * segs));
-  for (let i = 0; i < filled; i += 1) {
-    g.fillRect(40 + i * 13.4, 64, 11, 12);
-  }
-  text(g, `${Math.round(s.hp)} / ${s.maxHp}`, 174, 70, 11, '#08131c', 'center', '800');
-  text(g, 'HP', 40, 90, 11, '#8fa9bb', 'left', '600');
-
-  // Top-right is reserved for the read-only minimap (drawn after the HUD).
-
-  // Bottom-centre: two weapon slots. Only the active one drives melee.
-  const slotX = VIEW_W / 2 - 148;
-  const slotY = VIEW_H - 92;
-  g.fillStyle = 'rgba(8,16,24,0.82)';
-  roundRect(g, slotX, slotY, 296, 72, 14);
-  g.fill();
-  g.strokeStyle = 'rgba(150,180,205,0.4)';
-  g.lineWidth = 2;
-  roundRect(g, slotX, slotY, 296, 72, 14);
-  g.stroke();
-  for (let i = 0; i < 2; i += 1) {
-    const bx = slotX + 8 + i * 74;
-    const active = s.activeWeaponSlot === i;
-    const weapon = s.weaponSlots[i];
-    g.fillStyle = active
-      ? 'rgba(255,209,102,0.16)'
-      : weapon ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)';
-    roundRect(g, bx, slotY + 9, 68, 54, 9);
-    g.fill();
-    g.strokeStyle = active ? '#ffd166' : 'rgba(150,180,205,0.35)';
-    g.lineWidth = active ? 2 : 1;
-    roundRect(g, bx, slotY + 9, 68, 54, 9);
-    g.stroke();
-    if (weapon) {
-      // The slot shows the ITEM ITSELF (its own shape + quality accent), so the
-      // HUD and the bag can never disagree about what is equipped. Centred the
-      // same way the meta UI centres its cells: on the baked sprite's anchor.
-      const model = itemModel(itemArtOf(weapon));
-      const bounds = modelBounds(model);
-      const scale = fitScale(model, 38, 44);
-      const cx = bx + 34;
-      const cy = slotY + 36;
-      drawVoxel(
-        g,
-        model,
-        cx + (bounds.ax - bounds.w / 2) * scale,
-        cy + (bounds.ay - bounds.h / 2) * scale,
-        { scale },
-      );
-    } else {
-      text(g, '—', bx + 34, slotY + 42, 21, '#6f8798', 'center', '600');
-    }
-    text(g, String(i + 1), bx + 9, slotY + 24, 11, active ? '#ffd166' : '#6f8798', 'left', '700');
-  }
-  text(g, '武器槽', slotX + 160, slotY + 24, 12, '#8fa9bb', 'left', '600');
-  const used = activeWeapon(s);
-  text(g, used ? weaponLabel(used) : '空手', slotX + 160, slotY + 47, 19, used ? '#ffd166' : '#dbe9f5', 'left', '700');
-  text(g, '按 1 / 2 切换', VIEW_W / 2 + 140, slotY + 48, 11, '#8fa9bb', 'right', '600');
-
-  // 武器槽上面一行：7 格技能栏 + 法力条（设计 8.2 / 8.3）。
-  // 法力条**不做自动回复**，所以它只有「被扣」和「喝药慢慢涨」两种变化。
-  const barW = 376;
-  const barH = 74;
-  const barX = VIEW_W / 2 - barW / 2;
-  const barY = VIEW_H - 172;
-  g.fillStyle = 'rgba(8,16,24,0.82)';
-  roundRect(g, barX, barY, barW, barH, 14);
-  g.fill();
-  g.strokeStyle = 'rgba(150,180,205,0.4)';
-  g.lineWidth = 2;
-  roundRect(g, barX, barY, barW, barH, 14);
-  g.stroke();
-  const manaRatio = s.maxMana > 0 ? Math.max(0, Math.min(1, s.mana / s.maxMana)) : 0;
-  text(g, '法力', barX + 16, barY + 11, 10, '#8fa9bb', 'left', '700');
-  text(
-    g,
-    `${Math.round(s.mana)} / ${s.maxMana}   ·   蓝药 ×${s.potions}`,
-    barX + barW - 16, barY + 11, 10, '#8fa9bb', 'right', '600',
-  );
-  const manaBarW = barW - 32;
-  g.fillStyle = 'rgba(255,255,255,0.10)';
-  roundRect(g, barX + 16, barY + 17, manaBarW, 6, 3);
-  g.fill();
-  {
-    const cells = 42;
-    const stepX = manaBarW / cells;
-    const on = Math.max(0, Math.ceil(manaRatio * cells));
-    g.fillStyle = s.manaSurge > 0 ? '#8be9fd' : '#60a5fa';
-    for (let i = 0; i < on; i += 1) g.fillRect(barX + 16 + i * stepX, barY + 17, stepX - 1, 6);
-  }
-  const cell = 44;
-  const gap = 6;
-  const rowW = SKILL_SLOTS * cell + (SKILL_SLOTS - 1) * gap;
-  const rowX = barX + (barW - rowW) / 2;
-  const rowY = barY + 26;
-  const spent = s.gameOver || s.extracted || s.timedOut;
-  for (let i = 0; i < SKILL_SLOTS; i += 1) {
-    const slot = s.skillBar[i];
-    const def = slot === undefined ? null : skillDef(slot.id);
-    const bx = rowX + i * (cell + gap);
-    const cooling = slot !== undefined && slot.cooldown > 0;
-    const casting = s.cast !== null && s.cast.slot === i;
-    const ready = def !== null && !cooling && !spent && s.mana >= def.cost;
-    g.fillStyle = def === null
-      ? 'rgba(255,255,255,0.03)'
-      : ready ? 'rgba(96,165,250,0.16)' : 'rgba(255,255,255,0.06)';
-    roundRect(g, bx, rowY, cell, cell, 8);
-    g.fill();
-    g.strokeStyle = casting ? '#8be9fd' : ready ? 'rgba(150,200,255,0.62)' : 'rgba(150,180,205,0.3)';
-    g.lineWidth = casting || ready ? 2 : 1;
-    roundRect(g, bx, rowY, cell, cell, 8);
-    g.stroke();
-    if (def !== null) {
-      const model = skillModel(def.icon);
-      if (model !== null) {
-        const bounds = modelBounds(model);
-        const scale = fitScale(model, 34, 33);
-        drawVoxel(
-          g,
-          model,
-          bx + cell / 2 + (bounds.ax - bounds.w / 2) * scale,
-          rowY + cell / 2 + 4 + (bounds.ay - bounds.h / 2) * scale,
-          { scale },
-        );
-      }
-      if (cooling) {
-        // 冷却遮罩从顶部往下退，数字盖在遮罩上 —— 和武器槽的读法一致。
-        const ratio = def.cooldown > 0 ? Math.min(1, slot.cooldown / def.cooldown) : 1;
-        g.fillStyle = 'rgba(4,10,16,0.74)';
-        g.fillRect(bx + 1, rowY + 1, cell - 2, Math.round((cell - 2) * ratio));
-      }
-      text(g, keyLabel(SKILL_KEYS[i] ?? ''), bx + 5, rowY + 10, 10, ready ? '#cfe8ff' : '#6f8798', 'left', '800');
-      text(
-        g,
-        String(def.cost),
-        bx + cell - 5, rowY + cell - 9, 9,
-        s.mana >= def.cost ? '#60a5fa' : '#ff9b9b', 'right', '700',
-      );
-      if (cooling) {
-        text(g, slot.cooldown.toFixed(1), bx + cell / 2, rowY + cell / 2, 13, '#dbe9f5', 'center', '800');
-      }
-    } else {
-      text(g, keyLabel(SKILL_KEYS[i] ?? ''), bx + 5, rowY + 10, 10, '#41576a', 'left', '800');
-      text(g, '—', bx + cell / 2, rowY + cell / 2 + 1, 15, '#41576a', 'center', '700');
-    }
-  }
-
-  // Bottom-right: controls.
-  g.fillStyle = 'rgba(8,16,24,0.66)';
-  roundRect(g, VIEW_W - 286, VIEW_H - 92, 262, 72, 12);
-  g.fill();
-  text(g, '单击地面  移动    长按  跟随光标', VIEW_W - 270, VIEW_H - 70, 12, '#c6dcea');
-  text(g, '单击敌人  近战（进入距离后挥砍）', VIEW_W - 270, VIEW_H - 50, 12, '#c6dcea');
-  text(g, '空格 闪避   X 蓝药   R 重开', VIEW_W - 270, VIEW_H - 30, 12, '#8fa9bb');
+  /**
+   * 底部一条：**武器槽 ← 双液面球 → 技能栏**（用户 2026-11-15 指定的传奇式布局）。
+   * 左上角的血条面板、左下角的冷却条、右下角的操作说明都已经删掉：
+   * 血量 / 法力在球里，闪避冷却在技能栏第一格，操作说明不该长期盖住画面。
+   */
+  const orbCx = VIEW_W / 2;
+  const orbCy = VIEW_H - HUD_BOTTOM - ORB_R;
+  // 三个块共用同一条底线（球底 = 格子底），所以 600 与 720 高都不会错位。
+  const rowY = VIEW_H - HUD_BOTTOM - HUD_SLOT;
+  const weaponW = 2 * HUD_SLOT + HUD_GAP;
+  drawWeaponSlots(g, s, orbCx - ORB_R - 14 - weaponW, rowY);
+  drawVitalOrb(g, s, orbCx, orbCy);
+  drawSkillBar(g, s, orbCx + ORB_R + 14, rowY);
+  // 蓝药瓶数是「本局还剩几次续航」，挂在球正下方（球里放不下）。
+  text(g, `蓝药 ×${s.potions}`, orbCx, orbCy + ORB_R + 12, 10, '#9fc6ff', 'center', '700');
 
   // 本局剩余时间 + 阶段：搜打撤的「撤」是从这里读的。
   const phaseText = s.extracted
@@ -974,25 +1019,6 @@ function hud(g: Painter, s: GameState): void {
   g.fill();
   text(g, mode, VIEW_W / 2, 37, 12, modeColor, 'center', '700');
 
-  // Bottom-left: cooldown meters.
-  g.fillStyle = 'rgba(8,16,24,0.66)';
-  roundRect(g, 24, VIEW_H - 92, 210, 72, 12);
-  g.fill();
-  text(g, '攻击 / 闪避 冷却', 40, VIEW_H - 72, 11, '#8fa9bb');
-  const bars: [number, number, number, string][] = [
-    [40, VIEW_H - 56, 1 - s.player.attackCd / 0.4, '#ffb454'],
-    [40, VIEW_H - 36, 1 - s.player.dodgeCd / 1.25, '#67e8f9'],
-  ];
-  for (const [x, y, ratio, color] of bars) {
-    g.fillStyle = 'rgba(255,255,255,0.10)';
-    roundRect(g, x, y, 178, 8, 4);
-    g.fill();
-    g.fillStyle = color;
-    const cells = 22;
-    const on = Math.max(0, Math.ceil(Math.min(1, ratio) * cells));
-    for (let i = 0; i < on; i += 1) g.fillRect(x + i * 8.1, y, 7, 8);
-  }
-
   // 传送门：站在圈里提示按 E；引导中显示三段进度（与门顶那条是同一份数据）。
   const reach = s.portals.find((p) => p.inRange) ?? null;
   const channelPortal = s.channel === null
@@ -1030,8 +1056,8 @@ function hud(g: Painter, s: GameState): void {
     const hint = s.runKind === 'story'
       ? `按 E 引导传送门 · ${PORTAL_GUIDE_SECONDS} 秒 · 受击或离开会清空进度`
       : '按 E 引导';
-    // 技能栏上方一行：既不在技能格上压字，也不与顶部引导面板打架。
-    text(g, hint, VIEW_W / 2, VIEW_H - 186, 13, '#ffd166', 'center', '700');
+    // 球上方一行：不压球、不压技能格，也不与顶部引导面板打架。
+    text(g, hint, VIEW_W / 2, VIEW_H - 196, 13, '#ffd166', 'center', '700');
   }
 
   // Centre toast.

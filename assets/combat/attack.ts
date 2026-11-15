@@ -10,7 +10,7 @@ import { weaponDamage } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
 import {
   activeWeapon, DROP_MODEL_RADIUS, dropLabelRect, MELEE_RANGE_ARMED,
-  MELEE_RANGE_BARE, nextDropUid, PLAYER_SWING_TIME,
+  MELEE_RANGE_BARE, nextDropUid, PLAYER_ATTACK_CD, PLAYER_SWING_TIME,
   type Drop, type GameState,
 } from './state.ts';
 
@@ -188,7 +188,7 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   const baseline = weaponId === null ? 22 : (weaponDamage(weaponId) ?? 46);
   const aim = Math.atan2(ddy, ddx);
 
-  p.attackCd = 0.4;
+  p.attackCd = PLAYER_ATTACK_CD;
   p.attackFx = PLAYER_SWING_TIME;
   p.face = aim;
   s.attacks += 1;

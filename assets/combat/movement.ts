@@ -18,7 +18,7 @@ import {
   clearAttackOrder, dropAtPoint, hitTestEnemy,
 } from './attack.ts';
 import {
-  CLICK_DRAG_PIXELS, STRIDE_PIXELS, type GameState, type StepInput,
+  CLICK_DRAG_PIXELS, PLAYER_DODGE_CD, STRIDE_PIXELS, type GameState, type StepInput,
 } from './state.ts';
 import { walkable, type World } from './world.ts';
 
@@ -104,7 +104,7 @@ export function applyDodge(s: GameState, dodge: boolean): void {
   if (!dodge || p.dodgeCd > 0) return;
   p.dodge = 0.24;
   p.invuln = 0.36;
-  p.dodgeCd = 1.25;
+  p.dodgeCd = PLAYER_DODGE_CD;
   const dir = Math.hypot(p.vx, p.vy) > 4 ? Math.atan2(p.vy, p.vx) : p.face;
   setTarget(s, p.x + Math.cos(dir) * 185, p.y + Math.sin(dir) * 130);
   s.moveMode = 'point';

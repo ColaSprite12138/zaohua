@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/game/voxel.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: c0b80582a279fa8006568439111c0e0660ee1517a02b771d95f4e71c3fc9ca48
+ * Source SHA-256: ace550173d2bcf52358b1c52e29bbf944a62ab4094cbaf7b3be977f228fa73d3
  */
 (function (root) {
 "use strict";
@@ -479,11 +479,32 @@ function skillIceShard() {
     b.box(2, 0, 0, 1, 1, 1, C.gem);
     return b.model();
 }
+/**
+ * 闪避：一个向右前倾的人形 + 身后两道残影（用户 2026-11-15 要求把闪避当小技能
+ * 放进技能栏）。残影比本体暗一档，读起来是「刚从这里滚过去」。
+ */
+function skillDodge() {
+    const b = new Builder('skill-dodge', 4);
+    // 本体（亮）
+    b.box(1, 0, 0, 1, 2, 1, C.plate);
+    b.box(0, 2, 0, 2, 2, 1, C.armorHi);
+    b.box(0, 4, 0, 2, 1, 1, C.skin);
+    b.box(2, 1, 0, 1, 1, 1, C.boot);
+    // 残影（暗）
+    b.box(-2, 0, 0, 1, 2, 1, C.armorDark);
+    b.box(-3, 2, 0, 2, 2, 1, C.steel);
+    b.box(-3, 4, 0, 1, 1, 1, C.armorDark);
+    b.box(-5, 1, 0, 2, 1, 1, C.steel);
+    return b.model();
+}
 /** 技能 id → 体素图标。`skills.ts::SkillDef.icon` 就用这里的键。 */
 exports.SKILL_ICONS = Object.freeze({
     cleave: skillCleave(),
     charge: skillCharge(),
     ice_shard: skillIceShard(),
+    // 不是 `SkillDef`：闪避是角色自带的（设计 8.2 不占 7 格），但 HUD 上它和技能并排，
+    // 所以图标也放在这里，共用同一套格子画法。
+    dodge: skillDodge(),
 });
 /** 未知技能返回 null：HUD 会画一个空格子，而不是借别人的图标。 */
 function skillModel(icon) {
