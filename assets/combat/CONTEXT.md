@@ -109,6 +109,23 @@
 | HUD 不再画什么 | 左上角血条面板、左下角「攻击 / 闪避冷却」面板、右下角常驻操作说明遮罩**全部删除**（用户 2026-11-15：闪避进技能栏、说明挡画面）。**单页壳层那条 `#fx-battle-hint`（「战斗中 · 左键点地面移动…」）也一并删掉**（2026-11-15 第二轮，用户截图指出它还在）：操作提示只在开局 toast 出现一次，`B/I` 背包提示由顶栏按钮自带 |
 | 美术 | 图标是 `voxel.ts::SKILL_ICONS` 的体素模型（`cleave / charge / ice_shard`），键来自 `SkillDef.icon`。新增技能不登记图标 = `skills.test.ts` 红 |
 
+### 技能表现：动作 / 特效 / 地面残留（2026-11-15 第二批）
+
+> 用户原话：「所有技能都是瞬发的，也没有足够多的特效和粒子效果，让人根本看不出来放的
+> 是什么技能」+「冲锋直接变成了瞬移，怎么也要有一个冲过去的过程」。这一节就是那条需求的契约。
+
+| 项 | 契约 |
+|:--|:--|
+| 视觉事件 | `GameState.skillFx: SkillFx[]`，`kind = sweep / dash / bolt / cast / impact / sweepMark / frostMark`。**只写不读**：伤害 / 冷却 / 命中一律不看它；它只是「这一帧发生了什么」的记录，交给绘制层 |
+| 生命周期 | 特效由 `tickSkills()` 统一 `life -= dt` 并过滤；**闪光类 0.85s，命中 0.45s，地面残留 3.2s**。改数值只改 `skills.ts` 里的 `spawnFx(...)` 最后一参 |
+| 形状必须可分辨 | 横扫=**扇形刀光**（13 列方块沿 ±1.1rad 扫出去）；冰锥=**一颗飞出去的晶体 + 走廊霜痕**；冲锋=**起手尘土 + 身后连排残影**；读条=**脚下法阵 + 上升火花**；命中=**放射碎块 + 方块冲击环**。都是 4~7px 方块，不用渐变 / 圆弧 |
+| 两段式寿命 | 绘制层 `fade = life / (max * 0.55)` 先「亮」着保持、后段才淡出；扩散只在前 35% 完成。一直线性淡出会导致特效 0.3 秒就没了，玩家读不到 |
+| 地面残留 | 横扫留 `sweepMark`（橙色弧）、冰锥留 `frostMark`（青色走廊），3.2 秒。作用有两个：① 技能放完还能读出「往哪边打的」；② 截图/录像能拍到（0.3 秒的闪光拍不到） |
+| 冲锋是位移过程 | `startDash()` 只压 `player.dash`，位移由 `updateDash()` **按 `DASH_SPEED = 950` 分帧推进**（220px ≈ 0.23s）；每帧检查 `canStand`（撞墙沿墙滑、撞死就停）、给沿途目标**每只只结算一次**、留残影 |
+| 冲锋期间 | `step()` 用 `dashing` 关掉 `classifyPointer` / `walk` / `resolveAttackOrder`（不能一边冲一边砍）；`updateDash` 排在 `walk` 的位置 |
+| 读条姿态 | `player.castPose`（秒）在起手时置为 `castTime`，绘制层据此**举杖 + 手上一颗发光法力球**；读条结束 / 被打断都清零 |
+| 冲锋姿态 | 绘制层把身体整体抬起 2px（read 作「扑出去」）+ `drawDashTrail` 画身后 5 块拖影 |
+
 **没做的部分**（别以为漏了）：状态 / 减速 / 反应链（8.4 / 8.5）、技能升级与形态（决策 11「解锁即完整」）、
 星图解锁接线、`spell` 类武器（`attack-spec.ts` 仍只留类型）、弹道运行时（冰锥走直线判定，
 远程武器与弓手怪的 `Projectile` 还没接进 `step()`）、法力药水做成背包物品（现在按局发瓶数）。
@@ -234,6 +251,14 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
     `sk.hp -= x`」的技能都会绕开掉落与击杀计数，`lootLog` 与实际击杀从此对不上。
 30. **冷却只在 `tickSkills()` 里递减**：别的模块不得直接写 `slot.cooldown`（`beginSkill`
     负责置满、`reset` 负责清零，除此之外只有这里减）。
+31. **技能特效只写不读**：`skillFx` 是表现层的事实记录，伤害 / 冷却 / 命中判定一律不得读它；
+    反过来绘制层也不许自己编特效（它只知道位置，不知道「打中了谁、朝哪个方向」）。
+32. **冲锋必须分帧**：`player.dash` 每帧最多走 `DASH_SPEED * dt`，禁止再出现「一次算到底」
+    的瞬移实现；`updateDash` 里 **dt <= 0 的帧必须原样返回**（零长度帧不许结束位移，
+    浏览器里输入事件那一帧就是 dt = 0，旧实现会把 220px 的冲锋当场砍成 117px）。
+33. **冲锋不穿墙**：`updateDash` 与走路共用 `movement.ts::canStand()`；撞墙沿墙滑一段后停，
+    并在 `moved <= 0.5 && step > 0.5` 时报「被墙挡住」。
+34. **同一只怪一次冲锋只挨一下**：`DashState.hit` 记已结算的下标，撞到后继续冲不再重复伤害。
 
 ## 目录与依赖方向（单向，禁止反向 import）
 
@@ -297,7 +322,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 135 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3 / extraction 17 / **skills 19**）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 138 条（loot 14 / movement 33 / world 11 / weapons 10 / attack-spec 10 / projectiles 10 / run-inventory 8 / modifiers 3 / extraction 17 / **skills 22**）
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json

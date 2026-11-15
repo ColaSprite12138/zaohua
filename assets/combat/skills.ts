@@ -20,8 +20,8 @@ import { burst, say } from './effects.ts';
 import { canStand } from './movement.ts';
 import type { CombatModifiers } from './modifiers.ts';
 import {
-  POTION_MANA, POTION_SECONDS, SKILL_SLOTS, STRIDE_PIXELS,
-  type CastState, type GameState, type SkillSlot,
+  DASH_SPEED, POTION_MANA, POTION_SECONDS, SKILL_SLOTS, STRIDE_PIXELS,
+  type CastState, type GameState, type SkillFx, type SkillFxKind, type SkillSlot,
 } from './state.ts';
 
 /** 技能的作用形态。加一个「新技能」= 复用这三种之一，或在这里加一种 + 一个 resolver。 */
@@ -103,6 +103,10 @@ export function tickSkills(s: GameState, dt: number): void {
   for (const slot of s.skillBar) {
     slot.cooldown = Math.max(0, slot.cooldown - dt);
   }
+  // 技能特效与施法姿态走同一条时间轴（绘制层只读，不自己数秒）。
+  for (const fx of s.skillFx) fx.life -= dt;
+  s.skillFx = s.skillFx.filter((fx) => fx.life > 0);
+  s.player.castPose = Math.max(0, s.player.castPose - dt);
   if (s.manaSurge <= 0) return;
   const span = Math.min(dt, s.manaSurge);
   s.manaSurge = Math.max(0, s.manaSurge - span);
@@ -158,8 +162,11 @@ export function beginSkill(
     slot, id: def.id, t: 0, total: def.castTime, aimX: point.x, aimY: point.y,
   };
   s.cast = cast;
+  // 施法姿态：整段读条都保持举杖，绘制层据此换手臂角度 + 手上托一颗光球。
+  p.castPose = def.castTime;
+  spawnFx(s, 'cast', p.x, p.y, p.face, def.reach, def.castTime);
   pinPlayer(s);
-  burst(s, p.x, p.y - 30, '#8be9fd', 8, 60);
+  burst(s, p.x, p.y - 30, '#8be9fd', 12, 70);
   return 'ok';
 }
 
@@ -188,11 +195,13 @@ export function advanceCast(s: GameState, dt: number, mods: CombatModifiers): vo
   }
   if (s.player.hurt > 0) {
     s.cast = null;
+    s.player.castPose = 0;
     say(s, `受击打断了「${def.name}」· 法力与冷却不退还`);
     return;
   }
   if (s.player.dodge > 0) {
     s.cast = null;
+    s.player.castPose = 0;
     say(s, `闪避打断了「${def.name}」· 法力与冷却不退还`);
     return;
   }
@@ -202,6 +211,7 @@ export function advanceCast(s: GameState, dt: number, mods: CombatModifiers): vo
     return;
   }
   s.cast = null;
+  s.player.castPose = 0;
   resolveSkill(s, def, { x: cast.aimX, y: cast.aimY }, mods);
 }
 
@@ -214,32 +224,60 @@ function resolveSkill(
 ): void {
   const damage = mods.damageMultiplier(def.damage);
   if (def.kind === 'sweep') sweep(s, def, damage);
-  else if (def.kind === 'dash') dash(s, def, aim, damage);
+  else if (def.kind === 'dash') startDash(s, def, aim, damage);
   else bolt(s, def, aim, damage);
 }
 
-/** 横扫：以玩家为圆心，`reach` 内全部命中（不分敌我朝向，清填线用）。 */
+/** 记一条视觉事件。特效只是「这一帧发生了什么」的记录，逻辑从不去读它。 */
+function spawnFx(
+  s: GameState,
+  kind: SkillFxKind,
+  x: number,
+  y: number,
+  angle: number,
+  reach: number,
+  max: number,
+): void {
+  const fx: SkillFx = { kind, x, y, angle, reach, life: max, max };
+  s.skillFx.push(fx);
+}
+
+/**
+ * 横扫：以玩家为圆心，`reach` 内全部命中（不分敌我朝向，清填线用）。
+ * 视觉上给一条**扇形刀光**（`sweep`），不是「一圈平均的粒子」—— 用户要的是
+ * 「一眼看出这是什么技能」，扇形和人挥剑的方向对得上才读得出来。
+ */
 function sweep(s: GameState, def: SkillDef, damage: number): void {
   const p = s.player;
+  let hits = 0;
   for (let i = 0; i < s.skeletons.length; i += 1) {
     const sk = s.skeletons[i];
     if (sk === undefined || !sk.alive) continue;
     if (Math.hypot(sk.x - p.x, sk.y - p.y) > def.reach + 20) continue;
     damageSkeleton(s, i, damage, { color: '#ffd166', knockback: 1.4 });
+    spawnFx(s, 'impact', sk.x, sk.y, p.face, 26, 0.45);
+    hits += 1;
   }
-  // 反馈：一圈方块冲击波 + 自身光点，形状本身就是「范围」。
-  for (let a = 0; a < 12; a += 1) {
-    const ang = (Math.PI * 2 * a) / 12;
-    burst(s, p.x + Math.cos(ang) * 40, p.y + Math.sin(ang) * 26, '#ffd166', 3, 150);
+  spawnFx(s, 'sweep', p.x, p.y, p.face, def.reach, 0.85);
+  // 地面灼痕：闪光只有 0.3 秒，但「刚才往哪边扫了一刀」要能留在地面上。
+  spawnFx(s, 'sweepMark', p.x, p.y, p.face, def.reach, 3.2);
+  // 挥剑动作照常走（手臂真的抡一圈），再补一圈外向的碎块做「扫出去」的方向感。
+  p.attackFx = 0.3;
+  for (let a = 0; a < 10; a += 1) {
+    const ang = p.face + (a / 9 - 0.5) * 2.2;
+    burst(s, p.x + Math.cos(ang) * 52, p.y + Math.sin(ang) * 34, '#ffd166', 3, 210);
   }
-  burst(s, p.x, p.y - 26, '#fff3c4', 10, 90);
+  burst(s, p.x, p.y - 26, '#fff3c4', 12, 110);
+  if (hits === 0) say(s, `「${def.name}」没有命中`);
 }
 
 /**
- * 冲锋：沿光标方向按 8px 步进前进，撞墙就停（不穿墙、不穿怪），
- * 沿途 `width` 内的目标各结算一次。
+ * 冲锋：**起手只压状态，位移交给 `updateDash()` 分帧推进**。
+ *
+ * 旧实现沿方向一次算到底，看起来就是瞬移（用户原话）。现在按 `DASH_SPEED`
+ * 每帧走一小段：画面里能看到人冲过去、身后拖残影、撞到怪时才结算那一下。
  */
-function dash(
+function startDash(
   s: GameState,
   def: SkillDef,
   aim: { x: number; y: number },
@@ -249,35 +287,69 @@ function dash(
   const dx = aim.x - p.x;
   const dy = aim.y - p.y;
   const d = Math.hypot(dx, dy) || 1;
-  const ux = dx / d;
-  const uy = dy / d;
-  const hit = new Set<number>();
-  const fromX = p.x;
-  const fromY = p.y;
-  let travelled = 0;
-  const step = 8;
-  while (travelled < def.reach) {
-    const nx = p.x + ux * step;
-    const ny = p.y + uy * step;
-    // 墙体用和走路同一套 10px 探针：冲锋不能是「穿墙技能」。
-    if (!canStand(s.world, nx, ny)) break;
+  p.face = Math.atan2(dy, dx);
+  p.dash = {
+    travelled: 0,
+    total: def.reach,
+    ux: dx / d,
+    uy: dy / d,
+    damage,
+    hit: [],
+  };
+  spawnFx(s, 'dash', p.x, p.y, p.face, def.reach, 0.35);
+  burst(s, p.x, p.y, '#8be9fd', 8, 90);
+}
+
+/**
+ * 推进冲锋。每帧：按速度走一步（撞墙就停，可沿墙滑）、给沿途目标结算一次、
+ * 留残影与尘土。走完 / 撞墙 / 位移为 0 时收尾。
+ */
+export function updateDash(s: GameState, dt: number, _mods: CombatModifiers): void {
+  const dash = s.player.dash;
+  if (dash === null) return;
+  const p = s.player;
+  // dt = 0 的帧（暂停 / 输入事件的同一帧）不推进也不许结束冲锋 ——
+  // 之前用「位移为 0 就收尾」判定撞墙，结果浏览器里一个零长度帧就把冲锋砍掉了。
+  if (dt <= 0) return;
+  const step = Math.min(DASH_SPEED * dt, dash.total - dash.travelled);
+  const nx = p.x + dash.ux * step;
+  const ny = p.y + dash.uy * step;
+  let moved = 0;
+  // 和走路同一套 10px 探针：冲锋不能穿墙，撞上就沿墙滑一段再停。
+  if (canStand(s.world, nx, ny)) {
     p.x = nx;
     p.y = ny;
-    travelled += step;
-    for (let i = 0; i < s.skeletons.length; i += 1) {
-      const sk = s.skeletons[i];
-      if (sk === undefined || !sk.alive) continue;
-      if (Math.hypot(sk.x - p.x, sk.y - p.y) <= def.width) hit.add(i);
-    }
-    if (travelled % 48 === 0) burst(s, p.x, p.y - 18, '#8be9fd', 3, 70);
+    moved = step;
+  } else if (canStand(s.world, nx, p.y)) {
+    p.x = nx;
+    moved = step;
+  } else if (canStand(s.world, p.x, ny)) {
+    p.y = ny;
+    moved = step;
   }
-  // 位移过的距离也要推进步态，否则冲刺完角色像「滑」过去的。
-  p.stride += Math.hypot(p.x - fromX, p.y - fromY) / STRIDE_PIXELS;
-  for (const i of hit) {
-    damageSkeleton(s, i, damage, { color: '#8be9fd', knockback: 1.6 });
+  p.stride += moved / STRIDE_PIXELS;
+  dash.travelled += moved;
+  // 残影：每帧往 trail 里塞一个，绘制层画成方块拖影（冲刺的「速度感」在这里）。
+  // 残影留得比位移本身久一点（0.45s > 0.23s）：冲完身后还有一条彗尾，读得出来。
+  if (moved > 0.5) p.trail.push({ x: p.x, y: p.y, life: 0.45 });
+
+  for (let i = 0; i < s.skeletons.length; i += 1) {
+    const sk = s.skeletons[i];
+    if (sk === undefined || !sk.alive || dash.hit.includes(i)) continue;
+    if (Math.hypot(sk.x - p.x, sk.y - p.y) > 44) continue;
+    dash.hit.push(i);
+    damageSkeleton(s, i, dash.damage, { dirX: dash.ux, dirY: dash.uy, color: '#8be9fd', knockback: 1.7 });
+    spawnFx(s, 'impact', sk.x, sk.y, p.face, 30, 0.45);
+    burst(s, sk.x, sk.y - 20, '#cfe8ff', 14, 200);
   }
-  burst(s, p.x, p.y - 20, '#cfe8ff', 12, 150);
-  if (travelled < 16) say(s, '冲锋被墙挡住了');
+
+  // 「想走但一步都没走成」才算撞墙；走满距离也算结束。
+  const blocked = step > 0.5 && moved <= 0.5;
+  if (blocked || dash.travelled >= dash.total) {
+    p.dash = null;
+    burst(s, p.x, p.y - 18, '#cfe8ff', 12, 150);
+    if (blocked) say(s, '冲锋被墙挡住了');
+  }
 }
 
 /** 冰锥：直线走廊判定（起点玩家、方向光标、长 `reach`、半宽 `width`）。 */
@@ -300,11 +372,14 @@ function bolt(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
     const side = Math.abs(rx * uy - ry * ux);
     if (side > def.width + 18) continue;
     damageSkeleton(s, i, damage, { dirX: ux, dirY: uy, color: '#8be9fd', knockback: 0.6 });
+    spawnFx(s, 'impact', sk.x, sk.y, Math.atan2(uy, ux), 30, 0.45);
+    burst(s, sk.x, sk.y - 20, '#8be9fd', 16, 190);
     hits += 1;
   }
-  for (let step = 20; step <= def.reach; step += 24) {
-    burst(s, p.x + ux * step, p.y + uy * step - 18, '#8be9fd', 4, 80);
-  }
+  // 一条会「射出去」的冰锥（绘制层按角度铺晶体块），比原来的固定光点清楚得多。
+  spawnFx(s, 'bolt', p.x, p.y, Math.atan2(uy, ux), def.reach, 0.85);
+  // 霜痕：同一条走廊留一层结霜，走过去还看得出冰锥是朝哪打的。
+  spawnFx(s, 'frostMark', p.x, p.y, Math.atan2(uy, ux), def.reach, 3.2);
   if (hits === 0) say(s, `「${def.name}」没有命中`);
 }
 

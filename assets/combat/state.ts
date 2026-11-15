@@ -123,6 +123,56 @@ export const POTION_COUNT = 3;
 export const POTION_MANA = 60;
 export const POTION_SECONDS = 5;
 
+/**
+ * 技能视觉事件（2026-11-15 第二批）：**只写不读**。
+ *
+ * 运行时逻辑（伤害、冷却、命中）完全不依赖它们；它们只是「这一帧发生了什么」的
+ * 事实记录，交给绘制层按 `kind` 画方块特效。放在状态里而不是在 `paint.ts` 里
+ * 猜，是因为只有战斗层知道「命中了谁、打的是哪个方向、这是第几段位移」。
+ *
+ * 用户原话：「所有技能都是瞬发的，也没有足够多的特效和粒子效果，让人根本看不出来
+ * 放的是什么技能」。所以每个技能都有自己的 kind，形状必须能一眼分辨。
+ */
+export type SkillFxKind =
+  | 'sweep' | 'dash' | 'bolt' | 'cast' | 'impact'
+  /** 地面残留（刀光灼痕 / 冰锥霜痕）：寿命长得多，让玩家在技能放完之后仍读得出「刚才是什么」。 */
+  | 'sweepMark' | 'frostMark';
+
+export interface SkillFx {
+  kind: SkillFxKind;
+  /** 起点（世界像素）。 */
+  x: number;
+  y: number;
+  /** 方向（弧度）：扇形朝向 / 冰锥走廊 / 冲锋轨迹。 */
+  angle: number;
+  /** 半径或长度（世界像素）。 */
+  reach: number;
+  /** 剩余生命（秒）。 */
+  life: number;
+  /** 总时长（秒）；绘制层用 `1 - life/max` 算进度。 */
+  max: number;
+}
+
+/**
+ * 位移技能进行中的状态。冲锋**不是瞬移**：它按 `DASH_SPEED` 分帧推进，
+ * 每一帧检查碰撞、结算沿途命中，所以画面里能看到人冲过去的过程。
+ */
+export interface DashState {
+  /** 已冲出的距离（世界像素）。 */
+  travelled: number;
+  /** 目标距离。 */
+  total: number;
+  readonly ux: number;
+  readonly uy: number;
+  /** 撞到目标时的伤害（起手时按星图乘区算好）。 */
+  readonly damage: number;
+  /** 本次位移已经打过的怪下标，同一只只挨一次。 */
+  hit: number[];
+}
+
+/** 位移技能速度（世界像素 / 秒）：220px 的冲锋 ≈ 0.23 秒，读得到过程。 */
+export const DASH_SPEED = 950;
+
 export interface SkillSlot {
   /** authored 技能 id；null = 空格。 */
   id: string | null;
@@ -439,6 +489,10 @@ export interface Player {
   attackFx: number;
   hurt: number;
   trail: { x: number; y: number; life: number }[];
+  /** 冲锋进行中；null = 没在位移。绘制层据此画前倾 + 残影。 */
+  dash: DashState | null;
+  /** 施法姿态剩余秒数：> 0 时手臂保持抬起（举杖读条），归零回站姿。 */
+  castPose: number;
 }
 
 export interface GameState {
@@ -523,6 +577,8 @@ export interface GameState {
   potions: number;
   /** 蓝药剩余生效秒数：> 0 时按每秒速率缓慢回蓝。 */
   manaSurge: number;
+  /** 技能视觉事件队列（只写不读，见 `SkillFx`）。 */
+  skillFx: SkillFx[];
   /* ---------------------------------------------------- 单局骨架（搜打撤） */
   /** 关卡类型；只影响「什么算结束 / 死了掉什么」，不改变战斗。 */
   runKind: RunKind;
@@ -557,7 +613,7 @@ export function createState(config: RunConfig = {}): GameState {
     player: {
       x, y, vx: 0, vy: 0, face: 0, stride: 0,
       invuln: 0, dodge: 0, dodgeCd: 0, attackCd: 0,
-      attackFx: 0, hurt: 0, trail: [],
+      attackFx: 0, hurt: 0, trail: [], dash: null, castPose: 0,
     },
     target: { x, y },
     moveMode: 'idle',
@@ -592,6 +648,7 @@ export function createState(config: RunConfig = {}): GameState {
     cast: null,
     potions: POTION_COUNT,
     manaSurge: 0,
+    skillFx: [],
     runKind: 'story',
     runSeconds: RUN_SECONDS,
     phase: 'explore',
@@ -661,6 +718,7 @@ export function reset(s: GameState): void {
   s.potions = POTION_COUNT;
   s.manaSurge = 0;
   s.cast = null;
+  s.skillFx.length = 0;
   s.skillBar = createSkillBar();
   // 单局骨架：计时归零、门重建（次数是「本局」资源，重开一局就恢复）。
   s.runSeconds = RUN_SECONDS;
@@ -689,6 +747,8 @@ export function reset(s: GameState): void {
   p.attackFx = 0;
   p.hurt = 0;
   p.trail.length = 0;
+  p.dash = null;
+  p.castPose = 0;
   s.target = { x: p.x, y: p.y };
   s.path = [];
   s.camera = cameraFor(s.world, p.x, p.y);

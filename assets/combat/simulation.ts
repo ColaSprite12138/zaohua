@@ -18,7 +18,7 @@ import { say } from './effects.ts';
 import { makeRunInventory } from './run-inventory.ts';
 import { updateExtraction, updateRunClock } from './extraction.ts';
 import {
-  advanceCast, beginSkill, drinkPotion, skillDef, skillReady, tickSkills,
+  advanceCast, beginSkill, drinkPotion, skillDef, skillReady, tickSkills, updateDash,
 } from './skills.ts';
 import type { RunLoadout } from '../meta/inventory.ts';
 import {
@@ -76,15 +76,18 @@ export function step(
   // 引导传送门时玩家被钉在门口，读条技能同理：点击移动与攻击指令都不生效
   // （updateExtraction / advanceCast 负责开始、打断与结算；这里只负责「这一帧能不能动」）。
   const pinned = s.channel !== null || s.cast !== null;
+  // 冲锋进行中：位移由 `updateDash()` 接管，普通走位与普攻让位（不能一边冲一边砍）。
+  const dashing = s.player.dash !== null;
 
   // 1 / 2 only changes which slot is in use; it never moves items or attacks.
   if (input.switchWeapon !== undefined && input.switchWeapon !== null) {
     switchWeaponSlot(s, input.switchWeapon);
   }
-  if (!pinned) classifyPointer(s, input);
+  if (!pinned && !dashing) classifyPointer(s, input);
   applyDodge(s, input.dodge);
-  if (!pinned) walk(s, dt);
-  if (!pinned) resolveAttackOrder(s, modifiers);
+  if (!pinned && !dashing) walk(s, dt);
+  if (dashing) updateDash(s, dt, modifiers);
+  if (!pinned && !dashing) resolveAttackOrder(s, modifiers);
   updateSkeletons(s, dt);
   // Nobody may stand inside anybody. Runs after both sides moved AND after
   // swing knockback, so a hit never leaves two bodies fused.
@@ -279,6 +282,10 @@ export function projection(s: GameState) {
         ready: skillReady(s, slot),
       };
     }),
+    /** 冲锋进行中（分帧位移，不是瞬移）；绘制层与验收脚本都读它。 */
+    dashing: s.player.dash !== null,
+    /** 在场技能特效数量（> 0 说明这一帧有技能表现；只做观测，不参与逻辑）。 */
+    skillFx: s.skillFx.length,
     /** 读条中的技能 + 0..1 进度；null = 没在读条。 */
     cast: s.cast === null
       ? null
@@ -326,17 +333,20 @@ export {
   DROP_LABEL_STEP, DROP_MODEL_RADIUS, DROP_MODEL_TOP, DROP_PILE_GAP,
   dropLabelAnchor, dropLabelName, dropLabelRect, dropQualityRank,
   MELEE_RANGE_ARMED, MELEE_RANGE_BARE,
-  MONSTER_SWING_TIME, PLAYER_ATTACK_CD, PLAYER_DODGE_CD, PLAYER_MANA_MAX,
+  DASH_SPEED, MONSTER_SWING_TIME, PLAYER_ATTACK_CD, PLAYER_DODGE_CD, PLAYER_MANA_MAX,
   PLAYER_SWING_TIME, POTION_COUNT,
   POTION_MANA, POTION_SECONDS, PRE_EQUIPPED_SKILLS, SKILL_SLOTS, STRIDE_PIXELS,
   PHASE_EXTRACT_AT, PHASE_FIGHT_AT, PORTAL_COUNT, PORTAL_GUIDE_SECONDS,
   PORTAL_RADIUS, PORTAL_STAGE_COUNT, PORTAL_USES, RUN_SECONDS,
   createPortals, createSkillBar,
 } from './state.ts';
-export type { CastState, Portal, RunKind, RunPhase, SkillSlot } from './state.ts';
+export type {
+  CastState, DashState, Portal, RunKind, RunPhase, SkillFx, SkillFxKind, SkillSlot,
+} from './state.ts';
 export { phaseAt, runFinished } from './extraction.ts';
 export {
   SKILLS, advanceCast, beginSkill, drinkPotion, skillDef, skillReady, tickSkills,
+  updateDash,
 } from './skills.ts';
 export type { SkillDef, SkillKind } from './skills.ts';
 export type { ArenaMap } from './world.ts';

@@ -135,13 +135,61 @@ describe('skill bar and mana', () => {
     expect(s.lootLog).toHaveLength(1);
   });
 
-  it('the charge dashes along the aim and hits what it passes through', () => {
+  it('the charge is a DASH over time, not a teleport', () => {
+    const s = createState();
+    stage(s, []);
+    const startX = s.player.x;
+    expect(beginSkill(s, SLOT.charge, { x: startX + 600, y: s.player.y }, NO_MODIFIERS)).toBe('ok');
+    // 起手那一帧一步都还没走：冲锋是分帧推进的（用户：不能是瞬移）。
+    expect(s.player.dash).not.toBeNull();
+    expect(s.player.x).toBeCloseTo(startX, 5);
+    tick(s, 0.1);
+    const midway = s.player.x - startX;
+    expect(midway).toBeGreaterThan(40);
+    expect(midway).toBeLessThan(SKILLS.charge!.reach);
+    expect(s.player.dash).not.toBeNull();
+    tick(s, 0.3);
+    expect(s.player.dash).toBeNull();
+    expect(s.player.x - startX).toBeCloseTo(SKILLS.charge!.reach, 0);
+  });
+
+  it('the charge damages an enemy exactly once while passing through it', () => {
     const s = createState();
     const startX = s.player.x;
     stage(s, [[startX + 120, s.player.y]]);
-    expect(beginSkill(s, SLOT.charge, { x: startX + 600, y: s.player.y }, NO_MODIFIERS)).toBe('ok');
+    beginSkill(s, SLOT.charge, { x: startX + 600, y: s.player.y }, NO_MODIFIERS);
+    tick(s, 0.4);
     expect(s.player.x).toBeGreaterThan(startX + 150);
     expect(s.skeletons[0]!.hp).toBe(66 - SKILLS.charge!.damage);
+  });
+
+  it('a zero-length frame never cancels the dash', () => {
+    // 浏览器里输入事件那一帧的 dt 可能是 0：旧判定「位移为 0 就算撞墙」会把冲锋当场砍掉
+    //（playthrough 里实测只冲出 117px 就停了）。
+    const s = createState();
+    stage(s, []);
+    const startX = s.player.x;
+    beginSkill(s, SLOT.charge, { x: startX + 600, y: s.player.y }, NO_MODIFIERS);
+    step(s, 0, input());
+    expect(s.player.dash).not.toBeNull();
+    tick(s, 0.08);
+    expect(s.player.dash).not.toBeNull();
+    tick(s, 0.4);
+    expect(s.player.dash).toBeNull();
+    expect(s.player.x - startX).toBeCloseTo(SKILLS.charge!.reach, 0);
+  });
+
+  it('every skill leaves a distinguishable effect record behind', () => {
+    const s = createState();
+    stage(s, [[s.player.x + 60, s.player.y]]);
+    beginSkill(s, SLOT.cleave, null, NO_MODIFIERS);
+    const kinds = s.skillFx.map((fx) => fx.kind);
+    expect(kinds).toContain('sweep');
+    // 地面灼痕活得比闪光久：技能放完还能读出「刚才往哪扫的」。
+    expect(kinds).toContain('sweepMark');
+    // 特效会自己过期，不会一直堆在状态里。
+    tick(s, 3.6);
+    expect(s.skillFx).toHaveLength(0);
   });
 
   it('the charge stops at the wall instead of teleporting through it', () => {

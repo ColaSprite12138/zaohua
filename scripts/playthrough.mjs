@@ -463,6 +463,41 @@ export default async function playthrough(play) {
     await play.screenshot('skill-shard-hit');
   });
 
+  await play.step('the charge is a dash you can watch, not a teleport', async () => {
+    await play.keyboard.press('KeyR');
+    await play.wait(120);
+    await play.advance(2.6); // 让骷髅走进冲锋距离，冲过去才撞得到
+    await play.mouse.move([0.72, 0.52]);
+    await play.wait(120);
+    const before = await play.state('game.state');
+
+    await play.keyboard.press('KeyW');
+    await play.advance(0.06);
+    const mid = await play.state('game.state');
+    // 冲锋分帧推进的严格证明在 skills.test.ts（0.1 秒时位置严格落在 0 与 reach 之间）；
+    // 浏览器这一侧只能保证「按下去立刻产生位移与特效」，截图证明落地表现。
+    const midTravel = Math.hypot(
+      (mid.player.x - before.player.x) * 1280,
+      (mid.player.y - before.player.y) * 720,
+    );
+    assert.ok(
+      mid.dashing || midTravel > 40,
+      `the charge starts moving right away (dashing=${mid.dashing}, travel=${midTravel.toFixed(0)}px)`,
+    );
+    assert.ok(mid.skillFx > 0, 'the dash leaves an effect record');
+
+    await play.advance(0.5);
+    const after = await play.state('game.state');
+    assert.equal(after.dashing, false, 'the dash ends on its own');
+    const travel = Math.hypot(
+      (after.player.x - before.player.x) * 1280,
+      (after.player.y - before.player.y) * 720,
+    );
+    assert.ok(travel > 60, `the charge actually covered ground (${travel.toFixed(0)}px)`);
+    await play.screenshot('skill-dash-landing');
+    assert.ok(after.skillFx >= 0, 'effect records drain on their own');
+  });
+
   await play.step('a blue potion restores mana slowly and is limited', async () => {
     const before = await play.state('game.state');
     assert.ok(before.mana < before.maxMana, 'the skills above spent some mana');

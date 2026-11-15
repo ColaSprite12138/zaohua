@@ -430,6 +430,10 @@ function drawPlayer(g: Painter, s: GameState): void {
   const bob = moving && frame % 2 === 1 ? 1 : 0;
   const rig = facingOf(p.face);
   const swing = p.attackFx > 0 ? 1 - p.attackFx / PLAYER_SWING_TIME : 0;
+  // 施法中：手臂一直举着（读条姿态），不跟挥砍动画；冲锋中：整体抬起 2px，读作「扑出去」。
+  const casting = p.castPose > 0;
+  const armSwing = casting ? 0.12 : swing;
+  const lunge = p.dash === null ? 0 : 2;
 
   for (const mark of p.trail) {
     g.save();
@@ -446,7 +450,7 @@ function drawPlayer(g: Painter, s: GameState): void {
     drawPixelRing(g, p.x, p.y + 2, 26, 11, '#67e8f9', { alpha: 0.85, lineWidth: 2 });
   }
 
-  drawBody(g, KNIGHT, p.x, p.y - bob, {
+  drawBody(g, KNIGHT, p.x, p.y - bob - lunge, {
     frame: moving ? frame : 0,
     facing: rig.facing,
     flip: rig.flip,
@@ -459,13 +463,24 @@ function drawPlayer(g: Painter, s: GameState): void {
     KNIGHT_ARM,
     armed ? itemModel(itemArtOf(weaponId)) : null,
     p.x,
-    p.y - bob,
+    p.y - bob - lunge,
     p.face,
     rig.flip,
-    swing,
+    armSwing,
     p.hurt > 0,
     armed ? 1.1 : 1,
   );
+
+  // 举杖：拳头上托一颗发光的法力球（读条时它一直在，越接近完成越大）。
+  if (casting) {
+    const hand = handPose(p.x, p.y - bob - lunge, p.face, rig.flip, 0.12);
+    const pulse = 0.5 + 0.5 * Math.sin(s.t * 14);
+    drawPixelGlow(g, hand.x, hand.y, 11 + pulse * 4, 9 + pulse * 3, '#8be9fd', 0.34);
+    g.fillStyle = '#cfe8ff';
+    g.fillRect(Math.round(hand.x) - 3, Math.round(hand.y) - 3, 6, 6);
+    g.fillStyle = '#8be9fd';
+    g.fillRect(Math.round(hand.x) - 1, Math.round(hand.y) - 7, 2, 4);
+  }
 }
 
 /** 骷髅剑士 carries a bone-grey blade, 骷髅弓手 a bow (see `monster.xlsx`). */
@@ -924,6 +939,164 @@ function drawWeaponSlots(g: Painter, s: GameState, x: number, y: number): void {
   }
 }
 
+/* ---------------------------------------------------------- skill effects */
+
+/**
+ * 技能特效（2026-11-15 第二批，用户：「看不出放的是什么技能」）。
+ *
+ * 全部由 4~10px 的**方块**构成，没有渐变、没有圆弧 —— 和场景同一套像素语言。
+ * 形状是刻意分开的，一眼就能分辨：
+ * - `sweep`  **扇形刀光**：13 列方块沿 ±1.1rad 扫出去，扫到哪边看得见
+ * - `dash`   **起手尘土**：脚下炸开一圈（过程中的人影由 `drawDashTrail` 画）
+ * - `bolt`   **射出去的冰晶**：一颗亮晶体沿走廊飞出去 + 两侧霜痕
+ * - `cast`   **脚下法阵**：两圈方块 + 上升火花，读条期间一直在
+ * - `impact` **命中炸点**：放射碎块 + 一圈冲击环
+ */
+function drawSkillFx(g: Painter, s: GameState): void {
+  for (const fx of s.skillFx) {
+    const u = Math.max(0, Math.min(1, 1 - fx.life / fx.max));
+    // 两段式：先「亮」着扩散，再把剩下的时间用来淡出。
+    // 一直线性淡出的话，特效只活 0.3 秒，截图和玩家都看不到（用户就是抱怨这个）。
+    const fade = Math.max(0, Math.min(1, fx.life / (fx.max * 0.55)));
+    const spread = ease(Math.min(1, u / 0.35));
+    g.save();
+    if (fx.kind === 'sweep') {
+      // 扇形刀光：外沿亮 + 内沿更亮，边缘那一列最实，扫过的方向一目了然。
+      const r = 34 + (fx.reach - 34) * spread;
+      for (let i = 0; i < 13; i += 1) {
+        const ang = fx.angle + (i / 12 - 0.5) * 2.2;
+        // 中间最实、两端渐隐 —— 这就是「挥过去」的方向感。
+        const weight = 1 - Math.abs(i / 12 - 0.5) * 1.7;
+        g.globalAlpha = fade * Math.max(0, weight);
+        g.fillStyle = '#ffd166';
+        const px = fx.x + Math.cos(ang) * r;
+        const py = fx.y + Math.sin(ang) * r * 0.62;
+        g.fillRect(Math.round(px) - 3, Math.round(py) - 3, 6, 6);
+        // 内侧一层更亮的短刀光，让扇形有厚度
+        g.fillStyle = '#fff3c4';
+        const px2 = fx.x + Math.cos(ang) * (r - 16);
+        const py2 = fx.y + Math.sin(ang) * (r - 16) * 0.62;
+        g.fillRect(Math.round(px2) - 2, Math.round(py2) - 2, 4, 4);
+      }
+    } else if (fx.kind === 'bolt') {
+      // 两侧霜痕：整条走廊都结霜，越远越淡。
+      g.fillStyle = '#8be9fd';
+      for (let d = 24; d < fx.reach; d += 22) {
+        g.globalAlpha = fade * 0.22;
+        const nx = -Math.sin(fx.angle) * 16;
+        const ny = Math.cos(fx.angle) * 16 * 0.62;
+        const px = fx.x + Math.cos(fx.angle) * d;
+        const py = fx.y + Math.sin(fx.angle) * d * 0.62;
+        g.fillRect(Math.round(px + nx) - 2, Math.round(py + ny) - 2, 4, 4);
+        g.fillRect(Math.round(px - nx) - 2, Math.round(py - ny) - 2, 4, 4);
+      }
+      // 飞出去的晶体：头大尾小，位置随进度推进。
+      const d = 20 + (fx.reach - 20) * ease(Math.min(1, u / 0.4));
+      const hx = fx.x + Math.cos(fx.angle) * d;
+      const hy = fx.y + Math.sin(fx.angle) * d * 0.62;
+      g.globalAlpha = fade;
+      g.fillStyle = '#cfe8ff';
+      g.fillRect(Math.round(hx) - 5, Math.round(hy) - 7, 10, 14);
+      g.fillStyle = '#8be9fd';
+      g.fillRect(Math.round(hx) - 2, Math.round(hy) - 10, 4, 6);
+      for (let t = 1; t <= 4; t += 1) {
+        g.globalAlpha = fade * (0.55 - t * 0.1);
+        const tx = hx - Math.cos(fx.angle) * 16 * t;
+        const ty = hy - Math.sin(fx.angle) * 10 * t;
+        g.fillStyle = '#8be9fd';
+        g.fillRect(Math.round(tx) - 2, Math.round(ty) - 2, 4, 4);
+      }
+    } else if (fx.kind === 'cast') {
+      // 脚下法阵：两圈方块 + 上升火花，读条全程都在，越接近完成越亮。
+      const r1 = 26 + 8 * Math.sin(s.t * 6);
+      const r2 = 40 + 10 * u;
+      g.globalAlpha = fade * 0.75;
+      for (let i = 0; i < 12; i += 1) {
+        const ang = (Math.PI * 2 * i) / 12 + s.t * 0.8;
+        g.fillStyle = '#8be9fd';
+        g.fillRect(Math.round(fx.x + Math.cos(ang) * r1) - 2, Math.round(fx.y + Math.sin(ang) * r1 * 0.5) - 2, 4, 4);
+        g.fillStyle = '#cfe8ff';
+        g.fillRect(Math.round(fx.x + Math.cos(-ang) * r2) - 2, Math.round(fx.y + Math.sin(-ang) * r2 * 0.5) - 2, 4, 4);
+      }
+      for (let i = 0; i < 6; i += 1) {
+        const t = (s.t * 1.6 + i / 6) % 1;
+        g.globalAlpha = fade * (1 - t) * 0.7;
+        g.fillStyle = '#8be9fd';
+        g.fillRect(Math.round(fx.x + Math.cos(i * 2.1) * 14) - 2, Math.round(fx.y - 8 - t * 46) - 2, 4, 4);
+      }
+    } else if (fx.kind === 'dash') {
+      // 起手尘土：脚下的 6 个碎块向外散开（冲刺本身的人影在 drawDashTrail 里）。
+      g.globalAlpha = fade * 0.8;
+      g.fillStyle = '#cfe8ff';
+      for (let i = 0; i < 6; i += 1) {
+        const ang = fx.angle + Math.PI + (i / 5 - 0.5) * 1.6;
+        const d = 10 + 20 * spread;
+        g.fillRect(Math.round(fx.x + Math.cos(ang) * d) - 2, Math.round(fx.y + Math.sin(ang) * d * 0.5) - 2, 4, 4);
+      }
+    } else if (fx.kind === 'sweepMark') {
+      // 地面灼痕：两道同心的弧线留在原地，慢慢淡掉（比闪光长一倍寿命）。
+      g.globalAlpha = fade * 0.62;
+      for (let i = 0; i < 15; i += 1) {
+        const ang = fx.angle + (i / 14 - 0.5) * 2.2;
+        const weight = 1 - Math.abs(i / 14 - 0.5) * 1.2;
+        if (weight <= 0) continue;
+        g.fillStyle = '#ffb454';
+        const px = fx.x + Math.cos(ang) * (fx.reach - 12);
+        const py = fx.y + Math.sin(ang) * (fx.reach - 12) * 0.62;
+        g.fillRect(Math.round(px) - 3, Math.round(py) - 2, 7, 5);
+        g.fillStyle = '#ffd166';
+        const px2 = fx.x + Math.cos(ang) * (fx.reach - 40);
+        const py2 = fx.y + Math.sin(ang) * (fx.reach - 40) * 0.62;
+        g.fillRect(Math.round(px2) - 3, Math.round(py2) - 1, 5, 4);
+      }
+    } else if (fx.kind === 'frostMark') {
+      // 霜痕：走廊两侧各一排冰蓝碎块，能读出「往哪边射的」。
+      g.globalAlpha = fade * 0.62;
+      for (let d = 22; d < fx.reach; d += 14) {
+        const nx = -Math.sin(fx.angle) * 18;
+        const ny = Math.cos(fx.angle) * 18 * 0.62;
+        const px = fx.x + Math.cos(fx.angle) * d;
+        const py = fx.y + Math.sin(fx.angle) * d * 0.62;
+        g.fillStyle = '#8be9fd';
+        g.fillRect(Math.round(px + nx) - 3, Math.round(py + ny) - 2, 6, 4);
+        g.fillRect(Math.round(px - nx) - 3, Math.round(py - ny) - 2, 6, 4);
+        if ((d - 22) % 28 === 0) {
+          g.fillStyle = '#cfe8ff';
+          g.fillRect(Math.round(px) - 2, Math.round(py) - 1, 5, 3);
+        }
+      }
+    } else {
+      // impact：放射碎块 + 一圈冲击环（方块环，不是椭圆）。
+      g.globalAlpha = fade;
+      g.fillStyle = '#eaf8ff';
+      for (let i = 0; i < 8; i += 1) {
+        const ang = (Math.PI * 2 * i) / 8 + fx.angle;
+        const d = 6 + fx.reach * spread;
+        g.fillRect(Math.round(fx.x + Math.cos(ang) * d) - 2, Math.round(fx.y + Math.sin(ang) * d * 0.6) - 2, 4, 4);
+      }
+      g.globalAlpha = fade * 0.55;
+      drawPixelRing(g, fx.x, fx.y, 14 + fx.reach * spread, 7 + fx.reach * 0.4 * spread, '#8be9fd', { lineWidth: 2 });
+    }
+    g.restore();
+  }
+}
+
+/** 冲锋过程中的人影：身后连排的方块拖影 + 脚下速度线（这就是「冲过去的过程」）。 */
+function drawDashTrail(g: Painter, s: GameState): void {
+  const dash = s.player.dash;
+  if (dash === null) return;
+  const p = s.player;
+  g.save();
+  for (let k = 1; k <= 5; k += 1) {
+    g.globalAlpha = 0.26 - k * 0.04;
+    g.fillStyle = '#8be9fd';
+    const bx = p.x - dash.ux * k * 13;
+    const by = p.y - dash.uy * k * 9;
+    g.fillRect(Math.round(bx) - 7, Math.round(by) - 46, 14, 44);
+  }
+  g.restore();
+}
+
 /**
  * 读条提示（设计 8.4：引导类技能必须有极显眼的引导动作，让对手能反应、能打断）。
  *
@@ -1150,6 +1323,9 @@ export function paint(g: Painter, s: GameState): void {
   // Name plates last: a body can cover the tiny model, never the clickable name.
   drawDropLabels(g, s);
   drawParticles(g, s);
+  // 技能特效与冲刺残影：都在世界空间，画在粒子上方（技能表现要被看见）。
+  drawSkillFx(g, s);
+  drawDashTrail(g, s);
   // 读条提示盖在场景之上（它必须比头顶的粒子更显眼），但仍然属于世界空间。
   drawCastBar(g, s);
   g.restore();
