@@ -57,25 +57,6 @@
 }
 #fx-shell .fx-log.bad { color: #ff7b7b; }
 
-#fx-shell .fx-battle-hint {
-  display: none;
-  position: fixed;
-  left: 50%;
-  bottom: 18px;
-  transform: translateX(-50%);
-  z-index: 6;
-  pointer-events: none;
-  background: rgba(11, 19, 28, .86);
-  border: 1px solid #294055;
-  border-radius: 10px;
-  padding: 8px 16px;
-  color: #dbe9f5;
-  font-size: 12px;
-  text-align: center;
-}
-#fx-shell .fx-battle-hint b { color: #ffd166; }
-#fx-shell .fx-battle-hint .fx-sub { color: #8fa9bb; font-size: 11px; }
-
 /* Battle mode: meta panels disappear, the layer lets pointer events through.
    #fx-bag-content is the ONE exception: B / I opens it as an in-run overlay. */
 #fx-shell.fx-in-battle {
@@ -83,7 +64,7 @@
   pointer-events: none;
   overflow: hidden;
 }
-#fx-shell.fx-in-battle > *:not(.fx-bar):not(.fx-battle-hint):not(#fx-bag-content) { display: none !important; }
+#fx-shell.fx-in-battle > *:not(.fx-bar):not(#fx-bag-content) { display: none !important; }
 #fx-shell.fx-in-battle > #fx-bag-content { display: none !important; }
 #fx-shell.fx-in-battle .fx-bar { pointer-events: auto; background: rgba(17, 30, 42, .92); }
 

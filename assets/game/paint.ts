@@ -730,9 +730,6 @@ function drawHoverMark(g: Painter, s: GameState): void {
 /** 快捷栏格边长 / 间距。技能、闪避、武器槽共用同一套网格（用户 2026-11-15 指定）。 */
 const HUD_SLOT = 46;
 const HUD_GAP = 4;
-/** 双液面球半径；球身用 `ORB_STEP` 的方块拼，和场景里的体素同一个网格。 */
-const ORB_R = 60;
-const ORB_STEP = 4;
 /**
  * 底部留白：球底 / 格子底都停在 `VIEW_H - HUD_BOTTOM`，下面那一行放蓝药瓶数。
  * 留 52 而不是贴边：引擎的画布在 1280×600 下会吃掉底部约 16 逻辑像素（实测可见区到
@@ -741,52 +738,45 @@ const ORB_STEP = 4;
 const HUD_BOTTOM = 52;
 
 /**
- * 底部中间的「双液面球」：一个像素圆盘，中间一条竖线，**左半血量、右半法力**，
- * 各自从球底往上按比例涨（用户 2026-11-15 指定，热血传奇式布局）。
+ * 底部左侧（2026-11-15 第二轮）：**上面一行血条、下面一行法力条**。
  *
- * 为什么不用 `ctx.arc` / 渐变：风格规范禁止圆弧与渐变。球身是 4px 方块拼出来的盘子，
- * 液面也落在方块边界上，所以它和场景里的体素是同一套网格 —— 放大看能数清方块。
+ * 用户先要传奇式的球，看过之后改回条状 —— 理由说得很清楚：「更符合像素风格」。
+ * 所以这里是 20 段方块拼的分段条（每段 11px + 3.4px 缝），数字压在条里，
+ * 和场景里的 4px 体素同一套像素语言，不是抗锯齿的圆角血槽。
  */
-function drawVitalOrb(g: Painter, s: GameState, cx: number, cy: number): void {
-  const r = ORB_R;
-  const half = ORB_STEP / 2;
+function drawVitalBars(g: Painter, s: GameState, x: number, y: number, w: number): void {
   const cap = (v: number, max: number): number => (max > 0 ? Math.max(0, Math.min(1, v / max)) : 0);
+  const barW = w - 32;
+  const segs = 20;
+  const step = barW / segs;
+  g.fillStyle = 'rgba(8,16,24,0.66)';
+  roundRect(g, x, y, w, 72, 12);
+  g.fill();
+  g.strokeStyle = 'rgba(120,170,200,0.28)';
+  g.lineWidth = 1;
+  roundRect(g, x, y, w, 72, 12);
+  g.stroke();
+
+  // 参数不能叫 `text`：会把模块级的 `text()` 画字函数遮住。
+  const row = (ry: number, ratio: number, color: string, label: string): void => {
+    g.fillStyle = 'rgba(255,255,255,0.12)';
+    roundRect(g, x + 16, ry, barW, 16, 8);
+    g.fill();
+    g.fillStyle = color;
+    const on = Math.max(0, Math.ceil(ratio * segs));
+    for (let i = 0; i < on; i += 1) g.fillRect(x + 16 + i * step, ry, step - 2.4, 16);
+    // 数字压在条上：条是实色，所以用深色字，和旧血条读法一致。
+    text(g, label, x + w / 2, ry + 8, 11, '#08131c', 'center', '800');
+  };
+
   const hp = cap(s.hp, s.maxHp);
-  const mp = cap(s.mana, s.maxMana);
-  const inner = (r - ORB_STEP) * (r - ORB_STEP);
-  for (let gy = -r; gy < r; gy += ORB_STEP) {
-    for (let gx = -r; gx < r; gx += ORB_STEP) {
-      const mx = gx + half;
-      const my = gy + half;
-      const d2 = mx * mx + my * my;
-      if (d2 > r * r) continue; // 圆外：一个方块都不画
-      let color: string;
-      if (d2 > inner) {
-        color = '#050a12'; // 一格厚的深色外框
-      } else if (Math.abs(mx) <= half) {
-        color = '#0c1a24'; // 中缝竖线：一条格方块宽
-      } else {
-        const left = mx < 0;
-        const ratio = left ? hp : mp;
-        // 液面相对圆心的 y：比例为 0 时贴底，为 1 时到顶。
-        const surface = r - 2 * r * ratio;
-        if (my >= surface) {
-          // 液面最上面那一行提亮，读起来是「液面」而不是一整块色板。
-          const top = my - ORB_STEP < surface;
-          color = left
-            ? (top ? '#ff6b6b' : '#e0453f')
-            : (top ? '#7cb4ee' : '#3d7ec9');
-        } else {
-          color = left ? '#241318' : '#0e1c2c'; // 空槽：同一色系的暗版
-        }
-      }
-      g.fillStyle = color;
-      g.fillRect(Math.round(cx + gx), Math.round(cy + gy), ORB_STEP, ORB_STEP);
-    }
-  }
-  // 数字贴在各自半圆中间。容量固定（100 / 100），所以只报当前值，不挤成 "100/100"。
-  text(g, String(Math.round(s.hp)), cx - r / 2, cy, 21, '#fff2f0', 'center', '800');
-  text(g, String(Math.round(s.mana)), cx + r / 2, cy, 21, '#eaf4ff', 'center', '800');
+  row(y + 10, hp, hp > 0.5 ? '#4ade80' : hp > 0.25 ? '#fbbf24' : '#ff6b6b',
+    `${Math.round(s.hp)} / ${s.maxHp}`);
+  row(y + 32, cap(s.mana, s.maxMana), s.manaSurge > 0 ? '#8be9fd' : '#60a5fa',
+    `${Math.round(s.mana)} / ${s.maxMana}`);
+  // 蓝药：法力不自动恢复，所以「还剩几瓶」必须一直看得见。
+  text(g, 'X 蓝药', x + 16, y + 60, 9, '#8fa9bb', 'left', '700');
+  text(g, `×${s.potions}`, x + 16 + 46, y + 60, 9, '#9fc6ff', 'left', '800');
 }
 
 /**
@@ -811,11 +801,11 @@ function drawActionCell(
 ): void {
   const cell = HUD_SLOT;
   g.fillStyle = o.icon === null
-    ? 'rgba(255,255,255,0.03)'
-    : o.ready ? 'rgba(96,165,250,0.16)' : 'rgba(255,255,255,0.06)';
+    ? 'rgba(8,16,24,0.55)'
+    : o.ready ? 'rgba(96,165,250,0.16)' : 'rgba(8,16,24,0.55)';
   roundRect(g, bx, by, cell, cell, 8);
   g.fill();
-  g.strokeStyle = o.casting ? '#8be9fd' : o.ready ? 'rgba(150,200,255,0.62)' : 'rgba(150,180,205,0.3)';
+  g.strokeStyle = o.casting ? '#8be9fd' : o.ready ? 'rgba(150,200,255,0.62)' : 'rgba(150,180,205,0.42)';
   g.lineWidth = o.casting || o.ready ? 2 : 1;
   roundRect(g, bx, by, cell, cell, 8);
   g.stroke();
@@ -897,10 +887,10 @@ function drawWeaponSlots(g: Painter, s: GameState, x: number, y: number): void {
     const weapon = s.weaponSlots[i];
     g.fillStyle = active
       ? 'rgba(255,209,102,0.16)'
-      : weapon ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)';
+      : 'rgba(8,16,24,0.55)';
     roundRect(g, bx, y, HUD_SLOT, HUD_SLOT, 8);
     g.fill();
-    g.strokeStyle = active ? '#ffd166' : 'rgba(150,180,205,0.32)';
+    g.strokeStyle = active ? '#ffd166' : 'rgba(150,180,205,0.42)';
     g.lineWidth = active ? 2 : 1;
     roundRect(g, bx, y, HUD_SLOT, HUD_SLOT, 8);
     g.stroke();
@@ -963,16 +953,15 @@ function hud(g: Painter, s: GameState): void {
    * 左上角的血条面板、左下角的冷却条、右下角的操作说明都已经删掉：
    * 血量 / 法力在球里，闪避冷却在技能栏第一格，操作说明不该长期盖住画面。
    */
-  const orbCx = VIEW_W / 2;
-  const orbCy = VIEW_H - HUD_BOTTOM - ORB_R;
-  // 三个块共用同一条底线（球底 = 格子底），所以 600 与 720 高都不会错位。
+  // 左下角：血条在上、法力条在下。
+  drawVitalBars(g, s, 24, VIEW_H - HUD_BOTTOM - 72, 300);
+  // 球已经拿掉，武器槽与技能栏作为一组在屏幕底部居中：武器槽在左、技能在右。
   const rowY = VIEW_H - HUD_BOTTOM - HUD_SLOT;
   const weaponW = 2 * HUD_SLOT + HUD_GAP;
-  drawWeaponSlots(g, s, orbCx - ORB_R - 14 - weaponW, rowY);
-  drawVitalOrb(g, s, orbCx, orbCy);
-  drawSkillBar(g, s, orbCx + ORB_R + 14, rowY);
-  // 蓝药瓶数是「本局还剩几次续航」，挂在球正下方（球里放不下）。
-  text(g, `蓝药 ×${s.potions}`, orbCx, orbCy + ORB_R + 12, 10, '#9fc6ff', 'center', '700');
+  const skillW = (SKILL_SLOTS + 1) * HUD_SLOT + SKILL_SLOTS * HUD_GAP;
+  const groupX = (VIEW_W - (weaponW + 28 + skillW)) / 2;
+  drawWeaponSlots(g, s, groupX, rowY);
+  drawSkillBar(g, s, groupX + weaponW + 28, rowY);
 
   // 本局剩余时间 + 阶段：搜打撤的「撤」是从这里读的。
   const phaseText = s.extracted

@@ -51,14 +51,6 @@
     '<div id="fx-log" class="fx-log">配好装备后点「出征」；通关带回全部物品，阵亡或中途退出全部丢失。</div>';
   root.insertBefore(bar, root.firstChild);
 
-  var hint = document.createElement('div');
-  hint.className = 'fx-battle-hint';
-  hint.id = 'fx-battle-hint';
-  hint.innerHTML =
-    '<b>战斗中</b> · 左键点地面移动 / 点敌人攻击 · 长按跟随 · 空格闪避 · 1/2 切武器 · R 重开' +
-    '<div class="fx-sub">按 <b>B</b> 或 <b>I</b> 打开局内背包换装（战斗不会暂停）· 仓库不进战局</div>';
-  root.appendChild(hint);
-
   var $ = function (id) { return document.getElementById(id); };
   var log = function (text, bad) {
     var el = $('fx-log');
@@ -81,7 +73,7 @@
   function showBattle(on) {
     // Battle mode hides ALL meta panels and makes #fx-shell transparent +
     // pointer-transparent, so clicks reach the ForgeAX canvas underneath.
-    // Only the top bar, the hint and (when opened) the in-run bag get events.
+    // Only the top bar and (when opened) the in-run bag get events.
     setRunBag(false);
     root.classList.toggle('fx-in-battle', on);
     // The arena owns the pointer style only while it is being played.
@@ -90,7 +82,6 @@
     $('fx-back').disabled = !on;
     $('fx-bag').disabled = !on;
     $('fx-phase').textContent = on ? '阶段：战斗' : '阶段：局外配装';
-    $('fx-battle-hint').style.display = on ? 'block' : 'none';
   }
 
   /**
