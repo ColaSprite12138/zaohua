@@ -1188,8 +1188,13 @@ export interface BodyDrawOptions {
  * 会算出左右，再翻一次会把持械手换到反手。
  */
 export function yawOf(face: number): { yaw: number; flip: boolean } {
+  // **符号是 π/2 − face，不是 face − π/2。** 脸朝向在相机空间是
+  // (sin(yaw), cos(yaw))：朝屏幕右（face = 0）时脸必须朝 +X，要 yaw = +π/2。
+  // 写成 face − π/2 会让整个人左右镜像 —— 朝右下走却看到自己的左后方（背面），
+  // 这正是玩家 2026-11-17 截图报的"人物移动反向"。
+  const rel = Math.PI / 2 - face;
   return {
-    yaw: Math.atan2(Math.sin(face - Math.PI / 2), Math.cos(face - Math.PI / 2)),
+    yaw: Math.atan2(Math.sin(rel), Math.cos(rel)),
     flip: Math.cos(face) < 0,
   };
 }

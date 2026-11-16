@@ -82,10 +82,23 @@ describe('character rigs', () => {
   });
 
   it('yawOf maps a heading to a camera yaw, and all 16 headings differ', () => {
-    // 正对相机 = 屏幕朝下（π/2）→ yaw 0；朝右（0）→ yaw -π/2；朝上（-π/2）→ ±π。
+    // 脸朝向在相机空间是 (sin(yaw), cos(yaw))：x>0 朝屏幕右、y>0 朝屏幕下。
+    // 正对相机 = 屏幕朝下（π/2）→ yaw 0；朝右（0）→ **+π/2**；朝上（-π/2）→ ±π。
+    // 这里写死符号：写成 -π/2 会让整个人左右镜像（朝右走却看到背面）。
     expect(Math.abs(yawOf(Math.PI / 2).yaw)).toBeLessThan(1e-9);
-    expect(yawOf(0).yaw).toBeCloseTo(-Math.PI / 2, 6);
+    expect(yawOf(0).yaw).toBeCloseTo(Math.PI / 2, 6);
     expect(Math.abs(yawOf(-Math.PI / 2).yaw)).toBeCloseTo(Math.PI, 6);
+    // 逐个方向核对"脸朝哪"：这一步能抓住左右反、上下反。
+    const facing = (face: number): [number, number] => {
+      const { yaw } = yawOf(face);
+      return [Math.round(Math.sin(yaw)), Math.round(Math.cos(yaw))];
+    };
+    expect(facing(0)).toEqual([1, 0]);                    // 向右走 → 脸朝右
+    expect(facing(Math.PI / 4)).toEqual([1, 1]);          // 右下 → 脸朝右下
+    expect(facing(Math.PI / 2)).toEqual([0, 1]);          // 向下 → 脸朝镜头
+    expect(facing((Math.PI * 3) / 4)).toEqual([-1, 1]);   // 左下 → 脸朝左下
+    expect(facing(Math.PI)).toEqual([-1, 0]);             // 向左 → 脸朝左
+    expect(facing(-Math.PI / 2)).toEqual([0, -1]);        // 向上 → 背对镜头
     const yaws = new Set<string>();
     for (let i = 0; i < 16; i += 1) {
       const { yaw } = yawOf((i * Math.PI * 2) / 16);
@@ -100,9 +113,9 @@ describe('character rigs', () => {
     const b = yawOf(Math.PI / 2 + 0.087);    // 朝下，向左偏 5°
     const diff = Math.abs(Math.atan2(Math.sin(a.yaw - b.yaw), Math.cos(a.yaw - b.yaw)));
     expect(diff).toBeGreaterThan(1.3);
-    // 一个已经侧转（≈ π/2），一个几乎正对（≈ 0）。
+    // 一个已经侧转（|yaw| ≈ π/2），一个几乎正对（≈ 0）。
     expect(Math.abs(b.yaw)).toBeLessThan(0.15);
-    expect(Math.abs(a.yaw - Math.PI / 2)).toBeLessThan(0.15);
+    expect(Math.abs(Math.abs(a.yaw) - Math.PI / 2)).toBeLessThan(0.15);
   });
 
   it('the weapon arm is a limb authored upward from its shoulder joint', () => {
