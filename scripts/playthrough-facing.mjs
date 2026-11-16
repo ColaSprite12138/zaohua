@@ -84,6 +84,47 @@ export default async function facing(play) {
     );
   });
 
+  await play.step('a held greatsword goes BEHIND the body when walking away', async () => {
+    // 用户 2026-11-17 的截图：向上走（背对镜头）时剑画在人物**前面**，像穿过后背。
+    // 持械手在转身后落到身体远侧，必须先画手臂、再画身体，让身体盖住它。
+    // 这里只出图给人看：遮挡关系没有数值可断言，靠这两张对比。
+    await play.page.evaluate(() => {
+      const channel = new BroadcastChannel('forgeax-arena-run');
+      channel.postMessage({
+        type: 'deploy',
+        deployment: {
+          seed: 0x51de,
+          kind: 'dungeon',
+          stars: {},
+          loadout: {
+            bag: [],
+            equipped: [
+              { uid: 'sword-fixture', defId: '10006' },
+              null, null, null, null, null, null, null, null, null,
+            ],
+            activeWeaponSlot: 0,
+          },
+        },
+      });
+      channel.close();
+      return true;
+    });
+    const armed = await play.waitFor((st) => st.weaponDefIds[0] === '10006');
+    assert.ok(armed, '大剑应该已经装备到主手');
+
+    // 朝上（背对）：剑应该被身体挡住大半，只从肩后露出来。
+    await play.mouse.click([armed.player.x, armed.player.y - 0.16]);
+    await play.advance(0.5);
+    const up = await play.state('game.state');
+    assert.ok(up.playerFace < -0.9, `应该朝上走（face=${up.playerFace.toFixed(2)}）`);
+    await play.screenshot('weapon-behind-body-up');
+
+    // 朝下（正对）：剑在身体前面，握柄可见。
+    await play.mouse.click([up.player.x, up.player.y + 0.16]);
+    await play.advance(0.5);
+    await play.screenshot('weapon-in-front-body-down');
+  });
+
   await play.step('an arbitrary heading (37°) really moves along 37°, not eight buckets', async () => {
     // 八方向移动的根因在 A*：8 邻接 + 格中心点。拉直之后，空旷地面上点 37°
     // 就应该沿 37° 一条直线走过去。这里量的是**世界位移向量**，不是朝向 ——

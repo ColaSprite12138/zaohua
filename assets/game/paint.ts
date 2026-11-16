@@ -594,7 +594,11 @@ function handPose(
  * the blade is never upside down.
  */
 function bladeAngleOf(hand: HandPose): number {
-  return tilt(hand.arm, -lerp(1.65, 0.15, Math.min(1, hand.swing * 1.15)));
+  // rest 值必须接近 π（而不是 1.65）：手臂朝下（π/2）时，`tilt` 的两个候选
+  // 在 1.65 处**恰好等距**，会落到"水平"那一支 —— 剑于是横在身侧。取 π 才
+  // 让 `rotation` 归零，剑尖竖直向上（模型本来就是朝上 author 的）。
+  // 挥砍端点仍是 0.15（几乎水平向前），中间由 lerp 平滑过渡。
+  return tilt(hand.arm, -lerp(Math.PI, 0.15, Math.min(1, hand.swing * 1.15)));
 }
 
 /** Fit a model inside a HUD plate, preferring its authored size (cap 1.6x). */
@@ -655,6 +659,17 @@ function drawWeaponArm(
   drawLimb(g, limb, sx, sy, hand.arm, { flash, scale: 1 });
 }
 
+/**
+ * 持械手是不是在身体的**远侧**（背对镜头时）。
+ *
+ * 判据是相机空间的 yaw：`cos(yaw) < 0` 表示身体已经转过去超过 90°，右手
+ * 落在身体的另一侧，屏幕上应该被身体挡住 —— 此时手臂要先画。
+ * 侧身（cos ≈ 0）时手在身体轮廓边缘，画在前面不会穿帮。
+ */
+function armBehind(face: number): boolean {
+  return Math.cos(Math.PI / 2 - face) < 0;
+}
+
 function drawPlayer(g: Painter, s: GameState): void {
   const p = s.player;
   // `weaponSlots` holds authored item ids ("10006"), never the visual category,
@@ -689,24 +704,36 @@ function drawPlayer(g: Painter, s: GameState): void {
     drawPixelRing(g, p.x, p.y + 2, 26, 11, '#67e8f9', { alpha: 0.85, lineWidth: 2 });
   }
 
-  drawBody(g, KNIGHT, p.x, p.y - bob - lunge, {
-    frame: moving ? frame : 0,
-    face: p.face,
-    flash: p.hurt > 0,
-  });
-
-  // Weapon arm last: it is the near-side layer, so the grip always reads.
-  drawWeaponArm(
-    g,
-    KNIGHT_ARM,
-    armed ? itemModel(itemArtOf(weaponId)) : null,
-    p.x,
-    p.y - bob - lunge,
-    p.face,
-    armSwing,
-    p.hurt > 0,
-    armed ? 1.1 : 1,
-  );
+  const paintBody = (): void => {
+    drawBody(g, KNIGHT, p.x, p.y - bob - lunge, {
+      frame: moving ? frame : 0,
+      face: p.face,
+      flash: p.hurt > 0,
+    });
+  };
+  // 持械手臂画在身体的**近侧**：正对 / 侧身时在身体前面（看得见握柄），
+  // 背对时手已经转到身体另一侧，必须先画、让身体盖住它 —— 否则剑会"穿过"
+  // 后背（用户 2026-11-17 的截图：向上走时剑挡在人物前面）。
+  const paintArm = (): void => {
+    drawWeaponArm(
+      g,
+      KNIGHT_ARM,
+      armed ? itemModel(itemArtOf(weaponId)) : null,
+      p.x,
+      p.y - bob - lunge,
+      p.face,
+      armSwing,
+      p.hurt > 0,
+      armed ? 1 : 1,
+    );
+  };
+  if (armBehind(p.face)) {
+    paintArm();
+    paintBody();
+  } else {
+    paintBody();
+    paintArm();
+  }
 
   // 举杖：拳头上托一颗发光的法力球（读条时它一直在，越接近完成越大）。
   if (casting) {
@@ -851,22 +878,34 @@ function drawSkeleton(g: Painter, s: GameState, sk: Skeleton): void {
 
   shadow(g, sk.x, sk.y + 2, 21, 8, 0.42);
   drawStatusAura(g, s, sk);
-  drawBody(g, SKELETON, sk.x + lean, sk.y - bob, {
-    frame: sk.moving && !petrified ? frame : 0,
-    face: sk.face,
-    flash: sk.hit > 0 || frozen,
-  });
-  drawWeaponArm(
-    g,
-    SKELETON_ARM,
-    skeletonBlade(sk),
-    sk.x + lean,
-    sk.y - bob,
-    sk.face,
-    swing,
-    sk.hit > 0,
-    0.9,
-  );
+  const paintBody = (): void => {
+    drawBody(g, SKELETON, sk.x + lean, sk.y - bob, {
+      frame: sk.moving && !petrified ? frame : 0,
+      face: sk.face,
+      flash: sk.hit > 0 || frozen,
+    });
+  };
+  // 与玩家同一条规则：背对时武器在身后的那一侧，先画再让身体盖住。
+  const paintArm = (): void => {
+    drawWeaponArm(
+      g,
+      SKELETON_ARM,
+      skeletonBlade(sk),
+      sk.x + lean,
+      sk.y - bob,
+      sk.face,
+      swing,
+      sk.hit > 0,
+      0.9,
+    );
+  };
+  if (armBehind(sk.face)) {
+    paintArm();
+    paintBody();
+  } else {
+    paintBody();
+    paintArm();
+  }
 
   // 石化 / 冻结的覆盖层：几块半透明的方块，不是整屏滤镜（体素红线：不用渐变）。
   if (petrified) {

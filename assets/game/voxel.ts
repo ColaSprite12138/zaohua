@@ -507,12 +507,14 @@ function bladeShape(name: string, accent: string, great: boolean): VoxelModel {
   const hi = shade(accent, 1.5);
   const guard = shade(accent, 0.55);
   if (great) {
+    // 11 格高（44px），护手 4 格宽。旧版 13 格高、护手 6 格宽 —— 拿在手里几乎
+    // 和 14 格高的人物一样长，用户 2026-11-17 说"武器太大"。
     b.box(-1, 0, 0, 2, 1, 1, shade(accent, 0.45));
     b.box(-1, 1, 0, 2, 2, 1, C.grip);
-    b.box(-3, 3, 0, 6, 1, 1, guard);
-    b.box(-1, 4, 0, 3, 7, 1, accent);
-    b.box(0, 4, 0, 1, 7, 1, hi);
-    b.box(-1, 11, 0, 3, 2, 1, hi);
+    b.box(-2, 3, 0, 4, 1, 1, guard);
+    b.box(-1, 4, 0, 2, 5, 1, accent);
+    b.box(0, 4, 0, 1, 5, 1, hi);
+    b.box(-1, 9, 0, 2, 1, 1, hi);
     return b.model();
   }
   b.box(-1, 0, 0, 2, 1, 1, shade(accent, 0.45));
