@@ -126,6 +126,24 @@ export function shoulderOffset(face: number): number {
 }
 
 /**
+ * 手落在躯干中段（会被身体完全盖住）的横向阈值，世界像素。
+ *
+ * 正侧身时手臂绕到身体的中线上，屏幕横坐标 ≈ 0 —— 这时它不管画在身体前还是
+ * 后，观众都只能看到"身体挡住了手"。用它来决定**干脆不画**，就不会出现
+ * "侧面长出两只手"（用户 2026-11-17 的截图）。
+ */
+export const HAND_HIDDEN_PX = 5;
+
+/**
+ * 这只手在屏幕上还看得见吗：横坐标离开身体中线足够远才画。
+ *
+ * 正对（在左外侧）、背对（在右外侧）都可见；正侧身时手在躯干正中，被挡住。
+ */
+export function handVisible(face: number): boolean {
+  return Math.abs(shoulderOffset(face)) >= HAND_HIDDEN_PX;
+}
+
+/**
  * 「离正面的角度」（0..π）→ 收窄系数。
  *
  * **前 45° 不收窄**：斜着走（45°）在 2.5D 里是「四分之三视角」，看起来应该

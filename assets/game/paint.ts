@@ -79,6 +79,7 @@ import {
   drawVoxel,
   drawWallBlock,
   destructibleModel,
+  handVisible,
   itemModel,
   modelBounds,
   prepareScene,
@@ -636,6 +637,7 @@ function drawWeaponArm(
   swing: number,
   flash: boolean,
   scale: number,
+  showLimb = true,
 ): void {
   const hand = handPose(x, y, face, swing);
   // 肩位是连续量（见 voxel.ts::shoulderOffset），不是二值翻面。
@@ -661,7 +663,9 @@ function drawWeaponArm(
     });
   }
 
-  drawLimb(g, limb, sx, sy, hand.arm, { flash, scale: 1 });
+  // 正侧身时手已经绕到躯干后面，只画剑、不画手臂：剑身从头顶上方露出来，
+  // 根部被身体挡住 —— 读作"握着但看不见手"，比整把消失自然。
+  if (showLimb) drawLimb(g, limb, sx, sy, hand.arm, { flash, scale: 1 });
 }
 
 /**
@@ -671,14 +675,19 @@ function drawWeaponArm(
  * 落在身体的另一侧，屏幕上应该被身体挡住 —— 此时手臂要先画。
  * 侧身（cos ≈ 0）时手在身体轮廓边缘，画在前面不会穿帮。
  */
+/**
+ * 持械手要不要画在**身体下层**（背对镜头时剑在身后）。
+ *
+ * 用 `sin(face) < 0`（朝上半圈 = 背对）而不是"转过 120°"这种角度阈值：
+ * 这个判据的**零点正好落在正侧身**（face = 0 或 π），而那一点上手的横坐标
+ * 也正好是 0 —— 手被躯干完全盖住，前/后两档**画出来一模一样**。
+ *
+ * 用角度阈值（比如 |yaw| > 120°）会把切换点推到"手已经露出身体轮廓"的地方，
+ * 于是转身时剑会从身后**瞬移**到身侧（用户 2026-11-17 报的第二个症状）。
+ * 切换点选在看不见的位置，才是这类 2D 深度问题的正解。
+ */
 function armBehind(face: number): boolean {
-  // 只有**真正背对**（转过去 120° 以上）才把手画到身体后面。
-  //
-  // 按几何严格算，"手在相机远侧"从 yaw = -90° 就开始了；但那样角色面朝左走时
-  // 武器整条被身体吞掉，玩家读成"剑没了"（用户 2026-11-17 的截图）。像素游戏
-  // 的通行做法是让武器尽量可见，只在几乎完全背对时让位给身体。
-  const yaw = Math.atan2(Math.sin(Math.PI / 2 - face), Math.cos(Math.PI / 2 - face));
-  return Math.abs(yaw) > (Math.PI * 2) / 3;
+  return Math.sin(face) < 0;
 }
 
 function drawPlayer(g: Painter, s: GameState): void {
@@ -725,7 +734,7 @@ function drawPlayer(g: Painter, s: GameState): void {
   // 持械手臂画在身体的**近侧**：正对 / 侧身时在身体前面（看得见握柄），
   // 背对时手已经转到身体另一侧，必须先画、让身体盖住它 —— 否则剑会"穿过"
   // 后背（用户 2026-11-17 的截图：向上走时剑挡在人物前面）。
-  const paintArm = (): void => {
+  const paintArm = (showLimb = true): void => {
     drawWeaponArm(
       g,
       KNIGHT_ARM,
@@ -736,14 +745,23 @@ function drawPlayer(g: Painter, s: GameState): void {
       armSwing,
       p.hurt > 0,
       armed ? 1 : 1,
+      showLimb,
     );
   };
-  if (armBehind(p.face)) {
-    paintArm();
-    paintBody();
+  // 正侧身时持械手绕到躯干中线上，画在身体前面还是后面都只会读成"身体上挂着
+  // 一只手"。这时**干脆不画**，剩下的那只手是模型自带的副手。
+  if (handVisible(p.face)) {
+    if (armBehind(p.face)) {
+      paintArm();
+      paintBody();
+    } else {
+      paintBody();
+      paintArm();
+    }
   } else {
+    // 手在躯干中线上，看不见了；剑还在手里，只是根部被身体挡住。
+    paintArm(false);
     paintBody();
-    paintArm();
   }
 
   // 举杖：拳头上托一颗发光的法力球（读条时它一直在，越接近完成越大）。
@@ -897,7 +915,7 @@ function drawSkeleton(g: Painter, s: GameState, sk: Skeleton): void {
     });
   };
   // 与玩家同一条规则：背对时武器在身后的那一侧，先画再让身体盖住。
-  const paintArm = (): void => {
+  const paintArm = (showLimb = true): void => {
     drawWeaponArm(
       g,
       SKELETON_ARM,
@@ -908,14 +926,20 @@ function drawSkeleton(g: Painter, s: GameState, sk: Skeleton): void {
       swing,
       sk.hit > 0,
       0.9,
+      showLimb,
     );
   };
-  if (armBehind(sk.face)) {
-    paintArm();
-    paintBody();
+  if (handVisible(sk.face)) {
+    if (armBehind(sk.face)) {
+      paintArm();
+      paintBody();
+    } else {
+      paintBody();
+      paintArm();
+    }
   } else {
+    paintArm(false);
     paintBody();
-    paintArm();
   }
 
   // 石化 / 冻结的覆盖层：几块半透明的方块，不是整屏滤镜（体素红线：不用渐变）。

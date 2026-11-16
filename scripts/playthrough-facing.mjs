@@ -119,10 +119,30 @@ export default async function facing(play) {
     assert.ok(up.playerFace < -0.9, `应该朝上走（face=${up.playerFace.toFixed(2)}）`);
     await play.screenshot('weapon-behind-body-up');
 
+    // 背对再往右偏一点：剑**应该还留在身后**，不能瞬移到身侧。
+    // 这是用户报的第二个症状（切换点曾被推到"手已露出轮廓"的角度）。
+    await play.mouse.click([up.player.x + 0.07, up.player.y - 0.14]);
+    await play.advance(0.5);
+    const tilted = await play.state('game.state');
+    assert.ok(
+      tilted.playerFace < -0.7,
+      `应该仍朝上半圈（face=${tilted.playerFace.toFixed(2)}）`,
+    );
+    await play.screenshot('weapon-behind-body-tilted');
+
     // 朝下（正对）：剑在身体前面，握柄可见。
-    await play.mouse.click([up.player.x, up.player.y + 0.16]);
+    await play.mouse.click([tilted.player.x, tilted.player.y + 0.16]);
     await play.advance(0.5);
     await play.screenshot('weapon-in-front-body-down');
+
+    // 正侧身：持械手绕到躯干中线，应该**看不见**（只剩副手），
+    // 不能出现"身体侧面长出两只手"（用户 2026-11-17 的第一张截图）。
+    const front = await play.state('game.state');
+    await play.mouse.click([front.player.x + 0.18, front.player.y]);
+    await play.advance(0.5);
+    const side = await play.state('game.state');
+    assert.ok(Math.abs(side.playerFace) < 0.35, `应该朝右（face=${side.playerFace.toFixed(2)}）`);
+    await play.screenshot('weapon-side-hidden');
   });
 
   await play.step('an arbitrary heading (37°) really moves along 37°, not eight buckets', async () => {
