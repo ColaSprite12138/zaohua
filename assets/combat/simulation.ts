@@ -364,6 +364,13 @@ export function projection(s: GameState) {
      * 只有前 / 后 + 翻转四个状态，往左下 5° 和往下左 5° 画出来是同一个人。
      */
     playerFace: s.player.face,
+    /**
+     * 玩家的**世界坐标**（不是屏幕归一化）。
+     *
+     * 屏幕上量不出位移方向：相机跟着人走，玩家永远在画面中间。验收脚本要
+     * 断言「点 37° 就朝 37° 走」（而不是被 A* 量化到 0/45/90），只能读世界坐标。
+     */
+    playerWorld: { x: s.player.x, y: s.player.y },
     moveMode: s.moveMode,
     followingPointer: s.moveMode === 'follow',
     target: { x: targetScreen.x / VIEW_W, y: targetScreen.y / VIEW_H },

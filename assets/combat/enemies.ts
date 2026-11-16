@@ -22,7 +22,7 @@ import {
 import {
   attackIntervalMultiplier, lockedFlags, moveMultiplier,
 } from './status.ts';
-import { findPath, lineOfSight, walkable, type World } from './world.ts';
+import { canStandAt, findPath, lineOfSight, walkable, type World } from './world.ts';
 
 const REPATH_SECONDS = 0.7;
 const BODY_RADIUS = 8;
@@ -86,9 +86,8 @@ export function wakeNoise(s: GameState, x: number, y: number, radius: number): n
 }
 
 function canStand(w: World, x: number, y: number): boolean {
-  return walkable(w, x, y)
-    && walkable(w, x - BODY_RADIUS, y)
-    && walkable(w, x + BODY_RADIUS, y);
+  // 与玩家共用一份判定（以前怪只查左右，同样的墙对人查得严、对怪查得松）。
+  return canStandAt(w, x, y, BODY_RADIUS);
 }
 
 /** Axis-separated step so a monster slides along a wall instead of freezing. */
@@ -158,7 +157,7 @@ export function updateSkeletons(s: GameState, dt: number): void {
       sk.moving = false;
     } else if (goal === 'player' ? sd > engage : Math.hypot(gx - sk.x, gy - sk.y) > 24) {
       if (sk.repath <= 0 || sk.path.length === 0) {
-        sk.path = findPath(s.world, { x: sk.x, y: sk.y }, { x: gx, y: gy });
+        sk.path = findPath(s.world, { x: sk.x, y: sk.y }, { x: gx, y: gy }, BODY_RADIUS);
         sk.repath = REPATH_SECONDS;
       }
       const waypoint = sk.path[0] ?? { x: gx, y: gy };

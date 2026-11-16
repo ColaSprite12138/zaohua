@@ -142,6 +142,82 @@ export function blocks(w: World, x: number, y: number): boolean {
   return !walkable(w, x, y);
 }
 
+/** 人物 / 怪物的默认碰撞半径（世界像素）。寻路拉直和移动共用这一个数。 */
+export const BODY_RADIUS = 10;
+
+/**
+ * 一个身体能不能站在这里：中心 + 四个方向 `radius` 处都可走。
+ *
+ * 玩家和怪物共用这一份 —— 以前两边各写一份（玩家查四向，怪物只查左右），
+ * 于是同样的墙对两种身体有不同答案，路径拉直时还会互相矛盾。
+ */
+export function canStandAt(w: World, x: number, y: number, radius: number): boolean {
+  if (!walkable(w, x, y)) return false;
+  if (radius <= 0) return true;
+  return walkable(w, x - radius, y)
+    && walkable(w, x + radius, y)
+    && walkable(w, x, y - radius)
+    && walkable(w, x, y + radius);
+}
+
+/**
+ * 沿线段采样，检查一个半径 `radius` 的身体能不能一路站过去。
+ * 每半格采一次：薄墙钻不过去，也不会因为采样太密把路径拉直算成天价。
+ */
+export function clearWalk(w: World, from: Vec, to: Vec, radius: number): boolean {
+  const d = Math.hypot(to.x - from.x, to.y - from.y);
+  const steps = Math.max(1, Math.ceil(d / (w.grid / 2)));
+  for (let i = 1; i <= steps; i += 1) {
+    const t = i / steps;
+    if (!canStandAt(w, from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, radius)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * 把 A* 的格子折线**拉直成任意角度的线段**（string pulling）。
+ *
+ * 为什么要这一步：A* 跑在格子图上、8 邻接，返回的每个点都是**格中心**，
+ * 所以不管玩家点哪，实际轨迹只能是 0°/45°/90° 这八个方向 —— 这就是
+ * 「人物移动只有八方向、玩法不灵活」的真正原因（和朝向渲染无关）。
+ *
+ * 做法：从当前位置贪心找**最远的、可以直线走过去的**路径点，跳掉中间那些
+ * 只为绕过拐角而存在的格子中心。地图空旷时路径会塌成一段直线，走路方向
+ * 就是玩家点的那个角度；绕柱子时只在真正需要的拐点转弯。
+ *
+ * 注意：这里只改「怎么走」，不改「能不能走」—— 可达性仍然由 A* 判定，
+ * 拉直只在 A* 已经证明可达的走廊里取捷径，所以不会把怪引到墙里。
+ */
+export function straightenPath(
+  w: World,
+  from: Vec,
+  points: readonly Vec[],
+  radius: number,
+): Vec[] {
+  if (points.length <= 1) return [...points];
+  const out: Vec[] = [];
+  let cur = from;
+  let i = 0;
+  while (i < points.length) {
+    // 从最远的点往回试：能直达就跳过去，跳不过就退到次远的。
+    let best = i;
+    for (let j = points.length - 1; j > i; j -= 1) {
+      const target = points[j]!;
+      if (clearWalk(w, cur, target, radius)) {
+        best = j;
+        break;
+      }
+    }
+    const next = points[best]!;
+    out.push(next);
+    cur = next;
+    i = best + 1;
+  }
+  return out;
+}
+
 /** Snap an unwalkable waypoint to the closest walkable cell centre. */
 export function nearestWalkable(w: World, x: number, y: number): Vec {
   if (walkable(w, x, y)) return { x, y };
@@ -244,8 +320,13 @@ const NEIGHBOURS: readonly (readonly [number, number, number])[] = [
  * Returns world-pixel waypoints (excluding the start cell); the final entry is
  * the snapped target. An unreachable target falls back to a direct line so the
  * movement layer can still slide along a wall instead of freezing.
+ *
+ * **返回前会拉直**（`straightenPath`）：A* 的折线本身只有八个方向，直接交给
+ * 移动层就是「八方向移动」。拉直之后每一段都是任意角度，玩家点哪就走哪。
+ * `radius` 是这个身体的实际碰撞半径 —— 拉直必须用它判"这条直线过不过得去"，
+ * 用 0 会切到墙角上。
  */
-export function findPath(w: World, from: Vec, to: Vec): Vec[] {
+export function findPath(w: World, from: Vec, to: Vec, radius = 10): Vec[] {
   const goal = nearestWalkable(w, to.x, to.y);
   const startPoint = walkable(w, from.x, from.y)
     ? from
@@ -323,7 +404,8 @@ export function findPath(w: World, from: Vec, to: Vec): Vec[] {
   }));
   if (path.length > 0) path[path.length - 1] = { x: goal.x, y: goal.y };
   else path.push({ x: goal.x, y: goal.y });
-  return path;
+  // 格子折线 → 任意角度的线段。没有这一步就是"八方向移动"。
+  return straightenPath(w, startPoint, path, radius);
 }
 
 /**

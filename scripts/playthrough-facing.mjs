@@ -21,8 +21,20 @@ const VIEW_H = 720;
 /** 最短角差（弧度）。 */
 const angleDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
 
-/** 屏幕归一化坐标下，从玩家往 (dx, dy) 方向走一步的距离。 */
-const STEP = 0.16;
+/**
+ * 一步走多远（**世界像素**）。
+ *
+ * 坐标是归一化的，而 x / y 的归一化分母不同（1280 / 720）—— 直接给两个轴加
+ * 同样的 0.16，45° 就会变成 atan2(0.16*720, 0.16*1280) ≈ 29°。所以这里统一
+ * 用像素定义方向，落点再各自除以自己的视图尺寸。
+ */
+const STEP_PX = 200;
+
+/** 从 `from`（归一化）沿单位方向 (ux, uy) 走 STEP_PX 之后的归一化落点。 */
+const stepTo = (from, ux, uy) => [
+  from.x + (ux * STEP_PX) / VIEW_W,
+  from.y + (uy * STEP_PX) / VIEW_H,
+];
 
 const DIRECTIONS = [
   { name: 'right', dx: 1, dy: 0, expect: 0 },
@@ -47,10 +59,7 @@ export default async function facing(play) {
       await play.wait(140);
       const before = await play.state('game.state');
       const len = Math.hypot(dir.dx, dir.dy) || 1;
-      await play.mouse.click([
-        before.player.x + (dir.dx / len) * STEP,
-        before.player.y + (dir.dy / len) * STEP,
-      ]);
+      await play.mouse.click(stepTo(before.player, dir.dx / len, dir.dy / len));
       await play.advance(0.4);
       const s = await play.state('game.state');
       assert.equal(s.moveMode, 'point', `${dir.name}:应该是一个点地移动指令`);
@@ -75,6 +84,30 @@ export default async function facing(play) {
     );
   });
 
+  await play.step('an arbitrary heading (37°) really moves along 37°, not eight buckets', async () => {
+    // 八方向移动的根因在 A*：8 邻接 + 格中心点。拉直之后，空旷地面上点 37°
+    // 就应该沿 37° 一条直线走过去。这里量的是**世界位移向量**，不是朝向 ——
+    // 朝向对、路却是折的，玩家一样会觉得"不灵活"。
+    await play.keyboard.press('KeyR');
+    await play.wait(140);
+    const before = await play.state('game.state');
+    const angle = (37 * Math.PI) / 180;
+    await play.mouse.click(stepTo(before.player, Math.cos(angle), Math.sin(angle)));
+    await play.advance(0.9);
+    const after = await play.state('game.state');
+    const dx = after.playerWorld.x - before.playerWorld.x;
+    const dy = after.playerWorld.y - before.playerWorld.y;
+    const travelled = Math.hypot(dx, dy);
+    assert.ok(travelled > 20, `应该真的走了一段（位移 ${travelled.toFixed(1)}px）`);
+    const moved = Math.atan2(dy, dx);
+    const off = Math.abs(angleDiff(moved, angle));
+    assert.ok(
+      off < 0.12,
+      `位移方向应等于点击方向 37°（实际 ${((moved * 180) / Math.PI).toFixed(1)}°，偏 ${((off * 180) / Math.PI).toFixed(1)}°）`,
+    );
+    await play.screenshot('facing-37-degrees');
+  });
+
   await play.step('"left and a bit down" differs from "down and a bit left"', async () => {
     // 用户的原话：这两个方向看到的人物都是面向我的。差 80°，现在必须分得开。
     const run = async (dx, dy) => {
@@ -82,10 +115,7 @@ export default async function facing(play) {
       await play.wait(140);
       const before = await play.state('game.state');
       const len = Math.hypot(dx, dy) || 1;
-      await play.mouse.click([
-        before.player.x + (dx / len) * STEP,
-        before.player.y + (dy / len) * STEP,
-      ]);
+      await play.mouse.click(stepTo(before.player, dx / len, dy / len));
       await play.advance(0.4);
       return play.state('game.state');
     };

@@ -101,9 +101,20 @@ export function yawNarrow(face: number): number {
   const rel = Math.abs(
     Math.atan2(Math.sin(face - Math.PI / 2), Math.cos(face - Math.PI / 2)),
   );
+  return narrowOf(rel);
+}
+
+/**
+ * 「离正面的角度」（0..π）→ 收窄系数。
+ *
+ * **前 45° 不收窄**：斜着走（45°）在 2.5D 里是「四分之三视角」，看起来应该
+ * 和正面差不多宽；只有真的侧过去（67.5°/90°）才收。第一版从 0° 就开始线性
+ * 收窄，斜向移动的人物被压成一片 —— 用户直接反馈「人都扁了」。
+ */
+function narrowOf(mag: number): number {
   const half = Math.PI / 2;
-  const t = rel <= half ? rel / half : (Math.PI - rel) / half;
-  return 1 - 0.45 * t;
+  const t = mag <= half ? mag / half : (Math.PI - mag) / half;
+  return 1 - 0.45 * Math.pow(t, 1.6);
 }
 
 /**
@@ -116,10 +127,7 @@ export function yawNarrow(face: number): number {
 function turnOf(yaw: number): Turn {
   const c = Math.cos(yaw);
   const s = Math.sin(yaw);
-  const half = Math.PI / 2;
-  // 正面 / 背面 → 1，正侧 → 0.55：转过去再转回来。
-  const t = yaw <= half ? yaw / half : (Math.PI - yaw) / half;
-  const k = 1 - 0.45 * t;
+  const k = narrowOf(yaw);
   const x = (v: number): number => (v < 0 ? -Math.round(-v * k) : Math.round(v * k));
   const w = (n: number): number => Math.max(1, Math.round(n * k));
   return { c, s, x, w };
@@ -291,16 +299,31 @@ function knightPose(
     // 背对：没有护目镜，只有后颈和一道盔脊。
     b.box(faceX, 9, 0, faceW, 1, 1, C.armorDark);
     b.box(helmX, 10, 0, helmW, 2, 1, C.armorHi);
-    b.box(faceX, 10, 0, Math.max(1, t.w(1)), 2, 1, C.armorDark);
+    // 157.5° 还没完全背对：盔脊被看成偏在一侧；180° 才正中。
+    b.box(faceX + (t.c > -0.97 ? 1 : 0), 10, 0, Math.max(1, t.w(1)), 2, 1, C.armorDark);
   } else if (t.c <= -0.3) {
     // 背侧：后颈，但没有盔脊 —— 与正背面差一档。
     b.box(faceX, 9, 0, faceW, 1, 1, C.armorDark);
     b.box(helmX, 10, 0, helmW, 2, 1, C.armorHi);
-  } else if (t.c >= 0.8) {
-    // 正对相机：护目镜 + 两只发光的眼。
+  } else if (t.c >= 0.97) {
+    // 正对相机：护目镜 + 两只发光的眼（内一格外一格）。
     b.box(faceX, 9, 0, faceW, 1, 1, C.plate);
     b.sym(1, 9, 0, 1, 1, 1, C.glow);
     b.box(helmX, 10, 0, helmW, 2, 1, C.armorHi);
+  } else if (t.c >= 0.8) {
+    // 偏 22.5°：头几乎没转，眼睛已经贴到盔沿 —— 宽度与正脸相同，但图不同。
+    b.box(faceX, 9, 0, faceW, 1, 1, C.plate);
+    b.box(helmX, 9, 0, 1, 1, 1, C.glow);
+    b.box(helmX + helmW - 1, 9, 0, 1, 1, 1, C.glow);
+    b.box(helmX, 10, 0, helmW, 2, 1, C.armorHi);
+  } else if (t.c >= 0.55) {
+    // 45°：**四分之三视角** —— 还是两只眼（斜看不该变成半张脸），
+    // 但面甲已经凸到一侧，和 22.5° 不是同一张图。
+    b.box(faceX, 9, 0, faceW, 1, 1, C.plate);
+    b.box(helmX, 9, 0, 1, 1, 1, C.glow);
+    b.box(helmX + helmW - 1, 9, 0, 1, 1, 1, C.glow);
+    b.box(helmX, 10, 0, helmW, 2, 1, C.armorHi);
+    b.box(helmX + helmW - 1, 10, 0, 1, 1, 1, C.plate);
   } else {
     // 侧脸：面甲凸在最前一侧，只留一只眼。`s ≥ 0` 恒成立（另一半靠镜像），
     // 所以"朝前"永远是 +x 那一侧。完全侧身时面甲再往外凸一格 —— 这样
@@ -341,17 +364,28 @@ function skeletonPose(
   const skullW = t.w(5);
   const jawX = t.x(-1);
   const jawW = t.w(3);
-  if (t.c <= -0.8) {
-    // 背对：整块后脑 + 一道颈椎，没有眼窝。
+  if (t.c <= -0.6) {
+    // 背对 / 背侧：整块后脑 + 一道颈椎，没有眼窝。
     b.box(jawX, 8, 0, jawW, 2, 1, C.boneDark);
-    b.box(skullX + 1, 8, 0, Math.max(1, t.w(1)), 3, 1, C.boneDark);
+    b.box(skullX + (t.c > -0.97 ? 2 : 1), 8, 0, Math.max(1, t.w(1)), 3, 1, C.boneDark);
   } else if (t.c <= -0.3) {
-    // 背侧：后脑，但没有颈椎那一道。
+    // 背侧偏前一点：后脑，但没有颈椎那一道。
     b.box(jawX, 8, 0, jawW, 2, 1, C.boneDark);
-  } else if (t.c >= 0.8) {
+  } else if (t.c >= 0.97) {
     // 正对：下颌 + 两个眼窝。
     b.box(jawX, 8, 0, jawW, 1, 1, C.boneDark);
     b.sym(1, 9, 0, 1, 1, 1, C.socket);
+  } else if (t.c >= 0.8) {
+    // 偏 22.5°：眼窝贴到头骨边缘，与正脸区分。
+    b.box(jawX, 8, 0, jawW, 1, 1, C.boneDark);
+    b.box(skullX, 9, 0, 1, 1, 1, C.socket);
+    b.box(skullX + skullW - 1, 9, 0, 1, 1, 1, C.socket);
+  } else if (t.c >= 0.55) {
+    // 45°：两只眼窝都还在，颧骨凸到一侧。
+    b.box(jawX, 8, 0, jawW, 1, 1, C.boneDark);
+    b.box(skullX, 9, 0, 1, 1, 1, C.socket);
+    b.box(skullX + skullW - 1, 9, 0, 1, 1, 1, C.socket);
+    b.box(skullX + skullW - 1, 10, 0, 1, 1, 1, C.boneDark);
   } else {
     // 侧脸：一只眼窝压在朝前那一格，牙关留一条；完全侧身时颧骨再凸一格。
     b.box(jawX, 8, 0, jawW, 1, 1, C.boneDark);

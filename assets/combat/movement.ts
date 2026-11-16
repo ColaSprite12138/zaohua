@@ -20,7 +20,7 @@ import {
 import { destructibleAtPoint, orderSmash } from './destructibles.ts';
 import { CLICK_DRAG_PIXELS, PLAYER_DODGE_CD, STRIDE_PIXELS, type GameState, type StepInput } from './state.ts';
 import { lockedFlags, moveMultiplier } from './status.ts';
-import { walkable, type World } from './world.ts';
+import { BODY_RADIUS, canStandAt, walkable, type World } from './world.ts';
 
 export function classifyPointer(s: GameState, input: StepInput): void {
   if (s.player.dodge > 0) return;
@@ -125,15 +125,13 @@ export function applyDodge(s: GameState, dodge: boolean): void {
   burst(s, p.x, p.y, '#67e8f9', 12, 130);
 }
 
-const BODY_RADIUS = 10;
-
-/** A body may stand only if its centre and four extremities are walkable. */
+/**
+ * A body may stand only if its centre and four extremities are walkable.
+ * 实现收敛到 `world.ts::canStandAt` —— 寻路拉直也要用同一份判定，否则
+ * 「路径说能过、身体过不去」会在墙角上打转。半径也住在 world.ts。
+ */
 export function canStand(w: World, x: number, y: number): boolean {
-  return walkable(w, x, y)
-    && walkable(w, x - BODY_RADIUS, y)
-    && walkable(w, x + BODY_RADIUS, y)
-    && walkable(w, x, y - BODY_RADIUS)
-    && walkable(w, x, y + BODY_RADIUS);
+  return canStandAt(w, x, y, BODY_RADIUS);
 }
 
 /** Axis-separated movement so a wall slides the body instead of freezing it. */

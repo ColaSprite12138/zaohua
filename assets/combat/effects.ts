@@ -2,7 +2,7 @@
 
 import { clamp } from '../shared/constants.ts';
 import type { GameState } from './state.ts';
-import { findPath, nearestWalkable } from './world.ts';
+import { BODY_RADIUS, findPath, nearestWalkable } from './world.ts';
 
 export function burst(
   s: GameState, x: number, y: number, color: string, count: number, power: number,
@@ -42,7 +42,8 @@ export function setTarget(s: GameState, x: number, y: number): void {
   s.target.x = spot.x;
   s.target.y = spot.y;
   if (moved || s.path.length === 0) {
-    s.path = findPath(s.world, { x: s.player.x, y: s.player.y }, spot);
+    // 传玩家的真实碰撞半径：拉直时要按"身体过不过得去"判，不能只判中心线。
+    s.path = findPath(s.world, { x: s.player.x, y: s.player.y }, spot, BODY_RADIUS);
   }
 }
 

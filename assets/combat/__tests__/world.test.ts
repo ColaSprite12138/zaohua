@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  blocks, cameraFor, findPath, inBounds, lineOfSight, makeWorld,
-  nearestWalkable, screenToWorld, walkable, worldToScreen,
+  BODY_RADIUS, blocks, cameraFor, clearWalk, findPath, inBounds, lineOfSight,
+  makeWorld, nearestWalkable, screenToWorld, walkable, worldToScreen,
   type ArenaMap,
 } from '../world.ts';
 import { createState, setArena, spawnFromMap } from '../state.ts';
@@ -92,12 +92,39 @@ describe('LDtk world runtime', () => {
   it('A* routes around a wall, and every waypoint is walkable', () => {
     const w = makeWorld(wallMap);
     const path = findPath(w, { x: 16, y: 16 }, { x: 240, y: 240 });
-    expect(path.length).toBeGreaterThan(2);
+    // 拉直之后中间那些"只为绕过拐角"的格中心会被跳掉，所以只剩真正的拐点。
+    expect(path.length).toBeGreaterThanOrEqual(2);
     for (const p of path) expect(walkable(w, p.x, p.y)).toBe(true);
     // Straight line would cross the wall; the route must detour.
     expect(path.some((p) => p.y > 5 * 32 || p.x > 6 * 32 || p.x < 2 * 32)).toBe(true);
     expect(path[path.length - 1]).toEqual({ x: 240, y: 240 });
   });
+
+  it('the route is straightened: every leg is a straight, walkable line', () => {
+    // 拉直的意义是「每一段都能直线走过去」—— 这正是 360 度移动成立的前提。
+    const w = makeWorld(wallMap);
+    const from = { x: 16, y: 16 };
+    const path = findPath(w, from, { x: 240, y: 240 });
+    let cur = from;
+    for (const p of path) {
+      expect(clearWalk(w, cur, p, BODY_RADIUS)).toBe(true);
+      cur = p;
+    }
+  });
+
+  it('open ground gives a single straight leg at ANY angle (not eight buckets)', () => {
+    // 用户 2026-11-16 报的「八方向移动」：A* 的 8 邻接折线必须被拉成任意角度。
+    // 空旷地图上点一个 27°，路径应该只剩终点一个点 —— 玩家直接朝那个角度走。
+    const w = makeWorld(testArena);
+    const from = { x: 300, y: 300 };
+    const angle = (27 * Math.PI) / 180;
+    const to = { x: from.x + Math.cos(angle) * 120, y: from.y + Math.sin(angle) * 120 };
+    const path = findPath(w, from, to, BODY_RADIUS);
+    expect(path).toHaveLength(1);
+    const leg = Math.atan2(path[0]!.y - from.y, path[0]!.x - from.x);
+    expect(Math.abs(leg - angle)).toBeLessThan(0.02);
+  });
+
 
   it('A* returns a single goal waypoint when start and goal share a cell', () => {
     const w = makeWorld(wallMap);
