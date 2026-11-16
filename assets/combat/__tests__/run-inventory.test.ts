@@ -119,3 +119,40 @@ describe('Worker-side run inventory', () => {
     expect(snap.equipped).toHaveLength(10);
   });
 });
+
+describe('装备词条进战斗（设计 7.1 / 7.2）', () => {
+  it('词条加在 weapon.xlsx 的中值上，不是替换它', () => {
+    ensureItemCatalog();
+    const plain = weaponDamage('10001', undefined)!;
+    const gear = {
+      equipped: [{ uid: 'w0', defId: '10001', affixes: [{ id: 'keen', stat: 'dmg_pct', value: 0.1 }] },
+        ...Array.from({ length: 9 }, () => null)],
+      activeWeaponSlot: 0,
+    };
+    expect(weaponDamage('10001', gear)).toBeCloseTo(plain * 1.1, 6);
+  });
+
+  it('副手（非激活槽）的词条不生效', () => {
+    ensureItemCatalog();
+    const gear = {
+      equipped: [
+        { uid: 'w0', defId: '10001', affixes: [{ id: 'keen', stat: 'dmg_pct', value: 0.1 }] },
+        { uid: 'w1', defId: '10001', affixes: [{ id: 'brutal', stat: 'dmg_pct', value: 0.5 }] },
+        ...Array.from({ length: 8 }, () => null),
+      ],
+      activeWeaponSlot: 0 as const,
+    };
+    expect(weaponDamage('10001', gear)).toBeCloseTo(12.5 * 1.1, 6);
+    // 切到副手，生效的换成那件的 50%
+    expect(weaponDamage('10001', { ...gear, activeWeaponSlot: 1 as const })).toBeCloseTo(12.5 * 1.5, 6);
+  });
+
+  it('未知 id 仍然回 null（词条不会把 demo longsword 变成表内武器）', () => {
+    ensureItemCatalog();
+    const gear = {
+      equipped: [{ uid: 'x', defId: 'longsword', affixes: [{ id: 'keen', stat: 'dmg_pct', value: 0.1 }] }],
+      activeWeaponSlot: 0 as const,
+    };
+    expect(weaponDamage('longsword', gear)).toBeNull();
+  });
+});
