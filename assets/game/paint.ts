@@ -79,11 +79,12 @@ import {
   drawVoxel,
   drawWallBlock,
   destructibleModel,
-  handVisible,
   itemModel,
   modelBounds,
   prepareScene,
+  shoulderBehind,
   shoulderOffset,
+  shoulderOffsetY,
   skillModel,
   yawNarrow,
   yawOf,
@@ -513,8 +514,10 @@ function blendAngle(from: number, to: number, t: number): number {
  * right. A body walking straight up would get `face + 0.5` = up-and-right, i.e.
  * the arm raised instead of hanging.
  */
-function restArm(face: number): number {
-  return blendAngle(DOWN, face, 0.38);
+function restArm(_face: number): number {
+  // 自然下垂：手臂从肩关节竖直向下，剑握在手下。以前会朝朝向偏 38%，
+  // 那是"手臂向前伸"的走姿，和"右手在身体侧面"的 T-pose 约定不符。
+  return DOWN;
 }
 
 /**
@@ -576,9 +579,10 @@ function handPose(
   // 正对镜头（yaw 0）在右边，完全侧身（yaw ±π/2）落到中线，背对时换到左边。
   // **以前这里是 `flip ? -1 : 1` 的二值判断**，转身经过正下方时 cos 变号，
   // 肩膀会在两帧之间从 +14px 跳到 −14px，武器看起来"瞬移"（用户 2026-11-17 报的）。
-  // 肩位是连续量（见 voxel.ts::shoulderOffset），不是二值翻面。
+  // 肩位是**绕身体转圈的圆**：横向 -sin、纵向 +cos（见 voxel.ts）。
+  // 只算横向会让手永远贴在身体左右两侧，面朝左时该被挡住的手跑到前景。
   const sx = x + shoulderOffset(face);
-  const sy = y - SHOULDER_Y;
+  const sy = y - SHOULDER_Y + shoulderOffsetY(face);
   const arm = swing > 0 ? swingArmAngle(face, swing) : restArm(face);
   return {
     arm,
@@ -640,9 +644,9 @@ function drawWeaponArm(
   showLimb = true,
 ): void {
   const hand = handPose(x, y, face, swing);
-  // 肩位是连续量（见 voxel.ts::shoulderOffset），不是二值翻面。
+  // 与 handPose 用同一套肩位（含纵向分量），否则手臂和拳头会分家。
   const sx = x + shoulderOffset(face);
-  const sy = y - SHOULDER_Y;
+  const sy = y - SHOULDER_Y + shoulderOffsetY(face);
 
   if (blade !== null) {
     // Arc trail: three earlier positions of the same blade, dimmer each step.
@@ -734,16 +738,16 @@ function drawPlayer(g: Painter, s: GameState): void {
       showLimb,
     );
   };
-  // **武器永远画在身体上层**（不做前后层级切换）。
-  //
-  // 试过"背对时把手臂放到身体下层"：那样剑会整条被躯干吞掉 —— 用户明确说
-  // 「背对时剑应该在人物右边，竖直在身后是有问题的」。武器是玩家最需要读到的
-  // 信息，宁可让它压在身上，也不能让它消失；而层级一旦不切换，也就**不存在
-  // 转身时的跳变**（这是前面三轮瞬移问题的根源）。
-  //
-  // 侧身时手臂绕到躯干中线，画上去会读成"身体上挂着一只手"，所以那时只画剑。
-  paintBody();
-  paintArm(handVisible(p.face));
+  // 手转到身体背面的那半圈（面朝左）要画在**身体下层**：那时右手在屏幕上方、
+  // 位于躯干背后，只有被挡住才是对的。切换点在朝上/朝下（手在身体左右外侧），
+  // 身体盖不到，所以转身时看不出跳变。
+  if (shoulderBehind(p.face)) {
+    paintArm();
+    paintBody();
+  } else {
+    paintBody();
+    paintArm();
+  }
 
   // 举杖：拳头上托一颗发光的法力球（读条时它一直在，越接近完成越大）。
   if (casting) {
@@ -910,9 +914,13 @@ function drawSkeleton(g: Painter, s: GameState, sk: Skeleton): void {
       showLimb,
     );
   };
-  // 与玩家同一条规则：武器永远在上层，侧身时只画剑不画手臂。
-  paintBody();
-  paintArm(handVisible(sk.face));
+  if (shoulderBehind(sk.face)) {
+    paintArm();
+    paintBody();
+  } else {
+    paintBody();
+    paintArm();
+  }
 
   // 石化 / 冻结的覆盖层：几块半透明的方块，不是整屏滤镜（体素红线：不用渐变）。
   if (petrified) {

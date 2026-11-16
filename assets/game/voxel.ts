@@ -119,10 +119,34 @@ export function yawNarrow(face: number): number {
  * 报的「武器转向不连贯」）。单测直接扫一圈检查最大跳变。
  */
 export function shoulderOffset(face: number): number {
-  // **负号是"角色右手"的关键**：正对镜头时角色的右手在**屏幕左侧**，
-  // 背对时才换到右侧。写成正的会把剑放到角色左手上 —— 和模型自带的副手
-  // 撞在同一侧，看起来就是"手在左边、剑在别处"（用户 2026-11-17 报的）。
-  return -Math.cos(Math.PI / 2 - face) * SHOULDER_X * yawNarrow(face);
+  // 肩在"角色右手侧"，而右手方向是**绕身体转圈**的：
+  //   面朝上（背对）→ 右手在屏幕右；面朝右 → 右手在屏幕下方（近侧）；
+  //   面朝下（正对）→ 右手在屏幕左；面朝左 → 右手在屏幕上方（远侧，被身体挡住）。
+  // 所以横向分量是 -sin(face)、纵向分量是 +cos(face)（见 shoulderOffsetY）。
+  // 之前只算了横向，手就永远贴在身体左右两侧，面朝左时该被挡的手跑到了前面。
+  return -Math.sin(face) * SHOULDER_X;
+}
+
+/**
+ * 肩位的**纵向**分量（屏幕像素，向下为正）。
+ *
+ * 和 `shoulderOffset` 组成一个半径恒定的圆：右手绕身体转一圈。**正值 = 屏幕
+ * 下方 = 靠近镜头**（角色朝右时右手朝观察者），负值 = 屏幕上方 = 远离镜头
+ * （角色朝左时右手在身体正后方，会被躯干挡住）。
+ */
+export function shoulderOffsetY(face: number): number {
+  return Math.cos(face) * SHOULDER_X;
+}
+
+/**
+ * 持械手是不是转到了**身体背面**（远离镜头的一侧）。
+ *
+ * `cos(face) < 0` 等价于"右手落在屏幕上半"：面朝左半圈时成立。
+ * 这个判据的切换点（face = ±90°，即朝上 / 朝下）恰好是**手位于身体左右外侧**
+ * 的位置 —— 那里身体盖不到手，画前画后一模一样，所以切换看不见。
+ */
+export function shoulderBehind(face: number): boolean {
+  return Math.cos(face) < 0;
 }
 
 /**

@@ -22,7 +22,9 @@ import {
   bodyHeight,
   itemModel,
   modelBounds,
+  shoulderBehind,
   shoulderOffset,
+  shoulderOffsetY,
   yawOf,
   type VoxelModel,
 } from '../game/voxel.ts';
@@ -139,6 +141,29 @@ describe('character rigs', () => {
     expect(shoulderOffset(Math.PI / 2)).toBeCloseTo(-SHOULDER_X, 5);
     expect(shoulderOffset(0)).toBeCloseTo(0, 5);
     expect(shoulderOffset(-Math.PI / 2)).toBeCloseTo(SHOULDER_X, 5);
+  });
+
+  it('the weapon hand orbits the body: right hand is at heading + 90 degrees', () => {
+    // 用户的坐标系：Y 轴正向为 0°，顺时针增加。玩家面朝 θ 时，右手在 θ + 90°。
+    // 游戏里 `face` 是屏幕角（0 = 右、π/2 = 下），两者换算为 heading = 90° - face。
+    const cases = [
+      // 面朝、右手应在屏幕哪一侧、是否被身体挡（在背面）
+      ['上（背对）', -Math.PI / 2, 14, 0, false],    // 右手在屏幕右，可见
+      ['右', 0, 0, 14, false],                       // 右手在屏幕下方（近侧），可见
+      ['下（正对）', Math.PI / 2, -14, 0, false],    // 右手在屏幕左，可见
+      ['左', Math.PI, 0, -14, true],                 // 右手在屏幕上方（远侧），被挡
+    ] as const;
+    for (const [name, face, x, y, behind] of cases) {
+      expect(shoulderOffset(face), `${name} 横向`).toBeCloseTo(x, 0);
+      expect(shoulderOffsetY(face), `${name} 纵向`).toBeCloseTo(y, 0);
+      expect(shoulderBehind(face), `${name} 遮挡`).toBe(behind);
+    }
+    // 半径恒定：手是绕身体转圈，不是贴左右两侧。
+    for (let i = 0; i < 16; i += 1) {
+      const f = (i * Math.PI * 2) / 16;
+      const r = Math.hypot(shoulderOffset(f), shoulderOffsetY(f));
+      expect(r).toBeCloseTo(14, 3);
+    }
   });
 
   it('the weapon arm is a limb authored upward from its shoulder joint', () => {

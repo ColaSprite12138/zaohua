@@ -135,14 +135,28 @@ export default async function facing(play) {
     await play.advance(0.5);
     await play.screenshot('weapon-in-front-body-down');
 
-    // 正侧身：持械手绕到躯干中线，应该**看不见**（只剩副手），
-    // 不能出现"身体侧面长出两只手"（用户 2026-11-17 的第一张截图）。
+    // 朝右走：右手绕到屏幕**下方**（靠近镜头的一侧），完全可见。
     const front = await play.state('game.state');
     await play.mouse.click([front.player.x + 0.18, front.player.y]);
     await play.advance(0.5);
     const side = await play.state('game.state');
     assert.ok(Math.abs(side.playerFace) < 0.35, `应该朝右（face=${side.playerFace.toFixed(2)}）`);
-    await play.screenshot('weapon-side-hidden');
+    await play.screenshot('weapon-facing-right');
+
+    // 朝右下：右手在屏幕右下（近侧），剑应该看得见，不该躲到身后。
+    await play.mouse.click([side.player.x + 0.13, side.player.y + 0.13]);
+    await play.advance(0.5);
+    const dr = await play.state('game.state');
+    assert.ok(dr.playerFace > 0.4 && dr.playerFace < 1.2, `应该朝右下（face=${dr.playerFace.toFixed(2)}）`);
+    await play.screenshot('weapon-facing-down-right');
+
+    // 朝左：右手绕到屏幕**上方**（远离镜头），整个人挡在它前面 ——
+    // 手应该看不见，剑只从头顶露出一截。这是用户 2026-11-17 的核心场景。
+    await play.mouse.click([dr.player.x - 0.18, dr.player.y]);
+    await play.advance(0.5);
+    const left = await play.state('game.state');
+    assert.ok(Math.abs(Math.abs(left.playerFace) - Math.PI) < 0.35, `应该朝左（face=${left.playerFace.toFixed(2)}）`);
+    await play.screenshot('weapon-facing-left-hidden');
   });
 
   await play.step('an arbitrary heading (37°) really moves along 37°, not eight buckets', async () => {
