@@ -30,6 +30,18 @@
     return;
   }
 
+  /**
+   * 遗物写进存档时的形态：**除格子坐标外的字段全部跟着走**。
+   * 这里以前是白名单（只留 defId / durability），耐久已经因此漏过一次；
+   * 词条（affixes）再走白名单，死一次词条就没了 —— 而词条正是这件装备的价值。
+   */
+  function relicOf(it) {
+    var out = { defId: it.defId };
+    if (it.durability !== undefined) out.durability = it.durability;
+    if (it.affixes !== undefined) out.affixes = it.affixes;
+    return out;
+  }
+
   var SEED = 0x5eed1234;
   var inRun = false;
   var bagOpen = false;
@@ -286,11 +298,7 @@
       deployment.deathDrop = {
         x: drop.x,
         y: drop.y,
-        items: drop.items.map(function (it) {
-          return it.durability === undefined
-            ? { defId: it.defId }
-            : { defId: it.defId, durability: it.durability };
-        }),
+        items: drop.items.map(relicOf),
       };
     }
     if (channel) channel.postMessage({ type: 'deploy', deployment: deployment });
@@ -390,11 +398,7 @@
           stage: result.stage || '',
           x: left[0].x,
           y: left[0].y,
-          items: left.map(function (it) {
-            return it.durability === undefined
-              ? { defId: it.defId }
-              : { defId: it.defId, durability: it.durability };
-          }),
+          items: left.map(relicOf),
         }
         : null;
     } else if (kind === 'dungeon' && result.deathAt && (result.lost || []).length > 0) {
@@ -402,11 +406,7 @@
         stage: result.stage || '',
         x: result.deathAt.x,
         y: result.deathAt.y,
-        items: result.lost.map(function (it) {
-          return it.durability === undefined
-            ? { defId: it.defId }
-            : { defId: it.defId, durability: it.durability };
-        }),
+        items: result.lost.map(relicOf),
       };
     } else {
       host.deathDrop = null;

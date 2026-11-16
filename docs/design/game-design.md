@@ -61,6 +61,7 @@
 | 消耗品（红药 / 蓝药是背包物品） | ✅ 第一批可玩 | `item.xlsx` 的 30002/30003 + `combat/consumables.ts`；`X` 蓝药 / `Z` 红药；**每局免费瓶数已删除** |
 | 保险格（**独立容器** / 2 格 / 阵亡保住里面的东西） | ✅ 第一批可玩 | `meta/inventory.ts` 的 `safe` 容器 + `splitOnDeath`；局外有独立的「保险格」面板（青色边） |
 | 副本「死亡原地掉落、捡回一次」 | ✅ 第一批可玩 | `combat/death-drop.ts` + 壳层遗物槽（存档 v3 的 `extra.deathDrop`）；地上遗物带冷白环 |
+| **装备词条（主/副词条）** | ✅ 第一批可玩（2026-11-17） | `tables/affix.xlsx` + `affix_slot.xlsx` + `meta/affix.ts`；**词条属于实例不属于 defId**，掉落时用 `s.rng` 掷一次；生效四处（`dmg_pct` 普攻/远程、`hp_pct`/`mana_pct` 出征上限、`range_px` 射程、`dodge_cd_pct` 闪避冷却）；双武器槽只算激活那把 |
 | 词条重铸 | ⬜ 未开始 | 7.1–7.4 |
 | 可破坏物（站桩砸开 / 机关守卫 / 声响惊醒） | ✅ 第一批可玩 | `combat/destructibles.ts` + `tables/destructible.xlsx`；位置来自 LDtk `Destructible`；砸开产出走池 3/4 |
 | 7–8 分钟高价值事件 / 怪向门聚集 | ✅ 第一批可玩 | `combat/events.ts` + `tables/event.xlsx`（420s 刷舍利匣 + 光柱）；撤离阶段 `goal='portal'`；**沉睡模型**在 `enemies.ts`（`monster.xlsx::sense_radius`） |
@@ -73,7 +74,9 @@
 ~~大地图 / 分区 / 大地图查看 UI~~（**第一批已落地，2026-11-16：四区环形 + M 键大地图**）→
 ~~弹道 / 远程武器 / 怪物弓手~~（**已落地，2026-11-16：指向性 + 非指向性两种形态**）。
 按 15.0 的顺序，接下来只剩**组队**（第 1 版不做）与各系统的「第二批」；
-`petrify` / `sleep` / `silence` / `disarm` 等**状态引擎已支持但还没有施加来源**（等怪物技能 / 词条批次）；
+**装备词条第一批已落地（2026-11-17）**，同批剩下的两件事：**词条重铸**（每件 1–3 次、扣金币）
+与**金币经济**（收藏品换金 + 补给药水 / 保险格扩容改成买）；
+`petrify` / `sleep` / `silence` / `disarm` 等**状态引擎已支持但还没有施加来源**（等怪物技能批次）；
 箭矢**尚未堆叠**（一件一支、一格一件），等物品堆叠批次。
 
 ---
@@ -969,6 +972,7 @@ Dungeonborne 的教训：装备太稀有 → 玩家拿到就退游，且不敢�
 | 可破坏物（10.5） | ✅ 第一批 | `combat/destructibles.ts` + `tables/destructible.xlsx`：三档（木箱 2s / 铜箱 3s / 舍利匣 4s）。**站桩砸开**（和引导门共用 `pinPlayer()`，点击移动与攻击全部失效）、受击 / 闪避 / 走开只清进度、**舍利匣有机关**（`guard_radius=240` 内还有活怪时起不了手）、起手与砸开各一次声响惊醒沉睡的怪、产出走 `loot.ts::rollPool()`（池 3/4）并复用同一份 `Drop`。位置来自 LDtk 的 `Destructible` 实体（正式图 8 个），砸开后留 6 秒残骸。 |
 | 单局事件（10.2） | ✅ 第一批 | `combat/events.ts` + `tables/event.xlsx`：`high_value` @420s（第 7 分钟）在 LDtk 的 `EventSite` 上刷 1 个舍利匣，25 秒金色光柱 + 小地图亮点 + 声响（惊动 560px 内的沉睡怪）。一行一局只触发一次，已结束的一局不再刷。 |
 | 惊醒 / 守门（10.4 / 10.5 前提） | ✅ 第一批 | `Skeleton.awake` + `monster.xlsx::sense_radius`：玩家进圈 / 挨伤害 / 附近被砸开 / 撤离阶段 → 醒（单向）；撤离阶段离玩家 > `monster_converge_px`(320) 的改去守最近的门（`goal='portal'`）。**这是「破坏会惊醒周围的怪」能成立的前提** —— 没有沉睡，怪本来就在追你，那句话是空的。 |
+| **装备词条（7.1 / 7.2 主副词条）** | ✅ 2026-11-17 | `tables/affix.xlsx`（11 条，按 `scope` 锁部位）+ `affix_slot.xlsx`（品质→条数）+ `meta/affix.ts`（零 import：`rollAffixes` / `gearAffixTotal` / `sanitizeAffixes`）。**词条跟着实例走**（`Drop.affixes` → `collectDrop` → 背包/武器槽 → 遗物槽 → 存档，四处拷贝统一为"除坐标外全部跟随"）；掉落时用 `s.rng` 掷一次（同 seed 可复现），拾取/拖放/读档不重掷；**同 stat 不重复、白装 0 条**；双武器槽只算激活那把。技能伤害**不吃** `dmg_pct`（设计 6.2：装备管白值、星图管乘区） |
 | 组队 / 联机 | ⬜（第 1 版不做） | — |
 
 **技能两批踩到的取舍（2026-11-15）**：

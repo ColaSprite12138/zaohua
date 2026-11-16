@@ -255,6 +255,20 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 | 夹具 | `createState()` 给背包塞 `POTION_COUNT` 蓝 + `FIXTURE_HP_POTIONS` 红，供 playthrough / 单测；正式出征由局外背包决定 |
 | 投影 | `durability[2]`（`{slot,current,max,broken}`）/ `weaponBroken` / `potions` / `hpPotions`（后两个是背包计数） |
 
+### 装备词条（战斗侧，2026-11-17 第一批，设计文档 7.1 / 7.2）
+
+契约正本在 `assets/meta/CONTEXT.md`「装备词条」；这里只记**战斗侧接在哪**：
+
+| stat | 落点 | 细节 |
+|:--|:--|:--|
+| `dmg_pct` | `run-inventory.ts::weaponDamage(defId, gear?)` | 普攻（`attack.ts::swingAtTarget`）与远程（`ranged.ts::fireRangedAt`）的第二参数都传 `s.runInventory`。**技能伤害不吃它** —— 设计 6.2：装备管白值，星图管乘区 |
+| `hp_pct` / `mana_pct` | `state.ts::applyStarMods()` | 出征时一次：`base × 星图乘区 × 装备乘区`。局内换装**不重算上限**（否则拖一下胸甲就回血） |
+| `range_px` | `ranged.ts::resolveAttackOrder()` | 近战范围与弹道射程都加；**损坏的武器不给**（损坏 = 空手） |
+| `dodge_cd_pct` | `movement.ts::applyDodge()` | 只减 CD（下限 20%），不改无敌帧与闪避距离 |
+
+**双武器槽只算激活那把**（`gearAffixTotal` 跳过非激活的 0/1 槽），其余 8 个槽全算。
+词条在掉落时掷一次（`attack.ts` 用 `s.rng`），与掉落池共用同一序列。
+
 ### 本局状态与投影
 
 - **没有得分**：`GameState` 没有 `score`，击杀 / 拾取都不加分；HUD 右上角是**只读小地图**，结算板显示 `击杀 / 拾取`。
@@ -484,6 +498,14 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 69. **位移验收量世界坐标**：`projection().playerWorld`。屏幕上量不出移动方向 ——
     相机跟着玩家走，人永远在画面中间。而且归一化坐标的 x/y 分母不同（1280/720），
     直接比较两个轴的归一化偏移会把 45° 算成 29°（这个坑在验收脚本里踩过一次）。
+70. **词条只加武器白值，不加技能**：`dmg_pct` 只进 `weaponDamage()`（普攻 / 远程）。
+    技能伤害走 `mods.damageMultiplier()`（星图乘区）—— 设计 6.2 的分工是「星图管横向、
+    装备管纵向白值」。给技能加装备乘区会让装备变成第二个星图，也让 TTK 锚点失效。
+71. **副手词条不生效**：任何「穿戴合计」都必须走 `affix.ts::gearAffixTotal()`，
+    它只跳过非激活的 0/1 槽。另写一次遍历就会把副手算进来（设计 7.2 的锁部位前提）。
+72. **词条只在掉落时掷**：拾取 / 拖放 / 读存档 / 结算都不得调用 `rollAffixes()`。
+    重掷会让同一件装备的词条在过一道界面后变一次，而存档 diff 里看不出来。
+    唯一合法的重掷是**重铸**（尚未实现，届时必须扣金币并计入每件 1–3 次上限）。
 
 ## 目录与依赖方向（单向，禁止反向 import）
 

@@ -18,7 +18,10 @@
  * 掉落物不产生伤害、不参与击杀计数，它只是「东西躺在地上」。
  */
 
-import { itemDef, splitOnDeath, type ItemInstance, type RunLoadout } from '../meta/inventory.ts';
+import {
+  itemDef, splitOnDeath,
+  type AffixOnItem, type ItemInstance, type RunLoadout,
+} from '../meta/inventory.ts';
 import { nearestWalkable } from './world.ts';
 import { nextDropUid, type GameState } from './state.ts';
 import { say } from './effects.ts';
@@ -27,6 +30,8 @@ import { say } from './effects.ts';
 export interface DeathDropItem {
   readonly defId: string;
   readonly durability?: number;
+  /** 词条跟着遗物走（设计 7.1）：捡回来的还是那一把，不是重掷的一把。 */
+  readonly affixes?: readonly AffixOnItem[];
 }
 
 /** 上一局掉在副本里的东西：落点 + 物品（耐久跟着走）。 */
@@ -42,6 +47,7 @@ export interface LeftoverItem {
   readonly x: number;
   readonly y: number;
   readonly durability?: number;
+  readonly affixes?: readonly AffixOnItem[];
 }
 
 /** 一次死亡结出的两份账。 */
@@ -78,7 +84,8 @@ function nameOf(defId: string): string {
  * 所以过一遍 `nearestWalkable()`：死亡点本身就可能被尸体 / 墙占住。
  */
 function placeLeftover(
-  s: GameState, defId: string, x: number, y: number, t: number, durability?: number,
+  s: GameState, defId: string, x: number, y: number, t: number,
+  durability?: number, affixes?: readonly AffixOnItem[],
 ): void {
   const spot = nearestWalkable(s.world, x, y);
   s.drops.push({
@@ -93,6 +100,7 @@ function placeLeftover(
     fromDeathDrop: true,
     // 耐久必须跟着遗物走：捡回来的是「磨过的那把」，不是新的（设计 5.2 的出口）。
     ...(durability === undefined ? {} : { durability }),
+    ...(affixes === undefined ? {} : { affixes: affixes.map((a) => ({ ...a })) }),
   });
 }
 
@@ -111,7 +119,10 @@ export function spawnDeathDrop(s: GameState, payload: DeathDropPayload | undefin
     const span = row === 0 ? firstRow : DROP_PER_ROW;
     const ox = (col - (span - 1) / 2) * DROP_COL_STEP;
     const oy = row * DROP_ROW_STEP;
-    placeLeftover(s, item.defId, payload.x + ox, payload.y + oy, i * 0.17, item.durability);
+    placeLeftover(
+      s, item.defId, payload.x + ox, payload.y + oy, i * 0.17,
+      item.durability, item.affixes,
+    );
   });
   if (total > 0) {
     say(s, `上一局遗物 ${total} 件 · 走过去点名字牌捡回（再死一次就永久消失）`);
@@ -128,6 +139,7 @@ export function leftoverDeathDrops(s: GameState): LeftoverItem[] {
       x: d.x,
       y: d.y,
       ...(d.durability === undefined ? {} : { durability: d.durability }),
+      ...(d.affixes === undefined ? {} : { affixes: d.affixes.map((a) => ({ ...a })) }),
     }));
 }
 

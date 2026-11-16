@@ -15,10 +15,11 @@
 
 import { item } from '../resource/generated/item.ts';
 import { weapon } from '../resource/generated/weapon.ts';
+import { gearMultiplier, type AffixGear } from '../meta/affix.ts';
 import {
   addToBag, createInventoryState, equipItem, itemDef, loadoutFromRun, placeItem, registerItemDefs,
   runInventoryFrom, setActiveWeapon, unequipItem,
-  type InventoryState, type RunLoadout,
+  type AffixOnItem, type InventoryState, type RunLoadout,
 } from '../meta/inventory.ts';
 
 let catalogReady = false;
@@ -127,6 +128,8 @@ export function collectDrop(
   defId: string,
   /** 尸体遗物带着它原来的耐久；普通掉落为 undefined（捡起来就是新的）。 */
   durability?: number,
+  /** 掉落时掷好的词条（`affix.ts::rollAffixes`）；药 / 箭没有。 */
+  affixes?: readonly AffixOnItem[],
 ): PickupResult {
   ensureItemCatalog();
   // **只有武器能进武器槽**（设计 7.4）。掉落池里现在有药，以前这里无条件塞空槽，
@@ -135,23 +138,33 @@ export function collectDrop(
   const empty = !equippable ? -1
     : run.equipped[0] === null ? 0 : (run.equipped[1] === null ? 1 : -1);
   if (empty >= 0) {
-    run.equipped[empty] = { uid, defId, ...(durability === undefined ? {} : { durability }) };
+    run.equipped[empty] = {
+      uid,
+      defId,
+      ...(durability === undefined ? {} : { durability }),
+      ...(affixes === undefined ? {} : { affixes: affixes.map((a) => ({ ...a })) }),
+    };
     return { where: 'weapon', slot: empty as 0 | 1 };
   }
-  return addToBag(run, uid, defId, durability) !== null
+  return addToBag(run, uid, defId, durability, affixes) !== null
     ? { where: 'bag' }
     : { where: 'full' };
 }
 
 /**
- * Melee damage from `weapon.xlsx` for an authored id. The demo `longsword`
- * (and any unknown id) has no table row and returns null, so `attack.ts`
- * falls back to the legacy baseline instead of inventing a number.
+ * Melee damage from `weapon.xlsx` for an authored id, optionally scaled by the
+ * gear's `dmg_pct` affixes (设计 7.1). The demo `longsword` (and any unknown id)
+ * has no table row and returns null, so `attack.ts` falls back to the legacy
+ * baseline instead of inventing a number.
  * The midpoint is deterministic: consuming `GameState.rng` here would shift
  * the loot roll sequence and break reproducible playthroughs.
+ *
+ * `gear` 传 `runInventory` 即可（它满足 `AffixGear`）：**双武器槽只算激活那把**，
+ * 副手的词条不生效（设计 7.2）。不传 = 纯基础伤害（耐久 / 报告等只读场景用）。
  */
-export function weaponDamage(defId: string): number | null {
+export function weaponDamage(defId: string, gear?: AffixGear): number | null {
   const row = weapon.find((w) => String(w.id) === defId);
   if (row === undefined) return null;
-  return (row.damage_min + row.damage_max) / 2;
+  const base = (row.damage_min + row.damage_max) / 2;
+  return gear === undefined ? base : base * gearMultiplier(gear, 'dmg_pct');
 }

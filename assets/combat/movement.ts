@@ -14,6 +14,7 @@
  */
 
 import { burst, setTarget } from './effects.ts';
+import { gearAffixTotal } from '../meta/affix.ts';
 import {
   clearAttackOrder, dropAtPoint, hitTestEnemy,
 } from './attack.ts';
@@ -117,7 +118,8 @@ export function applyDodge(s: GameState, dodge: boolean): void {
   if (lockedFlags(p).noDodge) return;
   p.dodge = 0.24;
   p.invuln = 0.36;
-  p.dodgeCd = PLAYER_DODGE_CD;
+  // 闪避冷却词条（设计 7.1 `dodge_cd_pct`）：只减自己的 CD，不改无敌帧与距离。
+  p.dodgeCd = PLAYER_DODGE_CD * Math.max(0.2, 1 - gearAffixTotal(s.runInventory, 'dodge_cd_pct'));
   const dir = Math.hypot(p.vx, p.vy) > 4 ? Math.atan2(p.vy, p.vx) : p.face;
   setTarget(s, p.x + Math.cos(dir) * 185, p.y + Math.sin(dir) * 130);
   s.moveMode = 'point';

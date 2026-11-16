@@ -7,9 +7,12 @@
  */
 
 import { combat_rule } from '../resource/generated/combat_rule.ts';
+import { affix } from '../resource/generated/affix.ts';
+import { affix_slot } from '../resource/generated/affix_slot.ts';
+import { rollAffixes, type AffixEquipKind } from '../meta/affix.ts';
 import { activeWeaponBroken, weaponUsable, wearWeapon } from './durability.ts';
 import { burst, say } from './effects.ts';
-import { monsterXp, rollLoot } from './loot.ts';
+import { authoredItem, monsterXp, rollLoot } from './loot.ts';
 import { weaponDamage } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
 import { hurts, type DamageSource } from './source.ts';
@@ -118,6 +121,15 @@ export const WALL_BOUNCE_KNOCKBACK = combat_rule[0].wall_bounce_knockback;
 /** 撞墙的额外伤害（约等于普攻的四分之一）；数值在 `tables/combat_rule.xlsx`。 */
 export const WALL_BOUNCE_DAMAGE = combat_rule[0].wall_bounce_damage;
 
+/**
+ * 掉落物会用哪个部位的词条池（设计 7.2 的锁部位）。
+ * 只有武器有池子；药 / 箭返回 null —— 它们品质为白 / 空，`affix_slot` 给 0 条，
+ * 这里的 null 只是不替它们猜一个部位。
+ */
+function affixEquipKind(itemId: string): AffixEquipKind | null {
+  return authoredItem(itemId)?.item_type === '武器' ? 'weapon' : null;
+}
+
 /** 怪物能站在这里吗（和 `enemies.ts` 同一套 8px 探针；这里独立实现避免方向反向）。 */
 function monsterCanStand(w: World, x: number, y: number): boolean {
   return walkable(w, x, y)
@@ -224,6 +236,12 @@ export function damageSkeleton(
   // remain valid; the authored identity rides in itemId/name/quality.
   const loot = rollLoot(sk.monsterId, s.rng);
   if (loot !== null) {
+    // 词条在**掉落时**掷一次，结果落在实例上（设计 7.1）。用 `s.rng` 而不是
+    // Math.random：同一 seed 的掉落序列必须可复现，否则 playthrough 与掉落报告
+    // 每次都不一样。药与弹药品质为白 / 空 → 0 条，不会白送强度。
+    const affixes = rollAffixes(
+      affix, affix_slot, loot.quality, affixEquipKind(loot.itemId), s.rng,
+    );
     s.lootLog.push({
       monsterId: sk.monsterId,
       itemId: loot.itemId,
@@ -238,6 +256,7 @@ export function damageSkeleton(
       x: sk.x, y: sk.y, kind: 'longsword', t: 0,
       itemId: loot.itemId, name: loot.name, quality: loot.quality,
       monsterId: sk.monsterId,
+      ...(affixes.length === 0 ? {} : { affixes }),
     });
     burst(s, sk.x, sk.y - 24, '#e8e4d8', 22, 210);
     say(s, `骷髅被击杀 · 掉落「${loot.name}」(${loot.quality})`);
@@ -263,7 +282,7 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   const armed = weaponId !== null && !broken;
   // `weapon.xlsx` owns the number. Unknown / demo ids fall back to the legacy
   // baseline rather than inventing a value; bare hands stay at 22.
-  const baseline = !armed ? 22 : (weaponDamage(weaponId) ?? 46);
+  const baseline = !armed ? 22 : (weaponDamage(weaponId, s.runInventory) ?? 46);
   const aim = Math.atan2(ddy, ddx);
 
   p.attackCd = PLAYER_ATTACK_CD;

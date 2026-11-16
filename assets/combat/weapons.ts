@@ -45,7 +45,7 @@ export function updateDrops(s: GameState, dt: number): void {
 
   const label = drop.name ? `「${drop.name}」` : '长剑';
   const itemId = drop.itemId ?? 'longsword';
-  const picked = collectDrop(s.runInventory, drop.uid, itemId, drop.durability);
+  const picked = collectDrop(s.runInventory, drop.uid, itemId, drop.durability, drop.affixes);
   // Clear the order even on failure so the toast is not re-emitted every frame.
   s.pickupTarget = null;
   if (picked.where === 'full') {

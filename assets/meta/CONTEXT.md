@@ -65,6 +65,26 @@
 | 穿戴合法性（2026-11-15） | `normalizeEquipped(state)`：把 `equip` 与槽位不匹配的物品挪回背包（背包满则丢弃），`runInventoryFrom()` / `bringBack()` 都调用它。**只有武器能进武器槽**，拾取侧由 `combat/run-inventory.ts::collectDrop()` 保证 |
 | 悬停信息卡（2026-11-15 用户要求） | 鼠标移到**背包格 / 仓库格 / 已穿戴槽**上，弹一张卡：名字（品质色）+ `item_type · 品质 · 攻击方式` + 伤害区间 + 耐久（当前/上限 + 彩条，损坏时红字提示「伤害按空手算」）+ 格子大小。内容全部来自 `ItemDef`（表驱动的只读副本）与实例上的 `durability`，**页面不 join 表**；节点上只挂 `data-tip-def` / `data-tip-dura` 两个属性，`render()` 重建节点也不会失效（`document` 上委托 + `mousemove`）。拖拽中不弹卡。局内背包浮层同样生效（`shell.css` 把 `.item-tip` 排除在"战斗全隐藏"之外） |
 
+## 装备词条（设计 7.1 第一批，2026-11-17）
+
+| 项 | 契约 |
+|:--|:--|
+| 规则正本 | `assets/meta/affix.ts`（**零 import**，数据由调用方传入）。页面侧将来由 `build-meta-ui.mjs` 转成 `meta-ui/affix.js`；Worker 侧直接读 `resource/generated/affix.ts` |
+| 数据 | `tables/affix.xlsx`（11 条：`stat` / `scope` / `quality_min` / `value_min` / `value_max` / `weight`）+ `tables/affix_slot.xlsx`（品质 → 条数：白 0 / 绿 1 / 蓝 2 / 紫 3 / 橙 4 / 暗金 4） |
+| 归属 | **属于 `ItemInstance.affixes`，不属于 defId**。同一个 `10003` 可以是锋锐 +6%，也可以是坚韧 +8%；不在 `weapon.xlsx`，任何地方都不得按 id 反查词条 |
+| 三条硬约束 | ① 同一条 `stat` 在一件装备上**最多一次**（1）；② **白装 0 条**（白装是入场兜底，不给强度）；③ 词条按 `scope` 锁部位（武器 / 护甲 / 首饰，`any` 通用） |
+| 条数不足 | 池子空了就**少出**，不补位、不重复 stat。暗金在护甲上常常只有 3 条，这是预期 |
+| 掷骰时点 | **掉落时**一次（`attack.ts::damageSkeleton` 用 `s.rng`，与掉落池共用同一序列 → 同 seed 可复现）；拾取 / 拖放 / 存档**不重掷** |
+| 跨堆 | 词条与耐久走同一条路：`Drop.affixes` → `collectDrop(...affixes)` → 实例 → `RunLoadout` → 存档。四处拷贝都以「除格子坐标外全部跟随 + 数组深拷贝」实现（`instanceOf` / `clonePlaced` / `relicOf`） |
+| 遗物 | `DeathDropItem.affixes` / `LeftoverItem.affixes`：**死一次词条不消失**，捡回来还是那一把 |
+| 生效规则 | `gearAffixTotal(gear, stat)`：**双武器槽只算激活那把**，其余 8 槽全算；背包 / 仓库不算 |
+| 生效点 | `dmg_pct` → 普攻与远程（`weaponDamage(defId, gear)`）；`hp_pct` / `mana_pct` → 出征时 `applyStarMods()`（局内换装**不重算上限**）；`range_px` → 近战范围 / 弹道射程（损坏武器不给）；`dodge_cd_pct` → `applyDodge()` 的冷却 |
+| sanitize | 读存档 / 收跨堆消息过 `sanitizeAffixes()`：丢未知 id、丢非有限值、同 stat 裁到第一条。**不重掷** |
+
+**这一批没做**（别当成已完成）：套装词条（凑齐生效）、独立词条 = 技能附加词条（仅最高品质）、
+**词条重铸**（每件 1–3 次、扣金币）、收藏品与金币产出。三层词条届时共用同一个 `affixes` 容器，
+只需在 `AffixRow` 上加 `kind`。
+
 ## 单页流程与搜打撤契约（2026-11-11）
 
 | 项 | 权威 |

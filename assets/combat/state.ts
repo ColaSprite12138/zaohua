@@ -14,7 +14,8 @@ import { VIEW_H, VIEW_W } from '../shared/constants.ts';
 import { testArena } from '../resource/maps/arena-test.ts';
 import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { skill as skillTable } from '../resource/generated/skill.ts';
-import { createInventoryState, type InventoryState } from '../meta/inventory.ts';
+import { createInventoryState, type AffixOnItem, type InventoryState } from '../meta/inventory.ts';
+import { gearMultiplier } from '../meta/affix.ts';
 import { makeRng } from './loot.ts';
 import { seedFixturePotions } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
@@ -350,16 +351,22 @@ export interface CastState {
 }
 
 /**
- * 把星图乘区落到这一局的角色上（出征时调用一次）。
+ * 把星图乘区与装备词条落到这一局的角色上（出征时调用一次）。
  *
  * 生命 / 法力上限都在 deploy 重算，所以**洗点后下一局立刻生效**，局内不会变；
  * 这也正是设计 6.4「局内不能换 build」的实现方式 —— Worker 只在 deploy 时
  * 收到一份节点快照，之后没有任何接口能改它。
+ *
+ * 装备词条同理：`hp_pct` / `mana_pct` 按**出征那一刻的穿戴**算（只算激活的武器槽，
+ * 设计 7.2）。局内把胸甲拖进背包**不会**改上限 —— 否则拖一下就能回血 / 刷血，
+ * 而且「换装立即生效」本来只指武器伤害与射程。
  */
 export function applyStarMods(s: GameState, mods: CombatModifiers): void {
-  s.maxHp = Math.round(PLAYER_HP_MAX * mods.maxHpMultiplier());
+  const hpGear = gearMultiplier(s.runInventory, 'hp_pct');
+  const manaGear = gearMultiplier(s.runInventory, 'mana_pct');
+  s.maxHp = Math.round(PLAYER_HP_MAX * mods.maxHpMultiplier() * hpGear);
   s.hp = s.maxHp;
-  s.maxMana = Math.round(PLAYER_MANA_MAX * mods.maxManaMultiplier());
+  s.maxMana = Math.round(PLAYER_MANA_MAX * mods.maxManaMultiplier() * manaGear);
   s.mana = s.maxMana;
 }
 
@@ -628,6 +635,11 @@ export interface Drop {
    * 放在掉落物本身上，而不是 `state` 里再开一张表 —— 掉落物被捡走时它自然消失。
    */
   durability?: number;
+  /**
+   * 掉落时掷好的词条（设计 7.1）。和耐久一样放在掉落物本身上：捡起时整份
+   * 交给 `collectDrop()`，捡到背包 / 武器槽后仍跟着这件物品走。
+   */
+  affixes?: readonly AffixOnItem[];
   /**
    * Result of `layoutDrops()` for the CURRENT frame. `undefined` means "not
    * laid out yet" (a drop created this frame, or a unit-test fixture), which

@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 7d09dd7e48d400b751f492759c3e9e8e6772613087fa13d0353ce7854f594b9d
+ * Source SHA-256: 775b0fc0efceb03989400dce6102b0ce7b151a29c15549f1e60c64da7a6b59f8
  */
 (function (root) {
 "use strict";
@@ -291,8 +291,15 @@ function instanceOf(item) {
             continue;
         if (key === 'container' || key === 'col' || key === 'row')
             continue;
-        if (value !== undefined)
-            out[key] = value;
+        if (value === undefined)
+            continue;
+        // 词条数组必须**深拷贝**：浅拷贝会让背包里那把和仓库里那把共享同一个数组，
+        // 一次重铸就同时改掉两件装备的词条（而且两个 JS 堆之间更难查）。
+        if (key === 'affixes' && Array.isArray(value)) {
+            out.affixes = value.map((a) => ({ ...a }));
+            continue;
+        }
+        out[key] = value;
     }
     return out;
 }
@@ -415,7 +422,9 @@ function findFirstFit(state, defId, ignoreUid, containers = ['bag', 'stash']) {
  */
 function addToBag(state, uid, defId, 
 /** 从尸体上捡回来的武器带着它磨过的耐久（普通掉落没有这个字段）。 */
-durability) {
+durability, 
+/** 掉落时就掷好的词条（设计 7.1）。局外伸手拿的种子物品没有这个字段。 */
+affixes) {
     if (exports.ITEM_DEFS[defId] === undefined)
         return null;
     const def = itemDef(defId);
@@ -425,6 +434,7 @@ durability) {
                 const placed = {
                     uid, defId, container: 'bag', col, row,
                     ...(durability === undefined ? {} : { durability }),
+                    ...(affixes === undefined ? {} : { affixes: affixes.map((a) => ({ ...a })) }),
                 };
                 state.bag.push(placed);
                 return placed;
@@ -493,7 +503,12 @@ function normalizeEquipped(state) {
     return moved;
 }
 function clonePlaced(items) {
-    return items.map((i) => ({ ...i }));
+    return items.map((i) => ({
+        ...instanceOf(i),
+        container: i.container,
+        col: i.col,
+        row: i.row,
+    }));
 }
 /** Normalise to exactly ten slots so a malformed message cannot break the UI. */
 function cloneEquipped(slots) {
@@ -501,10 +516,12 @@ function cloneEquipped(slots) {
         const item = slots[i];
         if (!item)
             return null;
-        // 耐久必须跟着物品跨堆 / 跨局走，否则每次出征都自动修满（5.2 的出口就没了）。
-        return item.durability === undefined
-            ? { uid: String(item.uid), defId: String(item.defId) }
-            : { uid: String(item.uid), defId: String(item.defId), durability: item.durability };
+        // 耐久与词条都必须跟着物品跨堆 / 跨局走。这里以前是**白名单**
+        // （只留 uid/defId/durability），于是"拖一次装备就自动修满"过；
+        // 词条要是再走白名单，就会变成"出征一次词条全没"。改用统一的
+        // `instanceOf()`：新增字段默认跟随，只有刻意丢弃才需要改这里。
+        const copy = instanceOf(item);
+        return { ...copy, uid: String(copy.uid), defId: String(copy.defId) };
     });
 }
 /**

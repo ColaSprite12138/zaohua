@@ -30,7 +30,8 @@ import {
   syncWeaponSlots, applyRunCommand, snapshotRun, makeRunInventory,
   type Deployment, type RunLoadout, type RunCommand,
 } from './simulation.ts';
-import { leftoverDeathDrops, settleOnDeath } from '../combat/death-drop.ts';
+import { leftoverDeathDrops, settleOnDeath, type LeftoverItem } from '../combat/death-drop.ts';
+import type { AffixOnItem } from '../meta/inventory.ts';
 import { paint } from './paint.ts';
 import { HEAL_KEY, POTION_KEY, SKILL_KEYS } from '../shared/constants.ts';
 import { arena } from '../resource/maps/arena.generated.ts';
@@ -73,11 +74,11 @@ export type RunResult = {
    * 失败时**丢下**的部分。副本把它写进死亡掉落槽（下次进本捡回一次），
    * 搜打撤直接消失。主线阵亡为空数组。
    */
-  lost?: { defId: string; durability?: number }[];
+  lost?: { defId: string; durability?: number; affixes?: readonly AffixOnItem[] }[];
   /** 阵亡位置（世界像素）；副本用它决定遗物落在哪。 */
   deathAt?: { x: number; y: number } | null;
   /** 地上还没捡走的遗物（撤离时仍留在副本里，下次进来还在）。 */
-  deathDropLeft?: { defId: string; x: number; y: number; durability?: number }[];
+  deathDropLeft?: LeftoverItem[];
 };
 
 /** A discarded / not-yet-deployed run owns nothing. */

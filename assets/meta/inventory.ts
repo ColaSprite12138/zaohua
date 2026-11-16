@@ -272,6 +272,17 @@ export const EQUIP_SLOTS: readonly EquipSlotDef[] = [
 
 export const WEAPON_SLOT_INDICES = [0, 1] as const;
 
+/**
+ * 一条词条（设计 7.1）。结构在 `affix.ts::AffixInstance` 上有唯一正本，
+ * 这里内联一份只是为了保持**零 import**；`stat` 放宽成 string 是为了让
+ * `affix.ts` 的窄联合类型能直接赋进来（反方向不需要）。
+ */
+export interface AffixOnItem {
+  readonly id: string;
+  readonly stat: string;
+  readonly value: number;
+}
+
 export interface ItemInstance {
   readonly uid: string;
   readonly defId: string;
@@ -281,6 +292,14 @@ export interface ItemInstance {
    * 它跟着物品走，所以两个堆、存档、结算都会带上（`cloneEquipped` 不再丢掉它）。
    */
   readonly durability?: number;
+  /**
+   * 词条（设计 7.1 / 7.2）。**属于实例、不属于 defId** —— 同一个 `10003`
+   * 可以是锋锐 +6%，也可以是坚韧 +8%。空数组与 undefined 等价（白装）。
+   *
+   * 存的是**掷好的绝对值**（百分比 0.06 / 像素 18），不存"按区间再算一次"，
+   * 否则每次读档都会悄悄变。掷骰在 `affix.ts::rollAffixes()`，这里只透传。
+   */
+  readonly affixes?: readonly AffixOnItem[];
   /**
    * 悬停信息卡用的展示字段（2026-11-15）。都是**为读而存**的只读副本：
    * 数值权威仍是 `item.xlsx` / `weapon.xlsx`，这里只是让局外页面不必再自己 join 一次表。
@@ -400,7 +419,14 @@ function instanceOf(item: ItemInstance | PlacedItem): ItemInstance {
   for (const [key, value] of Object.entries(item)) {
     if (key === 'uid' || key === 'defId') continue;
     if (key === 'container' || key === 'col' || key === 'row') continue;
-    if (value !== undefined) out[key] = value;
+    if (value === undefined) continue;
+    // 词条数组必须**深拷贝**：浅拷贝会让背包里那把和仓库里那把共享同一个数组，
+    // 一次重铸就同时改掉两件装备的词条（而且两个 JS 堆之间更难查）。
+    if (key === 'affixes' && Array.isArray(value)) {
+      out.affixes = value.map((a) => ({ ...(a as AffixOnItem) }));
+      continue;
+    }
+    out[key] = value;
   }
   return out as unknown as ItemInstance;
 }
@@ -556,6 +582,8 @@ export function addToBag(
   defId: string,
   /** 从尸体上捡回来的武器带着它磨过的耐久（普通掉落没有这个字段）。 */
   durability?: number,
+  /** 掉落时就掷好的词条（设计 7.1）。局外伸手拿的种子物品没有这个字段。 */
+  affixes?: readonly AffixOnItem[],
 ): PlacedItem | null {
   if (ITEM_DEFS[defId] === undefined) return null;
   const def = itemDef(defId);
@@ -565,6 +593,7 @@ export function addToBag(
         const placed: PlacedItem = {
           uid, defId, container: 'bag', col, row,
           ...(durability === undefined ? {} : { durability }),
+          ...(affixes === undefined ? {} : { affixes: affixes.map((a) => ({ ...a })) }),
         };
         state.bag.push(placed);
         return placed;
@@ -644,7 +673,12 @@ export interface RunLoadout {
 }
 
 function clonePlaced(items: readonly PlacedItem[]): PlacedItem[] {
-  return items.map((i) => ({ ...i }));
+  return items.map((i) => ({
+    ...instanceOf(i),
+    container: i.container,
+    col: i.col,
+    row: i.row,
+  }));
 }
 
 /** Normalise to exactly ten slots so a malformed message cannot break the UI. */
@@ -654,10 +688,12 @@ function cloneEquipped(
   return EQUIP_SLOTS.map((_, i) => {
     const item = slots[i];
     if (!item) return null;
-    // 耐久必须跟着物品跨堆 / 跨局走，否则每次出征都自动修满（5.2 的出口就没了）。
-    return item.durability === undefined
-      ? { uid: String(item.uid), defId: String(item.defId) }
-      : { uid: String(item.uid), defId: String(item.defId), durability: item.durability };
+    // 耐久与词条都必须跟着物品跨堆 / 跨局走。这里以前是**白名单**
+    // （只留 uid/defId/durability），于是"拖一次装备就自动修满"过；
+    // 词条要是再走白名单，就会变成"出征一次词条全没"。改用统一的
+    // `instanceOf()`：新增字段默认跟随，只有刻意丢弃才需要改这里。
+    const copy = instanceOf(item);
+    return { ...copy, uid: String(copy.uid), defId: String(copy.defId) };
   });
 }
 

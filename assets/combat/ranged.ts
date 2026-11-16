@@ -14,6 +14,7 @@
  */
 
 import { ARROW_ID, weaponSpec, type AttackSpec } from './attack-spec.ts';
+import { gearAffixTotal } from '../meta/affix.ts';
 import { clearAttackOrder, swingAtTarget } from './attack.ts';
 import { activeWeaponBroken } from './durability.ts';
 import { say, setTarget } from './effects.ts';
@@ -49,10 +50,12 @@ export function resolveAttackOrder(s: GameState, mods: CombatModifiers): void {
   const weaponId = activeWeapon(s);
   const armed = weaponId !== null && !activeWeaponBroken(s);
   const spec = weaponSpec(armed ? weaponId : null);
+  // 射程词条（设计 7.1）只对**拿着的那把它**生效：损坏 / 空手不加。
+  const gearRange = armed ? gearAffixTotal(s.runInventory, 'range_px') : 0;
   const range = spec.kind === 'melee'
     // 损坏 = 空手距离（同一条判定，不要只看槽里有没有东西）。
-    ? (armed ? MELEE_RANGE_ARMED : MELEE_RANGE_BARE) + mods.meleeRangeBonus()
-    : spec.range;
+    ? (armed ? MELEE_RANGE_ARMED : MELEE_RANGE_BARE) + mods.meleeRangeBonus() + gearRange
+    : spec.range + gearRange;
   const d = Math.hypot(sk.x - s.player.x, sk.y - s.player.y);
   if (d > range - RANGE_SLACK) {
     setTarget(s, sk.x, sk.y);
@@ -95,7 +98,7 @@ export function fireRangedAt(
   }
   const weaponId = activeWeapon(s);
   // 伤害以 `weapon.xlsx` 的中值为准；spec 里的数字只是没有武器时的回退。
-  const baseline = weaponId === null ? spec.damage : (weaponDamage(weaponId) ?? spec.damage);
+  const baseline = weaponId === null ? spec.damage : (weaponDamage(weaponId, s.runInventory) ?? spec.damage);
   const damage = mods.damageMultiplier(baseline);
   p.attackCd = spec.cooldown;
   // 拉弓也是一次「出手动作」：绘制层据此抬手，玩家看得出这一发真的放出去了。
