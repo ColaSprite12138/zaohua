@@ -44,35 +44,39 @@ export interface VoxelModel {
   voxels: Voxel[];
 }
 
-/** Which side of a body the camera sees. Kept for callers that only care about
- * the two extremes (`back` = facing away). Bodies themselves are baked per
- * YAW STEP now, not per side — see `BodyModel.yaws`. */
+/** Which side of a body the camera sees. Only the two authored extremes exist
+ * (`back` = facing away); every angle in between comes from rotating the
+ * volume at bake time, not from another hand-drawn model. */
 export type Facing = 'front' | 'back';
 
 /**
- * 烘焙朝向档数：**半圈 9 档**（0°..180°，每 22.5°），另外半圈靠水平镜像。
- * 于是屏幕上能读到 16 个不同朝向 —— 少于 8 会让人读出「四个动作」，
- * 多于 16 在这个 4px 体素尺度上已经分辨不出来，只是白烧内存。
+ * 角色厚度（z 方向层数）。4 层 = 16px 深：正看 20px、侧看 16px，接近真人
+ * 侧影的比例（约 8 成）。3 层时侧看只有 12px，读起来还是一根柱子。
  */
-export const YAW_STEPS = 9;
-/** 一档多少弧度（22.5°）。 */
-export const YAW_STEP = Math.PI / 8;
+export const BODY_DEPTH = 4;
 
 /**
- * A character: the same rig baked once per YAW STEP and walk pose.
+ * 烘焙朝向的量化步长：7.5° 一档。360 个角度不可能每个都留一张 sprite，
+ * ±3.75° 的误差在这个体素尺度上读不出来；缓存只装真正遇到过的档位。
+ */
+const YAW_QUANT = Math.PI / 24;
+
+/**
+ * A character: three walk poses, each a **solid volume**（正面 / 中间 / 背面三层
+ * 合成），任意朝向由 `bake(model, ..., yaw)` 在烘焙时真投影出来。
  *
- * 为什么是「按角度烘焙」而不是「front / back 两张 + 翻转」：两张只能表达
- * 前 / 后 / 左 / 右四个状态，往左下 5° 和往下左 5° 会画出同一个人（用户
- * 2026-11-16 报的问题）。现在每个朝向都是一个独立模型，脸、肩、腿的透视
- * 都跟着角度变。
+ * 演进史（别退回去）：先是 front / back 两张平面图，身上只有四个状态；后来
+ * 改成半圈烘焙 9 档平面图，能做 16 个朝向，但转身全靠"横向压扁"——用户看到
+ * 的是「人都扁了」。现在每个 pose 是一块**真有厚度**的体积：转 45° 看到的是
+ * 侧面，包络宽度反而接近正面，不再靠压扁假装转身。
  */
 export interface BodyModel {
   readonly name: string;
   readonly unit: number;
   /** Height in blocks (sprite height = blocks * unit). */
   readonly blocks: number;
-  /** `yaws[step][pose]`：step 0 = 正对相机，8 = 背对相机，每档 22.5°。 */
-  readonly yaws: readonly (readonly VoxelModel[])[];
+  /** 三个步态，每个都是有厚度的体积（z 从背面到正面）。 */
+  readonly poses: readonly VoxelModel[];
 }
 
 /** 一个朝向下的「透视参数」，所有部件的横坐标都过它换算。 */
@@ -147,9 +151,17 @@ function channels(hex: string): [number, number, number] {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
+/**
+ * 输出 **#rrggbb**，不是 `rgb(...)`。
+ *
+ * `channels()` 只解析 `#rrggbb`，所以颜色一旦变成 `rgb()` 就再也不能参与
+ * 下一次 `shade()` —— `parseInt('gb(23,...)', 16)` 得到 NaN，画出来是纯黑。
+ * 体积合成正好是"调色后再调色"（背面压暗 → 烘焙时加噪/压暗边），踩了这个坑。
+ */
 function css(r: number, g: number, b: number): string {
   const clamp = (v: number): number => (v < 0 ? 0 : v > 255 ? 255 : Math.round(v));
-  return `rgb(${clamp(r)},${clamp(g)},${clamp(b)})`;
+  const hex = (v: number): string => clamp(v).toString(16).padStart(2, '0');
+  return `#${hex(r)}${hex(g)}${hex(b)}`;
 }
 
 /** Multiply a hex colour; >1 lightens toward white, <1 darkens. */
@@ -442,6 +454,36 @@ const POSE_COUNT = 3;
 /** frame % 4 -> baked pose. Classic 4-frame cycle: step, pass, step, pass. */
 const POSE_OF_FRAME = [0, 1, 0, 2] as const;
 
+/**
+ * 把正面 / 背面两张平面模型合成一块**有厚度的体积**。
+ *
+ * 层序（z 从远到近）：`back`（最远，压暗）→ 中间层（跟随正面轮廓，越深越暗）
+ * → `front`（最前，原色）。
+ *
+ * 中间层跟正面轮廓：体素人物的侧面没有独立细节，用正面轮廓拉出纵深就够了 ——
+ * 侧看是一条有明暗层次的柱体，比一张纸强得多。
+ *
+ * 背面必须用 `back` 模型而不是"正面涂暗"：脸和背是两种画法（护目镜 vs 后颈、
+ * 眼窝 vs 整块头骨）。真转过去要看到后脑，不能看到一张暗掉的正面。
+ */
+function volumeOf(front: VoxelModel, back: VoxelModel, name: string): VoxelModel {
+  const cells = new Map<string, Voxel>();
+  const put = (x: number, y: number, z: number, c: string): void => {
+    cells.set(`${x},${y},${z}`, { x, y, z, c });
+  };
+  // 按高度给一个深度基准：头略前、腿略后。侧看时这条弧线就是"站姿轮廓"，
+  // 没有它，身体在正侧身时会缩成一根等宽的柱子。
+  const leanZ = (y: number): number => (y >= 8 ? 1 : y <= 3 ? -1 : 0);
+  for (const v of front.voxels) put(v.x, v.y, leanZ(v.y) + 1, v.c);
+  const backZ = 1 - (BODY_DEPTH - 1);
+  for (const v of back.voxels) put(v.x, v.y, leanZ(v.y) + backZ, shade(v.c, 0.86));
+  for (let k = 1; k < BODY_DEPTH - 1; k += 1) {
+    // 中间层略暗：转身时侧面的块要读成"体侧"，不能和正面同一块颜色。
+    for (const v of front.voxels) put(v.x, v.y, leanZ(v.y) + 1 - k, shade(v.c, 1 - k * 0.07));
+  }
+  return { name, unit: front.unit, voxels: [...cells.values()] };
+}
+
 function bodyOf(
   name: string,
   blocks: number,
@@ -449,20 +491,19 @@ function bodyOf(
     yaw: number, leftLift: number, rightLift: number, offLift: number, name: string,
   ) => VoxelModel,
 ): BodyModel {
-  const yaws: VoxelModel[][] = [];
-  for (let step = 0; step < YAW_STEPS; step += 1) {
-    const yaw = step * YAW_STEP;
-    const poses: VoxelModel[] = [];
-    for (let i = 0; i < POSE_COUNT; i += 1) {
-      const leftLift = i === 1 ? 1 : 0;
-      const rightLift = i === 2 ? 1 : 0;
-      // Arms counter-swing against the leading leg.
-      const offLift = i === 1 ? 0 : i === 2 ? 1 : 0;
-      poses.push(pose(yaw, leftLift, rightLift, offLift, `${name}.${step}.${i}`));
-    }
-    yaws.push(poses);
+  const poses: VoxelModel[] = [];
+  for (let i = 0; i < POSE_COUNT; i += 1) {
+    const leftLift = i === 1 ? 1 : 0;
+    const rightLift = i === 2 ? 1 : 0;
+    // Arms counter-swing against the leading leg.
+    const offLift = i === 1 ? 0 : i === 2 ? 1 : 0;
+    // yaw = 0 是正对相机的那一套，yaw = π 是背对的那一套（pose 函数本来就在
+    // 处理这两个极端），中间角度交给几何。
+    const front = pose(0, leftLift, rightLift, offLift, `${name}.${i}.front`);
+    const back = pose(Math.PI, leftLift, rightLift, offLift, `${name}.${i}.back`);
+    poses.push(volumeOf(front, back, `${name}.${i}`));
   }
-  return { name, unit: 4, blocks, yaws };
+  return { name, unit: 4, blocks, poses };
 }
 
 export const KNIGHT: BodyModel = bodyOf('knight', 14, knightPose);
@@ -955,32 +996,62 @@ function extentOf(m: VoxelModel): Extent {
 }
 
 /**
- * Draw one model into a sprite. `override` swaps every block colour (used for
- * the hit-flash variants), so a flash never needs its own model.
+ * Draw one model into a sprite, seen from `yaw` radians.
+ *
+ * `yaw = 0` 是正对相机（静态物品 / 地形 / 图标都走这一条，行为和以前一致）；
+ * 角色每帧按自己的朝向传进来，于是**同一块体积能画出任意角度**。
+ *
+ * 真投影三步：绕 y 轴转到相机空间 → 斜投影到屏幕（深度 Z 既决定遮挡顺序，
+ * 也决定往下压多少像素）→ 按 Z 从远到近逐块绘制。旋转后的坐标取整到整像素，
+ * 这是保住硬边的关键：非整数坐标会让 2D 光栅器做亚像素抗锯齿，体素边缘就糊了。
  */
-function bake(m: VoxelModel, override?: string): Sprite {
+function bake(m: VoxelModel, override?: string, yaw = 0): Sprite {
   const u = m.unit;
-  const ext = extentOf(m);
-  const { minX, maxX, minZ, maxY, depth } = ext;
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
   const pad = 1;
-  const w = ext.w;
-  const h = ext.h;
-  const ax = pad - minX * u;
-  const ay = pad + (maxY + 1) * u + depth;
-  const zStep = Math.max(1, Math.round(u * 0.4));
+  const topH = u >= 4 ? 2 : 1;
+  const zStep = Math.max(1, Math.round(u * 0.45));
+
+  // 绕 y 轴旋转（x 向右、z 朝相机）。转到相机空间后 X 决定屏幕横坐标，
+  // Z 决定遮挡顺序与纵向偏移。
+  const rot: { v: Voxel; X: number; Z: number }[] = [];
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  let maxY = 0;
+  for (const v of m.voxels) {
+    const X = v.x * cos + v.z * sin;
+    const Z = -v.x * sin + v.z * cos;
+    if (X < minX) minX = X;
+    if (X > maxX) maxX = X;
+    if (Z < minZ) minZ = Z;
+    if (Z > maxZ) maxZ = Z;
+    if (v.y > maxY) maxY = v.y;
+    rot.push({ v, X, Z });
+  }
+  if (rot.length === 0) {
+    minX = 0; maxX = 0; minZ = 0; maxZ = 0;
+  }
+
+  const depth = Math.round((maxZ - minZ) * zStep);
+  const w = Math.ceil((maxX - minX) * u) + u + 2;
+  const h = (maxY + 1) * u + depth + 2;
+  const ax = Math.round(pad - minX * u);
+  const ay = Math.round(pad + (maxY + 1) * u + depth);
 
   const body = canvasOf(w, h);
   const g = contextOf(body);
   // One screen cell per block. A block is a small lit cube: a light top strip,
   // a mid body, and a dark right/bottom edge. That is what makes a stack read
   // as voxels at 1:1 proportions -- no face doubling, no stretched columns.
-  const topH = u >= 4 ? 2 : 1;
-  const sorted = [...m.voxels].sort((a, b) => a.z - b.z || a.y - b.y || a.x - b.x);
-  for (const v of sorted) {
-    const x = pad + (v.x - minX) * u;
-    const y = ay - (v.y + 1) * u + (v.z - minZ) * zStep;
-    const base = override ?? v.c;
-    const noise = (grain(v.x, v.y, v.z) - 0.5) * 0.1;
+  const sorted = [...rot].sort((a, b) => a.Z - b.Z || a.v.y - b.v.y || a.X - b.X);
+  for (const r of sorted) {
+    const x = Math.round(pad + (r.X - minX) * u);
+    const y = Math.round(ay - (r.v.y + 1) * u + (r.Z - minZ) * zStep);
+    const base = override ?? r.v.c;
+    const noise = (grain(r.v.x, r.v.y, r.v.z) - 0.5) * 0.1;
     g.fillStyle = shade(base, 1.0 + noise);
     g.fillRect(x, y, u, u);
     g.fillStyle = shade(base, 1.34 + noise);
@@ -1006,11 +1077,17 @@ function bake(m: VoxelModel, override?: string): Sprite {
   return { canvas: out, ax: ax + 1, ay: ay + 1, w: w + 2, h: h + 2 };
 }
 
-function spriteOf(m: VoxelModel, flash: boolean): Sprite {
-  const key = `${m.name}:${flash ? 'flash' : 'base'}`;
+/**
+ * 取（或首次烘焙）某个朝向的精灵。**按量化后的档位缓存**：360 个角度不可能
+ * 每个都留一张 canvas，7.5° 一档已经看不出台阶；缓存只装真正遇到过的档位，
+ * 稳态内存是几十张而不是几百张。
+ */
+function spriteOf(m: VoxelModel, flash: boolean, yaw = 0): Sprite {
+  const bucket = Math.round(yaw / YAW_QUANT);
+  const key = `${m.name}:${flash ? 'flash' : 'base'}:${bucket}`;
   let sprite = spriteCache.get(key);
   if (sprite === undefined) {
-    sprite = bake(m, flash ? '#fff6f0' : undefined);
+    sprite = bake(m, flash ? '#fff6f0' : undefined, bucket * YAW_QUANT);
     spriteCache.set(key, sprite);
   }
   return sprite;
@@ -1047,6 +1124,11 @@ export interface VoxelDrawOptions {
   squash?: number;
   /** Mirror across the anchor: the character faces the other way. */
   flip?: boolean;
+  /**
+   * 绕 y 轴的朝向（弧度，0 = 正对相机）。**只有角色会传** —— 物品、地形、图标
+   * 都只看正面。它会改变精灵的宽高和锚点，所以必须进缓存键。
+   */
+  yaw?: number;
   alpha?: number;
 }
 
@@ -1061,7 +1143,7 @@ export function drawVoxel(
   y: number,
   opts: VoxelDrawOptions = {},
 ): void {
-  const sprite = spriteOf(model, opts.flash ?? false);
+  const sprite = spriteOf(model, opts.flash ?? false, opts.yaw ?? 0);
   const scale = opts.scale ?? 1;
   const squash = opts.squash ?? 1;
   g.save();
@@ -1099,20 +1181,16 @@ export interface BodyDrawOptions {
 }
 
 /**
- * 朝向 → (烘焙档位, 是否水平镜像)。
+ * 朝向 → 相机空间的 yaw（弧度，0 = 正对相机，±π = 背对）。
  *
- * 只烘焙了半圈 9 档（0°..180°），另一半用镜像 —— 4px 体素的对称角色镜像后
- * 和真转过去一样（武器 / 副手本来就只有一侧，镜像正好把它换到另一侧）。
- *
- * 绘制层和手臂都要这份结果：身体的档位和手臂的翻转方向必须一致，否则会
- * 出现「人朝左走、剑挥向右边」。
+ * `face` 是屏幕方向（0 = 右，π/2 = 下）；正对相机就是"朝下"，所以减 π/2。
+ * `flip` 只给手臂用（决定肩关节画在哪一侧）：身体不用镜像 —— 真投影自己
+ * 会算出左右，再翻一次会把持械手换到反手。
  */
-export function yawOf(face: number): { step: number; flip: boolean } {
-  // 正对相机 = 朝屏幕下（+π/2），所以先把 face 转成「相对正面的偏角」。
-  const rel = Math.atan2(Math.sin(face - Math.PI / 2), Math.cos(face - Math.PI / 2));
+export function yawOf(face: number): { yaw: number; flip: boolean } {
   return {
-    step: Math.round(Math.abs(rel) / YAW_STEP),
-    flip: rel > 0,
+    yaw: Math.atan2(Math.sin(face - Math.PI / 2), Math.cos(face - Math.PI / 2)),
+    flip: Math.cos(face) < 0,
   };
 }
 
@@ -1130,13 +1208,11 @@ export function drawBody(
 ): void {
   const face = opts.face ?? Math.PI / 2;
   const frame = Math.abs(Math.trunc(opts.frame ?? 0));
-  const { step, flip } = yawOf(face);
-  const poses = body.yaws[step] ?? body.yaws[0]!;
-  const pose = poses[POSE_OF_FRAME[frame % 4] ?? 0] ?? poses[0]!;
+  const pose = body.poses[POSE_OF_FRAME[frame % 4] ?? 0] ?? body.poses[0]!;
   drawVoxel(g, pose, x, y, {
     scale: opts.scale,
     flash: opts.flash,
-    flip,
+    yaw: yawOf(face).yaw,
   });
 }
 
