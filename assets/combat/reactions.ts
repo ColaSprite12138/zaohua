@@ -21,6 +21,7 @@ import {
   nextZoneUid, type ElementId, type GameState, type ReactionId, type StatusHost,
   type StatusId, type Zone,
 } from './state.ts';
+import { hurts, type DamageSource } from './source.ts';
 import {
   ELEMENT_LABEL, ELEMENT_STATUS, STATUS, applyStatus, clearStatus, statusOf,
 } from './status.ts';
@@ -96,7 +97,11 @@ export function applyElement(
   s: GameState,
   index: number,
   element: ElementId,
-  options: { duration?: number; stacks?: number; dot?: number } = {},
+  options: {
+    duration?: number; stacks?: number; dot?: number;
+    /** 谁上的这个元素（技能 / 弹道 / 区域）。反应的伤害归属到它。 */
+    source?: DamageSource;
+  } = {},
 ): void {
   const sk = s.skeletons[index];
   if (sk === undefined || !sk.alive) return;
@@ -105,7 +110,7 @@ export function applyElement(
   // 已经带着同一个元素：只续时长，不重复触发反应。
   const pair = findReactionPartner(sk, element);
   if (pair !== null) {
-    runReaction(s, index, pair.def, pair.otherStatus, own);
+    runReaction(s, index, pair.def, pair.otherStatus, own, options.source);
     return;
   }
   applyStatus(sk, own, options);
@@ -135,6 +140,7 @@ function runReaction(
   def: ReactionDef,
   otherStatus: StatusId,
   ownStatus: StatusId,
+  source: DamageSource | undefined,
 ): void {
   const sk = s.skeletons[index];
   if (sk === undefined) return;
@@ -151,17 +157,17 @@ function runReaction(
 
   switch (def.id) {
     case 'freeze':
-      applyStatus(sk, 'freeze');
+      applyStatus(sk, 'freeze', { source });
       break;
     case 'paralyze': {
-      applyStatus(sk, 'paralyze');
+      applyStatus(sk, 'paralyze', { source });
       // 向附近敌人传导：半时长，且不连锁（传导只上麻痹，不再触发反应）。
       for (let i = 0; i < s.skeletons.length; i += 1) {
         if (i === index) continue;
         const other = s.skeletons[i];
         if (other === undefined || !other.alive) continue;
         if (Math.hypot(other.x - sk.x, other.y - sk.y) > REACTION_CHAIN_RADIUS) continue;
-        applyStatus(other, 'paralyze', { duration: STATUS.paralyze.duration * 0.5 });
+        applyStatus(other, 'paralyze', { duration: STATUS.paralyze.duration * 0.5, source });
         burst(s, other.x, other.y - 20, '#c084fc', 8, 140);
       }
       break;
@@ -170,7 +176,7 @@ function runReaction(
       // 每层毒的引爆伤害在 `tables/combat_rule.xlsx`：5 层满毒 ≈ 一发大招的量级。
       const rule = combat_rule[0];
       const damage = Math.max(rule.detonate_min, poisonStacks * rule.detonate_per_stack);
-      damageSkeleton(s, index, damage, { knockback: 0, color: '#ffd166' });
+      damageSkeleton(s, index, damage, { knockback: 0, color: '#ffd166', source });
       break;
     }
     case 'fireSpread':
@@ -192,7 +198,7 @@ export function spawnZone(
   y: number,
   radius: number,
   life: number,
-  source: string,
+  source: DamageSource,
 ): Zone | null {
   const status = ZONE_STATUS[element];
   if (status === undefined) return null;
@@ -236,6 +242,10 @@ export function growZones(s: GameState, x: number, y: number, elements: readonly
  *
  * 只续状态、**不直接扣血** —— 伤害一律由 DOT 跳（两套伤害会互相打架，
  * 而且「站在火里就一直在烧」本身已经读得很清楚）。
+ *
+ * **阵营由 `source` 决定**（2026-11-16 修正）：自己的火墙不烧自己、怪铺的火墙不烧
+ * 放火的怪，`world` 的（地图自带毒池）伤所有阵营。这里跳过同方宿主，所以不会出现
+ * 「先挂上点燃、再由 DOT 扣血」的二次绕路 —— 状态都不该被续上。
  */
 export function updateZones(s: GameState, dt: number): void {
   for (const zone of s.zones) {
@@ -248,16 +258,18 @@ export function updateZones(s: GameState, dt: number): void {
     for (let i = 0; i < s.skeletons.length; i += 1) {
       const sk = s.skeletons[i];
       if (sk === undefined || !sk.alive) continue;
+      if (!hurts(zone.source, 'monster')) continue;
       if (Math.hypot(sk.x - zone.x, sk.y - zone.y) > zone.radius) continue;
       // 区域续状态是「附着」，也会触发反应（火区里踩进毒池 = 引爆）。
-      applyElement(s, i, zone.element, { duration });
+      // 来源一路带下去：反应伤害也算这片地的主人打的。
+      applyElement(s, i, zone.element, { duration, source: zone.source });
     }
     const p = s.player;
-    if (Math.hypot(p.x - zone.x, p.y - zone.y) <= zone.radius) {
-      // 地面效果**对所有人都生效**，包括玩家自己：火墙铺在脚下自己也会烧、
-      // 冰面自己踩上去也会滑不快。这是「预铺地面」要站远处放的原因，
-      // 也是玩家侧状态目前唯一的来源（怪物技能批次之前）。
-      applyStatus(p, zone.status, { duration });
+    // 玩家这一侧同样按阵营过滤：自己铺的火墙 / 毒池 / 冰面**完全不碰自己**。
+    // （旧规则是「对所有人生效」，用户 2026-11-16 明确要求改掉。）
+    if (hurts(zone.source, 'player')
+      && Math.hypot(p.x - zone.x, p.y - zone.y) <= zone.radius) {
+      applyStatus(p, zone.status, { duration, source: zone.source });
     }
   }
   s.zones = s.zones.filter((zone) => zone.life > 0);
@@ -275,12 +287,12 @@ export function tickStatuses(s: GameState, dt: number): void {
   for (let i = 0; i < s.skeletons.length; i += 1) {
     const sk = s.skeletons[i];
     if (sk === undefined || !sk.alive) continue;
-    tickHost(sk, dt, (amount, color) => {
-      damageSkeleton(s, i, amount, { knockback: 0, color });
+    tickHost(sk, dt, (amount, color, source) => {
+      damageSkeleton(s, i, amount, { knockback: 0, color, source });
     });
   }
-  tickHost(s.player, dt, (amount, color) => {
-    hurtPlayer(s, amount, color);
+  tickHost(s.player, dt, (amount, color, source) => {
+    hurtPlayer(s, amount, color, source);
   });
 }
 
@@ -288,7 +300,7 @@ export function tickStatuses(s: GameState, dt: number): void {
 function tickHost(
   host: StatusHost,
   dt: number,
-  hit: (amount: number, color: string) => void,
+  hit: (amount: number, color: string, source: DamageSource | undefined) => void,
 ): void {
   for (const st of host.statuses) {
     st.left -= dt;
@@ -298,7 +310,8 @@ function tickHost(
     if (st.next > 0) continue;
     st.next += DOT_TICK_SECONDS;
     // 每跳伤害 = 定义值 × 层数 × 跳间隔（数值按「每秒」配，跳间隔换算一次）。
-    hit(st.dot * st.stacks * DOT_TICK_SECONDS, def.color);
+    // 状态记住的 `source` 一起交出去：自己的火墙给的点燃不会扣自己的血。
+    hit(st.dot * st.stacks * DOT_TICK_SECONDS, def.color, st.source);
   }
   const alive = host.statuses.filter((st) => st.left > 0);
   host.statuses.length = 0;
@@ -306,9 +319,12 @@ function tickHost(
 }
 
 /** 玩家掉血：走 `attack.ts::damagePlayer()`，和怪物出刀 / 弹道共用同一条路。 */
-function hurtPlayer(s: GameState, amount: number, color: string): void {
+function hurtPlayer(
+  s: GameState, amount: number, color: string, source: DamageSource | undefined,
+): void {
   damagePlayer(s, amount, {
     color,
+    source,
     invuln: false,     // DOT 不吃无敌帧：站在火里翻滚不该免疫灼烧
     deathText: '你被持续伤害击倒了 · 按 R 重新开始',
   });

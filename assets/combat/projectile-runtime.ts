@@ -27,6 +27,7 @@ import {
   type CollisionQuery, type HitTarget, type Projectile, type ProjectileHit, type ProjectileImpact,
 } from './projectiles.ts';
 import { applyElement, spawnZone } from './reactions.ts';
+import { monsterSource, playerSource, type DamageSource } from './source.ts';
 import { applyStatus, ELEMENT_STATUS, STATUS } from './status.ts';
 import { blocks, inBounds } from './world.ts';
 import type { ElementId, GameState, StatusId } from './state.ts';
@@ -240,10 +241,25 @@ function resolveHit(s: GameState, hit: ProjectileHit): void {
     if (index !== null) damageMonster(s, index, damage, hit.projectile, profile, 1);
   } else {
     // 无敌帧（闪避 / 受击硬直）在这里生效：翻滚躲开一支箭是设计允许的答案。
-    damagePlayer(s, damage, { color: '#ff6b6b', source: profile.name });
+    damagePlayer(s, damage, {
+      color: '#ff6b6b',
+      source: sourceOf(hit.projectile, profile),
+    });
     s.projectileStats.playerHits += 1;
   }
   explode(s, profile, hit.projectile, hit.x, hit.y, hit.target.kind === 'monster' ? monsterIndexOf(hit.target.id) : null);
+}
+
+/**
+ * 一发弹道的**伤害来源**：阵营来自 `owner`，身份用弹道原型 id。
+ *
+ * 有了它，「玩家火球落地留下的火」就算玩家造成的 —— 自己站在上面不会被烧
+ * （`hurts()` 在同阵营直接返回 false）。怪的箭同理，只是换个阵营。
+ */
+function sourceOf(p: Projectile, profile: ProjectileProfile): DamageSource {
+  return p.owner === 'player'
+    ? playerSource(profile.id, profile.name)
+    : monsterSource(profile.id, profile.name);
 }
 
 function resolveImpact(s: GameState, impact: ProjectileImpact): void {
@@ -273,18 +289,20 @@ function damageMonster(
   if (sk === undefined || !sk.alive) return;
   const speed = Math.hypot(source.vx, source.vy) || 1;
   const aliveBefore = sk.alive;
+  const src = sourceOf(source, profile);
   damageSkeleton(s, index, damage, {
     dirX: source.vx / speed,
     dirY: source.vy / speed,
     knockback,
     color: profile.element === 'fire' ? '#fb923c' : '#ffd166',
+    source: src,
   });
   // 造成伤害才磨武器（设计 7.4）：打空只丢一支箭，不额外扣耐久。
   if (aliveBefore && source.owner === 'player') wearWeapon(s, damage);
   const after = s.skeletons[index];
   if (after === undefined || !after.alive) return;
-  if (profile.status !== null) applyStatus(after, profile.status);
-  if (profile.element !== null) applyElement(s, index, profile.element);
+  if (profile.status !== null) applyStatus(after, profile.status, { source: src });
+  if (profile.element !== null) applyElement(s, index, profile.element, { source: src });
 }
 
 /**
@@ -315,7 +333,7 @@ function explode(
   if (profile.zoneRadius > 0 && profile.element !== null) {
     spawnZone(
       s, profile.element, x, y + BODY_LIFT * 0.6,
-      profile.zoneRadius, profile.zoneLife, `${profile.id}:${source.id}`,
+      profile.zoneRadius, profile.zoneLife, sourceOf(source, profile),
     );
   }
 }

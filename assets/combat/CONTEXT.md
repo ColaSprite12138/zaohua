@@ -150,7 +150,7 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 | 反应表 | `REACTIONS` **正好 5 条**：水+冰 冻结 / 水+雷 麻痹（向 140px 内传导，半时长）/ 火+毒 引爆（每层毒 12 点，至少 12）/ 风+火 火势蔓延 / 风+毒 毒雾扩散。**不做两两组合的 N² 判定** |
 | 反应消耗 | 触发即清掉**双方**附着，所以一次反应不可能自己连爆；也不再需要「反应冷却」字段（改过一版按秒冷却，会挡掉「火墙→毒池」这种正常连招，已删） |
 | 地面区域 | `GameState.zones`（`Zone`：`element/status/x/y/radius/life/next/source`）。每 `ZONE_TICK_SECONDS=0.4` 给圈内活体续一次对应状态，**不直接扣血**（伤害一律由 DOT 走 `damageSkeleton`）；半径上限 `ZONE_RADIUS_MAX=220` |
-| 区域影响玩家 | **对所有人生效**，包括玩家自己（踩自己的火墙会烧）。这是「预铺地面要站远处放」的原因，也是玩家侧状态目前唯一的来源 |
+| 区域影响玩家 | **看来源阵营**（`source.ts::hurts()`）：玩家铺的火墙 / 毒池 / 冰面**不碰玩家**，怪铺的照常烧玩家，`world`（地图自带毒池那类）伤所有人。~~对所有人生效，包括玩家自己~~ —— 那是 2026-11-16 之前的设计，用户实测「踩自己的火墙掉血」后改掉，见下节「伤害来源」 |
 | 撞墙（物理反应） | `damageSkeleton` 里做：击退强度 ≥ `WALL_BOUNCE_KNOCKBACK=1.2` 且落点不可站 → 不位移、改为 `stun` 0.6s + `WALL_BOUNCE_DAMAGE=12`，**在同一函数内结算**，所以撞死的怪照样掉战利品 |
 | 唯一伤害入口 | DOT / 引爆 / 传导 / 撞墙 / 技能 / 普攻全部经 `damageSkeleton()`；`sk.hp -= x` 仍然只在它里面出现 |
 | 技能带元素 | 横扫=物理（挂流血）/ 冲锋=物理+**风** / 冰锥=冰（+冰面区域）/ 火墙=火 / 毒池=毒 / 水浪=水 / 落雷=雷。**6 个元素各有一个来源**，所以 5 条反应全都能在实战里打出来 |
@@ -166,6 +166,38 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 击飞 / 拉拽两种位移还没有来源；点燃的「禁疗」要等治疗与药水系统；DOT 暂**不吃**星图乘区
 （直接伤害吃，DOT 走独立数值轴，等星图批次一起接）；`aura` 类持续区域（毒雾随时间扩散）没做，
 现在的扩散是「风把已有区域吹大」。
+
+### 伤害来源（2026-11-16，用户报「踩自己的火墙掉血」后立的概念）
+
+代码：`combat/source.ts`（**零依赖**，只有类型与两个工厂 + 一个判定）。
+
+**一句话**：*每一份伤害、每一片地面区域、每一个持续性状态都必须说明「谁造成的」；
+自己一方造成的东西打不到自己一方。*
+
+用户原话：「自己的攻击和自己触发的效果，不能对自己以及队友造成伤害……每种攻击，
+以及造成的环境效果，都要有一个来源。后续做其他逻辑也会用到伤害来源这个概念。」
+所以这次不是给火墙打补丁，而是把「来源」变成必填的建模概念。
+
+| 项 | 契约 |
+|:--|:--|
+| 形状 | `DamageSource { owner: 'player' \| 'monster' \| 'world'; id; label }`。`id` 是技能 / 武器 / 怪物 / 弹道 / 元素 id，`label` 只给人看 |
+| 工厂 | `playerSource(id,label)` / `monsterSource(monsterId)` / `WORLD_SOURCE`（地图自带伤害，如毒池、岩浆、陷阱） |
+| **唯一判定** | `hurts(source, victim)`：`undefined` / `world` → 打所有人；`source.owner === victim` → **打不到**；否则打到。**禁止**在技能 / 区域 / 弹道里另写一份 `if (owner === 'player')` |
+| 玩家伤害 | `damagePlayer()` 在**无敌帧、耐久、闪红之前**判 `hurts(source,'player')`。自伤不是「挨了一下被免疫」，而是**根本没打到**（不亮无敌帧、不扣耐久、不闪红） |
+| 怪伤害 | `damageSkeleton()` 在扣血前判 `hurts(source,'monster')`，所以同阵营连**击退 / 撞墙 / 惊醒 / 击杀计数 / 掉落**都不会发生 |
+| 区域 | `Zone.source: DamageSource`（原来只是给人看的字符串）。`updateZones()` 跳过同阵营宿主：自己的火墙不给自己挂点燃；怪的火墙也不烧放火的怪（对称规则，不是给玩家开后门） |
+| 状态 | `StatusInstance.source?`：DOT 跳伤时把它交给伤害入口。`applyStatus()` 续状态时，**谁把 DOT 抬高就算谁的**（弱来源不会抢走强来源的账） |
+| 反应 | 元素附着的 `source` 一路透传：区域续的附着 → 反应引爆的伤害，也算这片地的主人打的 |
+| 弹道 | `sourceOf(projectile, profile)`：阵营来自 `owner`，id 用弹道原型。火球落地留下的火 = 玩家来源，所以烧不到自己 |
+| 队友怎么接 | 把 `owner` 扩成队伍 id（或给 `DamageSource` 加 `team`），让「同阵营覆盖多个身体」即可 —— `hurts()` 一行不用改。**本轮按用户要求没有队友实体**，只有阵营判定就位 |
+| 投影 | `zones[].source`（id 字符串，兼容旧断言）+ `zones[].owner`（`player` / `monster` / `world`，验收脚本可直接断言「这片火是我的」） |
+
+**为什么来源必须在建模层而不是判定层**：只要有一处「自己写 `if (source === 'fire_wall') continue`」，
+下一条自伤就会从另一个入口回来（火球落地、毒池扩散、以后的怪物技能）。收成一个 `hurts()`
+之后，新伤害源只要求「带上来源」，规则自动成立。
+
+**没做的部分**：队友实体（没有队友，所以「不伤队友」只有判定、没有受益者）；
+伤害数字浮字 / 伤害归属统计（`source.id` 已经是它们的输入）；怪物技能施加 `petrify` 那批也还没做。
 
 ### 数值来源：表驱动（2026-11-15，用户要求）
 
@@ -430,10 +462,23 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 62. **落地一定结算**：命中 / 撞墙 / 飞满射程三种结束都必须进 `explode()`（只要有溅射或
     `zone_radius`）。让火球在墙上凭空消失，玩家会读成「这技能偶尔不生效」。
 
+63. **伤害必须带来源**：每个 `damageSkeleton()` / `damagePlayer()` / `spawnZone()` /
+    `applyStatus()` / `applyElement()` 的调用点都要给 `DamageSource`（技能 → `playerSource`，
+    怪 → `monsterSource`，地图自带 → `WORLD_SOURCE`）。新写一条伤害路径却不带来源 =
+    它会打到自己人，而且没人看出原因。
+64. **阵营判定只有一个函数**：只能问 `source.ts::hurts()`。禁止在任何技能 / 区域 / 弹道 /
+    DOT 里另写 `if (owner === 'player')` —— 那等于给下一条自伤留个后门。
+65. **同阵营伤害在扣血之前被拒**：`damagePlayer` 的判定要排在无敌帧 / 耐久 / 闪红之前，
+    `damageSkeleton` 的要排在击退 / 撞墙 / 惊醒 / 击杀 / 掉落之前。放在后面判会留下
+    「自伤把怪推走」「自伤点亮无敌帧」这类只在一帧里出现、事后查不出的 bug。
+66. **区域按 `Zone.source` 分阵营，不是按元素**：同一片火，玩家铺的不烧玩家、怪铺的烧玩家。
+    别再引入「某元素对所有人生效」的特例 —— 那是把 2026-11-16 修掉的 bug 换个形态放回来。
+
 ## 目录与依赖方向（单向，禁止反向 import）
 
 ```
 shared/constants.ts        ← 所有模块可 import（常量与纯类型，无状态）
+combat/source.ts           ← **零依赖**（伤害来源类型 + hurts() 阵营判定）；谁都能 import
 combat/world.ts            ← 只 import shared；纯地图运行时，不持有游戏状态
 combat/state.ts            ← shared + world + resource/{maps,generated/combat_rule}；类型权威（含 StatusId / ElementId）
 combat/status.ts           ← state 的类型 + resource/generated/status；注册表与纯查询，**不碰 GameState**
@@ -483,6 +528,8 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 `applyStatus(host, id, opts?)` / `hasStatus` / `statusOf` / `statusDef(id)` / `STATUS` / `ELEMENT_STATUS` /
 `lockedFlags(host)` / `moveMultiplier` / `attackIntervalMultiplier` / `damageTakenMultiplier` /
 `statusSnapshot(host)`（`status.ts` — **状态效果的唯一出口**）/
+`DamageSource` / `DamageOwner` / `DamageVictim` / `WORLD_SOURCE` / `playerSource` / `monsterSource` /
+`hurts`（`source.ts` — **伤害来源的唯一权威**）/
 `applyElement(s, index, element, opts?)` / `spawnZone(s, element, x, y, radius, life, source)` /
 `growZones(s, x, y, elements)` / `updateZones(s, dt)` / `tickStatuses(s, dt)` / `REACTIONS` / `reactionFor(a, b)`（`reactions.ts`）/
 `destructibleAtPoint(s, x, y)` / `orderSmash(s, obj)` / `beginSmash(s, obj)` / `cancelSmash(s, why?)` /
@@ -642,7 +689,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 252 条（17 个文件；zones 8 条是本批新增，其余见各文件）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 289 条（18 个文件；来源/自伤 7 条是本批新增，其余见各文件）
 python scripts/export_tables.py --check                                # 数值表与生成物是否同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json
@@ -650,6 +697,7 @@ node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真�
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-death-drop.mjs --json  # 副本遗物：摆点 / 名字牌 / 点回 / 耐久
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-destructible.mjs --json # 可破坏物 + 7 分钟事件（夹具 + 真地图）
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-worldmap.mjs --json # 分区 / 大地图：四区走一圈 + M 开关 + 1280x600
+./node_modules/.bin/forgeax project play --script scripts/playthrough-source.mjs --json # 伤害来源：站自己火墙里不掉血 + 同一片火烧得到怪
 ```
 
 `scripts/playthrough*.mjs` 是本模块的浏览器验收（放在工程 `scripts/` 下以兼容 `project play`）。

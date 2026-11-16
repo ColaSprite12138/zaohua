@@ -174,6 +174,12 @@ run_json projectile "$FX" project play \
   --script scripts/playthrough-projectile.mjs --json
 check_report projectile artifacts/play/scripts/playthrough-projectile/play.json 6
 
+# 伤害来源 / 自伤免疫（2026-11-16，用户报「踩自己的火墙掉血」）：自己铺的火墙站进去
+# 不掉血也不挂点燃，同一套元素砸在怪身上照样烧 —— 两条合起来才证明判定是**按阵营**。
+run_json source "$FX" project play \
+  --script scripts/playthrough-source.mjs --json
+check_report source artifacts/play/scripts/playthrough-source/play.json 2
+
 run_json package node scripts/package-with-shell.mjs --format web-zip --output "$OUT/forgeax-game-web.zip" --json
 ( cd "$OUT" && sha256sum -c forgeax-game-web.zip.sha256 ) >> "$SUMMARY" 2>&1 \
   || die "package：sha256 校验失败"

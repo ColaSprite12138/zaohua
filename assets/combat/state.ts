@@ -20,6 +20,8 @@ import { seedFixturePotions } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
 // 只 import 类型：`projectiles.ts` 是纯飞行逻辑，运行时不反向依赖战局状态。
 import type { Projectile } from './projectiles.ts';
+// 来源类型（`source.ts` 零依赖）：区域与持续性状态都必须记住「谁造成的」。
+import type { DamageSource } from './source.ts';
 import {
   cameraFor, makeWorld, nearestWalkable, type ArenaMap, type Vec, type World,
 } from './world.ts';
@@ -235,6 +237,13 @@ export interface StatusInstance {
   dot: number;
   /** 距下一跳的秒数。 */
   next: number;
+  /**
+   * 这个状态**是谁造成的**（DOT 掉血时用它判阵营）。
+   *
+   * 缺省 = 不知道来源 → 按环境处理（伤所有人）。玩家自己的火墙续上的点燃，
+   * 这里会写 `playerSource(...)`，所以那一跳不会扣自己的血。
+   */
+  source?: DamageSource;
 }
 
 /** 任何可以挂状态的宿主（玩家与怪物共用一套规则）。 */
@@ -271,8 +280,14 @@ export interface Zone {
   max: number;
   /** 距下一跳的秒数。 */
   next: number;
-  /** 来自哪个技能（表现用）。 */
-  source: string;
+  /**
+   * **谁铺的这片地**。决定它能伤到谁：`player` 的火墙不烧玩家（及以后的队友），
+   * 怪铺的火墙不烧怪自己，`world` 的（地图自带毒池）伤所有人。
+   *
+   * 以前这里只是一个给人看的字符串 id，判定不了阵营 —— 于是「自己的火墙烧自己」
+   * 被当成设计写进了文档。来源升级成 `DamageSource` 之后这条规则才有地方落。
+   */
+  source: DamageSource;
 }
 
 /** DOT 结算间隔（秒）：每 0.5 秒一跳，肉眼能读出节奏，也不会每帧写一次血。 */

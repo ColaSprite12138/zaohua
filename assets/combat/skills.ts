@@ -15,11 +15,12 @@
  * 本模块不 import 引擎 / DOM，也不持有第二份状态。
  */
 
-import { damageSkeleton } from './attack.ts';
+import { damageSkeleton, type SkeletonDamageOptions } from './attack.ts';
 import { weaponUsable, wearWeapon } from './durability.ts';
 import { burst, say } from './effects.ts';
 import { canStand } from './movement.ts';
 import type { CombatModifiers } from './modifiers.ts';
+import { playerSource } from './source.ts';
 import { POTION_MANA, POTION_SECONDS } from './consumables.ts';
 // 蓝药已经是背包物品（`consumables.ts`），这里只做转出，历史 import 路径不变。
 export { drinkPotion } from './consumables.ts';
@@ -369,16 +370,18 @@ function hit(
   index: number,
   def: SkillDef,
   damage: number,
-  options: { dirX?: number; dirY?: number; knockback?: number; color?: string } = {},
+  options: Omit<SkeletonDamageOptions, 'source'> = {},
 ): void {
   const aliveBefore = s.skeletons[index]?.alive === true;
-  damageSkeleton(s, index, damage, options);
+  // 技能伤害的来源恒为「玩家 + 这个技能」：阵营判定、以后的伤害归属统计都读它。
+  const source = playerSource(def.id, def.name);
+  damageSkeleton(s, index, damage, { ...options, source });
   // 技能也磨损武器（7.4：三类武器都有耐久，造成为主、速率低）。落空不算。
   if (aliveBefore) wearWeapon(s, damage);
   const sk = s.skeletons[index];
   if (sk === undefined || !sk.alive) return;
-  if (def.status !== undefined) applyStatus(sk, def.status);
-  if (def.element !== undefined) applyElement(s, index, def.element);
+  if (def.status !== undefined) applyStatus(sk, def.status, { source });
+  if (def.element !== undefined) applyElement(s, index, def.element, { source });
 }
 
 /** 记一条视觉事件。特效只是「这一帧发生了什么」的记录，逻辑从不去读它。 */
@@ -498,6 +501,7 @@ export function updateDash(s: GameState, dt: number, _mods: CombatModifiers): vo
     } else {
       damageSkeleton(s, i, dash.damage, {
         dirX: dash.ux, dirY: dash.uy, color: '#8be9fd', knockback: 1.7,
+        source: playerSource(dash.skillId, dash.skillId),
       });
     }
     spawnFx(s, 'impact', sk.x, sk.y, p.face, 30, 0.45);
@@ -547,7 +551,8 @@ function bolt(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
   // 冰面（真实区域，不是纯装饰）：走廊上留一片薄冰，踩上去减速，也是「冰」的附着。
   if (def.zone !== undefined) {
     const at = Math.min(def.reach, farthest > 0 ? farthest : def.reach * 0.7);
-    spawnZone(s, def.zone.element, p.x + ux * at, p.y + uy * at, def.zone.radius, def.zone.life, def.id);
+    spawnZone(s, def.zone.element, p.x + ux * at, p.y + uy * at, def.zone.radius, def.zone.life,
+      playerSource(def.id, def.name));
   }
   if (hits === 0) say(s, `「${def.name}」没有命中`);
 }
@@ -612,7 +617,7 @@ function zone(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
     spawnFx(s, 'impact', sk.x, sk.y, p.face, 22, 0.45);
     hits += 1;
   }
-  spawnZone(s, def.zone.element, x, y, radius, def.zone.life, def.id);
+  spawnZone(s, def.zone.element, x, y, radius, def.zone.life, playerSource(def.id, def.name));
   spawnFx(s, def.zone.element === 'fire' ? 'fire' : 'venom', x, y, p.face, radius, 0.85);
   say(s, `「${def.name}」铺开 · ${hits > 0 ? `命中 ${hits} 个目标` : '地面已点燃'}`);
 }

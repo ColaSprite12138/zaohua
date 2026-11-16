@@ -15,6 +15,7 @@ import { damagePlayer } from './attack.ts';
 import { burst } from './effects.ts';
 import { monsterRow } from './loot.ts';
 import { fireProjectile } from './projectile-runtime.ts';
+import { monsterSource } from './source.ts';
 import {
   MONSTER_SWING_TIME, STRIDE_PIXELS, type GameState,
 } from './state.ts';
@@ -203,7 +204,8 @@ export function updateSkeletons(s: GameState, dt: number): void {
           }
         } else if (p.invuln <= 0) {
           // 近战：易伤（软控）同样作用于玩家，伤害入口只有一个。
-          damagePlayer(s, stats.attackDamage, { source: sk.monsterId });
+          // 来源是「这一只怪」，阵营判定据此区分敌我（自己的怪不会误伤自己）。
+          damagePlayer(s, stats.attackDamage, { source: monsterSource(sk.monsterId) });
         }
       }
     }

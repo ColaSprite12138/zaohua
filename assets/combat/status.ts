@@ -18,6 +18,7 @@
 import {
   type ElementId, type StatusHost, type StatusId, type StatusInstance,
 } from './state.ts';
+import type { DamageSource } from './source.ts';
 import { status as statusTable } from '../resource/generated/status.ts';
 
 /** 状态大类：硬控 / 软控削弱 / 持续伤害 / 元素附着。 */
@@ -185,7 +186,11 @@ const FIRST_DOT_DELAY = 0.35;
 export function applyStatus(
   host: StatusHost,
   id: StatusId,
-  options: { duration?: number; stacks?: number; dot?: number } = {},
+  options: {
+    duration?: number; stacks?: number; dot?: number;
+    /** 谁施加的。DOT 跳伤时用它判阵营（自己的火墙给的点燃不烧自己）。 */
+    source?: DamageSource;
+  } = {},
 ): StatusInstance {
   const def = STATUS[id];
   const duration = options.duration ?? def.duration;
@@ -197,7 +202,13 @@ export function applyStatus(
     existing.total = Math.max(existing.total, existing.left);
     existing.stacks = Math.min(def.maxStacks, existing.stacks + addStacks);
     // 续状态时允许把 DOT 抬到更高的一档（换更强的来源），但不会被弱来源拉低。
-    existing.dot = Math.max(existing.dot, dot);
+    // 来源跟着「更强的那一份」走：谁把伤害抬高的，这一跳就算谁的。
+    if (dot > existing.dot) {
+      existing.dot = dot;
+      if (options.source !== undefined) existing.source = options.source;
+    } else if (existing.source === undefined && options.source !== undefined) {
+      existing.source = options.source;
+    }
     return existing;
   }
   const fresh: StatusInstance = {
@@ -208,6 +219,7 @@ export function applyStatus(
     dot,
     next: FIRST_DOT_DELAY,
   };
+  if (options.source !== undefined) fresh.source = options.source;
   host.statuses.push(fresh);
   return fresh;
 }

@@ -12,6 +12,7 @@ import { burst, say } from './effects.ts';
 import { monsterXp, rollLoot } from './loot.ts';
 import { weaponDamage } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
+import { hurts, type DamageSource } from './source.ts';
 import { applyStatus, clearStatus, damageTakenMultiplier, lockedFlags, statusOf } from './status.ts';
 import { walkable, type World } from './world.ts';
 import {
@@ -144,14 +145,27 @@ export function clearAttackOrder(s: GameState): void {
  * 伤害还要乘「易伤」（`damageTakenMultiplier`）：这是状态系统对伤害的唯一挂点，
  * 和 DOT / 引爆 / 撞墙共用同一条路径。
  */
+/** 「打怪」这一路的可选项。`source` 必填于新代码：没有来源就判不了阵营。 */
+export interface SkeletonDamageOptions {
+  dirX?: number; dirY?: number; knockback?: number; color?: string;
+  /**
+   * 谁造成的（技能 / 武器 / 怪物 / 弹道 / 区域 / DOT）。
+   * 省略 = 环境伤害（伤所有阵营）；同阵营一律打不到 —— 见 `source.ts::hurts()`。
+   */
+  source?: DamageSource;
+}
+
 export function damageSkeleton(
   s: GameState,
   index: number,
   amount: number,
-  options: { dirX?: number; dirY?: number; knockback?: number; color?: string } = {},
+  options: SkeletonDamageOptions = {},
 ): boolean {
   const sk = s.skeletons[index];
   if (sk === undefined || !sk.alive || amount <= 0) return false;
+  // **阵营判定在扣血之前**：打不到就什么都不该发生 —— 不给击退、不惊醒、
+  // 不撞墙、不计击杀、不滚掉落。放在后面判会留下「自伤把怪推走」这种鬼故事。
+  if (!hurts(options.source, 'monster')) return false;
   const p = s.player;
   let dx = options.dirX ?? sk.x - p.x;
   let dy = options.dirY ?? sk.y - p.y;
@@ -270,8 +284,11 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
 
 export interface PlayerDamageOptions {
   readonly color?: string;
-  /** 来源标签（弹道名 / 状态名），只用于文案与排查。 */
-  readonly source?: string;
+  /**
+   * 谁造成的。**同阵营打不到玩家**（`hurts()`）：自己火墙的 DOT、自己铺的毒池、
+   * 自己技能的溅射都不会扣自己的血。省略 = 环境，照常生效。
+   */
+  readonly source?: DamageSource;
   /**
    * 是否吃无敌帧。**攻击类伤害吃**（闪避 / 受击硬直期间不再掉血），
    * **DOT / 区域伤害不吃** —— 站在火里翻滚不该免疫灼烧。
@@ -296,6 +313,9 @@ export function damagePlayer(
 ): boolean {
   if (s.gameOver || s.extracted || s.timedOut || s.cleared) return false;
   if (amount <= 0) return false;
+  // **自己的东西打不到自己**：在无敌帧、耐久、闪红之前就返回，
+  // 所以自伤连"看起来挨了一下"的效果都不会有（用户 2026-11-16 报的问题）。
+  if (!hurts(options.source, 'player')) return false;
   const p = s.player;
   if ((options.invuln ?? true) && p.invuln > 0) return false;
   // 易伤（软控）对**所有**打向玩家的伤害生效：和怪物打怪走同一条倍率表。

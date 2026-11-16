@@ -416,7 +416,10 @@ export function projection(s: GameState) {
         y: v.y / VIEW_H,
         radius: zone.radius / VIEW_W,
         left: Math.round(zone.life * 100) / 100,
-        source: zone.source,
+        /** 谁铺的（技能 id / 弹道 id / `world`）。 */
+        source: zone.source.id,
+        /** 施法阵营：`player` 的区域伤不到玩家，`world` 的伤所有人。 */
+        owner: zone.source.owner,
       };
     }),
     /** 最近发生的反应（最多 8 条，`id` 就是设计 8.5 的表项）。 */

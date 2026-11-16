@@ -9,12 +9,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { damageSkeleton } from '../attack.ts';
+import { damagePlayer, damageSkeleton } from '../attack.ts';
 import { NO_MODIFIERS } from '../modifiers.ts';
 import {
   REACTIONS, applyElement, growZones, reactionFor, spawnZone, updateZones,
 } from '../reactions.ts';
 import { beginSkill, SKILLS } from '../skills.ts';
+import { monsterSource, playerSource, WORLD_SOURCE } from '../source.ts';
 import {
   ELEMENT_STATUS, STATUS, applyStatus, attackIntervalMultiplier, clearStatuses,
   damageTakenMultiplier, hasStatus, lockedFlags, moveMultiplier, statusDef,
@@ -289,7 +290,7 @@ describe('statuses change the fight (8.4)', () => {
     stage(s, [[s.player.x + 60, s.player.y]]);
     applyStatus(s.skeletons[0]!, 'burn');
     applyStatus(s.player, 'slow');
-    spawnZone(s, 'fire', s.player.x, s.player.y, 60, 4, 'test');
+    spawnZone(s, 'fire', s.player.x, s.player.y, 60, 4, playerSource('test', '测试火'));
     reset(s);
     expect(s.zones).toHaveLength(0);
     expect(s.player.statuses).toHaveLength(0);
@@ -347,8 +348,8 @@ describe('reaction chains (8.5)', () => {
   it('wind + fire and wind + poison grow the matching ground zones', () => {
     const s = createState();
     stage(s, [[s.player.x + 90, s.player.y]]);
-    const fire = spawnZone(s, 'fire', s.player.x + 90, s.player.y, 80, 5, 'fire_wall')!;
-    const venom = spawnZone(s, 'poison', s.player.x + 95, s.player.y, 80, 5, 'venom_pool')!;
+    const fire = spawnZone(s, 'fire', s.player.x + 90, s.player.y, 80, 5, playerSource('fire_wall', '火墙'))!;
+    const venom = spawnZone(s, 'poison', s.player.x + 95, s.player.y, 80, 5, playerSource('venom_pool', '毒池'))!;
     const before = { fire: fire.radius, venom: venom.radius };
     applyElement(s, 0, 'fire');
     applyElement(s, 0, 'wind');
@@ -380,7 +381,7 @@ describe('ground zones', () => {
     const s = createState();
     stage(s, [[s.player.x + 90, s.player.y]]);
     const sk = s.skeletons[0]!;
-    spawnZone(s, 'fire', sk.x, sk.y, 80, 1.2, 'fire_wall');
+    spawnZone(s, 'fire', sk.x, sk.y, 80, 1.2, playerSource('fire_wall', '火墙'));
     tick(s, 0.6);
     expect(hasStatus(sk, 'burn')).toBe(true);
     const hp = sk.hp;
@@ -393,7 +394,7 @@ describe('ground zones', () => {
     const s = createState();
     stage(s, [[s.player.x + 90, s.player.y]]);
     const sk = s.skeletons[0]!;
-    spawnZone(s, 'poison', sk.x, sk.y, 80, 4, 'venom_pool');
+    spawnZone(s, 'poison', sk.x, sk.y, 80, 4, playerSource('venom_pool', '毒池'));
     // 只推进区域（不跑 DOT）：不该掉血，只该被续上中毒。
     updateZones(s, 0.5);
     expect(sk.hp).toBe(66);
@@ -402,9 +403,103 @@ describe('ground zones', () => {
 
   it('zones grow but never past the cap', () => {
     const s = createState();
-    const zone = spawnZone(s, 'fire', 400, 400, 80, 4, 'fire_wall')!;
+    const zone = spawnZone(s, 'fire', 400, 400, 80, 4, playerSource('fire_wall', '火墙'))!;
     for (let i = 0; i < 10; i += 1) growZones(s, 400, 400, ['fire']);
     expect(zone.radius).toBeLessThanOrEqual(220);
+  });
+});
+
+/**
+ * 伤害来源（2026-11-16 用户报的问题）。
+ *
+ * 旧规则是「区域对所有人生效」—— 于是玩家踩自己的火墙也掉血。现在每一片地、
+ * 每一个 DOT 都记着来源，同阵营一律打不到。这一组守三件事：
+ * 自己铺的不伤自己 / 敌方铺的照常生效 / 环境伤所有人。
+ */
+describe('damage sources: own effects never hurt their owner', () => {
+  it('a player-laid fire wall does not burn the player standing in it', () => {
+    const s = createState();
+    stage(s, []);
+    const zone = spawnZone(s, 'fire', s.player.x, s.player.y, 80, 4, playerSource('fire_wall', '火墙'))!;
+    expect(zone.source.owner).toBe('player');
+    // 投影也要说得清「这片地是谁的」。
+    expect(projection(s).zones[0]?.owner).toBe('player');
+    expect(projection(s).zones[0]?.source).toBe('fire_wall');
+    const hp = s.hp;
+    tick(s, 1.5);
+    expect(hasStatus(s.player, 'burn')).toBe(false);
+    expect(s.hp).toBe(hp);
+  });
+
+  it('an enemy-laid zone still burns the player', () => {
+    const s = createState();
+    stage(s, []);
+    spawnZone(s, 'fire', s.player.x, s.player.y, 80, 4, monsterSource('100001'));
+    const hp = s.hp;
+    tick(s, 1.5);
+    expect(hasStatus(s.player, 'burn')).toBe(true);
+    expect(s.hp).toBeLessThan(hp);
+  });
+
+  it('a world zone hits every side (environment is nobody\'s friend)', () => {
+    const s = createState();
+    stage(s, [[s.player.x + 20, s.player.y]]);
+    const sk = s.skeletons[0]!;
+    spawnZone(s, 'fire', s.player.x, s.player.y, 140, 4, WORLD_SOURCE);
+    tick(s, 1.2);
+    expect(hasStatus(s.player, 'burn')).toBe(true);
+    expect(hasStatus(sk, 'burn')).toBe(true);
+  });
+
+  it('a monster does not burn in its own fire either (symmetric, not a player privilege)', () => {
+    const s = createState();
+    stage(s, [[400, 470]]);
+    const sk = s.skeletons[0]!;
+    spawnZone(s, 'fire', sk.x, sk.y, 80, 4, monsterSource('100001'));
+    updateZones(s, 0.5);
+    expect(hasStatus(sk, 'burn')).toBe(false);
+    // 换成玩家铺的同一片火，它就该烧起来。
+    spawnZone(s, 'fire', sk.x, sk.y, 80, 4, playerSource('fire_wall', '火墙'));
+    updateZones(s, 0.45);
+    expect(hasStatus(sk, 'burn')).toBe(true);
+  });
+
+  it('a DOT remembers who applied it: self-inflicted burn ticks zero', () => {
+    const s = createState();
+    stage(s, []);
+    applyStatus(s.player, 'burn', { duration: 3, source: playerSource('fire_wall', '火墙') });
+    const hp = s.hp;
+    tick(s, 1.2);
+    expect(s.hp).toBe(hp);
+    // 同一个状态被敌人重新点上之后，伤害就归敌人了 —— 该掉血。
+    clearStatuses(s.player);
+    applyStatus(s.player, 'burn', { duration: 3, source: monsterSource('100001') });
+    tick(s, 1.2);
+    expect(s.hp).toBeLessThan(hp);
+  });
+
+  it('damagePlayer refuses a friendly hit before any side effect', () => {
+    const s = createState();
+    stage(s, []);
+    const hp = s.hp;
+    const invuln = s.player.invuln;
+    expect(damagePlayer(s, 30, { source: playerSource('cleave', '横扫') })).toBe(false);
+    expect(s.hp).toBe(hp);
+    // 连无敌帧都不该被点亮：自伤不是「挨了一下被免疫」，而是根本没打到。
+    expect(s.player.invuln).toBe(invuln);
+    expect(damagePlayer(s, 30, { source: monsterSource('100001') })).toBe(false);
+    expect(s.hp).toBeLessThan(hp);
+  });
+
+  it('damageSkeleton refuses a monster-side hit on a monster', () => {
+    const s = createState();
+    stage(s, [[400, 470]]);
+    const sk = s.skeletons[0]!;
+    const hp = sk.hp;
+    expect(damageSkeleton(s, 0, 20, { source: monsterSource('100001') })).toBe(false);
+    expect(sk.hp).toBe(hp);
+    expect(damageSkeleton(s, 0, 20, { source: playerSource('cleave', '横扫') })).toBe(false);
+    expect(sk.hp).toBeLessThan(hp);
   });
 });
 
@@ -456,7 +551,7 @@ describe('skills carry the elements (so all five reactions are playable)', () =>
     const py = s.player.y;
     stage(s, [[px + 140, py]]);
     const sk = s.skeletons[0]!;
-    spawnZone(s, 'fire', sk.x, sk.y, 70, 5, 'fire_wall');
+    spawnZone(s, 'fire', sk.x, sk.y, 70, 5, playerSource('fire_wall', '火墙'));
     applyStatus(sk, 'burn', { duration: 9 });
     const zone = s.zones[0]!;
     const before = zone.radius;
@@ -470,7 +565,7 @@ describe('skills carry the elements (so all five reactions are playable)', () =>
     const s = createState();
     stage(s, [[s.player.x + 90, s.player.y]]);
     applyElement(s, 0, 'fire');
-    spawnZone(s, 'fire', s.skeletons[0]!.x, s.skeletons[0]!.y, 80, 4, 'fire_wall');
+    spawnZone(s, 'fire', s.skeletons[0]!.x, s.skeletons[0]!.y, 80, 4, playerSource('fire_wall', '火墙'));
     const p = projection(s);
     expect(p.skeletons[0]?.statuses.some((st) => st.id === 'burn')).toBe(true);
     expect(p.zones).toHaveLength(1);
