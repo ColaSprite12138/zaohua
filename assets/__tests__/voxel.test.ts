@@ -18,9 +18,11 @@ import {
   SHOULDER_Y,
   SKELETON,
   SKELETON_ARM,
+  YAW_STEPS,
   bodyHeight,
   itemModel,
   modelBounds,
+  yawOf,
   type VoxelModel,
 } from '../game/voxel.ts';
 import {
@@ -37,20 +39,22 @@ function blockKeys(m: VoxelModel): Set<string> {
 }
 
 describe('character rigs', () => {
-  it('bakes a standing pose plus two stepping poses for BOTH facings', () => {
+  it('bakes three walk poses for each of the nine half-turn yaw steps', () => {
     for (const body of [KNIGHT, SKELETON]) {
-      expect(body.poses.front).toHaveLength(3);
-      expect(body.poses.back).toHaveLength(3);
-      for (const pose of [...body.poses.front, ...body.poses.back]) {
-        expect(pose.voxels.length).toBeGreaterThan(20);
-        // One block deep: the model is a standee, not a volume.
-        expect(new Set(pose.voxels.map((v) => v.z))).toEqual(new Set([0]));
+      expect(body.yaws).toHaveLength(YAW_STEPS);
+      for (const poses of body.yaws) {
+        expect(poses).toHaveLength(3);
+        for (const pose of poses) {
+          expect(pose.voxels.length).toBeGreaterThan(20);
+          // One block deep: the model is a standee, not a volume.
+          expect(new Set(pose.voxels.map((v) => v.z))).toEqual(new Set([0]));
+        }
       }
     }
   });
 
   it('the stepped poses really lift a foot (they are not three copies)', () => {
-    const [stand, leftUp, rightUp] = KNIGHT.poses.front;
+    const [stand, leftUp, rightUp] = KNIGHT.yaws[0]!;
     expect(blockKeys(leftUp!)).not.toEqual(blockKeys(stand!));
     expect(blockKeys(rightUp!)).not.toEqual(blockKeys(stand!));
     // Left-foot and right-foot steps are mirror images of each other.
@@ -64,10 +68,61 @@ describe('character rigs', () => {
   it('the back pose drops the face (no glowing visor / eye sockets)', () => {
     const glow = (m: VoxelModel): number => m.voxels.filter((v) => v.c === '#67e8f9').length;
     const socket = (m: VoxelModel): number => m.voxels.filter((v) => v.c === '#ff5a5a').length;
-    expect(glow(KNIGHT.poses.front[0]!)).toBeGreaterThan(0);
-    expect(glow(KNIGHT.poses.back[0]!)).toBe(0);
-    expect(socket(SKELETON.poses.front[0]!)).toBeGreaterThan(0);
-    expect(socket(SKELETON.poses.back[0]!)).toBe(0);
+    expect(glow(KNIGHT.yaws[0]![0]!)).toBeGreaterThan(0);
+    expect(glow(KNIGHT.yaws[YAW_STEPS - 1]![0]!)).toBe(0);
+    expect(socket(SKELETON.yaws[0]![0]!)).toBeGreaterThan(0);
+    expect(socket(SKELETON.yaws[YAW_STEPS - 1]![0]!)).toBe(0);
+  });
+
+  it('every yaw step is a DIFFERENT silhouette (not one model 9 times)', () => {
+    // 用户 2026-11-16 的问题就是「只有四个动作」：往左下 5° 和往下左 5°
+    // 画出同一个人。所以每一档都必须是独立的方块布局。
+    // 判的是**真实视觉**（含颜色）：脸朝哪边是靠眼睛 / 面甲的位置画出来的，
+    // 只比方块坐标会把"眼睛换到另一侧"也算成同一张图。
+    const visual = (m: VoxelModel): string => m.voxels
+      .map((v) => `${v.x},${v.y},${v.z},${v.c}`)
+      .sort()
+      .join('|');
+    for (const body of [KNIGHT, SKELETON]) {
+      const shapes = body.yaws.map((poses) => visual(poses[0]!));
+      expect(new Set(shapes).size).toBe(YAW_STEPS);
+    }
+    // 轮廓本身也要变：宽度只有 5 → 4 → 3 这几档可取，但绝不能 9 档一个宽度。
+    const width = (m: VoxelModel): number => {
+      const xs = m.voxels.map((v) => v.x);
+      return Math.max(...xs) - Math.min(...xs) + 1;
+    };
+    const widths = KNIGHT.yaws.map((poses) => width(poses[0]!));
+    const CANT_FRONT = width(KNIGHT.yaws[0]![0]!);
+    const CANT_SIDE = width(KNIGHT.yaws[4]![0]!);
+    expect(new Set(widths).size).toBeGreaterThanOrEqual(3);
+    expect(CANT_SIDE).toBeLessThan(CANT_FRONT);
+  });
+
+  it('splits the circle into 16 distinct heading buckets', () => {
+    // 半圈 9 档 + 镜像 = 16 个视觉朝向。少于 16 就退化成"几个动作"。
+    const seen = new Set<string>();
+    for (let i = 0; i < 16; i += 1) {
+      const face = (i * Math.PI * 2) / 16;
+      const { step, flip } = yawOf(face);
+      expect(step).toBeGreaterThanOrEqual(0);
+      expect(step).toBeLessThan(YAW_STEPS);
+      seen.add(`${step}:${flip}`);
+    }
+    expect(seen.size).toBe(16);
+  });
+
+  it('distinguishes "left and a bit down" from "down and a bit left"', () => {
+    // 用户的原始描述：往左偏下 5° 和下偏左 5°，看到的人物都是面向我的。
+    // 这两个方向差 80°，必须落在不同档位（一个是侧后方，一个接近正面）。
+    const leftSlightlyDown = Math.PI - 0.087;    // 朝左，向下偏 5°
+    const downSlightlyLeft = Math.PI / 2 + 0.087; // 朝下，向左偏 5°
+    const a = yawOf(leftSlightlyDown);
+    const b = yawOf(downSlightlyLeft);
+    // 「朝下偏左」几乎是正脸（0 档），「朝左偏下」已经是侧转（4 档 = 90°）。
+    expect(b.step).toBe(0);
+    expect(a.step).toBe(4);
+    expect(Math.abs(a.step - b.step)).toBeGreaterThanOrEqual(4);
   });
 
   it('body heights are the authored block counts (56px / 44px)', () => {

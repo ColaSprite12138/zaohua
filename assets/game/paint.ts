@@ -83,7 +83,8 @@ import {
   modelBounds,
   prepareScene,
   skillModel,
-  type Facing,
+  yawNarrow,
+  yawOf,
   type Limb,
   type VoxelModel,
 } from './voxel.ts';
@@ -485,17 +486,15 @@ function ease(t: number): number {
 }
 
 /**
- * Heading -> which baked body to draw. Facing away from the camera uses the
- * `back` pose (no visor, no eye sockets), everything else the front pose; the
- * horizontal mirror comes from the heading's x sign. The 0.35 threshold keeps a
- * body walking almost straight sideways from flapping between the two poses.
+ * Heading -> which baked body to draw.
+ *
+ * 以前这里只有「前 / 后 + 水平翻转」四种状态 —— 往左下 5° 和往下左 5° 会画出
+ * 同一个人（用户 2026-11-16 报的问题）。现在量化成 16 个朝向（22.5° 一档），
+ * 身体模型按角度烘焙，`flip` 只用来取左半圈那份镜像。
+ *
+ * 绘制层和手臂共用这一份结果：要翻一起翻，否则会出现「人朝左走、剑挥向右」。
  */
-function facingOf(face: number): { facing: Facing; flip: boolean } {
-  return {
-    facing: Math.sin(face) < -0.35 ? 'back' : 'front',
-    flip: Math.cos(face) < 0,
-  };
-}
+const facingOf = yawOf;
 
 const DOWN = Math.PI / 2;
 
@@ -628,7 +627,9 @@ function drawWeaponArm(
 ): void {
   const hand = handPose(x, y, face, flip, swing);
   const side = flip ? -1 : 1;
-  const sx = x + side * SHOULDER_X;
+  // 肩宽跟着朝向收窄：侧身时身体只剩 3 格宽（12px），肩还按 14px 摆的话，
+  // 手臂会飘在身体外面一截。
+  const sx = x + side * SHOULDER_X * yawNarrow(face);
   const sy = y - SHOULDER_Y;
 
   if (blade !== null) {
@@ -691,8 +692,7 @@ function drawPlayer(g: Painter, s: GameState): void {
 
   drawBody(g, KNIGHT, p.x, p.y - bob - lunge, {
     frame: moving ? frame : 0,
-    facing: rig.facing,
-    flip: rig.flip,
+    face: p.face,
     flash: p.hurt > 0,
   });
 
@@ -855,8 +855,7 @@ function drawSkeleton(g: Painter, s: GameState, sk: Skeleton): void {
   drawStatusAura(g, s, sk);
   drawBody(g, SKELETON, sk.x + lean, sk.y - bob, {
     frame: sk.moving && !petrified ? frame : 0,
-    facing: rig.facing,
-    flip: rig.flip,
+    face: sk.face,
     flash: sk.hit > 0 || frozen,
   });
   drawWeaponArm(

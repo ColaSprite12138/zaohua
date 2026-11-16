@@ -44,19 +44,85 @@ export interface VoxelModel {
   voxels: Voxel[];
 }
 
-/** Which side of a body the camera sees: `back` = facing away (walking up). */
+/** Which side of a body the camera sees. Kept for callers that only care about
+ * the two extremes (`back` = facing away). Bodies themselves are baked per
+ * YAW STEP now, not per side — see `BodyModel.yaws`. */
 export type Facing = 'front' | 'back';
 
 /**
- * A character: the same rig baked into three walk poses for each facing.
- * Pose 0 is the standing / passing pose; 1 lifts the near foot, 2 the far one.
+ * 烘焙朝向档数：**半圈 9 档**（0°..180°，每 22.5°），另外半圈靠水平镜像。
+ * 于是屏幕上能读到 16 个不同朝向 —— 少于 8 会让人读出「四个动作」，
+ * 多于 16 在这个 4px 体素尺度上已经分辨不出来，只是白烧内存。
+ */
+export const YAW_STEPS = 9;
+/** 一档多少弧度（22.5°）。 */
+export const YAW_STEP = Math.PI / 8;
+
+/**
+ * A character: the same rig baked once per YAW STEP and walk pose.
+ *
+ * 为什么是「按角度烘焙」而不是「front / back 两张 + 翻转」：两张只能表达
+ * 前 / 后 / 左 / 右四个状态，往左下 5° 和往下左 5° 会画出同一个人（用户
+ * 2026-11-16 报的问题）。现在每个朝向都是一个独立模型，脸、肩、腿的透视
+ * 都跟着角度变。
  */
 export interface BodyModel {
   readonly name: string;
   readonly unit: number;
   /** Height in blocks (sprite height = blocks * unit). */
   readonly blocks: number;
-  readonly poses: Record<Facing, VoxelModel[]>;
+  /** `yaws[step][pose]`：step 0 = 正对相机，8 = 背对相机，每档 22.5°。 */
+  readonly yaws: readonly (readonly VoxelModel[])[];
+}
+
+/** 一个朝向下的「透视参数」，所有部件的横坐标都过它换算。 */
+interface Turn {
+  /** cos(yaw)：1 = 正对相机，0 = 完全侧身，-1 = 背对。 */
+  readonly c: number;
+  /** sin(yaw)：0 = 正 / 背，1 = 完全侧身；符号 = 转向屏幕的哪一侧。 */
+  readonly s: number;
+  /** 把正面的 x 换算到这个朝向下屏幕上的列（横向收窄 + 取整）。 */
+  readonly x: (v: number) => number;
+  /** 宽度收窄（至少 1 块，禁止出现 0 宽）。 */
+  readonly w: (n: number) => number;
+}
+
+/**
+ * 「离正面的角度」→ 横向收窄系数（1 = 正对相机，0.55 = 完全侧身）。
+ *
+ * 走**角度线性**的三角波，不是 `cos` —— `cos` 在 0° 附近太平，22.5° 时它还有
+ * 0.92，取整后和正对相机一模一样，于是「每隔一档长得相同」，用户要的「各个
+ * 角度」就打了折扣。
+ *
+ * 身体和**肩关节**必须共用它：身体的横坐标收窄了，肩宽却还是原来的 14px，
+ * 侧身时手臂就会飘在身体外面。
+ */
+export function yawNarrow(face: number): number {
+  const rel = Math.abs(
+    Math.atan2(Math.sin(face - Math.PI / 2), Math.cos(face - Math.PI / 2)),
+  );
+  const half = Math.PI / 2;
+  const t = rel <= half ? rel / half : (Math.PI - rel) / half;
+  return 1 - 0.45 * t;
+}
+
+/**
+ * 朝向 → 透视参数。
+ *
+ * 只缩横轴、不缩高度，也不做真旋转 —— 模型是 1 块厚的纸片，真绕 y 轴转会
+ * 在 90° 塌成一条线；这里的做法是「同一套 rig 按角度重排」，所以每一档都
+ * 还是轴对齐的整数方块，硬边和像素颗粒一点没变。
+ */
+function turnOf(yaw: number): Turn {
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  const half = Math.PI / 2;
+  // 正面 / 背面 → 1，正侧 → 0.55：转过去再转回来。
+  const t = yaw <= half ? yaw / half : (Math.PI - yaw) / half;
+  const k = 1 - 0.45 * t;
+  const x = (v: number): number => (v < 0 ? -Math.round(-v * k) : Math.round(v * k));
+  const w = (n: number): number => Math.max(1, Math.round(n * k));
+  return { c, s, x, w };
 }
 
 /** A single limb authored UPWARD from its joint, drawn rotated around it. */
@@ -187,64 +253,111 @@ function leg(b: Builder, x: number, width: number, lift: number, upper: string, 
   b.box(x, lift + 1, 0, width, 2 - lift, 1, upper);
 }
 
-/** Armoured duelist, 14 blocks tall (56px), one block deep. */
+/**
+ * Armoured duelist, 14 blocks tall (56px).
+ *
+ * 每个部件都按 `t`（朝向）换算横坐标：正对相机时原样，侧身时向中心收窄。
+ * 头是三态（正脸 / 侧脸 / 后脑）—— 朝向主要靠它读，所以哪怕身体只窄了
+ * 一格，脸也不会「左偏下 5° 和下偏左 5° 长得一样」。
+ */
 function knightPose(
-  back: boolean,
+  yaw: number,
   leftLift: number,
   rightLift: number,
   offLift: number,
   name: string,
 ): VoxelModel {
+  const t = turnOf(yaw);
   const b = new Builder(name, 4);
-  leg(b, 1, 2, leftLift, C.armorDark, C.boot);
-  leg(b, -2, 2, rightLift, C.armorDark, C.boot);
-  b.box(-2, 3, 0, 5, 1, 1, C.plate);
-  b.box(-2, 4, 0, 5, 4, 1, C.armor);
-  b.box(-1, 5, 0, 3, 2, 1, C.armorHi);
+  leg(b, t.x(1), t.w(2), leftLift, C.armorDark, C.boot);
+  leg(b, t.x(-2), t.w(2), rightLift, C.armorDark, C.boot);
+  b.box(t.x(-2), 3, 0, t.w(5), 1, 1, C.plate);
+  b.box(t.x(-2), 4, 0, t.w(5), 4, 1, C.armor);
+  b.box(t.x(-1), 5, 0, t.w(3), 2, 1, C.armorHi);
   // Off-hand only: the weapon arm is `KNIGHT_ARM`, swung around the shoulder.
-  b.box(-3, 4 + offLift, 0, 1, 3, 1, C.armorDark);
-  b.box(-3, 3 + offLift, 0, 1, 1, 1, C.skin);
-  b.box(-3, 7, 0, 1, 1, 1, C.armorHi);
-  b.box(-1, 8, 0, 3, 1, 1, C.skin);
-  if (back) {
-    // Seen from behind: no visor, no eye glow -- just the nape and a ridge.
-    b.box(-1, 9, 0, 3, 1, 1, C.armorDark);
-    b.box(-2, 10, 0, 5, 2, 1, C.armorHi);
-    b.box(-1, 10, 0, 1, 2, 1, C.armorDark);
-  } else {
-    b.box(-1, 9, 0, 3, 1, 1, C.plate);
-    b.sym(1, 9, 0, 1, 1, 1, C.glow);
-    b.box(-2, 10, 0, 5, 2, 1, C.armorHi);
+  // 侧身时它整条被躯干挡住，画出来会从身体外侧"飘"出一格，所以不画。
+  if (Math.abs(t.c) >= 0.45) {
+    b.box(t.x(-3), 4 + offLift, 0, t.w(1), 3, 1, C.armorDark);
+    b.box(t.x(-3), 3 + offLift, 0, t.w(1), 1, 1, C.skin);
+    b.box(t.x(-3), 7, 0, t.w(1), 1, 1, C.armorHi);
   }
-  b.box(0, 12, 0, 1, 2, 1, C.plume);
+  b.box(t.x(-1), 8, 0, t.w(3), 1, 1, C.skin);
+  const helmX = t.x(-2);
+  const helmW = t.w(5);
+  const faceX = t.x(-1);
+  const faceW = t.w(3);
+  const frontX = faceX + faceW - 1;
+  if (t.c <= -0.8) {
+    // 背对：没有护目镜，只有后颈和一道盔脊。
+    b.box(faceX, 9, 0, faceW, 1, 1, C.armorDark);
+    b.box(helmX, 10, 0, helmW, 2, 1, C.armorHi);
+    b.box(faceX, 10, 0, Math.max(1, t.w(1)), 2, 1, C.armorDark);
+  } else if (t.c <= -0.3) {
+    // 背侧：后颈，但没有盔脊 —— 与正背面差一档。
+    b.box(faceX, 9, 0, faceW, 1, 1, C.armorDark);
+    b.box(helmX, 10, 0, helmW, 2, 1, C.armorHi);
+  } else if (t.c >= 0.8) {
+    // 正对相机：护目镜 + 两只发光的眼。
+    b.box(faceX, 9, 0, faceW, 1, 1, C.plate);
+    b.sym(1, 9, 0, 1, 1, 1, C.glow);
+    b.box(helmX, 10, 0, helmW, 2, 1, C.armorHi);
+  } else {
+    // 侧脸：面甲凸在最前一侧，只留一只眼。`s ≥ 0` 恒成立（另一半靠镜像），
+    // 所以"朝前"永远是 +x 那一侧。完全侧身时面甲再往外凸一格 —— 这样
+    // 67.5° 和 90° 的宽度一样，但轮廓不一样，不会读成同一张图。
+    b.box(faceX, 9, 0, faceW, 1, 1, C.plate);
+    b.box(frontX, 9, 0, 1, 1, 1, C.glow);
+    b.box(helmX, 10, 0, helmW, 2, 1, C.armorHi);
+    if (Math.abs(t.c) < 0.2) b.box(frontX + 1, 10, 0, 1, 2, 1, C.plate);
+    else b.box(frontX, 10, 0, 1, 1, 1, C.plate);
+  }
+  b.box(t.x(0), 12, 0, t.w(1), 2, 1, C.plume);
   return b.model();
 }
 
 /** Skeleton, 11 blocks tall (44px). */
 function skeletonPose(
-  back: boolean,
+  yaw: number,
   leftLift: number,
   rightLift: number,
   offLift: number,
   name: string,
 ): VoxelModel {
+  const t = turnOf(yaw);
   const b = new Builder(name, 4);
-  leg(b, 1, 1, leftLift, C.bone, C.bone);
-  leg(b, -1, 1, rightLift, C.bone, C.bone);
-  b.box(-1, 3, 0, 3, 1, 1, C.bone);
-  b.box(0, 4, 0, 1, 4, 1, C.boneDark);
-  b.box(-2, 4, 0, 5, 1, 1, C.bone);
-  b.box(-2, 6, 0, 5, 1, 1, C.bone);
-  b.box(-2, 7, 0, 5, 1, 1, C.bone);
-  b.box(-3, 4 + offLift, 0, 1, 4, 1, C.boneDark);
-  b.box(-3, 3 + offLift, 0, 1, 1, 1, C.bone);
-  b.box(-2, 8, 0, 5, 3, 1, C.bone);
-  if (back) {
-    // Back of the skull: one dark plate instead of a jaw and two sockets.
-    b.box(-1, 8, 0, 3, 2, 1, C.boneDark);
-  } else {
-    b.box(-1, 8, 0, 3, 1, 1, C.boneDark);
+  leg(b, t.x(1), t.w(1), leftLift, C.bone, C.bone);
+  leg(b, t.x(-1), t.w(1), rightLift, C.bone, C.bone);
+  b.box(t.x(-1), 3, 0, t.w(3), 1, 1, C.bone);
+  b.box(t.x(0), 4, 0, t.w(1), 4, 1, C.boneDark);
+  b.box(t.x(-2), 4, 0, t.w(5), 1, 1, C.bone);
+  b.box(t.x(-2), 6, 0, t.w(5), 1, 1, C.bone);
+  b.box(t.x(-2), 7, 0, t.w(5), 1, 1, C.bone);
+  if (Math.abs(t.c) >= 0.45) {
+    b.box(t.x(-3), 4 + offLift, 0, t.w(1), 4, 1, C.boneDark);
+    b.box(t.x(-3), 3 + offLift, 0, t.w(1), 1, 1, C.bone);
+  }
+  b.box(t.x(-2), 8, 0, t.w(5), 3, 1, C.bone);
+  const skullX = t.x(-2);
+  const skullW = t.w(5);
+  const jawX = t.x(-1);
+  const jawW = t.w(3);
+  if (t.c <= -0.8) {
+    // 背对：整块后脑 + 一道颈椎，没有眼窝。
+    b.box(jawX, 8, 0, jawW, 2, 1, C.boneDark);
+    b.box(skullX + 1, 8, 0, Math.max(1, t.w(1)), 3, 1, C.boneDark);
+  } else if (t.c <= -0.3) {
+    // 背侧：后脑，但没有颈椎那一道。
+    b.box(jawX, 8, 0, jawW, 2, 1, C.boneDark);
+  } else if (t.c >= 0.8) {
+    // 正对：下颌 + 两个眼窝。
+    b.box(jawX, 8, 0, jawW, 1, 1, C.boneDark);
     b.sym(1, 9, 0, 1, 1, 1, C.socket);
+  } else {
+    // 侧脸：一只眼窝压在朝前那一格，牙关留一条；完全侧身时颧骨再凸一格。
+    b.box(jawX, 8, 0, jawW, 1, 1, C.boneDark);
+    const frontX = skullX + skullW - 1;
+    b.box(frontX, 9, 0, 1, 1, 1, C.socket);
+    if (Math.abs(t.c) < 0.2) b.box(frontX + 1, 9, 0, 1, 2, 1, C.boneDark);
   }
   return b.model();
 }
@@ -298,20 +411,24 @@ const POSE_OF_FRAME = [0, 1, 0, 2] as const;
 function bodyOf(
   name: string,
   blocks: number,
-  pose: (back: boolean, leftLift: number, rightLift: number, offLift: number, name: string) => VoxelModel,
+  pose: (
+    yaw: number, leftLift: number, rightLift: number, offLift: number, name: string,
+  ) => VoxelModel,
 ): BodyModel {
-  const poses = (back: boolean): VoxelModel[] => {
-    const out: VoxelModel[] = [];
+  const yaws: VoxelModel[][] = [];
+  for (let step = 0; step < YAW_STEPS; step += 1) {
+    const yaw = step * YAW_STEP;
+    const poses: VoxelModel[] = [];
     for (let i = 0; i < POSE_COUNT; i += 1) {
       const leftLift = i === 1 ? 1 : 0;
       const rightLift = i === 2 ? 1 : 0;
       // Arms counter-swing against the leading leg.
       const offLift = i === 1 ? 0 : i === 2 ? 1 : 0;
-      out.push(pose(back, leftLift, rightLift, offLift, `${name}.${back ? 'back' : 'front'}.${i}`));
+      poses.push(pose(yaw, leftLift, rightLift, offLift, `${name}.${step}.${i}`));
     }
-    return out;
-  };
-  return { name, unit: 4, blocks, poses: { front: poses(false), back: poses(true) } };
+    yaws.push(poses);
+  }
+  return { name, unit: 4, blocks, yaws };
 }
 
 export const KNIGHT: BodyModel = bodyOf('knight', 14, knightPose);
@@ -938,11 +1055,31 @@ export function bodyHeight(body: BodyModel, scale = 1): number {
 export interface BodyDrawOptions {
   /** Walk frame counter; wraps every 4. 0 = standing. */
   frame?: number;
-  facing?: Facing;
-  /** Mirrored sprite: the body faces screen-left instead of screen-right. */
-  flip?: boolean;
+  /**
+   * 朝向（弧度，**屏幕空间**：0 = 右，π/2 = 下 = 正对相机，-π/2 = 上 = 背对）。
+   * 直接传角色真实的 `face` —— 内部会量化到最近的 22.5° 档，不需要调用方自己分段。
+   */
+  face?: number;
   flash?: boolean;
   scale?: number;
+}
+
+/**
+ * 朝向 → (烘焙档位, 是否水平镜像)。
+ *
+ * 只烘焙了半圈 9 档（0°..180°），另一半用镜像 —— 4px 体素的对称角色镜像后
+ * 和真转过去一样（武器 / 副手本来就只有一侧，镜像正好把它换到另一侧）。
+ *
+ * 绘制层和手臂都要这份结果：身体的档位和手臂的翻转方向必须一致，否则会
+ * 出现「人朝左走、剑挥向右边」。
+ */
+export function yawOf(face: number): { step: number; flip: boolean } {
+  // 正对相机 = 朝屏幕下（+π/2），所以先把 face 转成「相对正面的偏角」。
+  const rel = Math.atan2(Math.sin(face - Math.PI / 2), Math.cos(face - Math.PI / 2));
+  return {
+    step: Math.round(Math.abs(rel) / YAW_STEP),
+    flip: rel > 0,
+  };
 }
 
 /**
@@ -957,14 +1094,15 @@ export function drawBody(
   y: number,
   opts: BodyDrawOptions = {},
 ): void {
-  const facing: Facing = opts.facing ?? 'front';
+  const face = opts.face ?? Math.PI / 2;
   const frame = Math.abs(Math.trunc(opts.frame ?? 0));
-  const poses = body.poses[facing];
+  const { step, flip } = yawOf(face);
+  const poses = body.yaws[step] ?? body.yaws[0]!;
   const pose = poses[POSE_OF_FRAME[frame % 4] ?? 0] ?? poses[0]!;
   drawVoxel(g, pose, x, y, {
     scale: opts.scale,
     flash: opts.flash,
-    flip: opts.flip,
+    flip,
   });
 }
 

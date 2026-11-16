@@ -97,13 +97,19 @@ export const BRAZIER = brazier();
 - `box(x, y, z, w, h, d, color)`：`y=0` 是地面，`x=0` 是身体中线，**`z` 目前只允许 0**
   （模型是一格厚的「体素立牌」，体积感靠三面着色，不靠厚度）。
 - `sym(...)`：以 `x=0` 为轴镜像，手臂/腿/护肩一律用它写，杜绝左右不齐。
+- **角色按角度参数化，不按「前 / 后」手写两套**：`bodyOf()` 会把同一个 rig 烘焙
+  9 个 yaw 档（0°..180°，每 22.5°），`turnOf(yaw)` 给出横向收窄系数，所有部件的
+  横坐标都过 `t.x()` / `t.w()`。侧面（90°）身体从 5 格收到 3 格，**每一档的宽度或
+  面部布局都不同** —— 这是「各个角度」能读出来的前提。
+- **头部是三态**：正脸（双眼）/ 侧脸（一只眼 + 面甲凸在最前侧）/ 后脑（无眼）。
+  朝向主要靠脸读，所以哪怕身体只窄了一格，脸也要跟着转。
 - 高度直接等于格数：想 60px 高就摆到 `y=14`。
 
 在场景里画它：
 
 ```ts
 drawVoxel(g, BRAZIER, x, y);                            // (x, y) = 脚底 / 落地锚点
-drawBody(g, KNIGHT, x, y, { frame, facing, flip });     // 角色：朝向 + 走路帧
+drawBody(g, KNIGHT, x, y, { frame, face });             // 角色：真实朝向（弧度）+ 走路帧
 drawLimb(g, KNIGHT_ARM, sx, sy, armAngle);              // 持械手臂（绕肩关节）
 drawVoxel(g, itemModel('greatsword:gold'), x, y, { rotation: -0.42, squash: 0.8 });
 ```
@@ -113,6 +119,9 @@ drawVoxel(g, itemModel('greatsword:gold'), x, y, { rotation: -0.42, squash: 0.8 
 - `flash: true` 用同一模型整体刷成受击高光色，不用单独做受击图。
 - `flip: true` 以锚点为轴水平镜像（角色朝左）。`drawBody` 的 `frame` 是**跑表整数**：
   只在真的走路时按位移推进，站着不推进 —— 否则会出现「原地踏步」。
+- **`drawBody` 要传真实 `face`**（弧度，屏幕空间：0 = 右，π/2 = 下 = 正对镜头），
+  内部量化到最近的 22.5° 档。不要自己传「前 / 后 + 翻转」—— 那只有四个状态，
+  往左下 5° 和往下左 5° 会画出同一个人（2026-11-16 修掉的问题）。
 - 精灵在首次绘制时烘焙（每个模型 + flash 变体各一张 `OffscreenCanvas`），之后只
   `drawImage`，不要每帧重画方块。
 

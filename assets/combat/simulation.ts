@@ -357,6 +357,13 @@ export function projection(s: GameState) {
     pickupTarget: s.pickupTarget,
     dropItems: s.drops.map((d) => d.itemId ?? null),
     player: { x: playerScreen.x / VIEW_W, y: playerScreen.y / VIEW_H },
+    /**
+     * 玩家朝向（弧度，屏幕空间：0 = 右，π/2 = 下 = 正对镜头）。
+     *
+     * 暴露它是为了让验收脚本能断言「人物朝向 = 移动方向」—— 2026-11-16 之前
+     * 只有前 / 后 + 翻转四个状态，往左下 5° 和往下左 5° 画出来是同一个人。
+     */
+    playerFace: s.player.face,
     moveMode: s.moveMode,
     followingPointer: s.moveMode === 'follow',
     target: { x: targetScreen.x / VIEW_W, y: targetScreen.y / VIEW_H },

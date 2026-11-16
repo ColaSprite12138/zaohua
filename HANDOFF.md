@@ -429,7 +429,7 @@ resource 14（tables 7 + map 7）、**美术 12（`assets/__tests__/voxel.test.t
 | 站在墙后仍被画在墙上面 | 墙块没进 `paint.ts` 的 `items` 深度排序；地形层只画地板，墙块按 `y+grid` 进排序 |
 | 换画风后整屏发糊 / 斜边有锯齿 | `imageSmoothingEnabled` 被判 true，或坐标/缩放不是整数；每帧首行 `prepareScene()`，精灵用整数 `drawImage` |
 | 空手/装备时剑的颜色反了 | `voxel.ts::sword(golden)` 的参数语义要和 `SWORD_STEEL` / `SWORD_GOLD` 的调用值对齐（曾把 `sword(true)` 赋给铁剑，导致空手也拿金剑） |
-| 角色「走路」只会整体平移、转身不转 | 只画了一个朝前的精灵，靠 `Math.sin(t)` 做 1px 上下浮动。必须用 `BodyModel` 的 3 个烘焙步态（抬腿一格）+ `facingOf(face)` 选正/背面与镜像；相位读 `stride`（按位移推进），**不要按时间编帧** |
+| 角色「走路」只会整体平移、转身不转 | 只画了一个朝前的精灵，靠 `Math.sin(t)` 做 1px 上下浮动。必须用 `BodyModel` 的 3 个烘焙步态（抬腿一格）+ `yawOf(face)` 选 16 个朝向之一（半圈 9 档烘焙 + 镜像，每档 22.5°）；相位读 `stride`（按位移推进），**不要按时间编帧**。只做「前 / 后 + 镜像」四种状态是 2026-11-16 修掉的老问题：往左下 5° 和往下左 5° 会画出同一个人 |
 | 站着也一直踏步 / 顶着墙腿在抖 | `stride` 按「意图速度」或时间推进了。必须按**碰撞后的实际位移**推进（`movement.ts::walk()` / `enemies.ts` 都算 `covered`）；怪物另用 `moving` 位让绘制层回站姿 |
 | 武器悬在肩膀/胸口，不像被握着 | 剑的锚点放在了躯干中心。现在：肩关节（`SHOULDER_X/Y`）→ `Limb` 绕关节转到手 → 剑柄落在手上 → **最后画拳头盖住剑柄**；剑的腕角用 `tilt(arm, -1.25→-0.15)` |
 | 左向角色的手臂抬过头顶、剑朝下戳地 | 角度写成 `face + 常数`：左向身体要 `face - 常数`。一律用 `paint.ts::tilt(face, amount)`（朝屏幕下方为正、自动取短弧并翻面） |

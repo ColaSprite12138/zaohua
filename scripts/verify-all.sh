@@ -180,6 +180,12 @@ run_json source "$FX" project play \
   --script scripts/playthrough-source.mjs --json
 check_report source artifacts/play/scripts/playthrough-source/play.json 2
 
+# 朝向（2026-11-16）：人物 / 怪物按真实移动方向画，16 个朝向而不是四个动作。
+# 八方向各走一遍并截图，「朝左偏下 5°」与「朝下偏左 5°」必须落在不同档。
+run_json facing "$FX" project play \
+  --script scripts/playthrough-facing.mjs --json
+check_report facing artifacts/play/scripts/playthrough-facing/play.json 8
+
 run_json package node scripts/package-with-shell.mjs --format web-zip --output "$OUT/forgeax-game-web.zip" --json
 ( cd "$OUT" && sha256sum -c forgeax-game-web.zip.sha256 ) >> "$SUMMARY" 2>&1 \
   || die "package：sha256 校验失败"

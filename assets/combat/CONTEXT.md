@@ -698,6 +698,8 @@ node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真�
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-destructible.mjs --json # 可破坏物 + 7 分钟事件（夹具 + 真地图）
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-worldmap.mjs --json # 分区 / 大地图：四区走一圈 + M 开关 + 1280x600
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-source.mjs --json # 伤害来源：站自己火墙里不掉血 + 同一片火烧得到怪
+./node_modules/.bin/forgeax project play --script scripts/playthrough-facing.mjs --json # 朝向：八方向各走一遍，朝向跟随移动方向（16 档）
+
 ```
 
 `scripts/playthrough*.mjs` 是本模块的浏览器验收（放在工程 `scripts/` 下以兼容 `project play`）。
