@@ -594,11 +594,16 @@ function handPose(
  * the blade is never upside down.
  */
 function bladeAngleOf(hand: HandPose): number {
-  // rest 值必须接近 π（而不是 1.65）：手臂朝下（π/2）时，`tilt` 的两个候选
-  // 在 1.65 处**恰好等距**，会落到"水平"那一支 —— 剑于是横在身侧。取 π 才
-  // 让 `rotation` 归零，剑尖竖直向上（模型本来就是朝上 author 的）。
-  // 挥砍端点仍是 0.15（几乎水平向前），中间由 lerp 平滑过渡。
-  return tilt(hand.arm, -lerp(Math.PI, 0.15, Math.min(1, hand.swing * 1.15)));
+  // 静止时剑**竖直向上**（`rotation` 要归零），挥砍时顺着手臂甩出去。
+  //
+  // 以前这里拿手臂角去算 `tilt(hand.arm, -π)`：正对（arm = 90°，朝下）时
+  // 结果刚好竖直，但背对时 arm 变成 0.38（朝右上），剑就被算成 −69° ——
+  // 斜着插进身体里，整把剑被躯干盖住，看起来"剑不在手上"（用户 2026-11-17
+  // 的截图）。剑的静止姿态不该跟着手臂角漂。
+  //
+  // `rotation = 返回值 + π/2`：-π/2 → 0（竖直向上）；`hand.arm` → 剑尖朝手臂指向。
+  const upright = -Math.PI / 2;
+  return lerp(upright, hand.arm, Math.min(1, hand.swing * 1.15));
 }
 
 /** Fit a model inside a HUD plate, preferring its authored size (cap 1.6x). */
@@ -667,7 +672,13 @@ function drawWeaponArm(
  * 侧身（cos ≈ 0）时手在身体轮廓边缘，画在前面不会穿帮。
  */
 function armBehind(face: number): boolean {
-  return Math.cos(Math.PI / 2 - face) < 0;
+  // 只有**真正背对**（转过去 120° 以上）才把手画到身体后面。
+  //
+  // 按几何严格算，"手在相机远侧"从 yaw = -90° 就开始了；但那样角色面朝左走时
+  // 武器整条被身体吞掉，玩家读成"剑没了"（用户 2026-11-17 的截图）。像素游戏
+  // 的通行做法是让武器尽量可见，只在几乎完全背对时让位给身体。
+  const yaw = Math.atan2(Math.sin(Math.PI / 2 - face), Math.cos(Math.PI / 2 - face));
+  return Math.abs(yaw) > (Math.PI * 2) / 3;
 }
 
 function drawPlayer(g: Painter, s: GameState): void {

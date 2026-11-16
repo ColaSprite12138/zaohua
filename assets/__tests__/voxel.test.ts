@@ -134,10 +134,11 @@ describe('character rigs', () => {
     }
     // 二值实现会在这里给出 ~28；连续实现只有零点几像素。
     expect(maxJump).toBeLessThan(1);
-    // 顺带锁住三个关键点：正对在右、侧身回中、背对换到左。
-    expect(shoulderOffset(Math.PI / 2)).toBeCloseTo(SHOULDER_X, 5);
+    // 顺带锁住三个关键点。符号是"角色右手"：正对镜头时右手在**屏幕左**，
+    // 背对时换到屏幕右。写反会让剑跑到角色左手上（和副手挤在同一侧）。
+    expect(shoulderOffset(Math.PI / 2)).toBeCloseTo(-SHOULDER_X, 5);
     expect(shoulderOffset(0)).toBeCloseTo(0, 5);
-    expect(shoulderOffset(-Math.PI / 2)).toBeCloseTo(-SHOULDER_X, 5);
+    expect(shoulderOffset(-Math.PI / 2)).toBeCloseTo(SHOULDER_X, 5);
   });
 
   it('the weapon arm is a limb authored upward from its shoulder joint', () => {

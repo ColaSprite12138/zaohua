@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/game/voxel.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: edc56e18590911a540ef489d241a3eced945f15b5e2f48d3d4e0addfe462661d
+ * Source SHA-256: b8c5805d3faa5ef1a4e5e43a082fe77b7acabdef4b9db73c1e415a703914ae19
  */
 (function (root) {
 "use strict";
@@ -92,7 +92,10 @@ function yawNarrow(face) {
  * 报的「武器转向不连贯」）。单测直接扫一圈检查最大跳变。
  */
 function shoulderOffset(face) {
-    return Math.cos(Math.PI / 2 - face) * exports.SHOULDER_X * yawNarrow(face);
+    // **负号是"角色右手"的关键**：正对镜头时角色的右手在**屏幕左侧**，
+    // 背对时才换到右侧。写成正的会把剑放到角色左手上 —— 和模型自带的副手
+    // 撞在同一侧，看起来就是"手在左边、剑在别处"（用户 2026-11-17 报的）。
+    return -Math.cos(Math.PI / 2 - face) * exports.SHOULDER_X * yawNarrow(face);
 }
 /**
  * 「离正面的角度」（0..π）→ 收窄系数。
@@ -253,10 +256,11 @@ function knightPose(back, leftLift, rightLift, offLift, name) {
     b.box(-2, 4, 0, 5, 1, 1, C.plate);
     b.box(-2, 5, 0, 5, 3, 1, C.armor);
     b.box(-1, 6, 0, 3, 2, 1, C.armorHi);
-    // Off-hand only: the weapon arm is `KNIGHT_ARM`, swung around the shoulder.
-    b.box(-3, 5 + offLift, 0, 1, 3, 1, C.armorDark);
-    b.box(-3, 4 + offLift, 0, 1, 1, 1, C.skin);
-    b.box(-3, 8, 0, 1, 1, 1, C.armorHi);
+    // 副手（空手）在**角色左手**：正对镜头时落在屏幕右侧，和持械的右手分开。
+    // 以前画在 x = -3，正对时和持械手挤在同一侧。
+    b.box(3, 5 + offLift, 0, 1, 3, 1, C.armorDark);
+    b.box(3, 4 + offLift, 0, 1, 1, 1, C.skin);
+    b.box(3, 8, 0, 1, 1, 1, C.armorHi);
     b.box(-1, 9, 0, 3, 1, 1, C.skin);
     if (back) {
         // 背面：没有护目镜，只有后颈和一道盔脊。
@@ -283,8 +287,9 @@ function skeletonPose(back, leftLift, rightLift, offLift, name) {
     b.box(-2, 5, 0, 5, 1, 1, C.bone);
     b.box(-2, 7, 0, 5, 1, 1, C.bone);
     b.box(-2, 8, 0, 5, 1, 1, C.bone);
-    b.box(-3, 5 + offLift, 0, 1, 4, 1, C.boneDark);
-    b.box(-3, 4 + offLift, 0, 1, 1, 1, C.bone);
+    // 副手在角色左手（正对时屏幕右侧），与持械的右手分开。
+    b.box(3, 5 + offLift, 0, 1, 4, 1, C.boneDark);
+    b.box(3, 4 + offLift, 0, 1, 1, 1, C.bone);
     b.box(-2, 9, 0, 5, 3, 1, C.bone);
     if (back) {
         // 背面：整块后脑 + 颈椎，没有眼窝。
