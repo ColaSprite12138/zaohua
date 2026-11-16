@@ -13,6 +13,7 @@ import {
   createInventoryState,
   equipItem,
   findItem,
+  itemDef,
   moveItem,
   placeItem,
   removeItem,
@@ -222,6 +223,19 @@ describe('只有武器能进武器槽（2026-11-15 用户要求）', () => {
     expect(normalizeEquipped(state)).toBe(1);
     expect(state.equipped[0]).toBeNull();
     expect(state.bag.map((i) => i.uid)).toEqual(['bad']); // 挪回背包，不静默丢弃
+  });
+
+  it('收藏品是 1x1、不可装备，并且带卖价（设计 5.1）', () => {
+    registerItemDefs([{ id: '40001', name: '铜钱串', item_type: '收藏品', quality: '绿', sell_price: 15 }]);
+    const def = itemDef('40001');
+    expect(def.cols).toBe(1);
+    expect(def.rows).toBe(1);
+    expect(def.equip).toBeNull();
+    expect(def.sellPrice).toBe(15);
+    expect(def.art).toBe('treasure:green');
+    const state = createInventoryState(0);
+    expect(addToBag(state, 'coin-1', '40001')).not.toBeNull();
+    expect(equipItem(state, 'coin-1', 0)).toBe(false);
   });
 
   it('runInventoryFrom / bringBack both normalize a corrupted loadout', () => {

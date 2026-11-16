@@ -101,16 +101,17 @@ describe('resource table contract', () => {
     const { weapon } = await import('../generated/weapon.ts');
     const { monster } = await import('../generated/monster.ts');
     const { loot_pool } = await import('../generated/loot_pool.ts');
-    // 13 件武器/弹药 + 2 瓶药（2026-11-15 消耗品落地，见 8.3）。
-    expect(item).toHaveLength(15);
+    // 13 件武器/弹药 + 2 瓶药（2026-11-15，见 8.3）+ 3 件收藏品（2026-11-17，见 5.1）。
+    expect(item).toHaveLength(18);
     expect(weapon).toHaveLength(13);
     expect(monster).toHaveLength(2);
     // 16 行怪物池 + 14 行可破坏物池（2026-11-16，设计 10.5：木箱/铜箱走池 3，
     // 舍利匣走池 4 —— 可破坏物不能只有剑池那点收益）。
     // +3 行箭矢（2026-11-16 弹道落地：池 1/2 各一行，可破坏物池 3 一行）——
     // 弓要按发数打，就必须有地方捡箭，否则远程武器在实战里等于废掉。
-    expect(loot_pool).toHaveLength(33);
-    expect(new Set(item.map((r) => r.id)).size).toBe(15);
+    // +7 行收藏品（2026-11-17 设计 5.1：4 个池子都能刷到换金道具）。
+    expect(loot_pool).toHaveLength(40);
+    expect(new Set(item.map((r) => r.id)).size).toBe(18);
     expect(new Set(weapon.map((r) => r.id)).size).toBe(13);
     // 武器阶梯仍是 10/8/6/4/2/1；药各有固定权重，两个池子都能刷到。
     for (const poolId of [1, 2]) {
@@ -129,11 +130,13 @@ describe('resource table contract', () => {
     // 武器两表严格 1:1 join；药只在 item 表（没有武器属性）。
     const ids = item.map((r) => r.id as string).sort();
     const weaponIds = weapon.map((r) => r.id as string).sort();
-    // 30001 是弹药，本来就有 weapon 行；只有两瓶药没有武器属性。
-    expect(weaponIds).toEqual(ids.filter((id) => id !== '30002' && id !== '30003'));
+    // 30001 是弹药，本来就有 weapon 行；只有两瓶药与三件收藏品没有武器属性。
+    const noWeapon = new Set(['30002', '30003', '40001', '40002', '40003']);
+    expect(weaponIds).toEqual(ids.filter((id) => !noWeapon.has(id)));
     for (const row of loot_pool) {
       expect(ids).toContain(row.item_id);
-      if (String(row.item_id).startsWith('3') === false) {
+      // 1xxxx / 2xxxx 是武器，必须有 weapon 行；3xxxx（弹药 / 药）与 4xxxx（收藏品）没有。
+      if (/^[12]/.test(String(row.item_id))) {
         expect(weaponIds).toContain(row.item_id);
       }
     }
@@ -146,9 +149,10 @@ describe('resource table contract', () => {
     expect(ammo?.name).toBe('弓箭');
     expect(ammo?.item_type).toBe('弹药');
     expect(ammo?.stack_size).toBe(10);
-    // 非武器行只有弹药 1 + 消耗品 2（红药 / 蓝药）。
+    // 非武器行：弹药 1 + 消耗品 2（红药 / 蓝药）+ 收藏品 3（设计 5.1，纯换金）。
     const nonWeapon = item.filter((r) => r.item_type !== '武器');
-    expect(nonWeapon.map((r) => r.item_type).sort()).toEqual(['弹药', '消耗品', '消耗品']);
+    expect(nonWeapon.map((r) => r.item_type).sort())
+      .toEqual(['弹药', '收藏品', '收藏品', '收藏品', '消耗品', '消耗品']);
 
     const subtypes = new Map(weapon.map((r) => [r.id as string, r.weapon_subtype]));
     expect(subtypes.get('10001')).toBe('近战');

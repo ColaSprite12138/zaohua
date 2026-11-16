@@ -44,6 +44,20 @@ const targets = [
     global: 'MetaTalent',
   },
   {
+    // 装备词条（设计 7.1 / 7.2）。零 import：词条池由宿主注入（`MetaShell.affix`），
+    // 信息卡与重铸面板都调这一份，绝不复制「同 stat 不重复」这类规则。
+    source: 'assets/meta/affix.ts',
+    output: 'meta-ui/affix.js',
+    global: 'MetaAffix',
+  },
+  {
+    // 收藏品卖出（设计 5.1）：价格表由宿主注入（`MetaShell.treasure`）。
+    // 规则零 import，所以单测与页面用的是同一份。
+    source: 'assets/meta/trade.ts',
+    output: 'meta-ui/trade.js',
+    global: 'MetaTrade',
+  },
+  {
     // The voxel model library is import-free by design, so the standalone page
     // can draw the very same item models the game draws -- one art authority,
     // no duplicated shapes and no bitmaps to keep in sync.

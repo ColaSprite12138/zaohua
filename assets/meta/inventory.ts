@@ -109,6 +109,11 @@ export interface ItemDef {
   readonly weaponSubtype?: string;
   readonly damageMin?: number;
   readonly damageMax?: number;
+  /**
+   * 收藏品的卖出价（`treasure.xlsx::sell_price`）。没有这个字段 = 不能卖。
+   * 信息卡据此显示「可卖 N 金」，`meta/trade.ts` 据此结算 —— 价格只有一处。
+   */
+  readonly sellPrice?: number;
 }
 
 /**
@@ -135,7 +140,7 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
 export type ItemArtShape =
   | 'blade' | 'greatsword' | 'bow' | 'arrow'
   | 'ring' | 'amulet' | 'gloves' | 'helmet' | 'chest' | 'pants' | 'boots'
-  | 'potion';
+  | 'potion' | 'treasure';
 
 /** Quality → voxel accent. Unknown qualities fall back to plain steel. */
 const QUALITY_ACCENT: Record<string, string> = {
@@ -155,6 +160,8 @@ export function itemArtShape(defId: string, equip: EquipKind | null): ItemArtSha
     case '1': return 'greatsword';
     case '2': return 'bow';
     case '3': return 'arrow';
+    // 4xxxx = 收藏品（设计 5.1）：纯换金道具，不参与战斗。
+    case '4': return 'treasure';
     default: break;
   }
   switch (equip) {
@@ -191,6 +198,8 @@ export interface AuthoredItem {
   readonly durability?: number;
   /** `weapon.xlsx::weapon_subtype`（近战 / 远程 / 子弹），信息卡上显示。 */
   readonly weapon_subtype?: string;
+  /** `treasure.xlsx::sell_price`（只有收藏品有）。 */
+  readonly sell_price?: number;
   /** Grid footprint; defaults to the 2x3 weapon footprint. */
   readonly cols?: number;
   readonly rows?: number;
@@ -219,10 +228,12 @@ export function registerItemDefs(rows: readonly AuthoredItem[]): number {
     // 以前弹药 / 消耗品没有 `equip` 就被当成 2x3 的武器（30001 弓箭就中过招）。
     const consumable = row.item_type === '消耗品';
     const ammo = row.item_type === '弹药';
+    // 收藏品（设计 5.1）：纯换金道具，占 1 格、不能装备、不参与战斗。
+    const treasure = row.item_type === '收藏品';
     const equip: EquipKind | null = row.equip !== undefined
       ? row.equip
-      : (consumable || ammo ? null : 'weapon');
-    const small = consumable || ammo;
+      : (consumable || ammo || treasure ? null : 'weapon');
+    const small = consumable || ammo || treasure;
     ITEM_DEFS[id] = {
       id,
       name: row.name,
@@ -238,6 +249,7 @@ export function registerItemDefs(rows: readonly AuthoredItem[]): number {
       ...(row.weapon_subtype === undefined ? {} : { weaponSubtype: row.weapon_subtype }),
       ...(row.damage_min === undefined ? {} : { damageMin: row.damage_min }),
       ...(row.damage_max === undefined ? {} : { damageMax: row.damage_max }),
+      ...(row.sell_price === undefined ? {} : { sellPrice: row.sell_price }),
     };
     added += 1;
   }

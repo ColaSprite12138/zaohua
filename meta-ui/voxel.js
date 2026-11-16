@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/game/voxel.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 42311e4eda925f50ea7d2f2045ec9b7339e74f52cdce19e254fc39ec4cc213b3
+ * Source SHA-256: 476d9e6cb1de8ab47737c7152a391aae85cb11169c80d5fd47fe300637343861
  */
 (function (root) {
 "use strict";
@@ -526,6 +526,20 @@ function potionShape(name, accent) {
     b.box(-1, 2, 0, 1, 1, 1, shade(accent, 1.6));
     return b.model();
 }
+/**
+ * 收藏品（设计 5.1）：纯换金道具，不参与战斗。形状读成"一枚带绳的方孔钱"
+ * 而不是武器 / 装备 —— 玩家在格子里一眼就知道这东西是拿去卖的。
+ */
+function treasureShape(name, accent) {
+    const b = new Builder(name, 4);
+    const rim = shade(accent, 1.25);
+    b.box(-1, 0, 0, 3, 3, 1, accent);
+    b.box(-1, 3, 0, 3, 1, 1, rim);
+    b.box(0, 1, 1, 1, 1, 1, shade(accent, 0.3)); // 方孔
+    b.box(-2, 3, 0, 1, 1, 1, C.wood); // 绳结
+    b.box(1, 3, 0, 1, 1, 1, C.wood);
+    return b.model();
+}
 function ringShape(name, accent) {
     const b = new Builder(name, 4);
     const band = shade(accent, 0.85);
@@ -597,6 +611,7 @@ const SHAPES = {
     bow: bowShape,
     arrow: (name) => arrowShape(name),
     potion: potionShape,
+    treasure: treasureShape,
     ring: ringShape,
     amulet: amuletShape,
     gloves: glovesShape,

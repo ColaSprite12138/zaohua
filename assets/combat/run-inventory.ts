@@ -15,6 +15,7 @@
 
 import { item } from '../resource/generated/item.ts';
 import { weapon } from '../resource/generated/weapon.ts';
+import { treasure } from '../resource/generated/treasure.ts';
 import { gearMultiplier, type AffixGear } from '../meta/affix.ts';
 import {
   addToBag, createInventoryState, equipItem, itemDef, loadoutFromRun, placeItem, registerItemDefs,
@@ -33,14 +34,19 @@ export function ensureItemCatalog(): void {
   if (catalogReady) return;
   catalogReady = true;
   const byId = new Map(weapon.map((w) => [String(w.id), w]));
+  // 收藏品（设计 5.1）没有 weapon 行：品质与卖价来自 `treasure.xlsx`，
+  // 不 join 就会退成"白色 + 不可卖"，地上那枚铜钱也会画成钢色。
+  const treasureById = new Map(treasure.map((t) => [String(t.id), t]));
   registerItemDefs(item.map((r) => {
     const w = byId.get(String(r.id));
+    const t = treasureById.get(String(r.id));
     return {
       id: String(r.id),
       name: String(r.name),
-      // item_type 决定「能不能装备 / 占几格」：消耗品与弹药是 1x1 且不可装备。
+      // item_type 决定「能不能装备 / 占几格」：消耗品、弹药与收藏品都是 1x1 且不可装备。
       item_type: String(r.item_type),
-      quality: w ? String(w.quality) : '',
+      quality: w ? String(w.quality) : (t ? String(t.quality) : ''),
+      ...(t === undefined ? {} : { sell_price: t.sell_price }),
     };
   }));
 }

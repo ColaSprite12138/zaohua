@@ -612,6 +612,57 @@ const SELFTEST = `
         out.platform.messages = out.platformMessages.slice();
       }
 
+      // ---- 收藏品卖出（设计 5.1）：金币的唯一来源 ----
+      // 塞两件收藏品进仓库（4xxxx 是从 item/treasure 表注册过的真实 id）。
+      var sellLobby = H.getLobbyState();
+      sellLobby.stash.push({ uid: 'coin-probe', defId: '40001', container: 'stash', col: 8, row: 7 });
+      sellLobby.stash.push({ uid: 'jade-probe', defId: '40002', container: 'stash', col: 9, row: 7 });
+      H.render();
+      var goldBefore = H.wallet && Number.isFinite(H.wallet.gold) ? H.wallet.gold : 0;
+      var swordsBefore = sellLobby.stash.filter(function (i) { return i.defId === 'longsword'; }).length;
+      document.getElementById('sell').click();
+      var afterSell = H.getLobbyState();
+      out.trade = {
+        goldBefore: goldBefore,
+        gold: H.wallet ? H.wallet.gold : -1,
+        treasuresLeft: afterSell.stash.filter(function (i) { return /^4/.test(i.defId); }).length,
+        swordsBefore: swordsBefore,
+        swordsKept: afterSell.stash.filter(function (i) { return i.defId === 'longsword'; }).length,
+        // 页面级的 say() 写 #status（#fx-log 是壳层的出征日志），别读错元素。
+        log: document.getElementById('status').textContent,
+      };
+      await waitFor(function () {
+        var env = Store.lastSaved();
+        return !!(env && env.extra && env.extra.wallet);
+      });
+      var walletEnv = Store.lastSaved();
+      out.trade.kvGold = walletEnv && walletEnv.extra && walletEnv.extra.wallet
+        ? walletEnv.extra.wallet.gold : -1;
+
+      // ---- 词条信息卡（设计 7.1）：词条在实例上，格子上悬停就能读到 ----
+      var tipLobby = H.getLobbyState();
+      var tipSword = tipLobby.stash.filter(function (i) { return i.defId === 'longsword'; })[0];
+      out.affixTip = { found: !!tipSword };
+      if (tipSword) {
+        tipSword.affixes = [{ id: 'keen', stat: 'dmg_pct', value: 0.06 }];
+        H.render();
+        var tipNode = document.querySelector('[data-tip-uid="' + tipSword.uid + '"]');
+        var tipBox = document.getElementById('fx-item-tip');
+        if (tipNode && tipBox) {
+          var box = tipNode.getBoundingClientRect();
+          tipNode.dispatchEvent(new MouseEvent('mousemove', {
+            bubbles: true,
+            clientX: box.left + box.width / 2,
+            clientY: box.top + box.height / 2,
+          }));
+          var affixEl = tipBox.querySelector('.tip-affix');
+          out.affixTip.visible = tipBox.hidden === false;
+          out.affixTip.text = affixEl ? affixEl.textContent : '';
+          document.body.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 2, clientY: 2 }));
+          out.affixTip.hiddenAfterLeave = tipBox.hidden === true;
+        }
+      }
+
       out.ok = true;
     } catch (err) {
       out.error = String(err && err.stack || err);
@@ -831,6 +882,17 @@ const checks = [
     result.cursor.sword === true && result.cursor.hotspot === true, result.cursor],
   ['the cursor goes back to the platform default when nothing is hovered',
     result.cursor.reset === true, result.cursor],
+  ['卖出收藏品换金币：收藏品消失、武器一件不动、日志报数',
+    result.trade.goldBefore === 0 && result.trade.gold === 95
+      && result.trade.treasuresLeft === 0
+      && result.trade.swordsKept === result.trade.swordsBefore
+      && /卖出 2 件收藏品/.test(result.trade.log), result.trade],
+  ['金币随存档落盘（extra.wallet），不只是内存里的数字',
+    result.trade.kvGold === 95, result.trade],
+  ['信息卡列出实例上的词条（词条属于实例，不属于 defId）',
+    result.affixTip.found === true && result.affixTip.visible === true
+      && /锋锐/.test(result.affixTip.text) && /武器伤害/.test(result.affixTip.text)
+      && result.affixTip.hiddenAfterLeave === true, result.affixTip],
 ];
 let failed = 0;
 for (const [name, ok, detail] of checks) {

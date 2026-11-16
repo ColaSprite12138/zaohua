@@ -81,6 +81,15 @@
       // 「下次进本捡回一次」在关掉页面之后就没了。空槽不写字段。
       var drop = host.deathDrop;
       var extra = drop && drop.items && drop.items.length > 0 ? { deathDrop: drop } : undefined;
+      // 金币（设计 5.1）跟背包 / 星图 / 遗物槽同一份 blob。余额为 0 时不写字段 ——
+      // 读回缺省 0，语义一致；写 0 只会让信封多一个永远不变的空壳。
+      var gold = host.wallet && Number.isFinite(host.wallet.gold)
+        ? Math.round(host.wallet.gold)
+        : 0;
+      if (gold > 0) {
+        extra = extra || {};
+        extra.wallet = { gold: gold };
+      }
       return A.writeSave(queue, host.getState(), p || undefined, extra);
     },
     lastSaved: function () { return queue ? queue.last() : null; },
@@ -107,6 +116,11 @@
       host.deathDrop = extra && extra.deathDrop && Array.isArray(extra.deathDrop.items)
         ? extra.deathDrop
         : null;
+      // 金币：v1–v3 存档没有这一格 → 0。玩家卖过收藏品才会有余额。
+      var wallet = extra && extra.wallet;
+      host.wallet = wallet && Number.isFinite(wallet.gold)
+        ? { gold: Math.max(0, Math.round(wallet.gold)) }
+        : { gold: 0 };
       apply(A.decodeSave(bridge.initial, fallback, slots));
       return true;
     },

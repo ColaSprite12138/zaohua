@@ -85,6 +85,22 @@
 **词条重铸**（每件 1–3 次、扣金币）、收藏品与金币产出。三层词条届时共用同一个 `affixes` 容器，
 只需在 `AffixRow` 上加 `kind`。
 
+## 收藏品与金币（设计 5.1 / 5.2 第一批，2026-11-17）
+
+| 项 | 契约 |
+|:--|:--|
+| 收藏品 | `item.xlsx` 的 `4xxxx` 三件（铜钱串 绿 / 古玉 紫 / 星陨石 橙）。**纯换金道具**：1×1、不可装备、不参与战斗；模型 `treasure:<品质色>`（`voxel.ts::treasureShape`，方孔钱） |
+| 价格 | `tables/treasure.xlsx`（`id / quality / sell_price / cols / rows`）。**这是唯一的价目表**，`ItemDef.sellPrice` 只是注入后的只读副本 |
+| 掉落入水口 | `loot_pool.xlsx` 四个池子都有（权重表达稀有度）；`ensureItemCatalog` 与 `inject-shell` 都把 treasure 行 join 进物品目录，否则收藏品会退成"白色、不可卖、画成钢色" |
+| 卖出规则 | `assets/meta/trade.ts`（**零 import**）：`sellTreasure(hold, rows)` **原地**删掉三个容器（背包 / 保险格 / 仓库）里的收藏品，返回 `{ gold, lines }`；`treasureCount` 给按钮判可用 |
+| 白名单 | 只有 `treasure.xlsx` 里有的 id 能卖。**不允许"凡是物品都有价"** —— 那是一键卖光武器 / 药的灾难 |
+| 金币 | `host.wallet = { gold }`（主窗口）。唯一来源是卖收藏品；存档写进 `extra.wallet`（余额 0 不写字段），`decodeExtra` 读回。**没有宿主时不落盘**（沿用"本地零存盘"约定） |
+| UI | 顶栏「卖出收藏品」按钮 + 金币余额；信息卡显示「卖出 N 金」；**局内禁止**（`sellTreasures` 先判 `runMode`） |
+| 幂等 | 卖第二次是 0，不会凭空生钱 |
+
+**这一批没做**：物品**堆叠**（收藏品仍是一件一格）、**商店**（补给药水仍是免费按钮、保险格不能扩容）、
+**词条重铸**（要扣金币，规则层已就绪：`affix.ts::rollAffixes` + 每件 1–3 次上限待加）。
+
 ## 单页流程与搜打撤契约（2026-11-11）
 
 | 项 | 权威 |
@@ -260,11 +276,11 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/meta/__tests__      # 40 条（inventory 16 + account 11 + run-settlement 10 + meta 3）
-node scripts/build-meta-ui.mjs --check                     # 三个生成物（inventory / account / voxel）与源码同步
-node scripts/verify-meta-ui.cjs                            # 独立页面 15 条（13 条真实拖放 + 1 条像素断言 + 1 条悬停信息卡）
+./node_modules/.bin/vitest run assets/meta/__tests__      # 80 条（inventory 20 + affix 19 + account 11 + run-settlement 10 + insurance 8 + trade 6 + meta 3）
+node scripts/build-meta-ui.mjs --check                     # 六个生成物（inventory / account / talent / affix / trade / voxel）与源码同步
+node scripts/verify-meta-ui.cjs                            # 独立页面 16 条（13 条真实拖放 + 1 条像素断言 + 1 条悬停信息卡 + 1 条…）
 node scripts/inject-shell.mjs --check                      # dist 注入块与源同步
-node scripts/verify-shell.cjs                              # 4174 单页 45 条（含 5 条星图）（无宿主不写盘/平台身份/KV 存档/局内背包/局内拾取镜像/出征/撤离与通关/阵亡清 10 槽/超时/返回/lifecycle）
+node scripts/verify-shell.cjs                              # 4174 单页 56 条（含 5 条星图 / 卖出收藏品 / 金币落盘 / 词条信息卡）
 ```
 
 `scripts/build-meta-ui.mjs` 把 `inventory.ts` / `account.ts` / `game/voxel.ts` 用 `ts.transpileModule`

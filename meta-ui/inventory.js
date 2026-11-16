@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 775b0fc0efceb03989400dce6102b0ce7b151a29c15549f1e60c64da7a6b59f8
+ * Source SHA-256: 9a2a2cf206e499bc55b8f2be2859ebdc4e7dca948f4ceb4f69dad67af683fa2b
  */
 (function (root) {
 "use strict";
@@ -128,6 +128,8 @@ function itemArtShape(defId, equip) {
         case '1': return 'greatsword';
         case '2': return 'bow';
         case '3': return 'arrow';
+        // 4xxxx = 收藏品（设计 5.1）：纯换金道具，不参与战斗。
+        case '4': return 'treasure';
         default: break;
     }
     switch (equip) {
@@ -169,10 +171,12 @@ function registerItemDefs(rows) {
         // 以前弹药 / 消耗品没有 `equip` 就被当成 2x3 的武器（30001 弓箭就中过招）。
         const consumable = row.item_type === '消耗品';
         const ammo = row.item_type === '弹药';
+        // 收藏品（设计 5.1）：纯换金道具，占 1 格、不能装备、不参与战斗。
+        const treasure = row.item_type === '收藏品';
         const equip = row.equip !== undefined
             ? row.equip
-            : (consumable || ammo ? null : 'weapon');
-        const small = consumable || ammo;
+            : (consumable || ammo || treasure ? null : 'weapon');
+        const small = consumable || ammo || treasure;
         exports.ITEM_DEFS[id] = {
             id,
             name: row.name,
@@ -188,6 +192,7 @@ function registerItemDefs(rows) {
             ...(row.weapon_subtype === undefined ? {} : { weaponSubtype: row.weapon_subtype }),
             ...(row.damage_min === undefined ? {} : { damageMin: row.damage_min }),
             ...(row.damage_max === undefined ? {} : { damageMax: row.damage_max }),
+            ...(row.sell_price === undefined ? {} : { sellPrice: row.sell_price }),
         };
         added += 1;
     }

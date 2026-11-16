@@ -534,7 +534,7 @@ export const SKELETON_ARM: Limb = {
 export type ItemShape =
   | 'blade' | 'greatsword' | 'bow' | 'arrow'
   | 'ring' | 'amulet' | 'gloves' | 'helmet' | 'chest' | 'pants' | 'boots'
-  | 'potion';
+  | 'potion' | 'treasure';
 
 /** Accent per authored quality, so the same shape reads at five rarities. */
 export const ACCENTS: Record<string, string> = {
@@ -612,6 +612,21 @@ function potionShape(name: string, accent: string): VoxelModel {
   b.box(-1, 1, 1, 3, 2, 1, accent);
   b.box(0, 4, 0, 1, 1, 1, C.wood);
   b.box(-1, 2, 0, 1, 1, 1, shade(accent, 1.6));
+  return b.model();
+}
+
+/**
+ * 收藏品（设计 5.1）：纯换金道具，不参与战斗。形状读成"一枚带绳的方孔钱"
+ * 而不是武器 / 装备 —— 玩家在格子里一眼就知道这东西是拿去卖的。
+ */
+function treasureShape(name: string, accent: string): VoxelModel {
+  const b = new Builder(name, 4);
+  const rim = shade(accent, 1.25);
+  b.box(-1, 0, 0, 3, 3, 1, accent);
+  b.box(-1, 3, 0, 3, 1, 1, rim);
+  b.box(0, 1, 1, 1, 1, 1, shade(accent, 0.3)); // 方孔
+  b.box(-2, 3, 0, 1, 1, 1, C.wood);            // 绳结
+  b.box(1, 3, 0, 1, 1, 1, C.wood);
   return b.model();
 }
 
@@ -693,6 +708,7 @@ const SHAPES: Record<ItemShape, (name: string, accent: string) => VoxelModel> = 
   bow: bowShape,
   arrow: (name) => arrowShape(name),
   potion: potionShape,
+  treasure: treasureShape,
   ring: ringShape,
   amulet: amuletShape,
   gloves: glovesShape,

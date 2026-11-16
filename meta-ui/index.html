@@ -120,7 +120,12 @@
   .item-tip .tip-bar.low i { background: #fbbf24; }
   .item-tip .tip-bar.broken i { background: #ff6b6b; }
   .item-tip .tip-broken { color: var(--red); font-size: 10px; margin-top: 3px; }
+  /* 词条（设计 7.1）：青蓝色，与品质色分开 —— 词条不是品质，读起来别混。 */
+  .item-tip .tip-affix { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+  .item-tip .tip-affix b { color: #8ad7ff; font-weight: 700; font-size: 11px; }
   .item-tip .tip-size { color: var(--muted); font-size: 10px; margin-top: 6px; }
+  /* 金币：收藏品卖出来的，唯一用途是重铸 / 补给（设计 5.1）。 */
+  .coin { color: var(--gold); font-weight: 800; font-size: 12px; letter-spacing: .3px; }
   .hint { color: var(--muted); font-size: 11px; margin-top: 8px; max-width: 300px; }
   .legend { margin-top: 14px; color: var(--muted); font-size: 11px; line-height: 1.9; }
   .legend code { color: var(--gold); }
@@ -194,6 +199,8 @@
   <div class="toolbar">
     <button id="reset">重置演示数据</button>
     <button id="supply" title="雏形期的免费补给：等金币 / 商店批次上线后改成买">补给药水</button>
+    <button id="sell" title="把背包 / 保险格 / 仓库里的收藏品换成金币（武器与药品不会动）">卖出收藏品</button>
+    <span class="coin" id="fx-gold" title="金币：收藏品换来的，用于重铸与补给">0 金</span>
     <span class="status" id="status"></span>
   </div>
 
@@ -268,6 +275,8 @@
 <script src="./voxel.js"></script>
 <script src="./inventory.js"></script>
 <script src="./talent.js"></script>
+<script src="./affix.js"></script>
+<script src="./trade.js"></script>
 <script>
 (function () {
   'use strict';
@@ -283,6 +292,13 @@
   // to SHARE the very same InventoryState object (memory, not a copy). When
   // opened standalone via file:// the hook is absent and behaviour is unchanged.
   const host = window.MetaShell ?? (window.MetaShell = {});
+  // 词条规则（`assets/meta/affix.ts` → `meta-ui/affix.js`）与词条池（宿主注入）。
+  // 页面只调用，不复制「同 stat 不重复 / 白装 0 条」这类规则。
+  const AFFIX = window.MetaAffix ?? null;
+  const AFFIX_ROWS = host.affix ?? [];
+  // 收藏品卖出规则（`assets/meta/trade.ts` → `meta-ui/trade.js`）与价格表（宿主注入）。
+  const TRADE = window.MetaTrade ?? null;
+  const TREASURE_ROWS = host.treasure ?? [];
   if (typeof M.registerItemDefs === 'function' && host.authoredItems) {
     M.registerItemDefs(host.authoredItems);
   }
@@ -376,9 +392,11 @@
     node.className = 'item';
     node.draggable = true;
     node.dataset.uid = item.uid;
-    // 悬停信息卡只靠这两个属性重建内容，不必回头查状态（节点每次 render 都会重建）。
+    // 悬停信息卡只靠这三个属性重建内容，不必回头查状态（节点每次 render 都会重建）。
+    // `tipUid` 让卡片能读到**实例上的词条**（词条属于实例、不属于 defId，设计 7.1）。
     node.dataset.tipDef = item.defId;
     node.dataset.tipDura = item.durability === undefined ? '' : String(item.durability);
+    node.dataset.tipUid = item.uid;
     node.style.width = w + 'px';
     node.style.height = h + 'px';
     const label = h >= 60 ? 14 : 12;
@@ -443,6 +461,7 @@
       if (item) {
         node.dataset.tipDef = item.defId;
         node.dataset.tipDura = item.durability === undefined ? '' : String(item.durability);
+        node.dataset.tipUid = item.uid;
       }
 
       if (item) {
@@ -574,7 +593,44 @@
     buildEquip();
     const active = M.activeWeapon(state);
     $('status').title = active ? '当前武器：' + M.itemDef(active.defId).name : '当前空手';
+    syncGold();
     if (host.onRender) host.onRender();
+  }
+
+  /* ---------------------- 金币与收藏品卖出（设计 5.1） ------------------- */
+  // 金币的**唯一来源**是卖收藏品：不自动发、不按击杀发，否则"贪"就没有代价。
+  // 余额挂在 `host.wallet`，由平台存档的 `extra.wallet` 落盘；没有宿主时只活在
+  // 内存里（双击页与无平台的 4174 预览刷新即归零，这是既有的"本地零存盘"约定）。
+  function wallet() {
+    if (!host.wallet || typeof host.wallet !== 'object') host.wallet = { gold: 0 };
+    if (!Number.isFinite(host.wallet.gold)) host.wallet.gold = 0;
+    return host.wallet;
+  }
+  function goldOf() { return wallet().gold; }
+  function syncGold() {
+    const el = $('fx-gold');
+    if (el) el.textContent = goldOf() + ' 金';
+  }
+
+  function sellTreasures() {
+    if (runMode) {
+      say('局内不能卖东西 · 回大厅再卖', true);
+      return;
+    }
+    if (!TRADE) {
+      say('卖出规则没加载（meta-ui/trade.js）', true);
+      return;
+    }
+    const result = TRADE.sellTreasure(lobbyState, TREASURE_ROWS);
+    if (result.gold <= 0) {
+      say('没有可卖的收藏品 · 只有收藏品能换金（武器 / 药品不会卖）', true);
+      return;
+    }
+    wallet().gold = Math.round(goldOf() + result.gold);
+    drag = null;
+    render();
+    const count = result.lines.reduce((n, line) => n + line.count, 0);
+    say('卖出 ' + count + ' 件收藏品 · +' + result.gold + ' 金（现有 ' + goldOf() + ' 金）');
   }
 
   // ---- Lobby <-> run view switch ---------------------------------------
@@ -862,7 +918,19 @@
   // 所以 render() 重建节点也不受影响。
   const tipEl = $('fx-item-tip');
 
-  function tipHtml(def, duraRaw) {
+  /**
+   * 某个实例上的词条。走 `findItem()` 而不是把 JSON 塞进 dataset：
+   * 词条是数组（会随重铸变），查状态永远是最新的那一份。
+   * 找不到（刚被拖走 / 快照换了）就返回空 —— 卡片少一行，不会报错。
+   */
+  function affixesOf(uid) {
+    if (!uid) return [];
+    const loc = M.findItem(state, uid);
+    const item = loc ? loc.item : null;
+    return item && item.affixes ? item.affixes : [];
+  }
+
+  function tipHtml(def, duraRaw, affixes) {
     const parts = [];
     parts.push('<div class="tip-name" style="color:' + def.color + '">' + def.name + '</div>');
     const meta = [def.itemType, def.quality, def.itemType === '武器' ? def.weaponSubtype : null]
@@ -887,6 +955,17 @@
     } else if (def.itemType === '消耗品') {
       parts.push('<div class="tip-row"><span>使用</span><b>'
         + (def.id === '30002' ? 'Z 红药' : 'X 蓝药') + '</b></div>');
+    }
+    // 收藏品（设计 5.1）：直接标出换金价，玩家不用猜"这东西值多少"。
+    if (typeof def.sellPrice === 'number' && def.sellPrice > 0) {
+      parts.push('<div class="tip-row"><span>卖出</span><b>' + def.sellPrice + ' 金</b></div>');
+    }
+    // 词条（设计 7.1）：数值来自实例，名字来自注入的词条池。
+    if (affixes && affixes.length > 0) {
+      const lines = affixes.map(function (a) {
+        return '<b>' + (AFFIX ? AFFIX.affixText(a, AFFIX_ROWS) : a.id) + '</b>';
+      }).join('');
+      parts.push('<div class="tip-affix">' + lines + '</div>');
     }
     parts.push('<div class="tip-size">占 ' + def.cols + ' × ' + def.rows + ' 格'
       + (def.equip ? ' · 可装备' : '') + '</div>');
@@ -926,9 +1005,12 @@
       hideTip();
       return;
     }
-    const html = tipHtml(def, node.dataset.tipDura || '');
-    if (tipEl.dataset.for !== node.dataset.tipDef + '|' + node.dataset.tipDura) {
-      tipEl.dataset.for = node.dataset.tipDef + '|' + node.dataset.tipDura;
+    const affixes = affixesOf(node.dataset.tipUid);
+    const key = node.dataset.tipDef + '|' + (node.dataset.tipDura || '')
+      + '|' + JSON.stringify(affixes);
+    const html = tipHtml(def, node.dataset.tipDura || '', affixes);
+    if (tipEl.dataset.for !== key) {
+      tipEl.dataset.for = key;
       tipEl.innerHTML = html;
     }
     tipEl.hidden = false;
@@ -940,6 +1022,8 @@
   bindGrid('bag');
   bindGrid('safe');
   bindGrid('stash');
+  const sellBtn = $('sell');
+  if (sellBtn) sellBtn.addEventListener('click', sellTreasures);
   render();
   renderStar();
   say('三把长剑已在仓库：拖到背包或装备栏开始配装（绿色预览＝可放，红色＝放不下）');

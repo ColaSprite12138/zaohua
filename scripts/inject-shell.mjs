@@ -101,17 +101,22 @@ function buildBlock() {
   // numbers do not silently disappear after the table split.
   const itemRows = generatedRows('item.ts', 'item');
   const weaponRows = generatedRows('weapon.ts', 'weapon');
+  const treasureRows = generatedRows('treasure.ts', 'treasure');
   const weaponsById = new Map(weaponRows.map((r) => [String(r.id), r]));
+  const treasuresById = new Map(treasureRows.map((r) => [String(r.id), r]));
   const rows = itemRows.map((r) => {
     const w = weaponsById.get(String(r.id));
+    // 收藏品没有 weapon 行：品质与卖价来自 `treasure.xlsx`，不填就会退成"白色无价"。
+    const t = treasuresById.get(String(r.id));
     return {
       ...r,
-      quality: w ? w.quality : '',
+      quality: w ? w.quality : (t ? t.quality : ''),
       damage_min: w ? w.damage_min : 0,
       damage_max: w ? w.damage_max : 0,
       weapon_subtype: w ? w.weapon_subtype : null,
       // 耐久上限：局外武器槽下面那条细条要它（当前值在物品实例上）。
       durability: w ? w.durability : undefined,
+      sell_price: t ? t.sell_price : undefined,
     };
   });
   // 星图 / 等级：节点坐标、前置、花费、经验曲线全部来自 Excel 生成物，
@@ -119,6 +124,7 @@ function buildBlock() {
   const levelRows = generatedRows('level.ts', 'level');
   const starRows = generatedRows('starmap.ts', 'starmap');
   const constellationRows = generatedRows('constellation.ts', 'constellation');
+  const affixRows = generatedRows('affix.ts', 'affix');
   const ruleRow = generatedRows('combat_rule.ts', 'combat_rule')[0];
   const starRule = {
     mainline_star_points: ruleRow.mainline_star_points,
@@ -126,10 +132,13 @@ function buildBlock() {
   };
   const sources = [
     'meta-ui/index.html', 'meta-ui/voxel.js', 'meta-ui/inventory.js',
-    'meta-ui/account.js', 'meta-ui/talent.js', 'meta-ui/platform-store.js',
+    'meta-ui/account.js', 'meta-ui/talent.js', 'meta-ui/affix.js', 'meta-ui/trade.js',
+    'meta-ui/platform-store.js',
     'meta-ui/shell.css', 'meta-ui/shell-bridge.js',
     'assets/resource/generated/item.ts',
     'assets/resource/generated/weapon.ts',
+    'assets/resource/generated/treasure.ts',
+    'assets/resource/generated/affix.ts',
     'assets/resource/generated/level.ts',
     'assets/resource/generated/starmap.ts',
     'assets/resource/generated/constellation.ts',
@@ -149,6 +158,8 @@ ${read('meta-ui/shell.css')}
 </style>
 <script>window.MetaShell = {
   authoredItems: ${JSON.stringify(rows)},
+  affix: ${JSON.stringify(affixRows)},
+  treasure: ${JSON.stringify(treasureRows)},
   levels: ${JSON.stringify(levelRows)},
   starmap: ${JSON.stringify(starRows)},
   constellations: ${JSON.stringify(constellationRows)},
@@ -161,6 +172,8 @@ ${markup}
 <script>${read('meta-ui/inventory.js')}</script>
 <script>${read('meta-ui/account.js')}</script>
 <script>${read('meta-ui/talent.js')}</script>
+<script>${read('meta-ui/affix.js')}</script>
+<script>${read('meta-ui/trade.js')}</script>
 <script>${script}</script>
 <script>${read('meta-ui/platform-store.js')}</script>
 <script>${read('meta-ui/shell-bridge.js')}</script>
