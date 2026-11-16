@@ -22,6 +22,7 @@ import {
   bodyHeight,
   itemModel,
   modelBounds,
+  shoulderOffset,
   yawOf,
   type VoxelModel,
 } from '../game/voxel.ts';
@@ -46,7 +47,7 @@ describe('character rigs', () => {
         expect(pose.voxels.length).toBeGreaterThan(60);
         // 厚度：任意高度上都有 BODY_DEPTH 层（头 / 躯干 / 腿的 z 基准不同，
         // 所以总的 z 取值会比 BODY_DEPTH 多 —— 那正是"站姿轮廓"）。
-        const head = pose.voxels.filter((v) => v.y === 9);
+        const head = pose.voxels.filter((v) => v.y === 10);
         expect(new Set(head.map((v) => v.z)).size).toBe(BODY_DEPTH);
         expect(new Set(pose.voxels.map((v) => v.z)).size).toBeGreaterThanOrEqual(BODY_DEPTH);
       }
@@ -56,8 +57,8 @@ describe('character rigs', () => {
   it('the volume carries BOTH faces: visor in front, nape at the back', () => {
     // 正面层（z = 0）必须有发光的眼；最背层（z = -(D-1)）必须是后脑的暗色，
     // 否则转过 180° 会看到一张"暗掉的正脸"。
-    // 同一高度（头部 y=9）比较最前层与最背层：眼睛只该出现在最前层。
-    const head = KNIGHT.poses[0]!.voxels.filter((v) => v.y === 9);
+    // 同一高度（面部 y=10）比较最前层与最背层：眼睛只该出现在最前层。
+    const head = KNIGHT.poses[0]!.voxels.filter((v) => v.y === 10);
     const maxZ = Math.max(...head.map((v) => v.z));
     const minZ = Math.min(...head.map((v) => v.z));
     const frontLayer = head.filter((v) => v.z === maxZ);
@@ -76,9 +77,10 @@ describe('character rigs', () => {
     expect(floor(leftUp!)).toBeLessThan(floor(stand!));
   });
 
-  it('body heights are the authored block counts (56px / 44px)', () => {
+  it('body heights are the authored block counts (56px / 48px)', () => {
+    // 骷髅从 11 格加到 12 格：腿和骑士一样加长了一格（2026-11-17 腿短修正）。
     expect(bodyHeight(KNIGHT)).toBe(56);
-    expect(bodyHeight(SKELETON)).toBe(44);
+    expect(bodyHeight(SKELETON)).toBe(48);
   });
 
   it('yawOf maps a heading to a camera yaw, and all 16 headings differ', () => {
@@ -116,6 +118,26 @@ describe('character rigs', () => {
     // 一个已经侧转（|yaw| ≈ π/2），一个几乎正对（≈ 0）。
     expect(Math.abs(b.yaw)).toBeLessThan(0.15);
     expect(Math.abs(Math.abs(a.yaw) - Math.PI / 2)).toBeLessThan(0.15);
+  });
+
+  it('the weapon shoulder moves CONTINUOUSLY through a full turn', () => {
+    // 用户 2026-11-17 报「武器转向不连贯，会瞬移」。旧实现是 `flip ? -1 : 1`，
+    // 转身经过正下方时肩膀从 +14px 直接跳到 −14px（28px 瞬移）。
+    // 这里扫一整圈：任意相邻 0.5° 之间的位移必须远小于肩宽。
+    const STEP = (Math.PI * 2) / 720;
+    let prev = shoulderOffset(0);
+    let maxJump = 0;
+    for (let i = 1; i <= 720; i += 1) {
+      const cur = shoulderOffset(i * STEP);
+      maxJump = Math.max(maxJump, Math.abs(cur - prev));
+      prev = cur;
+    }
+    // 二值实现会在这里给出 ~28；连续实现只有零点几像素。
+    expect(maxJump).toBeLessThan(1);
+    // 顺带锁住三个关键点：正对在右、侧身回中、背对换到左。
+    expect(shoulderOffset(Math.PI / 2)).toBeCloseTo(SHOULDER_X, 5);
+    expect(shoulderOffset(0)).toBeCloseTo(0, 5);
+    expect(shoulderOffset(-Math.PI / 2)).toBeCloseTo(-SHOULDER_X, 5);
   });
 
   it('the weapon arm is a limb authored upward from its shoulder joint', () => {

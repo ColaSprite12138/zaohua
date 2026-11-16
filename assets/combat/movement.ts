@@ -126,6 +126,12 @@ export function applyDodge(s: GameState, dodge: boolean): void {
 }
 
 /**
+ * 转身收敛速率（1/秒）。`dt * TURN_RATE` 是这一帧追赶剩余角差的上限。
+ * 18 ≈ 0.15 秒转完 90°，读作"转身"但不会让武器瞬移。
+ */
+const TURN_RATE = 18;
+
+/**
  * A body may stand only if its centre and four extremities are walkable.
  * 实现收敛到 `world.ts::canStandAt` —— 寻路拉直也要用同一份判定，否则
  * 「路径说能过、身体过不去」会在墙角上打转。半径也住在 world.ts。
@@ -171,7 +177,12 @@ export function walk(s: GameState, dt: number): void {
     const ny = dy / dist;
     p.vx = nx * speed;
     p.vy = ny * speed;
-    p.face = Math.atan2(ny, nx);
+    // **朝向平滑过渡，不是直接赋值。** 直接 `p.face = atan2(...)` 会让转弯在
+    // 一帧内跳 90°，持械手臂（离身体中心 14px）跟着瞬移 —— 用户 2026-11-17 报的
+    // 「武器转向不连贯、会瞬移」。移动方向仍然立即生效，只有"看哪边"在追。
+    const want = Math.atan2(ny, nx);
+    const turn = Math.atan2(Math.sin(want - p.face), Math.cos(want - p.face));
+    p.face += turn * Math.min(1, dt * TURN_RATE);
     const fromX = p.x;
     const fromY = p.y;
     moveWithCollision(s, p.vx * dt, p.vy * dt);

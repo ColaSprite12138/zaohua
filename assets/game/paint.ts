@@ -82,6 +82,7 @@ import {
   itemModel,
   modelBounds,
   prepareScene,
+  shoulderOffset,
   skillModel,
   yawNarrow,
   yawOf,
@@ -568,11 +569,14 @@ function handPose(
   x: number,
   y: number,
   face: number,
-  flip: boolean,
   swing: number,
 ): HandPose {
-  const side = flip ? -1 : 1;
-  const sx = x + side * SHOULDER_X;
+  // 肩在"角色的右手侧"，屏幕横向偏移 = SHOULDER_X · cos(yaw)：
+  // 正对镜头（yaw 0）在右边，完全侧身（yaw ±π/2）落到中线，背对时换到左边。
+  // **以前这里是 `flip ? -1 : 1` 的二值判断**，转身经过正下方时 cos 变号，
+  // 肩膀会在两帧之间从 +14px 跳到 −14px，武器看起来"瞬移"（用户 2026-11-17 报的）。
+  // 肩位是连续量（见 voxel.ts::shoulderOffset），不是二值翻面。
+  const sx = x + shoulderOffset(face);
   const sy = y - SHOULDER_Y;
   const arm = swing > 0 ? swingArmAngle(face, swing) : restArm(face);
   return {
@@ -620,16 +624,13 @@ function drawWeaponArm(
   x: number,
   y: number,
   face: number,
-  flip: boolean,
   swing: number,
   flash: boolean,
   scale: number,
 ): void {
-  const hand = handPose(x, y, face, flip, swing);
-  const side = flip ? -1 : 1;
-  // 肩宽跟着朝向收窄：侧身时身体只剩 3 格宽（12px），肩还按 14px 摆的话，
-  // 手臂会飘在身体外面一截。
-  const sx = x + side * SHOULDER_X * yawNarrow(face);
+  const hand = handPose(x, y, face, swing);
+  // 肩位是连续量（见 voxel.ts::shoulderOffset），不是二值翻面。
+  const sx = x + shoulderOffset(face);
   const sy = y - SHOULDER_Y;
 
   if (blade !== null) {
@@ -637,11 +638,10 @@ function drawWeaponArm(
     // Only during a real swing -- an idle blade must not smear.
     if (swing > 0.1) {
       for (let i = 3; i >= 1; i -= 1) {
-        const past = handPose(x, y, face, flip, Math.max(0, swing - i * 0.12));
+        const past = handPose(x, y, face, Math.max(0, swing - i * 0.12));
         drawVoxel(g, blade, past.x, past.y, {
           rotation: bladeAngleOf(past) + Math.PI / 2,
           scale,
-          flip,
           alpha: 0.1 * (4 - i),
         });
       }
@@ -649,7 +649,6 @@ function drawWeaponArm(
     drawVoxel(g, blade, hand.x, hand.y, {
       rotation: bladeAngleOf(hand) + Math.PI / 2,
       scale,
-      flip,
     });
   }
 
@@ -704,7 +703,6 @@ function drawPlayer(g: Painter, s: GameState): void {
     p.x,
     p.y - bob - lunge,
     p.face,
-    rig.flip,
     armSwing,
     p.hurt > 0,
     armed ? 1.1 : 1,
@@ -712,7 +710,7 @@ function drawPlayer(g: Painter, s: GameState): void {
 
   // 举杖：拳头上托一颗发光的法力球（读条时它一直在，越接近完成越大）。
   if (casting) {
-    const hand = handPose(p.x, p.y - bob - lunge, p.face, rig.flip, 0.12);
+    const hand = handPose(p.x, p.y - bob - lunge, p.face, 0.12);
     const pulse = 0.5 + 0.5 * Math.sin(s.t * 14);
     drawPixelGlow(g, hand.x, hand.y, 11 + pulse * 4, 9 + pulse * 3, '#8be9fd', 0.34);
     g.fillStyle = '#cfe8ff';
@@ -865,7 +863,6 @@ function drawSkeleton(g: Painter, s: GameState, sk: Skeleton): void {
     sk.x + lean,
     sk.y - bob,
     sk.face,
-    rig.flip,
     swing,
     sk.hit > 0,
     0.9,
