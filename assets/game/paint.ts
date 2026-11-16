@@ -675,20 +675,6 @@ function drawWeaponArm(
  * 落在身体的另一侧，屏幕上应该被身体挡住 —— 此时手臂要先画。
  * 侧身（cos ≈ 0）时手在身体轮廓边缘，画在前面不会穿帮。
  */
-/**
- * 持械手要不要画在**身体下层**（背对镜头时剑在身后）。
- *
- * 用 `sin(face) < 0`（朝上半圈 = 背对）而不是"转过 120°"这种角度阈值：
- * 这个判据的**零点正好落在正侧身**（face = 0 或 π），而那一点上手的横坐标
- * 也正好是 0 —— 手被躯干完全盖住，前/后两档**画出来一模一样**。
- *
- * 用角度阈值（比如 |yaw| > 120°）会把切换点推到"手已经露出身体轮廓"的地方，
- * 于是转身时剑会从身后**瞬移**到身侧（用户 2026-11-17 报的第二个症状）。
- * 切换点选在看不见的位置，才是这类 2D 深度问题的正解。
- */
-function armBehind(face: number): boolean {
-  return Math.sin(face) < 0;
-}
 
 function drawPlayer(g: Painter, s: GameState): void {
   const p = s.player;
@@ -748,21 +734,16 @@ function drawPlayer(g: Painter, s: GameState): void {
       showLimb,
     );
   };
-  // 正侧身时持械手绕到躯干中线上，画在身体前面还是后面都只会读成"身体上挂着
-  // 一只手"。这时**干脆不画**，剩下的那只手是模型自带的副手。
-  if (handVisible(p.face)) {
-    if (armBehind(p.face)) {
-      paintArm();
-      paintBody();
-    } else {
-      paintBody();
-      paintArm();
-    }
-  } else {
-    // 手在躯干中线上，看不见了；剑还在手里，只是根部被身体挡住。
-    paintArm(false);
-    paintBody();
-  }
+  // **武器永远画在身体上层**（不做前后层级切换）。
+  //
+  // 试过"背对时把手臂放到身体下层"：那样剑会整条被躯干吞掉 —— 用户明确说
+  // 「背对时剑应该在人物右边，竖直在身后是有问题的」。武器是玩家最需要读到的
+  // 信息，宁可让它压在身上，也不能让它消失；而层级一旦不切换，也就**不存在
+  // 转身时的跳变**（这是前面三轮瞬移问题的根源）。
+  //
+  // 侧身时手臂绕到躯干中线，画上去会读成"身体上挂着一只手"，所以那时只画剑。
+  paintBody();
+  paintArm(handVisible(p.face));
 
   // 举杖：拳头上托一颗发光的法力球（读条时它一直在，越接近完成越大）。
   if (casting) {
@@ -929,18 +910,9 @@ function drawSkeleton(g: Painter, s: GameState, sk: Skeleton): void {
       showLimb,
     );
   };
-  if (handVisible(sk.face)) {
-    if (armBehind(sk.face)) {
-      paintArm();
-      paintBody();
-    } else {
-      paintBody();
-      paintArm();
-    }
-  } else {
-    paintArm(false);
-    paintBody();
-  }
+  // 与玩家同一条规则：武器永远在上层，侧身时只画剑不画手臂。
+  paintBody();
+  paintArm(handVisible(sk.face));
 
   // 石化 / 冻结的覆盖层：几块半透明的方块，不是整屏滤镜（体素红线：不用渐变）。
   if (petrified) {
