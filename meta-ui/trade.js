@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/trade.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 8b086fbe9bf9aa73b6076d30b6cc37a7f44ce9f2b4d6e368e96b02ed090878eb
+ * Source SHA-256: b30ae7c9c73fc53ffc584b8adbb37f064b1150b96e1c3ff14e2d0ce5503b7d78
  */
 (function (root) {
 "use strict";
@@ -30,6 +30,15 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.priceOf = priceOf;
 exports.sellTreasure = sellTreasure;
 exports.treasureCount = treasureCount;
+/**
+ * 这一格有几件。**故意和 `inventory.ts::itemCount()` 同一条规则**：本文件零 import
+ * 才能被转成独立页脚本，所以读法照着抄一行；两处不一致会让"卖出后金币少了"
+ * 这种错永远查不出来（`trade.test.ts` 里钉了 5 件 = 5 倍价）。
+ */
+function stackCount(item) {
+    const n = item.count;
+    return Number.isFinite(n) && n >= 1 ? Math.round(n) : 1;
+}
 /** 这个 id 的单价；不在表里 = 0（不可卖）。 */
 function priceOf(rows, defId) {
     const row = rows.find((r) => r.id === defId);
@@ -52,7 +61,8 @@ function sellTreasure(hold, rows) {
             const item = list[i];
             if (priceOf(rows, item.defId) <= 0)
                 continue;
-            counts.set(item.defId, (counts.get(item.defId) ?? 0) + 1);
+            // 一叠 5 枚铜钱 = 5 件，不是 1 件；否则"堆叠"会让收藏品的金币收入腰斩。
+            counts.set(item.defId, (counts.get(item.defId) ?? 0) + stackCount(item));
             list.splice(i, 1);
         }
     }
@@ -65,13 +75,13 @@ function sellTreasure(hold, rows) {
     }
     return { gold, lines };
 }
-/** 背包里还剩多少件能卖的（UI 用它决定按钮是否可点）。 */
+/** 背包里还剩多少**件**能卖的（UI 用它决定按钮是否可点）。堆叠按件数算。 */
 function treasureCount(hold, rows) {
     let n = 0;
     for (const list of [hold.bag, hold.safe ?? [], hold.stash]) {
         for (const item of list)
             if (priceOf(rows, item.defId) > 0)
-                n += 1;
+                n += stackCount(item);
     }
     return n;
 }

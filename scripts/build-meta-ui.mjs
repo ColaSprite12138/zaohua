@@ -58,6 +58,13 @@ const targets = [
     global: 'MetaTrade',
   },
   {
+    // 商店（设计 5.2 的金币出口）：价目表由宿主注入（`MetaShell.shop`）。
+    // 起始金币 `STARTING_GOLD` 也在这里 —— 页面与平台存档都读它，没有第二份。
+    source: 'assets/meta/shop.ts',
+    output: 'meta-ui/shop.js',
+    global: 'MetaShop',
+  },
+  {
     // The voxel model library is import-free by design, so the standalone page
     // can draw the very same item models the game draws -- one art authority,
     // no duplicated shapes and no bitmaps to keep in sync.

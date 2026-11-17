@@ -82,12 +82,13 @@
       // 「下次进本捡回一次」在关掉页面之后就没了。空槽不写字段。
       var drop = host.deathDrop;
       var extra = drop && drop.items && drop.items.length > 0 ? { deathDrop: drop } : undefined;
-      // 金币（设计 5.1）跟背包 / 星图 / 遗物槽同一份 blob。余额为 0 时不写字段 ——
-      // 读回缺省 0，语义一致；写 0 只会让信封多一个永远不变的空壳。
+      // 金币（设计 5.1）跟背包 / 星图 / 遗物槽同一份 blob。
+      // **余额 0 也必须写**：商店上线后 0 是一个真实状态（钱花光了），
+      // 省略它会让读档时走"新号起始金币"的兜底，等于每次刷新白送一笔钱。
       var gold = host.wallet && Number.isFinite(host.wallet.gold)
         ? Math.round(host.wallet.gold)
-        : 0;
-      if (gold > 0) {
+        : null;
+      if (gold !== null) {
         extra = extra || {};
         extra.wallet = { gold: gold };
       }
@@ -117,11 +118,15 @@
       host.deathDrop = extra && extra.deathDrop && Array.isArray(extra.deathDrop.items)
         ? extra.deathDrop
         : null;
-      // 金币：v1–v3 存档没有这一格 → 0。玩家卖过收藏品才会有余额。
+      // 金币：v1–v3 存档没有这一格 → 新号起始金币（`shop.ts::STARTING_GOLD`）。
+      // 老玩家卖过收藏品就有余额，不会因为这条兜底被"充值"。
       var wallet = extra && extra.wallet;
+      var startGold = window.MetaShop && Number.isFinite(window.MetaShop.STARTING_GOLD)
+        ? window.MetaShop.STARTING_GOLD
+        : 0;
       host.wallet = wallet && Number.isFinite(wallet.gold)
         ? { gold: Math.max(0, Math.round(wallet.gold)) }
-        : { gold: 0 };
+        : { gold: startGold };
       apply(A.decodeSave(bridge.initial, fallback, slots));
       return true;
     },

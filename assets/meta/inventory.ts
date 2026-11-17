@@ -46,11 +46,46 @@ export const STASH: GridSpec = { cols: 16, rows: 10, label: '仓库' };
  */
 export const SAFE: GridSpec = { cols: 2, rows: 1, label: '保险格' };
 
+/**
+ * 保险格扩容上限（5 列 × 1 行）。
+ *
+ * 5 不是数值平衡，是**版面约束**：保险格面板宽 230px、格子 46px，再宽就挤掉背包。
+ * 具体档位（几列、多少钱）在 `tables/shop.xlsx`，代码只认这一个上限。
+ */
+export const SAFE_MAX_COLS = 5;
+
 export const CONTAINERS: Record<ContainerId, GridSpec> = {
   bag: BAG,
   stash: STASH,
   safe: SAFE,
 };
+
+/**
+ * **某个存档实际的容器网格**。背包 / 仓库是常量；保险格可以付费扩容
+ * （`tables/shop.xlsx` 的 `safe` 行），所以它的列数挂在状态上（`safeCols`）。
+ *
+ * 为什么不做成 `CONTAINERS.safe` 就地改：那是模块级常量，改一次会影响同一进程里的
+ * 每一份状态（局外 + 局内快照 + 单测），而且存档读回来的瞬间就串味了。
+ */
+export function containerSpec(state: InventoryState, container: ContainerId): GridSpec {
+  if (container !== 'safe') return CONTAINERS[container];
+  return { cols: safeColsOf(state), rows: SAFE.rows, label: SAFE.label };
+}
+
+/** 保险格当前列数（缺省 = 赠送的 2 列）。非法值一律回落，绝不让网格变成 NaN 宽。 */
+export function safeColsOf(state: InventoryState): number {
+  const raw = state.safeCols;
+  if (!Number.isFinite(raw)) return SAFE.cols;
+  return Math.max(SAFE.cols, Math.min(SAFE_MAX_COLS, Math.round(raw as number)));
+}
+
+/** 扩容（设计 5.2 的付费出口）。返回是否真的变了 —— 到顶 / 回退都返回 false。 */
+export function setSafeCols(state: InventoryState, cols: number): boolean {
+  const next = Math.max(SAFE.cols, Math.min(SAFE_MAX_COLS, Math.round(cols)));
+  if (next <= safeColsOf(state)) return false;
+  state.safeCols = next;
+  return true;
+}
 
 /**
  * 老存档 / 旧消息里没有 `safe` 字段时补一个空容器。
@@ -63,6 +98,16 @@ export function normalizeContainers(state: InventoryState): void {
   if (!Array.isArray(state.bag)) state.bag = [];
   if (!Array.isArray(state.stash)) state.stash = [];
   if (!Array.isArray(state.safe)) state.safe = [];
+  // 保险格扩容（商店批次）：缺字段 = 赠送的 2 列；乱写（0 / 负数 / NaN / 超上限）
+  // 一律回落成合法值，否则 `canPlace()` 会用 NaN 宽度算出一个永远放不下的格子。
+  if (state.safeCols !== undefined) {
+    if (!Number.isFinite(state.safeCols) || state.safeCols < SAFE.cols) {
+      delete state.safeCols;
+    } else {
+      state.safeCols = Math.min(SAFE_MAX_COLS, Math.round(state.safeCols));
+    }
+  }
+  for (const list of [state.bag, state.safe, state.stash]) normalizeStackCounts(list);
 }
 
 export type EquipKind =
@@ -95,6 +140,11 @@ export interface ItemDef {
    * the same blade model serves a 白 and an 橙 weapon in different colours.
    */
   readonly art: string;
+  /**
+   * 一格最多叠几个（`item.xlsx::stack_size`，设计 5.1「收藏品占背包格、可堆叠」）。
+   * 1 = 不可叠（武器 / 护甲，一件一格）；>1 = 可叠（箭 10 / 药 5 / 收藏品）。
+   */
+  readonly stackSize: number;
   /**
    * 耐久上限（来自 `weapon.xlsx::durability`）。没有 = 不参与耐久（演示长剑 / 消耗品）。
    * 局外页面用它画武器槽下面那条细条；当前值在物品实例的 `durability` 上。
@@ -133,6 +183,7 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
     color: '#ffd166',
     glyph: '⚔',
     art: 'blade:steel',
+    stackSize: 1,
   },
 };
 
@@ -200,6 +251,8 @@ export interface AuthoredItem {
   readonly weapon_subtype?: string;
   /** `treasure.xlsx::sell_price`（只有收藏品有）。 */
   readonly sell_price?: number;
+  /** `item.xlsx::stack_size`：一格最多叠几个。缺省 1（不可叠）。 */
+  readonly stack_size?: number;
   /** Grid footprint; defaults to the 2x3 weapon footprint. */
   readonly cols?: number;
   readonly rows?: number;
@@ -243,6 +296,7 @@ export function registerItemDefs(rows: readonly AuthoredItem[]): number {
       color: row.color ?? QUALITY_COLOR[row.quality ?? ''] ?? '#ffd166',
       glyph: row.glyph ?? (id.startsWith('2') ? '➶' : '⚔'),
       art: itemArtKey(id, row.quality, equip),
+      stackSize: stackSizeOfRow(row),
       ...(row.durability === undefined ? {} : { durability: row.durability }),
       itemType: row.item_type,
       ...(row.quality === undefined ? {} : { quality: row.quality }),
@@ -322,6 +376,12 @@ export interface ItemInstance {
    */
   readonly damage?: number;
   /**
+   * 这一叠有几件（设计 5.1）。**缺省 = 1**，非堆叠物品永远不写这个字段。
+   * 只有"同 defId + 没有实例属性"的东西才会被合进来（见 `isStackable()`）；
+   * 占格仍然是 `def.cols × def.rows`（箭 / 药 / 收藏品都是 1×1），不随数量变大。
+   */
+  readonly count?: number;
+  /**
    * 悬停信息卡用的展示字段（2026-11-15）。都是**为读而存**的只读副本：
    * 数值权威仍是 `item.xlsx` / `weapon.xlsx`，这里只是让局外页面不必再自己 join 一次表。
    */
@@ -351,6 +411,11 @@ export interface InventoryState {
    * v1/v2 存档没有这个字段 —— `normalizeContainers()` 补一个空数组。
    */
   safe: PlacedItem[];
+  /**
+   * 保险格列数（商店付费扩容，设计 5.2）。**缺省 / 字段缺失 = 赠送的 `SAFE.cols`**，
+   * 所以老存档不需要迁移；扩容档位与价格在 `tables/shop.xlsx`。
+   */
+  safeCols?: number;
 }
 
 export function itemDef(defId: string): ItemDef {
@@ -358,6 +423,127 @@ export function itemDef(defId: string): ItemDef {
   if (def === undefined) throw new Error(`unknown item def: ${defId}`);
   return def;
 }
+
+/* ------------------------------------------------------------------ *
+ * 堆叠（设计 5.1 / 5.2）                                              *
+ * ------------------------------------------------------------------ *
+ *
+ * 规则只有三条，别的都是它的推论：
+ *
+ * 1. **只有 `stack_size > 1` 的 defId 能叠**（箭 10 / 红蓝药 5 / 收藏品）。
+ *    武器护甲永远是 `1`，一件一格。
+ * 2. **带实例属性的东西不叠**。词条（7.1）、耐久（5.2）、掷定的武器伤害
+ *    （2026-11-17）都跟着**这一件**走；把它们并进一叠以后就再也分不出来，
+ *    重铸一件会连带改掉"另一件"，所以 `isStackable()` 直接否掉。
+ * 3. **合堆只发生在入包**（拾取 / 购买 / 补给）。拖放不合并 —— 拖一叠进包就是
+ *    那一叠，数量不会在玩家没要求的时候变化。掉落物本来就逐件入包，所以同一
+ *    defId 最多只会有一个**没叠满**的堆（满了就开新格），不会散成一地碎片。
+ *
+ * 数量存在实例的 `count` 上；`count` 缺省 = 1（老存档、旧快照、所有非堆叠物品
+ * 都不写这个字段，信封保持字节稳定）。
+ */
+export function stackSizeOfRow(row: AuthoredItem): number {
+  const n = row.stack_size;
+  if (!Number.isFinite(n) || (n as number) < 1) return 1;
+  return Math.max(1, Math.round(n as number));
+}
+
+/** 这个 defId 一格最多叠几个；未知 defId 当 1（不可叠），不炸。 */
+export function stackLimit(defId: string): number {
+  const def = ITEM_DEFS[defId];
+  if (def === undefined) return 1;
+  const n = def.stackSize;
+  return Number.isFinite(n) && n >= 1 ? Math.round(n) : 1;
+}
+
+/** 这一叠有几个。缺失 / 非法一律当 1 —— 绝不能返回 0，否则物品会凭空消失。 */
+export function itemCount(item: { readonly count?: number }): number {
+  const n = item.count;
+  return Number.isFinite(n) && (n as number) >= 1 ? Math.round(n as number) : 1;
+}
+
+/** 参与合堆所需的最小字段集（`PlacedItem` / `ItemInstance` 都满足）。 */
+export interface StackLike {
+  readonly defId: string;
+  readonly count?: number;
+  readonly affixes?: readonly AffixOnItem[];
+  readonly durability?: number;
+  readonly damage?: number;
+}
+
+/** 能不能并进别人的那一叠（规则 1 + 规则 2）。 */
+export function isStackable(item: StackLike): boolean {
+  if (stackLimit(item.defId) <= 1) return false;
+  if (item.affixes !== undefined && item.affixes.length > 0) return false;
+  if (item.durability !== undefined) return false;
+  if (item.damage !== undefined) return false;
+  return true;
+}
+
+/** 一组格子里某个 defId 的**件数**（不是格子数）。 */
+export function countOf(items: readonly { readonly defId: string; readonly count?: number }[], defId: string): number {
+  let total = 0;
+  for (const it of items) if (it.defId === defId) total += itemCount(it);
+  return total;
+}
+
+/**
+ * 读档 / 跨堆 / 手改数据的兜底：把非法的 `count` 修回 1。
+ *
+ * **只往下修，不拆超量**：`count` 大于上限（手改存档）时保留原值，只是不再往里加
+ * —— 拆成两格需要空格，而"修存档"这一步没有资格替玩家决定把东西放哪。
+ */
+export function normalizeStackCounts(list: PlacedItem[]): void {
+  for (let i = 0; i < list.length; i += 1) {
+    const item = list[i]!;
+    const n = item.count;
+    if (n === undefined) continue;
+    if (!Number.isFinite(n) || n < 1) {
+      list[i] = { ...item, count: undefined };
+    } else if (!isStackable(item)) {
+      // 带词条 / 耐久的东西本来就不该有 count；清掉，免得 UI 画出个「×3」骗人。
+      list[i] = { ...item, count: undefined };
+    }
+  }
+}
+
+/**
+ * 从一叠里取走 n 件（消耗品 / 弹药）。取空了就把这一格删掉。
+ * 返回**实际取走**的件数 —— 少于 n 表示这一叠本来就不够。
+ */
+export function takeFromStack(state: InventoryState, uid: string, n = 1): number {
+  const loc = findItem(state, uid);
+  if (loc === null || loc.where !== 'grid') return 0;
+  const have = itemCount(loc.item);
+  const take = Math.min(Math.max(1, Math.round(n)), have);
+  if (take >= have) {
+    removeItem(state, uid);
+    return have;
+  }
+  const rest = have - take;
+  listOf(state, loc.container)[loc.index] = {
+    ...loc.item,
+    ...(rest > 1 ? { count: rest } : { count: undefined }),
+  };
+  return take;
+}
+
+/**
+ * 按 defId 从**背包**取走一件（药 / 箭的公共入口）。
+ *
+ * 先取没叠满的那一叠（`count` 最小）不是必须的，但能让"剩下的一叠尽量完整"，
+ * 玩家看到的角标不会在 9 / 8 / 7 之间跳来跳去。没有就返回 false，状态不变。
+ */
+export function takeOneFromBag(state: InventoryState, defId: string): boolean {
+  let best: PlacedItem | null = null;
+  for (const item of state.bag) {
+    if (item.defId !== defId) continue;
+    if (best === null || itemCount(item) < itemCount(best)) best = item;
+  }
+  if (best === null) return false;
+  return takeFromStack(state, best.uid, 1) === 1;
+}
+
 
 /**
  * 新开局的仓库**是空的**（用户 2026-11-17：「把仓库初始三把长剑删掉」）。
@@ -404,7 +590,7 @@ export function canPlace(
   ignoreUid?: string,
 ): boolean {
   if (!Number.isInteger(col) || !Number.isInteger(row)) return false;
-  const grid = CONTAINERS[container];
+  const grid = containerSpec(state, container);
   const def = itemDef(defId);
   if (col < 0 || row < 0 || col + def.cols > grid.cols || row + def.rows > grid.rows) {
     return false;
@@ -586,7 +772,7 @@ export function findFirstFit(
 ): GridSpot | null {
   const def = itemDef(defId);
   for (const container of containers) {
-    const grid = CONTAINERS[container];
+    const grid = containerSpec(state, container);
     for (let row = 0; row <= grid.rows - def.rows; row += 1) {
       for (let col = 0; col <= grid.cols - def.cols; col += 1) {
         if (canPlace(state, container, defId, col, row, ignoreUid)) {
@@ -613,29 +799,85 @@ export function addToBag(
   affixes?: readonly AffixOnItem[],
   /** 生成时掷好的恒定伤害（2026-11-17）；非武器没有。 */
   damage?: number,
+  /** 一次放进几件（购买 / 补给一次多瓶）。它们会先并进已有的那一叠。 */
+  count = 1,
 ): PlacedItem | null {
   if (ITEM_DEFS[defId] === undefined) return null;
-  const def = itemDef(defId);
-  for (let row = 0; row <= BAG.rows - def.rows; row += 1) {
-    for (let col = 0; col <= BAG.cols - def.cols; col += 1) {
-      if (canPlace(state, 'bag', defId, col, row)) {
-        const placed: PlacedItem = {
-          uid, defId, container: 'bag', col, row,
-          ...(durability === undefined ? {} : { durability }),
-          ...(affixes === undefined ? {} : { affixes: affixes.map((a) => ({ ...a })) }),
-          ...(damage === undefined ? {} : { damage }),
-        };
-        state.bag.push(placed);
-        return placed;
-      }
+  const limit = stackLimit(defId);
+  // 带实例属性的东西（磨损的武器 / 有词条的装备 / 掷定伤害）不参与合堆 ——
+  // 一次只可能进一件，否则"这一叠里的第二件"是从哪来的就说不清了。
+  const mergeable = limit > 1 && durability === undefined && damage === undefined
+    && (affixes === undefined || affixes.length === 0);
+  let remaining = Math.max(1, Math.round(count));
+  let first: PlacedItem | null = null;
+
+  if (mergeable) {
+    // 先填**最不满**的那一叠：掉落逐件入包，这样同一种东西最多只有一个碎叠，
+    // 玩家看到的角标不会在 9 / 8 / 7 之间来回跳。
+    const partial = state.bag
+      .filter((it) => it.defId === defId && isStackable(it) && itemCount(it) < limit)
+      .sort((a, b) => itemCount(a) - itemCount(b));
+    for (const stack of partial) {
+      const room = limit - itemCount(stack);
+      if (room <= 0) continue;
+      const take = Math.min(room, remaining);
+      const index = state.bag.indexOf(stack);
+      if (index < 0) continue; // 同一次调用里已经被替换掉了
+      const total = itemCount(stack) + take;
+      const next: PlacedItem = { ...stack, ...(total > 1 ? { count: total } : { count: undefined }) };
+      state.bag[index] = next;
+      first = first ?? next;
+      remaining -= take;
+      if (remaining <= 0) return first;
     }
   }
-  return null;
+
+  let opened = 0;
+  while (remaining > 0) {
+    const spot = findFirstFit(state, defId, undefined, ['bag']);
+    if (spot === null) break;
+    const put = Math.min(limit, remaining);
+    // 一次进多叠时 uid 必须唯一：同一件"掉落"拆成两格时，第二格带 #2 后缀。
+    const placed: PlacedItem = {
+      uid: opened === 0 ? uid : `${uid}#${opened + 1}`,
+      defId, container: 'bag', col: spot.col, row: spot.row,
+      ...(durability === undefined ? {} : { durability }),
+      ...(affixes === undefined ? {} : { affixes: affixes.map((a) => ({ ...a })) }),
+      ...(damage === undefined ? {} : { damage }),
+      ...(put > 1 ? { count: put } : {}),
+    };
+    state.bag.push(placed);
+    first = first ?? placed;
+    opened += 1;
+    remaining -= put;
+  }
+  return first;
+}
+
+/**
+ * 背包**真的**放得下 n 件吗（商店一次买 5 瓶 / 一次捡一叠时用）。
+ *
+ * 做法是在一份克隆上真跑一遍 `addToBag()`，而不是估算空格 —— 合堆会把"还剩几格"
+ * 变得很难算（一叠 3/5 的箭能再收 2 支），估算错一次就是"钱花了、东西没进包"。
+ * 幂等、无副作用；40 格的拷贝可以忽略不计。
+ */
+export function bagHasRoomFor(state: InventoryState, defId: string, count = 1): boolean {
+  if (ITEM_DEFS[defId] === undefined) return false;
+  const probe = JSON.parse(JSON.stringify(state)) as InventoryState;
+  let left = Math.max(1, Math.round(count));
+  let guard = 0;
+  while (left > 0) {
+    const placed = addToBag(probe, `probe-${guard}`, defId);
+    if (placed === null) return false;
+    left -= 1;
+    guard += 1;
+    if (guard > 10_000) return false;
+  }
+  return true;
 }
 
 /** Remove an item by uid from bag or stash. */
-export function removeItem(state: InventoryState, uid: string): boolean {
-  for (const container of ALL_CONTAINERS) {
+export function removeItem(state: InventoryState, uid: string): boolean {  for (const container of ALL_CONTAINERS) {
     const list = listOf(state, container);
     const i = list.findIndex((it) => it.uid === uid);
     if (i >= 0) { list.splice(i, 1); return true; }

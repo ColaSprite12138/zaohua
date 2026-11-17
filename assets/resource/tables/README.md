@@ -35,7 +35,8 @@ sharedStrings，**不读 `styles.xml`**。曾有两张表的 `styles.xml` 把 `<
 
 | 表 | 字段 | 消费方 |
 |:--|:--|:--|
-| `item.xlsx` | `id, name, item_type, stack_size` | `combat` / `meta`（身份、类型、堆叠；`item_type=消耗品` → 1×1 且不可装备） |
+| `item.xlsx` | `id, name, item_type, stack_size` | `combat` / `meta`（身份、类型、**堆叠上限**；`item_type=消耗品` → 1×1 且不可装备） |
+| `shop.xlsx` | `id, name, kind, item_id, qty, price, safe_cols` | `meta/shop.ts`（**金币出口**：`kind=potion` 买物品 / `kind=safe` 保险格扩容）；`meta-ui` 顶栏商店面板 |
 | `weapon.xlsx` | `id, quality, weapon_subtype, damage_min, damage_max, durability, range` | `combat`（伤害、攻击方式、耐久上限、**近战可达距离**）、`meta`（品质颜色 / 耐久条） |
 | `monster.xlsx` | `id, name, loot_pool_id` | `combat`（怪物 → 掉落池） |
 | `loot_pool.xlsx` | `id, loot_pool_id, item_id, weight` | `combat`（权重掉落；武器阶梯 + 两瓶药） |

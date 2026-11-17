@@ -27,6 +27,18 @@ export interface TreasureRow {
 /** 一件能卖的东西只要 defId（`PlacedItem` / `ItemInstance` 都满足）。 */
 interface Sellable {
   readonly defId: string;
+  /** 堆叠数量（设计 5.1：收藏品可堆叠）。缺省 1 —— 老存档不写这个字段。 */
+  readonly count?: number;
+}
+
+/**
+ * 这一格有几件。**故意和 `inventory.ts::itemCount()` 同一条规则**：本文件零 import
+ * 才能被转成独立页脚本，所以读法照着抄一行；两处不一致会让"卖出后金币少了"
+ * 这种错永远查不出来（`trade.test.ts` 里钉了 5 件 = 5 倍价）。
+ */
+function stackCount(item: Sellable): number {
+  const n = item.count;
+  return Number.isFinite(n) && (n as number) >= 1 ? Math.round(n as number) : 1;
 }
 
 /** 卖出时能看到的三个容器。结构上不需要 import `InventoryState`。 */
@@ -73,7 +85,8 @@ export function sellTreasure(
     for (let i = list.length - 1; i >= 0; i -= 1) {
       const item = list[i]!;
       if (priceOf(rows, item.defId) <= 0) continue;
-      counts.set(item.defId, (counts.get(item.defId) ?? 0) + 1);
+      // 一叠 5 枚铜钱 = 5 件，不是 1 件；否则"堆叠"会让收藏品的金币收入腰斩。
+      counts.set(item.defId, (counts.get(item.defId) ?? 0) + stackCount(item));
       list.splice(i, 1);
     }
   }
@@ -87,11 +100,11 @@ export function sellTreasure(
   return { gold, lines };
 }
 
-/** 背包里还剩多少件能卖的（UI 用它决定按钮是否可点）。 */
+/** 背包里还剩多少**件**能卖的（UI 用它决定按钮是否可点）。堆叠按件数算。 */
 export function treasureCount(hold: TreasureHold, rows: readonly TreasureRow[]): number {
   let n = 0;
   for (const list of [hold.bag, hold.safe ?? [], hold.stash]) {
-    for (const item of list) if (priceOf(rows, item.defId) > 0) n += 1;
+    for (const item of list) if (priceOf(rows, item.defId) > 0) n += stackCount(item);
   }
   return n;
 }

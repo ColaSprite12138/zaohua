@@ -7,6 +7,14 @@ import assert from 'node:assert/strict';
 /** Skeleton art centre is ~30 logical px above its ground anchor. */
 const BODY_OFFSET_Y = 30 / 720;
 
+/**
+ * 背包里某个 defId 的**件数**。堆叠（设计 5.1）之后 `bag.length` 是格子数：
+ * 一格 3 瓶蓝药只算 1 个 entry，喝一瓶不会让那一格消失。断言要看件数。
+ */
+const bagUnits = (bag, defId) => bag
+  .filter((it) => it.defId === defId)
+  .reduce((n, it) => n + (Number.isFinite(it.count) && it.count > 0 ? it.count : 1), 0);
+
 /** @param {import('@forgeax/engine/devkit').PlayContext} play */
 export default async function playthrough(play) {
   const enemyPoint = (sk) => [sk.x, sk.y - BODY_OFFSET_Y];
@@ -532,6 +540,18 @@ export default async function playthrough(play) {
     await play.screenshot('weapon-durability');
   });
 
+  await play.step('stacking: three blue potions share one bag cell (design 5.1)', async () => {
+    // 需求：箭 / 药 / 收藏品一格多件。夹具开局就是 3 瓶蓝药，堆叠之后它们
+    // 应该落在**一格**里、格子上写着 3 —— 而不是占三格。
+    const s = await play.state('game.state');
+    const blue = s.runInventory.bag.filter((it) => it.defId === '30003');
+    assert.equal(blue.length, 1, 'three blue potions collapse into ONE bag cell');
+    assert.equal(blue[0].count, 3, 'and that cell carries count = 3');
+    // 视觉证据不在这一张：play 直接跑游戏画布，壳层此时**没有出征**（`inRun=false`），
+    // 按 B 打不开局内背包浮层。角标（×3）由 `verify-meta-ui.cjs` 在真实 DOM 上
+    // 断言并截图（artifacts/verify/meta-ui-shop.png）。
+  });
+
   await play.step('a blue potion restores mana slowly and is limited', async () => {
     const before = await play.state('game.state');
     assert.ok(before.mana < before.maxMana, 'the skills above spent some mana');
@@ -539,8 +559,8 @@ export default async function playthrough(play) {
     await play.advance(0.2);
     const drunk = await play.state('game.state');
     assert.equal(drunk.potions, before.potions - 1, 'drinking spends one bottle from the bag');
-    assert.equal(drunk.runInventory.bag.filter((it) => it.defId === '30003').length,
-      before.runInventory.bag.filter((it) => it.defId === '30003').length - 1,
+    assert.equal(bagUnits(drunk.runInventory.bag, '30003'),
+      bagUnits(before.runInventory.bag, '30003') - 1,
       'the bottle is really gone from the run bag, not just a counter');
     await play.advance(1.2);
     const later = await play.state('game.state');

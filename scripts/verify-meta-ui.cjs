@@ -215,6 +215,54 @@ const SELFTEST = `
         return row ? row.textContent.trim() : '';
       }
     })();
+    // ---- 商店（设计 5.2）：金币买药 / 保险格付费扩容 ----
+    // 价目表由宿注入（见文件末尾的预注入块），所以这里走的是真实规则与真实按钮。
+    out.shop = (function () {
+      const MI = window.MetaInventory, HS = window.MetaShell;
+      const potionCells = () => [...document.querySelectorAll('#wrap-bag .grid-item')]
+        .filter((n) => n.dataset.tipDef === '30002');
+      // 面板默认展开；点一次应当收起、再点一次回来（按钮没有变成摆设）。
+      const panel = document.getElementById('shop-panel');
+      const openByDefault = !panel.hidden;
+      document.getElementById('shop-toggle').click();
+      const collapsed = panel.hidden;
+      document.getElementById('shop-toggle').click();
+      const reopened = !panel.hidden;
+      const offers = document.querySelectorAll('.shop-offer').length;
+      const gold0 = HS.wallet ? HS.wallet.gold : -1;
+      const bagBefore = HS.getLobbyState().bag.length;
+      // 没钱买不到：金币清零后点一下，背包不能多东西。
+      HS.wallet.gold = 0;
+      HS.render();
+      const hp = document.querySelector('.shop-offer[data-offer="potion_hp"]');
+      // 买不起时按钮必须是**禁用**的（点了也不会发购买命令），并且角标写着"金币不足"。
+      const hpDisabled = hp.disabled;
+      const hpLabel = (hp.querySelector('.so-state') || {}).textContent || '';
+      hp.click();
+      const refused = hpDisabled && /金币不足/.test(hpLabel)
+        && HS.getLobbyState().bag.length === bagBefore;
+      // 有钱：买两瓶红药，第二瓶必须并进同一格（堆叠走的是真实购买路径）。
+      HS.wallet.gold = 500;
+      HS.render();
+      document.querySelector('.shop-offer[data-offer="potion_hp"]').click();
+      document.querySelector('.shop-offer[data-offer="potion_hp"]').click();
+      const cellsUsed = potionCells().length;
+      const badge = (potionCells()[0] && potionCells()[0].querySelector('.stack-count') || {}).textContent || '';
+      // 保险格扩容：买 3 格那一档，网格真的变宽。
+      document.querySelector('.shop-offer[data-offer="safe_3"]').click();
+      return {
+        offers: offers,
+        openByDefault: openByDefault,
+        collapses: collapsed && reopened,
+        gold0: gold0,
+        refused: refused,
+        cells: cellsUsed,
+        badge: badge,
+        safeCells: cells('safe'),
+        safeCols: MI.safeColsOf(HS.getLobbyState()),
+        gold: HS.wallet.gold,
+      };
+    })();
     out.ok = true;
   } catch (e) {
     out.ok = false;
@@ -230,15 +278,38 @@ const source = fs.readFileSync(pagePath, 'utf8');
 // Every classic <script src> the page needs must resolve from the TEMPORARY
 // copy in artifacts/verify/, so pin both generated scripts to absolute paths.
 const absOf = (f) => 'file:///' + path.join(root, 'meta-ui', f).replace(/\\/g, '/');
+
+// 价目表与两个可堆叠物品的 def 在**页面脚本之前**注入（页面的 `SHOP_ROWS` 是
+// 初始化时读一次的快照，`registerItemDefs` 也只会在启动时跑）。数据来自生成物，
+// 所以这里没有第二份价格。
+const shopBody = fs.readFileSync(path.join(root, 'assets/resource/generated/shop.ts'), 'utf8')
+  .replace(/^[\s\S]*?export const shop = /, '')
+  .replace(/\n\] as const;[\s\S]*$/, '\n]');
+const shopRows = JSON.parse(shopBody.replace(/([a-z_]+):/g, '"$1":').replace(/,\s*\]$/, ']'));
+const preset = JSON.stringify({
+  shop: shopRows,
+  authoredItems: [
+    { id: '30002', name: '红药', item_type: '消耗品', stack_size: 5 },
+    { id: '30003', name: '蓝药', item_type: '消耗品', stack_size: 5 },
+  ],
+});
 let html = source;
 for (const [tag, file] of [
   ['./voxel.js', 'voxel.js'],
   ['./inventory.js', 'inventory.js'],
+  ['./talent.js', 'talent.js'],
+  ['./affix.js', 'affix.js'],
+  ['./trade.js', 'trade.js'],
+  ['./shop.js', 'shop.js'],
 ]) {
-  const next = html.replace('<script src="' + tag + '"></script>', '<script src="' + absOf(file) + '"></script>');
+  const next = html.replace('<script src="' + tag + '"></script>',
+    '<script src="' + absOf(file) + '"></script>');
   if (next === html) throw new Error('meta-ui/index.html no longer references ' + tag);
   html = next;
 }
+// `window.MetaShell` 必须在页面自己的 <script> 里被读到，所以放在最前面。
+html = html.replace('<script src="' + absOf('voxel.js') + '"></script>',
+  '<script>window.MetaShell = ' + preset + ';</script>\n<script src="' + absOf('voxel.js') + '"></script>');
 html = html.replace('</body>', SELFTEST + '</body>');
 fs.writeFileSync(testPage, html, 'utf8');
 
@@ -256,6 +327,19 @@ const run = spawnSync(chrome, [
 
 if (run.error) throw run.error;
 fs.writeFileSync(domPath, run.stdout || '', 'utf8');
+
+// 同一张测试页再跑一次截图（自测结束后的状态：背包里有 2 瓶红药叠成一格、
+// 保险格已扩到 3 格、商店面板开着）。这条是**堆叠与商店的视觉证据**：
+// `--dump-dom` 只能证明 DOM 里的角标文字，截图能证明它真的画在格子上。
+const shotPath = path.join(outDir, 'meta-ui-shop.png');
+spawnSync(chrome, [
+  '--headless=new', '--disable-gpu', '--no-sandbox',
+  '--allow-file-access-from-files', '--virtual-time-budget=4000',
+  '--user-data-dir=' + profile + '-shot',
+  '--window-size=1400,1000',
+  '--screenshot=' + shotPath,
+  'file:///' + testPage.replace(/\\/g, '/'),
+], { encoding: 'utf8', timeout: 90000 });
 
 const decode = (s) => s
   .replace(/&quot;/g, '"').replace(/&amp;/g, '&')
@@ -307,6 +391,14 @@ const checks = [
       && result.tip.bar === true
       && result.tip.hiddenAfterLeave === true, result.tip],
   // 用户 2026-11-17：卡片必须显示**掷定后的那一个数**，不再是表里的区间。
+  ['商店：金币够才买得到；两瓶红药并成一格（×2 角标）',
+    result.shop.offers >= 5 && result.shop.gold0 === 120
+      && result.shop.openByDefault === true && result.shop.collapses === true
+      && result.shop.refused === true
+      && result.shop.cells === 1 && result.shop.badge === '×2', result.shop],
+  ['商店：保险格付费扩容把网格从 2 格变成 3 格',
+    result.shop.safeCells === 3 && result.shop.safeCols === 3
+      && result.shop.gold === 500 - 50 - 250, result.shop],
   ['信息卡显示掷定伤害（不是区间）：实例值优先 / 无实例值取中值',
     /^伤害\d+$/.test(result.tip.dmgRolled || '')
       && result.tip.dmgRolled === '伤害271'

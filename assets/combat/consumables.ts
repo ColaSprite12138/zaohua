@@ -9,7 +9,7 @@
  */
 
 import type { InventoryState } from '../meta/inventory.ts';
-import { removeItem } from '../meta/inventory.ts';
+import { countOf, takeOneFromBag } from '../meta/inventory.ts';
 import { consumable } from '../resource/generated/consumable.ts';
 import { burst, say } from './effects.ts';
 import type { GameState } from './state.ts';
@@ -49,18 +49,15 @@ export const POTION_SECONDS = consumableEffect(POTION_MP_ID)?.manaSeconds ?? 0;
 /** 红药：一口回多少生命。 */
 export const POTION_HP_HEAL = consumableEffect(POTION_HP_ID)?.hpRestore ?? 0;
 
-/** 背包里有几瓶（不统计仓库：仓库永不进战局）。 */
+/** 背包里有几瓶（不统计仓库：仓库永不进战局）。**按件数算，不是格子数**。 */
 export function countConsumable(run: InventoryState, defId: string): number {
-  let total = 0;
-  for (const item of run.bag) if (item.defId === defId) total += 1;
-  return total;
+  // 堆叠（设计 5.1）：一格 5 瓶就是 5 瓶。以前数格子，叠起来以后会显示"只有 1 瓶"。
+  return countOf(run.bag, defId);
 }
 
-/** 从背包取走一瓶。没有就返回 false，状态不变。 */
+/** 从背包取走一瓶（一叠里扣 1，扣空才删格）。没有就返回 false，状态不变。 */
 function takeConsumable(run: InventoryState, defId: string): boolean {
-  const item = run.bag.find((it) => it.defId === defId);
-  if (item === undefined) return false;
-  return removeItem(run, item.uid);
+  return takeOneFromBag(run, defId);
 }
 
 function runOver(s: GameState): boolean {

@@ -333,6 +333,9 @@ export function projection(s: GameState) {
       // 都要读它，所以投影必须带上，不能每帧替玩家修满。
       bag: s.runInventory.bag.map((i) => ({
         uid: i.uid, defId: i.defId, container: i.container, col: i.col, row: i.row,
+        // 堆叠（设计 5.1）：投影是验收与 HUD 的读面，缺了 count 就只剩"一格"，
+        // 一切"几瓶 / 几支"的断言都会退化成数格子。
+        ...(i.count === undefined ? {} : { count: i.count }),
         ...(i.durability === undefined ? {} : { durability: i.durability }),
       })),
       equipped: s.runInventory.equipped.map((i) => (
@@ -343,6 +346,7 @@ export function projection(s: GameState) {
       // 保险格是独立容器（设计 4）：阵亡只保它，局内面板要有自己的一栏。
       safe: (s.runInventory.safe ?? []).map((i) => ({
         uid: i.uid, defId: i.defId, container: i.container, col: i.col, row: i.row,
+        ...(i.count === undefined ? {} : { count: i.count }),
         ...(i.durability === undefined ? {} : { durability: i.durability }),
       })),
       activeWeaponSlot: s.runInventory.activeWeaponSlot,

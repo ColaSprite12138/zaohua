@@ -249,11 +249,12 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 | 不做修理 | 设计原话是「修不如重铸」。修理 / 重铸要等金币经济 + 词条批次；本轮坏了就换（5.3 装备是消耗品） |
 | 耐久跨局 | 耐久写在 `ItemInstance.durability` 上，跟着物品跨堆 / 进存档；**重开一局不会修满** |
 | 药是物品 | 红药 `30002` / 蓝药 `30003` 在 `item.xlsx`，1×1 格、`equip=null`，从两个掉落池都能刷到。`GameState.potions` 计数器**已删除** |
+| 药会叠 | 2026-11-17 起一格 5 瓶（`item.xlsx::stack_size`）。`countConsumable()` 数的是**件数**（`countOf`），喝一瓶走 `takeOneFromBag()` 扣 1、扣空才删格。**不要再数 `bag.length`**，那会显示"只有 1 瓶"、并在第二瓶时就丢格 |
 | 药的效果在表里 | `tables/consumable.xlsx`（**每瓶一行**）：`hp_restore / mana_restore / mana_seconds`。以前塞在 `combat_rule.xlsx` 的单行全局常量里，加第三种药就无处可放；现在 `consumables.ts::consumableEffect(id)` 是唯一读法，缺行＝拒绝使用并提示「未配置」 |
 | 只有武器进武器槽（7.4） | 三处执行：`equipItem()`（拖放）、`collectDrop()`（**拾取优先空武器槽只对武器成立**，药/箭落进背包）、`normalizeEquipped()`（读存档 / 出征 / 结算时把非法穿戴挪回背包，背包满则丢弃）。三处缺一条，就会出现"捡到一瓶药被装备在主手" |
 | 喝药 | `X` 蓝药（缓慢回复，`POTION_SECONDS` 秒内 `POTION_MANA` 点）/ `Z` 红药（一口 `hp_potion_heal`）。都是从**局内背包**取走一件；满蓝 / 满血 / 没有药 → 拒绝且不消耗 |
 | 夹具 | `createState()` 给背包塞 `POTION_COUNT` 蓝 + `FIXTURE_HP_POTIONS` 红，供 playthrough / 单测；正式出征由局外背包决定 |
-| 投影 | `durability[2]`（`{slot,current,max,broken}`）/ `weaponBroken` / `potions` / `hpPotions`（后两个是背包计数） |
+| 投影 | `durability[2]`（`{slot,current,max,broken}`）/ `weaponBroken` / `potions` / `hpPotions`（后两个是背包**件数**）/ `runInventory.bag[].count`（堆叠数量，缺省不写） |
 
 ### 装备词条（战斗侧，2026-11-17 第一批，设计文档 7.1 / 7.2）
 
@@ -641,7 +642,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 2. **形态在 spec，数值在表**：`targeting` 是机制（代码），速度 / 射程 / 溅射 / 追踪率 / 落地
    留什么都是 `projectile.xlsx` 的列。加一种弹（毒箭、追踪飞弹）= 表里加一行 + 引用它的地方
    写一个 id，**不改 runtime**。表里 `element` / `status` 拼错会在启动时抛错，不静默失效。
-3. **箭矢是物品**：每发从背包取走一件 `30001`（`takeAmmo`），没有就**拒绝出手并且不进冷却、
+3. **箭矢是物品**：每发从背包取走一件 `30001`（`takeAmmo` → 一叠里扣 1，`count` 到 0 才删格），没有就**拒绝出手并且不进冷却、
    不扣耐久**，同时给一句 toast（「没有箭了」）。打空只丢一支箭 —— 耐久按**造成的伤害**扣，
    发生在命中时（7.4 的 3:7）。
 4. **落地一定结算**：命中 / 撞墙 / 飞满射程三种结束方式都会产生 `impacts`，带溅射或
@@ -657,7 +658,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 | 怪物弓手 | `monsterSpec('200001')` 是非指向性弹道；AI 在 `range * 0.9` 处停下放箭，**没有视线就不放**（不隔墙乱射） |
 | 观测 | 投影多出 `projectiles`（屏幕归一化 + `locked` / `travelled`）、`ammo`、`projectileStats`（出手 / 命中 / 打人 / 撞墙 / 出界 / 消散 / 溅射）、`toast` |
 
-**没做的部分**（别以为漏了）：箭矢**不堆叠**（一件一支、一格一件，等物品堆叠批次）；
+**没做的部分**（别以为漏了）：~~箭矢不堆叠~~（**2026-11-17 已堆叠**：一格 10 支，`count` 跟着实例走）；
 `pierce` 这一列全是 0（没有穿透弹，机制与单测已就位）；非指向性目前**只能由技能或怪物发出**，
 玩家没有「按住某键朝光标射一发」的键位（`Q W T F G V C` 全给技能了，等输入批次）；
 `magic_bolt`（追踪法术）没有做成技能，表里也没留空行 —— 等技能库批次；怪物不会**边退边射**。

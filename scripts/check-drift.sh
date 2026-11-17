@@ -27,6 +27,10 @@ PROTECTED=(
   scripts/import_map.py
   docs/art-style.md
   assets/__tests__/movement.test.ts
+  assets/meta/inventory.ts
+  assets/meta/trade.ts
+  assets/meta/shop.ts
+  assets/resource/tables/shop.xlsx
   scripts/playthrough.mjs
   scripts/playthrough-resize.mjs
   scripts/verify-all.sh

@@ -34,6 +34,19 @@
     border-radius: 14px; padding: 16px;
   }
   .panel-title { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  /* ---- 商店（金币出口） ---- */
+  .shop-panel { margin-bottom: 14px; }
+  .shop-offers { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 4px; }
+  .shop-offer {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    padding: 8px 12px; min-width: 132px; text-align: left;
+  }
+  .shop-offer .so-name { font-size: 12px; font-weight: 700; }
+  .shop-offer .so-price { font-size: 11px; color: var(--gold); }
+  .shop-offer .so-state { font-size: 10px; color: var(--muted); }
+  .shop-offer:disabled { opacity: .5; cursor: not-allowed; border-color: var(--line); color: var(--muted); }
+  .shop-offer:disabled .so-price { color: var(--muted); }
+  .shop-offer .so-owned { color: var(--green); }
   .panel-title small { color: var(--muted); font-size: 11px; font-weight: 400; }
   .equip-grid { display: grid; grid-template-columns: repeat(2, 84px); gap: 10px; margin-top: 4px; }
   .equip-slot {
@@ -92,6 +105,13 @@
   .item .glyph { font-size: 20px; line-height: 1.1; }
   .item .name { font-size: 10px; font-weight: 700; line-height: 1.2; padding: 0 2px; }
   .item .size { font-size: 9px; opacity: .8; }
+  /* 堆叠角标：右下角一枚小徽章，颜色跟物品走（不抢名字的位置）。 */
+  .item .stack-count {
+    position: absolute; right: 2px; bottom: 1px; padding: 0 3px;
+    font-size: 10px; font-weight: 800; line-height: 1.25;
+    color: #0b1620; background: var(--sword); border-radius: 4px;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.35);
+  }
   .item.dragging { opacity: .35; }
   .preview {
     position: absolute; border-radius: 7px; border: 2px solid var(--green);
@@ -198,11 +218,22 @@
 
   <div class="toolbar">
     <button id="reset">重置演示数据</button>
-    <button id="supply" title="雏形期的免费补给：等金币 / 商店批次上线后改成买">补给药水</button>
+    <button id="shop-toggle" title="花金币补给：红蓝药、保险格扩容（价目表在 tables/shop.xlsx）">商店</button>
     <button id="sell" title="把背包 / 保险格 / 仓库里的收藏品换成金币（武器与药品不会动）">卖出收藏品</button>
-    <span class="coin" id="fx-gold" title="金币：收藏品换来的，用于重铸与补给">0 金</span>
+    <span class="coin" id="fx-gold" title="金币：收藏品换来的，用来在商店买补给与扩容">0 金</span>
     <span class="status" id="status"></span>
   </div>
+
+  <!-- 商店（设计 5.2 的金币出口）。价目表来自 `tables/shop.xlsx`，由 inject-shell.mjs
+       注入；页面不写价格。局内不可用 —— 补给是"下场前"的决定。
+       **默认展开**：价目和余额要第一眼能看到，否则玩家不知道金币能干什么。 -->
+  <section class="panel shop-panel" id="shop-panel">
+    <div class="panel-title">
+      <h2>商店</h2>
+      <small id="shop-hint">金币来自卖出收藏品</small>
+    </div>
+    <div class="shop-offers" id="shop-offers"></div>
+  </section>
 
   <!-- The 4174 shell reuses this whole block as the IN-RUN bag overlay. In the
        standalone page it is just a plain wrapper, so drag/drop is unchanged. -->
@@ -218,7 +249,7 @@
     </section>
 
     <section class="panel" id="safe-panel">
-      <div class="panel-title"><h2>保险格</h2><small>2 格 · 阵亡不掉</small></div>
+      <div class="panel-title"><h2>保险格</h2><small id="safe-size">2 格 · 阵亡不掉</small></div>
       <div class="grid-wrap" id="wrap-safe">
         <div class="grid" id="grid-safe"></div>
         <div class="preview" id="preview-safe"></div>
@@ -277,6 +308,7 @@
 <script src="./talent.js"></script>
 <script src="./affix.js"></script>
 <script src="./trade.js"></script>
+<script src="./shop.js"></script>
 <script>
 (function () {
   'use strict';
@@ -415,6 +447,15 @@
     name.className = 'name';
     name.textContent = def.name;
     node.appendChild(name);
+    // 堆叠角标（设计 5.1）：一叠 5 瓶药就画 ×5；单件不画，避免每格都是 ×1 的噪声。
+    const stack = M.itemCount(item);
+    node.dataset.tipCount = stack > 1 ? String(stack) : '';
+    if (stack > 1) {
+      const badge = document.createElement('span');
+      badge.className = 'stack-count';
+      badge.textContent = '×' + stack;
+      node.appendChild(badge);
+    }
     node.addEventListener('dragstart', (e) => startDrag(e, node, item, size));
     node.addEventListener('dragend', () => {
       node.classList.remove('dragging');
@@ -426,7 +467,8 @@
   }
 
   function buildGrid(container) {
-    const spec = M.CONTAINERS[container];
+    // 保险格可以付费扩容（商店批次），列数在状态上；背包 / 仓库是常量。
+    const spec = M.containerSpec(state, container);
     const size = CELL[container];
     const el = $('grid-' + container);
     const wrap = $('wrap-' + container);
@@ -596,7 +638,13 @@
     buildEquip();
     const active = M.activeWeapon(state);
     $('status').title = active ? '当前武器：' + M.itemDef(active.defId).name : '当前空手';
+    // 保险格可以付费扩容（商店）：标题要跟着实际列数走，别写死 "2 格"。
+    const safeTitle = $('safe-size');
+    if (safeTitle) safeTitle.textContent = M.safeColsOf(state) + ' 格 · 阵亡不掉';
     syncGold();
+    // 商店按钮的可用状态依赖金币与保险格档位，状态一变就得重画（面板收起时也画，
+    // 只是看不见 —— 省得展开时先闪一帧旧状态）。
+    if (typeof renderShop === 'function') renderShop();
     if (host.onRender) host.onRender();
   }
 
@@ -605,7 +653,12 @@
   // 余额挂在 `host.wallet`，由平台存档的 `extra.wallet` 落盘；没有宿主时只活在
   // 内存里（双击页与无平台的 4174 预览刷新即归零，这是既有的"本地零存盘"约定）。
   function wallet() {
-    if (!host.wallet || typeof host.wallet !== 'object') host.wallet = { gold: 0 };
+    if (!host.wallet || typeof host.wallet !== 'object') {
+      // 新号起始金币（`shop.ts::STARTING_GOLD`，开发期取值）：0 金开局的玩家第一局
+      // 连一瓶药都买不起，那不是"硬核"，是死循环。用 `window.MetaShop` 直读，
+      // 避免和下面 `const SHOP` 的初始化顺序纠缠。
+      host.wallet = { gold: window.MetaShop ? window.MetaShop.STARTING_GOLD : 0 };
+    }
     if (!Number.isFinite(host.wallet.gold)) host.wallet.gold = 0;
     return host.wallet;
   }
@@ -868,39 +921,117 @@
   Object.defineProperty(host, 'starTree', { get: () => starMap, configurable: true });
 
   /**
-   * 补给药水（**雏形期临时手段**）：药是背包物品（设计 8.3），但金币与商店还没做，
-   * 所以先给一个显式按钮把背包补到 2 红 / 3 蓝，而不是偷偷塞进 `createInventoryState`
-   * （那会让"初始背包是空的"这条既有约定失效）。商店批次上线后这个按钮改成购买。
+   * 商店（设计 5.2 的**金币出口**）。规则在 `assets/meta/shop.ts`（零 import，
+   * 与 `trade.ts` 同一条路），价目表在 `tables/shop.xlsx` → 由 inject-shell 注入。
+   *
+   * 页面只负责三件事：渲染按钮、把「放进背包」这个动作交给 `M.addToBag()`、
+   * 把扣钱交给 `SHOP.buyItem()` —— **顺序由 shop.ts 保证**（先放物品，放不下不扣钱）。
+   * 以前这里是一个免费的「补给药水」按钮，那是商店上线前的临时形态，已经删掉。
    */
-  $('supply').addEventListener('click', () => {
-    if (runMode) {
-      say('局内不能补给：药要自己带下场或在局内搜刮', true);
+  const SHOP = window.MetaShop ?? null;
+  const SHOP_ROWS = host.shop ?? [];
+
+  function offerStateText(status, row) {
+    if (status === 'ok') return row.kind === 'safe' ? '点击扩容' : '点击购买';
+    if (status === 'poor') return '金币不足';
+    return row.kind === 'safe' ? '已拥有 / 到顶' : '不可购买';
+  }
+
+  function renderShop() {
+    const box = $('shop-offers');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!SHOP || SHOP_ROWS.length === 0) {
+      const hint = document.createElement('span');
+      hint.className = 'hint';
+      hint.textContent = '价目表没加载（tables/shop.xlsx → shop.ts）';
+      box.appendChild(hint);
       return;
     }
-    const targets = [['30002', 2], ['30003', 3]];
-    let added = 0;
-    for (const [defId, want] of targets) {
-      try {
-        M.itemDef(defId);
-      } catch (err) {
-        continue; // 独立页没有注入表目录：静默跳过，不炸整页。
-      }
-      let have = state.bag.filter((it) => it.defId === defId).length;
-      while (have < want) {
-        const uid = 'supply-' + defId + '-' + (have + 1) + '-' + Date.now();
-        if (!M.addToBag(state, uid, defId)) break;
-        have += 1;
-        added += 1;
-      }
+    const gold = goldOf();
+    const cols = M.safeColsOf(state);
+    for (const row of SHOP_ROWS) {
+      const status = SHOP.offerStatus(row, SHOP_ROWS, gold, cols);
+      const btn = document.createElement('button');
+      btn.className = 'shop-offer';
+      btn.dataset.offer = row.id;
+      const name = document.createElement('span');
+      name.className = 'so-name';
+      name.textContent = row.kind === 'potion' && SHOP.shopQtyOf(row) > 1
+        ? row.name + ' ×' + SHOP.shopQtyOf(row) : row.name;
+      const price = document.createElement('span');
+      price.className = 'so-price';
+      price.textContent = SHOP.shopPriceOf(row) + ' 金';
+      const stateText = document.createElement('span');
+      stateText.className = 'so-state' + (status === 'ok' ? ' so-owned' : '');
+      stateText.textContent = offerStateText(status, row);
+      btn.appendChild(name);
+      btn.appendChild(price);
+      btn.appendChild(stateText);
+      btn.disabled = status !== 'ok' || runMode;
+      btn.addEventListener('click', () => buyOffer(row));
+      box.appendChild(btn);
     }
-    host.setState(state);
-    say(added > 0 ? '补给 ' + added + ' 瓶药（雏形期免费，等商店）' : '背包里已经有足够的药了', added === 0);
+  }
+
+  function buyOffer(row) {
+    if (runMode) {
+      say('局内不能买东西 · 补给是下场前的决定', true);
+      return;
+    }
+    if (!SHOP) {
+      say('商店规则没加载（meta-ui/shop.js）', true);
+      return;
+    }
+    const w = wallet();
+    if (row.kind === 'safe') {
+      const out = SHOP.buySafe(row, SHOP_ROWS, w, M.safeColsOf(state),
+        (cols) => M.setSafeCols(state, cols));
+      if (out !== 'bought') {
+        say(out === 'poor' ? '金币不够 · 先去卖收藏品' : '这一档已经买过 / 已到顶', true);
+        return;
+      }
+      render();
+      say('保险格扩到 ' + M.safeColsOf(state) + ' 格 · 剩 ' + goldOf() + ' 金');
+      return;
+    }
+    const qty = SHOP.shopQtyOf(row);
+    // 整单判断：买 5 瓶要么 5 瓶全进包，要么一瓶不买（否则"钱花了药只有 3 瓶"）。
+    if (!M.bagHasRoomFor(state, row.item_id, qty)) {
+      say('背包放不下 ' + qty + ' 件 · 先清格子', true);
+      return;
+    }
+    const out = SHOP.buyItem(row, w, () => {
+      const stamp = Date.now();
+      for (let i = 0; i < qty; i += 1) {
+        // 同一次点击里的 uid 必须互不相同（合并进已有那一叠时也各算一件）。
+        M.addToBag(state, 'buy-' + row.id + '-' + stamp + '-' + i, row.item_id);
+      }
+      return true;
+    });
+    if (out !== 'bought') {
+      say(out === 'poor' ? '金币不够 · 先去卖收藏品' : '背包放不下', true);
+      return;
+    }
+    render();
+    say('买入 ' + row.name + (qty > 1 ? ' ×' + qty : '') + ' · 剩 ' + goldOf() + ' 金');
+  }
+
+  $('shop-toggle').addEventListener('click', () => {
+    const panel = $('shop-panel');
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) renderShop();
   });
 
   $('reset').addEventListener('click', () => {
     if (runMode) return;
     host.setState(M.createInventoryState(0));
-    say('已重置（仓库与背包清空）');
+    // 重置是"演示数据回到初始"，金币也一起回去；否则一个空背包 + 几千金会让
+    // 第一次打开页面的人以为商店是白送的。
+    host.wallet = { gold: window.MetaShop ? window.MetaShop.STARTING_GOLD : 0 };
+    render();
+    say('已重置（仓库、背包与金币回到初始）');
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === '1' || e.key === '2') {
@@ -949,13 +1080,19 @@
     return String(Math.round((def.damageMin + def.damageMax) / 2));
   }
 
-  function tipHtml(def, duraRaw, affixes, dmgRaw) {
+  function tipHtml(def, duraRaw, affixes, dmgRaw, countRaw) {
     const parts = [];
     parts.push('<div class="tip-name" style="color:' + def.color + '">' + def.name + '</div>');
     const meta = [def.itemType, def.quality, def.itemType === '武器' ? def.weaponSubtype : null]
       .filter((v) => v !== undefined && v !== null && v !== '' && v !== 'null')
       .join(' · ');
     parts.push('<div class="tip-meta">' + (meta || '物品') + '</div>');
+    // 堆叠（设计 5.1）：一叠几件 + 这一种的上限，玩家才知道还能捡多少。
+    const stacked = countRaw === '' || countRaw === undefined ? 0 : Number(countRaw);
+    if (Number.isFinite(stacked) && stacked > 1) {
+      parts.push('<div class="tip-row"><span>数量</span><b>' + stacked
+        + (def.stackSize > 1 ? ' / ' + def.stackSize : '') + '</b></div>');
+    }
 
     if (typeof def.damageMin === 'number') {
       parts.push('<div class="tip-row"><span>伤害</span><b>' + damageText(def, dmgRaw) + '</b></div>');
@@ -984,6 +1121,7 @@
       parts.push('<div class="tip-affix">' + lines + '</div>');
     }
     parts.push('<div class="tip-size">占 ' + def.cols + ' × ' + def.rows + ' 格'
+      + (def.stackSize > 1 ? ' · 可叠 ' + def.stackSize : '')
       + (def.equip ? ' · 可装备' : '') + '</div>');
     return parts.join('');
   }
@@ -1024,8 +1162,10 @@
     const affixes = affixesOf(node.dataset.tipUid);
     const key = node.dataset.tipDef + '|' + (node.dataset.tipDura || '')
       + '|' + (node.dataset.tipDmg || '')
+      + '|' + (node.dataset.tipCount || '')
       + '|' + JSON.stringify(affixes);
-    const html = tipHtml(def, node.dataset.tipDura || '', affixes, node.dataset.tipDmg || '');
+    const html = tipHtml(def, node.dataset.tipDura || '', affixes,
+      node.dataset.tipDmg || '', node.dataset.tipCount || '');
     if (tipEl.dataset.for !== key) {
       tipEl.dataset.for = key;
       tipEl.innerHTML = html;

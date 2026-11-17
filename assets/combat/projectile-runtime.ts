@@ -18,6 +18,7 @@
  */
 
 import { projectile as projectileRows } from '../resource/generated/projectile.ts';
+import { countOf, takeOneFromBag } from '../meta/inventory.ts';
 import type { AttackOwner } from './attack-spec.ts';
 import { damagePlayer, damageSkeleton } from './attack.ts';
 import { wearWeapon } from './durability.ts';
@@ -340,21 +341,19 @@ function explode(
 
 /* ------------------------------------------------------------ 弹药 */
 
-/** 背包里的弹药数量（弹药和药一样是**物品**，不是计数器）。 */
+/** 背包里的弹药数量（弹药和药一样是**物品**，不是计数器）。按件数算，一叠 10 支 = 10。 */
 export function ammoCount(s: GameState, ammoId: string): number {
-  let total = 0;
-  for (const item of s.runInventory.bag) if (item.defId === ammoId) total += 1;
-  return total;
+  return countOf(s.runInventory.bag, ammoId);
 }
 
-/** 取走一件弹药。没有就返回 false，状态不变。 */
+/**
+ * 取走一件弹药。没有就返回 false，状态不变。
+ *
+ * 堆叠（设计 5.1）之后"一件"是**一叠里的一支**：扣到 0 才把那一格删掉。
+ * 以前这里是 `splice(index, 1)`，叠起来以后一箭就会打掉一整叠 10 支。
+ */
 export function takeAmmo(s: GameState, ammoId: string): boolean {
-  const item = s.runInventory.bag.find((it) => it.defId === ammoId);
-  if (item === undefined) return false;
-  const index = s.runInventory.bag.findIndex((it) => it.uid === item.uid);
-  if (index < 0) return false;
-  s.runInventory.bag.splice(index, 1);
-  return true;
+  return takeOneFromBag(s.runInventory, ammoId);
 }
 
 /** 当前武器是不是「按发数打」的远程武器（HUD 与出手前检查共用）。 */

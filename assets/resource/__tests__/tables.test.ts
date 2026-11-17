@@ -163,6 +163,25 @@ describe('resource table contract', () => {
     expect([...new Set(subtypes.values())].sort()).toEqual(['子弹', '近战', '远程']);
   });
 
+  it('shop.xlsx is the single price list: both kinds exist, prices positive, tiers ascending', async () => {
+    const { shop } = await import('../generated/shop.ts');
+    const { item } = await import('../generated/item.ts');
+    expect(shop.length).toBeGreaterThan(0);
+    // 价格与件数是表的事：0 价会让 `shop.ts` 把这一行当成"买不起"，等于白写一行。
+    for (const row of shop) expect(row.price).toBeGreaterThan(0);
+    const ids = new Set(item.map((r) => String(r.id)));
+    for (const row of shop.filter((r) => r.kind === 'potion')) {
+      expect(ids.has(String(row.item_id))).toBe(true);
+      expect(row.qty).toBeGreaterThanOrEqual(1);
+    }
+    const tiers = shop.filter((r) => r.kind === 'safe').map((r) => r.safe_cols);
+    expect(tiers.length).toBeGreaterThan(0);
+    // 档位必须严格递增：`nextSafeTier()` 按"第一个更大的档"找下一档，重复/乱序会死循环在某一档。
+    expect([...tiers].sort((a, b) => a - b)).toEqual(tiers);
+    expect(new Set(tiers).size).toBe(tiers.length);
+    expect(tiers[0]).toBeGreaterThan(2); // 赠送的 2 格不在商店里重复卖
+  });
+
   it('every source .xlsx is a well-formed OOXML package Excel can open', () => {
     // Regression guard: a hand-written styles.xml once had `<border/>` followed
     // by `</border>`. The exporter never reads styles.xml, so --check stayed

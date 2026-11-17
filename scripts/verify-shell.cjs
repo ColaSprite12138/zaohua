@@ -133,6 +133,10 @@ const SELFTEST = `
       weapon0: s.equipped[0] ? s.equipped[0].defId : null,
       weapon1: s.equipped[1] ? s.equipped[1].defId : null,
       bagDefs: s.bag.map(function (i) { return i.defId; }),
+      // 堆叠（设计 5.1）：bag.length 是格子数，bagTotal 是件数。别再拿格子数当件数。
+      bagTotal: s.bag.reduce(function (n, i) {
+        return n + (Number.isFinite(i.count) && i.count > 0 ? i.count : 1);
+      }, 0),
       safe: (s.safe || []).length,
       safeDefs: (s.safe || []).map(function (i) { return i.defId; }),
       lobbyBag: lobby.bag.length, lobbyStash: lobby.stash.length,
@@ -291,17 +295,66 @@ const SELFTEST = `
       document.querySelector('.star-chip[data-node="ember_dmg"]').click();
       out.star.deployPicks = H.getProgress().picks.slice();
 
-      // ---- 消耗品（设计 8.3）：补给把红 / 蓝药真的放进背包，出征就带得走 ----
-      out.potions = { before: H.getState().bag.filter(function (i) {
-        return i.defId === '30002' || i.defId === '30003';
-      }).length };
-      document.getElementById('supply').click();
-      var bagPots = H.getState().bag.filter(function (i) {
-        return i.defId === '30002' || i.defId === '30003';
-      });
-      out.potions.after = bagPots.length;
-      out.potions.red = bagPots.filter(function (i) { return i.defId === '30002'; }).length;
-      out.potions.blue = bagPots.filter(function (i) { return i.defId === '30003'; }).length;
+      // ---- 商店（设计 5.2）：金币买补给 / 保险格扩容，买了才进背包 ----
+      // 金币来自卖收藏品（下面那段），但探针要先有钱买东西 —— 直接给钱包充值，
+      // 和"往仓库里塞两件收藏品"是同一类夹具手段，不是绕过规则。
+      var bagPots = function () {
+        return H.getState().bag.filter(function (i) {
+          return i.defId === '30002' || i.defId === '30003';
+        });
+      };
+      var potionUnits = function (defId) {
+        return bagPots().filter(function (i) { return i.defId === defId; })
+          .reduce(function (n, i) {
+            return n + (Number.isFinite(i.count) && i.count > 0 ? i.count : 1);
+          }, 0);
+      };
+      var shopBtn = document.getElementById('shop-toggle');
+      out.shop = {
+        // 面板默认展开（价目要第一眼看到）；按钮只负责收起 / 再打开。
+        panelOpen: !document.getElementById('shop-panel').hidden,
+        offers: document.querySelectorAll('.shop-offer').length,
+        initialGold: H.wallet ? H.wallet.gold : -1,
+        before: bagPots().length,
+      };
+      // 没钱买不到：金币清零点一下，药不能凭空出现。
+      if (H.wallet) H.wallet.gold = 0;
+      H.render();
+      var poorBtn = document.querySelector('.shop-offer[data-offer="potion_hp"]');
+      // 买不起 = 按钮禁用 + 角标写「金币不足」；点它不应该发生任何事。
+      var poorLabel = (poorBtn.querySelector('.so-state') || {}).textContent || '';
+      poorBtn.click();
+      out.shop.poorRefused = poorBtn.disabled === true
+        && /金币不足/.test(poorLabel)
+        && bagPots().length === 0
+        && H.wallet.gold === 0;
+      // 有钱：买 2 瓶红 + 3 瓶蓝（一叠，逐瓶点击 —— 检验合堆走的是真实购买路径）
+      H.wallet.gold = 500;
+      H.render();
+      // 买两瓶红药：第二瓶应该并进同一格，而不是占第二格。
+      document.querySelector('.shop-offer[data-offer="potion_hp"]').click();
+      document.querySelector('.shop-offer[data-offer="potion_hp"]').click();
+      out.shop.redCells = bagPots().filter(function (i) { return i.defId === '30002'; }).length;
+      for (var bi = 0; bi < 3; bi += 1) {
+        document.querySelector('.shop-offer[data-offer="potion_mp"]').click();
+      }
+      out.shop.goldAfterBuy = H.wallet.gold;
+      out.shop.after = bagPots().length;
+      out.shop.red = potionUnits('30002');
+      out.shop.blue = potionUnits('30003');
+      // 保险格扩容：只有下一档能买，买完网格真的变宽。
+      var safeCellsBefore = document.querySelectorAll('#grid-safe .cell').length;
+      document.querySelector('.shop-offer[data-offer="safe_3"]').click();
+      out.shop.safeBefore = safeCellsBefore;
+      out.shop.safeCells = document.querySelectorAll('#grid-safe .cell').length;
+      out.shop.safeCols = H.M.safeColsOf(H.getLobbyState());
+      out.shop.safeGold = H.wallet.gold;
+      // 4 格那一档现在是"下一档"但钱不够（110 < 600）：必须存在且禁用 ——
+      // 这就是"按档买单、且买不起时点不动"的可观测证据。
+      var safe4 = document.querySelector('.shop-offer[data-offer="safe_4"]');
+      out.shop.safe4Enabled = safe4 ? !safe4.disabled : null;
+      out.shop.safe4Label = safe4
+        ? (safe4.querySelector('.so-state') || {}).textContent || '' : '';
 
       out.sharedState = H.state === H.getState() && H.getLobbyState() === H.state;
       snap('initial');
@@ -632,9 +685,12 @@ const SELFTEST = `
         // 页面级的 say() 写 #status（#fx-log 是壳层的出征日志），别读错元素。
         log: document.getElementById('status').textContent,
       };
+      // 等一下存盘跟上：商店买药那几次已经写过钱包（110），只看"有没有字段"
+      // 会立刻拿到旧值。等余额与内存一致，才是"这次卖出真的落盘了"。
       await waitFor(function () {
         var env = Store.lastSaved();
-        return !!(env && env.extra && env.extra.wallet);
+        return !!(env && env.extra && env.extra.wallet
+          && env.extra.wallet.gold === H.wallet.gold);
       });
       var walletEnv = Store.lastSaved();
       out.trade.kvGold = walletEnv && walletEnv.extra && walletEnv.extra.wallet
@@ -816,9 +872,18 @@ const checks = [
           && s.domBag === s.bag && s.domWorn === s.worn;
       }),
     result.switchSpam],
-  ['补给把红 / 蓝药放进背包（消耗品是物品，不是计数器）',
-    result.potions.before === 0 && result.potions.after === 5
-      && result.potions.red === 2 && result.potions.blue === 3, result.potions],
+  ['商店：金币够才买得到，买到的药按瓶合堆（2 红 = 1 格、3 蓝 = 1 格）',
+    result.shop.panelOpen === true && result.shop.offers >= 5
+      && result.shop.initialGold === 120
+      && result.shop.poorRefused === true && result.shop.before === 0
+      && result.shop.redCells === 1 && result.shop.after === 2
+      && result.shop.red === 2 && result.shop.blue === 3
+      && result.shop.goldAfterBuy === 360, result.shop],
+  ['商店：保险格付费扩容真的把网格变宽；下一档存在但买不起时禁用',
+    result.shop.safeBefore === 2 && result.shop.safeCells === 3
+      && result.shop.safeCols === 3 && result.shop.safeGold === 110
+      && result.shop.safe4Enabled === false
+      && /金币不足/.test(result.shop.safe4Label || ''), result.shop],
   ['出征把星图技能与乘区快照给 Worker，局内星图面板隐藏',
     !!d.stars && d.stars.skills.indexOf('fire_wall') >= 0
       && d.stars.nodes.indexOf('ember_wall') >= 0
@@ -831,11 +896,12 @@ const checks = [
   ['deploy switches the page into battle mode',
     S.deployed.inBattle === true && /战斗/.test(S.deployed.phase), S.deployed],
   ['cleared brings the WHOLE run state home (worn + bag loot + potions)',
+    // 堆叠之后：2 瓶红 + 3 瓶蓝 = 2 格；再加 1 件战利品 = 3 格 / 6 件。
     S.cleared.weapon0 === 'longsword' && S.cleared.weapon1 === '10006'
       && S.cleared.bagDefs.indexOf('20006') >= 0
-      && S.cleared.bagDefs.filter(function (d) { return d === '30003'; }).length === 3
-      && S.cleared.bagDefs.length === 6
-      && S.cleared.lobbyBag === 6 && S.cleared.lobbyWorn === 2, S.cleared],
+      && S.cleared.bagDefs.filter(function (d) { return d === '30003'; }).length === 1
+      && S.cleared.bagDefs.length === 3 && S.cleared.bagTotal === 6
+      && S.cleared.lobbyBag === 3 && S.cleared.lobbyWorn === 2, S.cleared],
   ['cleared leaves the stash intact and exits the run view',
     S.cleared.stash === 3 && S.cleared.lobbyStash === 3
       && S.cleared.isRun === false, S.cleared],
@@ -884,12 +950,13 @@ const checks = [
   ['the cursor goes back to the platform default when nothing is hovered',
     result.cursor.reset === true, result.cursor],
   ['卖出收藏品换金币：收藏品消失、武器一件不动、日志报数',
-    result.trade.goldBefore === 0 && result.trade.gold === 95
+    // 金币起点不再是 0（起始金币 + 商店花掉一部分），所以按增量断言。
+    result.trade.goldBefore >= 0 && result.trade.gold === result.trade.goldBefore + 95
       && result.trade.treasuresLeft === 0
       && result.trade.swordsKept === result.trade.swordsBefore
       && /卖出 2 件收藏品/.test(result.trade.log), result.trade],
   ['金币随存档落盘（extra.wallet），不只是内存里的数字',
-    result.trade.kvGold === 95, result.trade],
+    result.trade.kvGold === result.trade.gold, result.trade],
   ['信息卡列出实例上的词条（词条属于实例，不属于 defId）',
     result.affixTip.found === true && result.affixTip.visible === true
       && /锋锐/.test(result.affixTip.text) && /武器伤害/.test(result.affixTip.text)

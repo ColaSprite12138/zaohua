@@ -116,8 +116,42 @@
 | UI | 顶栏「卖出收藏品」按钮 + 金币余额；信息卡显示「卖出 N 金」；**局内禁止**（`sellTreasures` 先判 `runMode`） |
 | 幂等 | 卖第二次是 0，不会凭空生钱 |
 
-**这一批没做**：物品**堆叠**（收藏品仍是一件一格）、**商店**（补给药水仍是免费按钮、保险格不能扩容）、
+**这一批没做**：~~物品堆叠~~（**2026-11-17 已做，见下一节**）、~~商店~~（**同日已做**）、
 **词条重铸**（要扣金币，规则层已就绪：`affix.ts::rollAffixes` + 每件 1–3 次上限待加）。
+
+## 物品堆叠与商店（设计 5.1 / 5.2 第二批，2026-11-17）
+
+### 堆叠
+
+| 项 | 契约 |
+|:--|:--|
+| 数量 | `ItemInstance.count`（缺省 = 1，非堆叠物品**永不写这个字段**）。数量存在**实例**上，不存 defId |
+| 上限 | `item.xlsx::stack_size` → `ItemDef.stackSize` → `inventory.ts::stackLimit()`。箭 10 / 红蓝药 5 / 收藏品 20·10·3 / 武器护甲 1 |
+| 谁能叠 | `isStackable()`：上限 > 1 **且**没有词条 / 耐久 / 掷定伤害。后三者是**实例身份**，合起来就分不出来了（重铸会一次改掉两件） |
+| 合堆时机 | **只在入包**（拾取 / 购买 / 补给，`addToBag`）。先填最不满的那一叠，满了才开新格 ⇒ 同一 defId 最多一个碎叠 |
+| 不合堆 | 拖放不合并（拖一叠就是一叠）。想验证"一格 5 瓶"就买 5 瓶 / 捡 5 次，不要指望拖两次 |
+| 取一件 | `takeFromStack` / `takeOneFromBag`：一叠里扣 1，扣到 0 才删格。**禁止再写 `splice(index,1)`** —— 那是"一箭打光一叠" |
+| 件数 | `countOf(list, defId)` / `itemCount(item)`。**格数 ≠ 件数**：UI、贸易、消耗品、弹药、验收全部按件数算 |
+| 读档 | `normalizeStackCounts()`：`count` 非正整数 → 清掉（读成 1）；不可叠物品上的 `count` → 清掉；**超量保留不拆**（拆格要空格，修存档不该替玩家搬东西） |
+| 跨堆 | `instanceOf()` 一律深拷贝并保留 `count`（出征 / 带回 / 遗物 / 存档自动跟随） |
+| 预检 | `bagHasRoomFor(state, defId, n)` 在克隆上真跑 `addToBag` —— 合堆让"还剩几格"很难估，估错就是"钱花了东西没进包" |
+
+### 商店与保险格扩容
+
+| 项 | 契约 |
+|:--|:--|
+| 价目表 | `tables/shop.xlsx`（`id / name / kind / item_id / qty / price / safe_cols`）。**代码里没有任何价格**；`meta/shop.ts` 零 import，规则与单测同一份 |
+| 两种商品 | `kind=potion`（买物品，写背包，可多件 / 多瓶）与 `kind=safe`（保险格扩容，改 `safe_cols`） |
+| 顺序铁律 | **先看钱 → 再放东西 / 扩容 → 最后扣钱**。`buyItem` 放不进背包返回 `'full'` 且不扣钱；`buySafe` 非"下一档"直接 `'maxed'` 不扣钱 |
+| 起始金币 | `shop.ts::STARTING_GOLD`（当前 120，**开发期取值**）。页面与 `platform-store.js` 都读它，没有第二份 |
+| 卖出的替代 | 旧的免费「补给药水」按钮**已删除**。补给必须花钱 —— 否则金币没有出口，经济链是断的 |
+| 保险格容量 | `InventoryState.safeCols`（缺省 = `SAFE.cols` = 2）。`containerSpec(state, container)` 是唯一读法；**不要改 `SAFE` 常量**（进程级，会把别的存档一起改掉） |
+| 上限 | `SAFE_MAX_COLS = 5`，不是平衡值而是版面约束（面板 230px / 格 46px）。档位 3 / 4 / 5 与价格全在 `shop.xlsx` |
+| 落盘 | `safeCols` 在 InventoryState 里，跟着同一份 blob 走；`normalizeContainers()` 会把 NaN / 0 / 超上限修回合法值 |
+| 金币落盘 | `extra.wallet` **余额 0 也写**（以前省略 0）。省略会让读档走"新号起始金币"兜底，等于每次刷新白送一笔钱 |
+| UI | 顶栏「商店」按钮；面板**默认展开**（价目与余额要第一眼看到）；买不起 = 按钮 `disabled` + 角标「金币不足」；局内禁止（`runMode`） |
+| 没做 | **修理 / 词条重铸**（同属金币出口，等重铸批次一起做，设计 5.2「修不如重铸」） |
+
 
 ## 单页流程与搜打撤契约（2026-11-11）
 
@@ -294,11 +328,11 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/meta/__tests__      # 80 条（inventory 20 + affix 19 + account 11 + run-settlement 10 + insurance 8 + trade 6 + meta 3）
-node scripts/build-meta-ui.mjs --check                     # 六个生成物（inventory / account / talent / affix / trade / voxel）与源码同步
-node scripts/verify-meta-ui.cjs                            # 独立页面 16 条（13 条真实拖放 + 1 条像素断言 + 1 条悬停信息卡 + 1 条…）
+./node_modules/.bin/vitest run assets/meta/__tests__      # 107 条（inventory 20 + stack 16 + shop 10 + affix 19 + account 14 + run-settlement 10 + insurance 8 + trade 7 + meta 3）
+node scripts/build-meta-ui.mjs --check                     # 七个生成物（inventory / account / talent / affix / trade / shop / voxel）与源码同步
+node scripts/verify-meta-ui.cjs                            # 独立页面 20 条（13 条真实拖放 + 像素断言 + 悬停信息卡 + 商店 2 条），并截 artifacts/verify/meta-ui-shop.png
 node scripts/inject-shell.mjs --check                      # dist 注入块与源同步
-node scripts/verify-shell.cjs                              # 4174 单页 56 条（含 5 条星图 / 卖出收藏品 / 金币落盘 / 词条信息卡）
+node scripts/verify-shell.cjs                              # 4174 单页 57 条（含 5 条星图 / 商店 2 条 / 卖出收藏品 / 金币落盘 / 词条信息卡）
 ```
 
 `scripts/build-meta-ui.mjs` 把 `inventory.ts` / `account.ts` / `game/voxel.ts` 用 `ts.transpileModule`

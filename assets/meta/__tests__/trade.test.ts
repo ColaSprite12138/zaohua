@@ -69,4 +69,17 @@ describe('sellTreasure', () => {
     sellTreasure(state, TREASURE);
     expect(treasureCount(state, TREASURE)).toBe(0);
   });
+
+  it('一叠 5 枚铜钱算 5 件、卖 5 倍价（堆叠不能把收入腰斩）', () => {
+    const state: TreasureHold = {
+      bag: [{ defId: '40001', count: 5 }],
+      stash: [],
+      safe: [],
+    };
+    expect(treasureCount(state, TREASURE)).toBe(5);
+    const result = sellTreasure(state, TREASURE);
+    expect(result.gold).toBe(priceOf(TREASURE, '40001') * 5);
+    expect(result.lines[0]!.count).toBe(5);
+    expect(state.bag).toEqual([]);
+  });
 });

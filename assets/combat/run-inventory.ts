@@ -45,6 +45,9 @@ export function ensureItemCatalog(): void {
       name: String(r.name),
       // item_type 决定「能不能装备 / 占几格」：消耗品、弹药与收藏品都是 1x1 且不可装备。
       item_type: String(r.item_type),
+      // 堆叠上限（设计 5.1）：漏掉这一列，局内箭 / 药 / 收藏品就会退成"一件一格"，
+      // 而局外页面叠得好好的 —— 两边对不上是最难查的一类不一致。
+      stack_size: r.stack_size,
       quality: w ? String(w.quality) : (t ? String(t.quality) : ''),
       ...(t === undefined ? {} : { sell_price: t.sell_price }),
     };
