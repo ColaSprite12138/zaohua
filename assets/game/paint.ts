@@ -68,6 +68,7 @@ import {
   SHOULDER_Y,
   SKELETON,
   SKELETON_ARM,
+  SKELETON_MAGE,
   bodyHeight,
   drawBody,
   drawGroundDetail,
@@ -89,6 +90,7 @@ import {
   yawNarrow,
   yawOf,
   type Limb,
+  type BodyModel,
   type VoxelModel,
 } from './voxel.ts';
 // 挥砍运动学是**纯数学**，单独成文件（`swing.ts`）并带单测：
@@ -646,9 +648,59 @@ function drawPlayer(g: Painter, s: GameState): void {
   drawStatusMarks(g, p.x, p.y, p.statuses, bodyHeight(KNIGHT));
 }
 
-/** 骷髅剑士 carries a bone-grey blade, 骷髅弓手 a bow (see `monster.xlsx`). */
-function skeletonBlade(sk: Skeleton): VoxelModel {
-  return itemModel(sk.monsterId === '200001' ? 'bow:steel' : 'blade:steel');
+/**
+ * 怪物的身体与手上的东西 —— 这里必须按 `monster.xlsx` 的 id 分开。
+ *
+ * 2026-11-18 之前只有一个 `monsterId === '200001'` 的分支，剩下的全给钢剑：
+ * 于是骷髅法师（100002）站在地图上和剑士长得一模一样，玩家看不出「这只马上
+ * 要丢火球」。三种怪三种剪影：剑士 = 剑、弓手 = 弓、法师 = 法杖 + 紫袍。
+ *
+ * 弓手是**非指向性**射箭（`monster-skills.ts` 的决定），所以弓要读得出来：
+ * 「站着不动的那只在瞄你」是唯一的躲闪预告。
+ */
+const ARCHER_ID = '200001';
+const MAGE_ID = '100002';
+
+function skeletonBody(sk: Skeleton): BodyModel {
+  return sk.monsterId === MAGE_ID ? SKELETON_MAGE : SKELETON;
+}
+
+function skeletonWeapon(sk: Skeleton): VoxelModel {
+  if (sk.monsterId === ARCHER_ID) return itemModel('bow:steel');
+  return itemModel('blade:steel');
+}
+
+/**
+ * 法师的法杖**单独画、竖直举着**。
+ *
+ * 不能复用 `drawWeaponArm` 的挥砍旋转：那套旋转把武器的 +y 轴转到腕角方向，
+ * 一根细杆顶个球被转到斜下方，立刻读成「拄着扫帚的老头」。竖直是法杖唯一的
+ * 识别剪影 —— 它不需要挥砍动画，只有举着。
+ */
+function drawMageStaff(g: Painter, sk: Skeleton, x: number, y: number, showLimb: boolean): void {
+  const hand = handPose(x, y, sk.face, 0);
+  // 正对 / 背对时完全竖直，侧身略微朝前倾一点，免得像插在地上。
+  // 上提 28px：`drawVoxel` 的锚点落在模型中部，不提的话整根杖会沉到腰以下、
+  // 顶端刚好藏在脑袋后面 —— 第一版就是这个效果，看截图才发现。
+  const drawY = hand.y - 22;
+  const tilt = Math.cos(sk.face) * 0.1;
+  drawVoxel(g, itemModel('staff:gem'), hand.x, drawY, {
+    rotation: tilt,
+    scale: 0.9,
+    flash: sk.hit > 0,
+  });
+  // 法力球的光晕：4px 的球在 1x 下只是个小色块，必须给一圈抖动光才读成"亮着"。
+  drawPixelGlow(g, hand.x - Math.sin(tilt) * 12, drawY - 22, 12, 11, '#a7f3ff', 0.42);
+  if (showLimb) {
+    drawLimb(
+      g,
+      SKELETON_ARM,
+      x + shoulderOffset(sk.face),
+      y - SHOULDER_Y + shoulderOffsetY(sk.face),
+      hand.arm,
+      { flash: sk.hit > 0, scale: 1 },
+    );
+  }
 }
 
 /**
@@ -773,8 +825,10 @@ function drawSkeleton(g: Painter, s: GameState, sk: Skeleton): void {
 
   shadow(g, sk.x, sk.y + 2, 21, 8, 0.42);
   drawStatusAura(g, s, sk);
+  // 身体 / 武器都按怪物取（法师换紫袍 + 法杖，见 `skeletonBody`）。
+  const body = skeletonBody(sk);
   const paintBody = (): void => {
-    drawBody(g, SKELETON, sk.x + lean, sk.y - bob, {
+    drawBody(g, body, sk.x + lean, sk.y - bob, {
       frame: sk.moving && !petrified ? frame : 0,
       face: sk.face,
       flash: sk.hit > 0 || frozen,
@@ -782,10 +836,14 @@ function drawSkeleton(g: Painter, s: GameState, sk: Skeleton): void {
   };
   // 与玩家同一条规则：背对时武器在身后的那一侧，先画再让身体盖住。
   const paintArm = (showLimb = true): void => {
+    if (sk.monsterId === MAGE_ID) {
+      drawMageStaff(g, sk, sk.x + lean, sk.y - bob, showLimb);
+      return;
+    }
     drawWeaponArm(
       g,
       SKELETON_ARM,
-      skeletonBlade(sk),
+      skeletonWeapon(sk),
       sk.x + lean,
       sk.y - bob,
       sk.face,
@@ -809,14 +867,14 @@ function drawSkeleton(g: Painter, s: GameState, sk: Skeleton): void {
     g.globalAlpha = 0.35;
     g.fillStyle = '#9a9584';
     for (let i = 0; i < 4; i += 1) {
-      g.fillRect(Math.round(sk.x) - 12 + i * 7, Math.round(sk.y) - bodyHeight(SKELETON) + 6, 6, bodyHeight(SKELETON) - 8);
+      g.fillRect(Math.round(sk.x) - 12 + i * 7, Math.round(sk.y) - bodyHeight(body) + 6, 6, bodyHeight(body) - 8);
     }
     g.restore();
   }
 
   // Health bar above the head: hard blocks, no rounded pill.
   const w = 44;
-  const top = Math.round(sk.y) - bodyHeight(SKELETON) - 10;
+  const top = Math.round(sk.y) - bodyHeight(body) - 10;
   g.fillStyle = 'rgba(6,12,18,0.85)';
   g.fillRect(Math.round(sk.x) - w / 2 - 2, top, w + 4, 8);
   g.fillStyle = '#ff6b6b';
@@ -824,7 +882,7 @@ function drawSkeleton(g: Painter, s: GameState, sk: Skeleton): void {
   g.fillStyle = 'rgba(255,255,255,0.18)';
   g.fillRect(Math.round(sk.x) - w / 2, top + 2, (w * Math.max(0, sk.hp / sk.maxHp)), 2);
   // 状态标记画在血条之上：先读「他中了什么」，再读「还剩多少血」。
-  drawStatusMarks(g, sk.x, sk.y, sk.statuses, bodyHeight(SKELETON));
+  drawStatusMarks(g, sk.x, sk.y, sk.statuses, bodyHeight(body));
 }
 
 /**
@@ -1130,7 +1188,7 @@ function drawTargetLock(g: Painter, s: GameState): void {
   const pulse = 0.5 + 0.5 * Math.sin(s.t * 9);
   drawPixelRing(g, sk.x, sk.y + 2, 28 + pulse * 3, 11 + pulse, '#ff6b6b', { alpha: 0.85, lineWidth: 3 });
   drawPixelRing(g, sk.x, sk.y + 2, 36 + pulse * 4, 15 + pulse * 1.5, '#ff6b6b', { alpha: 0.5, lineWidth: 2 });
-  text(g, '目标', sk.x, sk.y - bodyHeight(SKELETON) - 22, 11, '#ff9b9b', 'center', '700');
+  text(g, '目标', sk.x, sk.y - bodyHeight(skeletonBody(sk)) - 22, 11, '#ff9b9b', 'center', '700');
 }
 
 /**

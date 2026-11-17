@@ -707,6 +707,17 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 
 `sleep` 仍无来源（它和"躺着的怪 / 受击即醒"绑在一起，留给下一批）。
 
+### 画面必须对得上行为（2026-11-18 补）
+
+法师加进来时 `paint.ts` 只有一句 `monsterId === '200001' ? 弓 : 剑`，于是**新怪在地图上
+隐形**：玩家看到的还是 22 具同一副灰白骨架。现在分派收成两个函数 ——
+`skeletonBody()`（法师 → `SKELETON_MAGE`：暗紫法袍 + 兜帽 + 紫瞳）与
+`skeletonWeapon()`（弓手 → `bow:steel`、法师 → `staff:gem`、剑士 → `blade:steel`）。
+
+两个坑：① **凡是行为不同的怪，剪影必须能分开**（同 8.8「看不见的 debuff 等于不存在」）；
+② 法杖**不能走 `drawWeaponArm` 的挥砍旋转** —— 那套旋转会把细杆顶球转到斜下方、
+读成扫帚，所以 `drawMageStaff()` 单独竖直绘制并给顶端加一圈抖动光。
+
 ## 死亡掉落与保险格（设计 4 / 5.2，2026-11-15 深夜）
 
 `combat/death-drop.ts` 是**唯一**负责「死了以后东西去哪」的文件。

@@ -18,6 +18,7 @@ import {
   SHOULDER_Y,
   SKELETON,
   SKELETON_ARM,
+  SKELETON_MAGE,
   BODY_DEPTH,
   bodyHeight,
   itemModel,
@@ -54,6 +55,34 @@ describe('character rigs', () => {
         expect(new Set(pose.voxels.map((v) => v.z)).size).toBeGreaterThanOrEqual(BODY_DEPTH);
       }
     }
+  });
+
+  it('the mage is its own model, not the swordsman with a different id', () => {
+    // 2026-11-18：骷髅法师（100002）此前和剑士共用同一副灰白骨架 + 钢剑，
+    // 站在 22 只怪里根本分不出「哪只马上要丢火球」。袍子必须是一件真盖在
+    // 躯干上的新颜色，而不是复刻一副骨头。
+    expect(SKELETON_MAGE.blocks).toBe(SKELETON.blocks);
+    const bone = new Set(SKELETON.poses[0]!.voxels.map((v) => v.c));
+    const robe = SKELETON_MAGE.poses[0]!.voxels.filter((v) => !bone.has(v.c));
+    // 一件盖住躯干 + 兜帽的袍子，不是零散的点缀。
+    expect(robe.length).toBeGreaterThan(20);
+    expect(new Set(robe.map((v) => v.y)).size).toBeGreaterThanOrEqual(5);
+    // 正面的瞳孔换成了紫色（`C.bolt`），背对时不能有眼睛。
+    const eyes = SKELETON_MAGE.poses[0]!.voxels.filter((v) => v.y === 10 && v.z === 0);
+    expect(eyes.length).toBeGreaterThan(0);
+    expect(eyes.every((v) => !bone.has(v.c))).toBe(true);
+  });
+
+  it('the staff reads as a thin pole with one big head', () => {
+    // 法杖靠「细杆 + 大头」的剪影和剑/弓分开：杆一格宽，顶上一颗三格宽的球。
+    const staff = itemModel('staff:gem');
+    const pole = staff.voxels.filter((v) => v.y === 3);
+    const orb = staff.voxels.filter((v) => v.y === 10);
+    expect(new Set(pole.map((v) => v.x)).size).toBe(1);
+    expect(new Set(orb.map((v) => v.x)).size).toBe(3);
+    // 比剑薄（没有刃的排面），但不比剑矮。
+    expect(staff.voxels.length).toBeLessThan(itemModel('blade:steel').voxels.length);
+    expect(ACCENTS.gem).toBeTruthy();
   });
 
   it('the volume carries BOTH faces: visor in front, nape at the back', () => {

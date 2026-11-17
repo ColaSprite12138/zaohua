@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/game/voxel.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 476d9e6cb1de8ab47737c7152a391aae85cb11169c80d5fd47fe300637343861
+ * Source SHA-256: 904192c2022c9e9c3f2cbb0e8a915c8c3a762882bd9b6774b3dee5af8f0d5e29
  */
 (function (root) {
 "use strict";
@@ -37,7 +37,7 @@ var exports = module.exports;
  *    of the meta UI (which reuses this very file, see `scripts/build-meta-ui`).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.WALL_LIFT = exports.SKILL_ICONS = exports.MODELS = exports.DESTRUCTIBLE_MODELS = exports.ACCENTS = exports.SKELETON_ARM = exports.KNIGHT_ARM = exports.ARM_REACH = exports.SHOULDER_X = exports.SHOULDER_Y = exports.CORPSE = exports.SKELETON = exports.KNIGHT = exports.PORTAL_FRAME = exports.HAND_HIDDEN_PX = exports.BODY_DEPTH = void 0;
+exports.WALL_LIFT = exports.SKILL_ICONS = exports.MODELS = exports.DESTRUCTIBLE_MODELS = exports.ACCENTS = exports.SKELETON_ARM = exports.KNIGHT_ARM = exports.ARM_REACH = exports.SHOULDER_X = exports.SHOULDER_Y = exports.CORPSE = exports.SKELETON_MAGE = exports.SKELETON = exports.KNIGHT = exports.PORTAL_FRAME = exports.HAND_HIDDEN_PX = exports.BODY_DEPTH = void 0;
 exports.yawNarrow = yawNarrow;
 exports.shoulderOffset = shoulderOffset;
 exports.shoulderOffsetY = shoulderOffsetY;
@@ -269,6 +269,10 @@ const C = {
     waterHi: '#bfdbfe',
     bolt: '#c084fc',
     boltHi: '#e9d5ff',
+    /* 骷髅法师的法袍（2026-11-18）：暗紫三档，靠明度差读布料褶皱，不是渐变。 */
+    robe: '#3f2a5c',
+    robeHi: '#6b47a0',
+    robeDark: '#241636',
 };
 /* ------------------------------------------------------- characters (rigs) */
 /**
@@ -340,6 +344,37 @@ function skeletonPose(back, leftLift, rightLift, offLift, name) {
         // 正面：下颌 + 两个眼窝。
         b.box(-1, 9, 0, 3, 1, 1, C.boneDark);
         b.sym(1, 10, 0, 1, 1, 1, C.socket);
+    }
+    return b.model();
+}
+/**
+ * 骷髅法师的站姿：骨架 + 法袍。
+ *
+ * 只盖**下肢到胸**，不盖头骨的两侧 —— 兜帽留出眼窝那一格，紫色瞳孔是
+ * 「这只在施法」的第一识别点。袍子不分走动帧（袍摆本来就该垂着），
+ * 所以腿部用 `lift` 只影响露出来的脚踝。
+ */
+function skeletonMagePose(back, leftLift, rightLift, offLift, name) {
+    const b = new Builder(name, 4);
+    leg(b, 1, 1, leftLift, C.robeDark, C.bone);
+    leg(b, -1, 1, rightLift, C.robeDark, C.bone);
+    b.box(-1, 4, 0, 3, 1, 1, C.robeDark);
+    // 袍身 5 宽 4 高，中缝压暗一档 —— 一整块纯色在这个尺寸会读成"没有形状"。
+    b.box(-2, 5, 0, 5, 4, 1, C.robe);
+    b.box(0, 5, 0, 1, 4, 1, C.robeDark);
+    // 肩线亮一档：这是布，靠明度差和骨头的灰白分开。
+    b.box(-2, 8, 0, 5, 1, 1, C.robeHi);
+    // 副手（空手那侧）仍露一截骨头，避免整只变成一个色块。
+    b.box(3, 5 + offLift, 0, 1, 4, 1, C.boneDark);
+    b.box(3, 4 + offLift, 0, 1, 1, 1, C.bone);
+    // 兜帽：后脑整块盖住，正面只压一横条当帽檐，眼窝留出来。
+    b.box(-2, 9, 0, 5, 3, 1, C.robe);
+    if (back) {
+        b.box(-1, 9, 0, 3, 2, 1, C.robeDark);
+    }
+    else {
+        b.box(-1, 9, 0, 3, 1, 1, C.robeDark);
+        b.sym(1, 10, 0, 1, 1, 1, C.bolt);
     }
     return b.model();
 }
@@ -435,6 +470,14 @@ function bodyOf(name, blocks, pose) {
 }
 exports.KNIGHT = bodyOf('knight', 14, knightPose);
 exports.SKELETON = bodyOf('skeleton', 12, skeletonPose);
+/**
+ * 骷髅法师：同一副骨架，外面套一件暗紫法袍 + 兜帽，眼窝换成紫色。
+ *
+ * 为什么必须另做一套模型：`monster.xlsx` 里它（100002）此前和剑士共用
+ * 钢铁剑 + 灰白骨头，玩家在 22 只怪里根本分不出「哪只会在 6 秒后丢火球」。
+ * 设计 8.8 的同一句话适用于怪：**画面上读不出来的威胁等于不存在**。
+ */
+exports.SKELETON_MAGE = bodyOf('skeleton-mage', 12, skeletonMagePose);
 exports.CORPSE = corpse();
 /** Shoulder joint, measured from the feet: 28px up (block 7 boundary). */
 exports.SHOULDER_Y = 28;
@@ -463,6 +506,8 @@ exports.ACCENTS = {
     purple: '#c084fc',
     orange: '#fb923c',
     gold: C.gold,
+    // 法杖顶端的法力球：青色，和紫色法袍拉开对比（`staff:gem`，骷髅法师 2026-11-18）。
+    gem: C.gem,
 };
 function bladeShape(name, accent, great) {
     const b = new Builder(name, 4);
@@ -502,6 +547,25 @@ function bowShape(name, accent) {
     b.box(3, 8, 0, 1, 1, 1, limbHi);
     b.box(2, 9, 0, 1, 2, 1, limb);
     b.box(1, 11, 0, 1, 1, 1, limb);
+    return b.model();
+}
+/**
+ * 法杖：木杆 + 顶端一颗法力球（`accent` 决定球的颜色），杆上两圈铁箍。
+ *
+ * 球下面必须有一对"托"——一格宽的杆顶一颗三格宽的球，没有过渡会读成
+ * "球浮在杆旁边"。这是这一件和剑/弓的差别所在：前两者靠刃和弧线，
+ * 法杖靠"细杆 + 一个大头"的剪影对比。
+ */
+function staffShape(name, accent) {
+    const b = new Builder(name, 4);
+    b.box(0, 0, 0, 1, 10, 1, C.wood);
+    b.box(0, 0, 0, 1, 2, 1, C.grip);
+    b.box(0, 4, 0, 1, 1, 1, C.iron);
+    b.box(0, 7, 0, 1, 1, 1, C.iron);
+    b.box(-1, 9, 0, 1, 1, 1, C.iron);
+    b.box(1, 9, 0, 1, 1, 1, C.iron);
+    b.box(-1, 10, 0, 3, 2, 1, accent);
+    b.box(0, 11, 0, 1, 1, 1, shade(accent, 1.5));
     return b.model();
 }
 function arrowShape(name) {
@@ -609,6 +673,7 @@ const SHAPES = {
     blade: (name, accent) => bladeShape(name, accent, false),
     greatsword: (name, accent) => bladeShape(name, accent, true),
     bow: bowShape,
+    staff: staffShape,
     arrow: (name) => arrowShape(name),
     potion: potionShape,
     treasure: treasureShape,

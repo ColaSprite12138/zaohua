@@ -1,6 +1,6 @@
 # 游戏设计文档 · 2.5D 搜打撤（暂名）
 
-> **状态**：设计 v7.4（2026-11-18 00:40 更新），**已进入实现**。
+> **状态**：设计 v7.5（2026-11-18 01:50 更新），**已进入实现**。
 > **性质**：这是**设计与决策文档**，不是工程契约。工程契约仍在 `HANDOFF.md` 与各模块 `CONTEXT.md`。
 > **读法**：第 0 章看全貌（含**实现状态**）；第 13 章是决策总表；第 14 章是风险清单；
 > **第 15.0 是实现进度正本** —— 动任何功能前先看它，别重复做已完成的。
@@ -34,6 +34,10 @@
 >   `projectile`）与招数（`skills`）都进表，新增 `monster_skill.xlsx`；骷髅法师带火球 /
 >   禁魔诅咒 / 石化凝视，剑士带碎骨击。`silence` / `petrify` / `disarm` 终于有施加者。
 >   **睡（`sleep`）仍无来源**，留给「玩家控制技 / 会睡的怪」那一批。见 15.0
+> - v7.5 2026-11-18 01:50 **三种怪三种剪影**：法师此前和剑士共用灰白骨架 + 钢剑，站在
+>   地图上分不出来（`paint.ts` 只判了弓手）。新增 `SKELETON_MAGE`（暗紫法袍 + 兜帽 + 紫瞳）
+>   与 `staff:gem` 法杖（细杆 + 顶端青球，竖直单独绘制）。规则：**能做出不同行为的怪，
+>   剪影必须能分开**。见 10 章的取舍第 11 条
 
 ---
 
@@ -1017,7 +1021,7 @@ Dungeonborne 的教训：装备太稀有 → 玩家拿到就退游，且不敢�
 | **修理（5.2 / 7.4）** | ✅ 2026-11-17 | `workshop.xlsx`（`kind=repair` 的 `unit_price` / `step_pct` / `max_loss_pct`）：`repairQuote` / `repair`。`cost = ceil(补回量 × 单价 × 1.6^已修次数)`；**上限按补回量永久下降**（`maxLoss = ceil(补回量 × 0.25)`，硬底 1 点，写进 `ItemInstance.durabilityMax`），`repairs` 记次数。战斗侧 `durabilityMaxOf()` 是唯一上限读法（HUD / 投影 / 磨损全用它）；局外武器槽的细条与信息卡分母也换成实例上限 |
 | **工坊面板（局外）** | ✅ 2026-11-17 | 顶栏「工坊」按钮 + **默认收起**的面板。只列**现在能做点什么**的装备（洗过的 / 修满的整行消失）；行内显示词条摘要、`当前/上限`（被磨过标「修磨」）、「重铸 N」「修 N」两个按钮；买不起 / 已洗过 / 耐久满 = `disabled`；局内禁止。信息卡新增「重铸 x 次 · 修过 y 次」与「上限 a / b（修磨）」 |
 | **怪物技能（10.2 / 8.4）** | ✅ 2026-11-18 | `tables/monster_skill.xlsx`（`kind` = `projectile` / `burst`、`damage`、`cooldown`、`range`、`projectile`、`status`）+ `monster.xlsx` 的 `attack_kind` / `projectile` / `skills` 三列 + `combat/monster-skills.ts`（表 join / 校验 / `pickMonsterSkill` / `castMonsterSkill`）。**普攻形态也进表**：`attack-spec.ts::monsterSpec()` 改成查行，那个 `if (monsterId === '200001')` 与三处死值一起删了。AI：技能优先于普攻、**冷却最长（最贵）的先放**、**一进场就在冷却**（不让你一照面就被缴械）、放不出去（够不着 / 隔墙 / 翻滚躲掉）不占 CD |
-| **骷髅法师（第 3 种怪）** | ✅ 2026-11-18 | `monster.xlsx` 100002（`attack_kind: projectile`，普攻 `monster_bolt`，`skills` 三招）+ `projectile.xlsx` 的 `monster_bolt` / `silence_orb`（`status: silence`）/ `petrify_gaze`（`status: petrify`）；`arena.ldtk` 摆 2 只（院落与东廊各一）。剑士加 `sunder`（`burst` 96px，`disarm` 2 秒）。**弹道命中玩家时也会挂弹道自带的状态**（此前只对怪生效） |
+| **骷髅法师（第 3 种怪）** | ✅ 2026-11-18 | `monster.xlsx` 100002（`attack_kind: projectile`，普攻 `monster_bolt`，`skills` 三招）+ `projectile.xlsx` 的 `monster_bolt` / `silence_orb`（`status: silence`）/ `petrify_gaze`（`status: petrify`）；`arena.ldtk` 摆 2 只（院落与东廊各一）。剑士加 `sunder`（`burst` 96px，`disarm` 2 秒）。**弹道命中玩家时也会挂弹道自带的状态**（此前只对怪生效）。**剪影**：法师独立模型 `SKELETON_MAGE`（暗紫法袍 + 兜帽 + 紫瞳）+ `staff:gem` 法杖（竖直绘制、顶端青色光环），剑士 = 剑、弓手 = 弓 |
 | 组队 / 联机 | ⬜（第 1 版不做） | — |
 
 **技能两批踩到的取舍（2026-11-15）**：
@@ -1231,6 +1235,13 @@ Dungeonborne 的教训：装备太稀有 → 玩家拿到就退游，且不敢�
    玩家点了没反应只能怀疑鼠标坏了。现在会说「被缴械 · 这一下打不出去」。
 10. **`sleep` 没做**。它和"躺在地上的怪"绑在一起（受击即醒、首次受伤 +50%），
     比这四招复杂一档，留给"会睡的怪 / 玩家的控制技"那一批。
+11. **三种怪必须三种剪影**（2026-11-18 补）。第一版法师直接复用剑士的灰白骨架 + 钢剑，
+    `paint.ts` 里只有一个 `monsterId === '200001' ? 弓 : 剑` 的分支 —— 于是**新怪在地图上
+    看不见**：玩家找不到任何"多了一种怪"的证据，只看到 22 具长得一样的骷髅。
+    现在法师有 `SKELETON_MAGE`（暗紫法袍 + 兜帽 + 紫瞳）与 `staff:gem`（细杆 + 顶端青球 +
+    光晕，**单独竖直绘制**、不走挥砍旋转，否则细杆顶球会被转到斜下方读成扫帚）。
+    规则写死：**凡是能在画面上对玩家做出不同行为的怪，剪影必须能分开**（与 8.8
+    "看不见的 debuff 等于不存在"同一条）。单测钉住"法师模型 ≠ 剑士模型"。
 
 ---
 
