@@ -39,7 +39,8 @@ sharedStrings，**不读 `styles.xml`**。曾有两张表的 `styles.xml` 把 `<
 | `shop.xlsx` | `id, name, kind, item_id, qty, price, safe_cols` | `meta/shop.ts`（**金币出口**：`kind=potion` 买物品 / `kind=safe` 保险格扩容）；`meta-ui` 顶栏商店面板 |
 | `workshop.xlsx` | `id, kind, quality, cost, max_times, unit_price, step_pct, max_loss_pct` | `meta/workshop.ts`（**金币出口**：`kind=reforge` 洗词条（每件 `max_times` 次）/ `kind=repair` 修耐久（`unit_price` × `step_pct^次数`，并按补回量永久扣 `max_loss_pct` 的上限））；`meta-ui` 顶栏工坊面板 |
 | `weapon.xlsx` | `id, quality, weapon_subtype, damage_min, damage_max, durability, range` | `combat`（伤害、攻击方式、耐久上限、**近战可达距离**）、`meta`（品质颜色 / 耐久条） |
-| `monster.xlsx` | `id, name, loot_pool_id` | `combat`（怪物 → 掉落池） |
+| `monster.xlsx` | `id, name, loot_pool_id, walk_speed, attack_interval, attack_damage, xp, sense_radius, attack_kind, projectile, skills` | `combat`（手感值 + **普攻形态**（`attack_kind` / `projectile`）+ **招数列表**（`skills`，逗号分隔））；`attack-spec.ts::monsterSpec()` 只查这张表，没有第二个 `if (id === …)` |
+| `monster_skill.xlsx` | `id, name, kind, damage, cooldown, range, projectile, status, status_duration, hint` | `combat/monster-skills.ts`（**怪物技能**：`kind=projectile` 走弹道（状态挂在弹道行上）/ `kind=burst` 以怪为圆心的一次性范围 + 自带状态）。2026-11-18 加入；没有 `element` 列 —— 玩家侧没有元素反应链，写了也是死列 |
 | `loot_pool.xlsx` | `id, loot_pool_id, item_id, weight` | `combat`（权重掉落；武器阶梯 + 两瓶药） |
 | `skill.xlsx` | `id, name, cost, cooldown, cast_time, damage, reach, width, zone_radius, zone_life, hint` | `combat`（技能数值） |
 | `status.xlsx` | `id, name, category, duration, max_stacks, dot, move_mul, attack_interval_mul, damage_taken_mul, no_move, no_attack, no_skill, no_dodge, hint` | `combat`（状态数值） |

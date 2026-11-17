@@ -20,6 +20,7 @@
  */
 
 import { combat_rule } from '../resource/generated/combat_rule.ts';
+import { monster as monsterRows } from '../resource/generated/monster.ts';
 import { projectile as projectileRows } from '../resource/generated/projectile.ts';
 import { weapon } from '../resource/generated/weapon.ts';
 
@@ -170,25 +171,53 @@ export function weaponSpec(itemId: string | null | undefined): AttackSpec {
 }
 
 /**
- * Monster attack behaviour is keyed by the authored monsterId, not by the
- * player's weapon slots. 伤害 / 间隔仍来自 `monster.xlsx`（见 `enemies.ts`），
- * 这里只决定「用哪种形态出手」与弹道原型。
+ * 怪物普攻的形态，**按 `monster.xlsx` 的行派生**，不再按 id 写 if
+ * （2026-11-18 怪物技能批次）。
  *
- * 弓手是**非指向性**：朝你此刻站的地方射，走位能躲。这是设计上「不能只靠站着
- * 对轰」的那一半 —— 如果弓手也锁定，玩家挨箭就变成纯数值比大小。
+ * 表里两列决定它：
+ * - `attack_kind`：`melee` / `projectile`；
+ * - `projectile`：远程的弹道原型（`projectile.xlsx`）；近战留空。
+ *
+ * 伤害 / 间隔**不在这里**：`enemies.ts` 直接读同一行的 `attack_damage` /
+ * `attack_interval`。以前这个函数里写死过一份 `damage: 6` / `cooldown: 1.15`，
+ * 改表根本不生效 —— 那种「看着像配置的死值」比没有更坏。
+ *
+ * 远程一律 `directional`：弓手与法师都朝你**此刻**站的位置出手，走位能躲。
+ * 会追踪的远程会让「贴脸换血」变成唯一解，那是设计明确否决的。
+ *
+ * 表里没有这只怪（地图写了没配表的 id）时退回近战模板 —— 一只站着不动的怪
+ * 比一只打法粗暴的怪更难查。
  */
+const MONSTER_SPEC = new Map<string, AttackSpec>();
+const MONSTER_BY_ID = new Map(monsterRows.map((row) => [String(row.id), row]));
+
 export function monsterSpec(monsterId: string): AttackSpec {
-  if (monsterId === '200001') {
-    const arrow = projectileRow(MONSTER_ARROW_ID);
-    return Object.freeze({
-      id: 'monster_archer', kind: 'projectile' as const, damage: 6,
-      range: arrow.range, cooldown: 1.8, costKind: 'none' as const,
-      projectileId: MONSTER_ARROW_ID, targeting: 'directional' as const,
-      projectileSpeed: arrow.speed,
+  const cached = MONSTER_SPEC.get(monsterId);
+  if (cached !== undefined) return cached;
+  const row = MONSTER_BY_ID.get(monsterId);
+  // 显式放宽成 string：generated 是 `as const`，判别式收窄会把「melee 行的
+  // projectile 必为空」推成字面量联合，`!== ''` 反而报"不可能成立"。
+  const kind: string = row?.attack_kind ?? 'melee';
+  const projectileId: string = row?.projectile ?? '';
+  let spec: AttackSpec;
+  if (row !== undefined && kind === 'projectile' && projectileId !== '') {
+    const shot = projectileRow(projectileId);
+    spec = Object.freeze({
+      id: `monster:${monsterId}`, kind: 'projectile' as const,
+      damage: row.attack_damage, range: shot.range, cooldown: row.attack_interval,
+      costKind: 'none' as const,
+      projectileId, targeting: 'directional' as const,
+      projectileSpeed: shot.speed,
+    });
+  } else {
+    spec = Object.freeze({
+      id: `monster:${monsterId}`, kind: 'melee' as const,
+      damage: row?.attack_damage ?? 0,
+      range: combat_rule[0].monster_strike_range,
+      cooldown: row?.attack_interval ?? 0,
+      costKind: 'none' as const,
     });
   }
-  return Object.freeze({
-    id: 'monster_melee', kind: 'melee' as const, damage: 6,
-    range: 40, cooldown: 1.15, costKind: 'none' as const,
-  });
+  MONSTER_SPEC.set(monsterId, spec);
+  return spec;
 }

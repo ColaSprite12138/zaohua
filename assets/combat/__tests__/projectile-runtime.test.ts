@@ -6,6 +6,7 @@ import {
 import { fireRangedAt } from '../ranged.ts';
 import { weaponSpec } from '../attack-spec.ts';
 import { NO_MODIFIERS } from '../modifiers.ts';
+import { projectile as projectileRows } from '../../resource/generated/projectile.ts';
 import type { ArenaMap } from '../world.ts';
 import type { GameState } from '../state.ts';
 
@@ -56,12 +57,18 @@ function walledMap(): ArenaMap {
 
 describe('projectile table join', () => {
   it('exposes one profile per authored row', () => {
-    expect(Object.keys(PROJECTILES).sort()).toEqual(['arrow', 'fireball', 'monster_arrow']);
+    // 不钉死行数：加一种弹道（毒箭 / 追踪飞弹）不该要改这条断言，
+    // 但「表里每一行都有 profile、且没有多出来的」必须成立。
+    expect(Object.keys(PROJECTILES).sort()).toEqual(projectileRows.map((r) => String(r.id)).sort());
     expect(projectileProfile('arrow').visual).toBe('arrow');
     expect(projectileProfile('fireball').splashRadius).toBeGreaterThan(0);
     expect(projectileProfile('fireball').element).toBe('fire');
     expect(projectileProfile('fireball').zoneRadius).toBeGreaterThan(0);
     expect(projectileProfile('monster_arrow').element).toBeNull();
+    // 怪物技能的状态**挂在弹道上**（monster_skill.xlsx 不允许重复写）；
+    // 这条同时守住「表里的 status 字符串真的被解析成状态 id」。
+    expect(projectileProfile('silence_orb').status).toBe('silence');
+    expect(projectileProfile('petrify_gaze').status).toBe('petrify');
   });
 
   it('refuses an id with no row instead of flying a bullet with no numbers', () => {

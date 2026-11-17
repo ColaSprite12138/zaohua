@@ -238,17 +238,24 @@ export default async function projectile(play) {
     const empty = await play.state('game.state');
     if (empty.ammo !== 0) throw new Error(`箭应该射空了，还剩 ${empty.ammo}`);
     const attacksBefore = empty.attacks;
-    const statsBefore = empty.projectileStats.fired;
-    const { sk } = nearestMonster(empty);
-    if (sk !== null) {
+    const statsBefore = empty.projectileStats.playerFired;
+    // 玩家这时可能正被缴械 / 石化（骷髅剑士的碎骨击、法师的凝视——2026-11-18）：
+    // 普攻入口会先报那一句，而不是「没有箭」。所以这里**重试到真的说出
+    // 「没有箭」**为止，而不是放宽断言 —— 断言仍然要求那句话真的出现。
+    let toastText = '';
+    for (let i = 0; i < 25 && !/没有箭/.test(toastText); i += 1) {
+      const now = await play.state('game.state');
+      const { sk } = nearestMonster(now);
+      if (sk === null) throw new Error('没有活着的怪可以射');
       await play.mouse.click([clamp(sk.x, 0.1, 0.9), clamp(sk.y, 0.1, 0.9)]);
-      await play.advance(0.3);
+      await play.advance(0.2);
+      toastText = (await play.state('game.state')).toast?.text ?? '';
     }
     const refused = await play.state('game.state');
     if (refused.attacks !== attacksBefore) throw new Error('没箭了还打出了一发（attacks 变了）');
-    if (refused.projectileStats.fired !== statsBefore) throw new Error('没箭了还射出了飞行体');
-    if (!refused.toast || !/没有箭/.test(refused.toast.text)) {
-      throw new Error(`拒绝必须说话，实际提示是 ${JSON.stringify(refused.toast)}`);
+    if (refused.projectileStats.playerFired !== statsBefore) throw new Error('没箭了还射出了飞行体');
+    if (!/没有箭/.test(toastText)) {
+      throw new Error(`拒绝必须说话，实际提示是 ${JSON.stringify(toastText)}`);
     }
     await play.screenshot('projectile-out-of-ammo');
   });

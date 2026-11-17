@@ -138,7 +138,8 @@ describe('arena population and loot settlement', () => {
     expect(real.map((sk) => sk.monsterId))
       .toEqual(arena.monsters.map((m) => m.monsterId));
     expect(new Set(real.map((sk) => `${sk.x},${sk.y}`)).size).toBe(arena.monsters.length);
-    expect(new Set(real.map((sk) => sk.monsterId)).size).toBe(2);
+    // 骷髅剑士 / 骷髅弓手 / 骷髅法师：地图上现身过的种类（加了新怪就改这条）。
+    expect(new Set(real.map((sk) => sk.monsterId)).size).toBe(3);
   });
 
   it('a kill rolls loot, labels the drop, and records it in lootLog', () => {

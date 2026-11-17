@@ -104,7 +104,8 @@ describe('resource table contract', () => {
     // 13 件武器/弹药 + 2 瓶药（2026-11-15，见 8.3）+ 3 件收藏品（2026-11-17，见 5.1）。
     expect(item).toHaveLength(18);
     expect(weapon).toHaveLength(13);
-    expect(monster).toHaveLength(2);
+    // 骷髅剑士 / 骷髅弓手 + 骷髅法师（2026-11-18 怪物技能批次）。
+    expect(monster).toHaveLength(3);
     // 16 行怪物池 + 14 行可破坏物池（2026-11-16，设计 10.5：木箱/铜箱走池 3，
     // 舍利匣走池 4 —— 可破坏物不能只有剑池那点收益）。
     // +3 行箭矢（2026-11-16 弹道落地：池 1/2 各一行，可破坏物池 3 一行）——
@@ -203,6 +204,50 @@ describe('resource table contract', () => {
       // 上限损耗是「修不如重铸」的另一半：没有它，修理就变成无限续命。
       expect(row.max_loss_pct).toBeGreaterThan(0);
       expect(row.max_loss_pct).toBeLessThan(1);
+    }
+  });
+
+  it('monster_skill.xlsx is the only place a monster attack lives', async () => {
+    const { monster } = await import('../generated/monster.ts');
+    const { monster_skill } = await import('../generated/monster_skill.ts');
+    const { projectile } = await import('../generated/projectile.ts');
+    const shots = new Map(projectile.map((r) => [String(r.id), String(r.status)]));
+    for (const row of monster_skill) {
+      expect(row.cooldown, row.id).toBeGreaterThan(0);
+      expect(row.range, row.id).toBeGreaterThan(0);
+      if (row.kind === 'projectile') {
+        expect(shots.has(String(row.projectile)), `${row.id} 指向不存在的弹道`).toBe(true);
+        // 状态挂在弹道上（唯一来源）；技能行里再写一份必然漂移。
+        expect(String(row.status), `${row.id} 的 status 应写在 projectile.xlsx 上`).toBe('');
+      } else {
+        expect(row.kind, row.id).toBe('burst');
+        expect(String(row.projectile), `${row.id} 是 burst，不该有弹道`).toBe('');
+      }
+    }
+    for (const row of monster) {
+      // 普攻形态也进了表（以前是 attack-spec.ts 里的一个 if）。
+      expect(['melee', 'projectile'], row.id).toContain(String(row.attack_kind));
+      if (row.attack_kind === 'projectile') {
+        expect(shots.has(String(row.projectile)), `${row.id} 的普攻弹道不存在`).toBe(true);
+      } else {
+        expect(String(row.projectile), `${row.id} 是近战，不该有普攻弹道`).toBe('');
+      }
+      for (const id of String(row.skills).split(',').filter((s) => s !== '')) {
+        expect(
+          monster_skill.some((s) => String(s.id) === id),
+          `${row.id} 引用了不存在的技能 ${id}`,
+        ).toBe(true);
+      }
+    }
+    // 三条原先没有来源的状态，现在各自都有施加者（睡留给下一批）。
+    const applied = new Set<string>();
+    for (const row of monster_skill) {
+      if (String(row.status) !== '') applied.add(String(row.status));
+      const viaShot = shots.get(String(row.projectile));
+      if (viaShot !== undefined && viaShot !== '') applied.add(viaShot);
+    }
+    for (const id of ['silence', 'petrify', 'disarm']) {
+      expect(applied.has(id), `${id} 仍然没有施加者`).toBe(true);
     }
   });
 

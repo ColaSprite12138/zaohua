@@ -425,7 +425,13 @@ export function projection(s: GameState) {
         slot: s.cast.slot,
         progress: s.cast.total > 0 ? Math.min(1, s.cast.t / s.cast.total) : 1,
       },
-    /** 玩家身上的状态（当前没有怪物技能会施加，等下一批；结构先留好）。 */
+    /**
+     * 玩家身上的状态（硬控 / 软控 / DOT）。
+     *
+     * 2026-11-18 起有了真实来源：骷髅法师的禁魔弹 / 石化凝视、剑士的碎骨击。
+     * 和怪物同一种快照格式，验收脚本用同一套断言
+     * （`playthrough-monster-skill.mjs` 就靠它证明「沉默真的挂上了」）。
+     */
     playerStatuses: statusSnapshot(s.player),
     /**
      * 地面区域（火墙 / 毒池 / 冰面）：坐标屏幕归一化，验收脚本可以直接断言

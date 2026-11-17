@@ -44564,6 +44564,114 @@
         1424,
         4192
        ]
+      },
+      {
+       "__grid": [
+        35,
+        32
+       ],
+       "__identifier": "Monster",
+       "__pivot": [
+        0.5,
+        1
+       ],
+       "__smartColor": "#C084FC",
+       "__tags": [],
+       "__tile": null,
+       "defUid": 21,
+       "fieldInstances": [
+        {
+         "__identifier": "monsterId",
+         "__type": "String",
+         "__value": "100002",
+         "__tile": null,
+         "defUid": 22,
+         "realEditorValues": [
+          {
+           "id": "V_String",
+           "params": [
+            "100002"
+           ]
+          }
+         ]
+        },
+        {
+         "__identifier": "wave",
+         "__type": "Int",
+         "__value": 1,
+         "__tile": null,
+         "defUid": 23,
+         "realEditorValues": [
+          {
+           "id": "V_Int",
+           "params": [
+            1
+           ]
+          }
+         ]
+        }
+       ],
+       "height": 32,
+       "width": 32,
+       "iid": "9d94ae4d-86a9-4eea-98c5-64bbd1acf405",
+       "px": [
+        1136,
+        1056
+       ]
+      },
+      {
+       "__grid": [
+        227,
+        32
+       ],
+       "__identifier": "Monster",
+       "__pivot": [
+        0.5,
+        1
+       ],
+       "__smartColor": "#C084FC",
+       "__tags": [],
+       "__tile": null,
+       "defUid": 21,
+       "fieldInstances": [
+        {
+         "__identifier": "monsterId",
+         "__type": "String",
+         "__value": "100002",
+         "__tile": null,
+         "defUid": 22,
+         "realEditorValues": [
+          {
+           "id": "V_String",
+           "params": [
+            "100002"
+           ]
+          }
+         ]
+        },
+        {
+         "__identifier": "wave",
+         "__type": "Int",
+         "__value": 2,
+         "__tile": null,
+         "defUid": 23,
+         "realEditorValues": [
+          {
+           "id": "V_Int",
+           "params": [
+            2
+           ]
+          }
+         ]
+        }
+       ],
+       "height": 32,
+       "width": 32,
+       "iid": "064cf115-8698-42b5-b9f1-64acec33eba8",
+       "px": [
+        7280,
+        1056
+       ]
       }
      ]
     },

@@ -621,6 +621,17 @@ export interface Skeleton {
   awake: boolean;
   /** 本帧的移动目标：追人 / 守门（撤离阶段）/ 原地。纯观测，AI 用它算路。 */
   goal: 'player' | 'portal' | 'none';
+  /**
+   * 每个**怪物技能**的剩余冷却，按 `monster.xlsx::skills` 的顺序一一对应
+   * （`monster-skills.ts::monsterSkillsOf()` 是唯一读序的地方）。
+   *
+   * 存成稀疏数组而不是定长：`state.ts` 不能 import 技能表（那会把
+   * `projectile-runtime` 拉进状态模块，形成真正的运行时环）。没写过的位置
+   * 一律当 0（= 立刻可放），写回时按下标补上，长度自然长成技能数。
+   *
+   * 可选：单测 / 验收夹具手搓 `Skeleton` 字面量时不必关心冷却（缺省 = 全就绪）。
+   */
+  skillCd?: number[];
 }
 
 /**
@@ -889,6 +900,14 @@ export interface Player {
 export interface ProjectileStats {
   /** 出手次数（玩家 + 怪物）。 */
   fired: number;
+  /**
+   * 其中**玩家**出手的次数。
+   *
+   * `fired` 是两边混着数的：地图上 20 只弓手/法师一刻不停地在射，验收脚本要
+   * 断言「这一下没打出飞行体」时会被它们的箭粒掉。分成两个计数器，而不是让
+   * 脚本去猜（2026-11-18 怪物技能批次踩到）。
+   */
+  playerFired: number;
   /** 命中身体的次数（含穿透的第二、三个目标）。 */
   hits: number;
   /** 打中玩家的次数。 */
@@ -905,7 +924,7 @@ export interface ProjectileStats {
 
 export function zeroProjectileStats(): ProjectileStats {
   return {
-    fired: 0, hits: 0, playerHits: 0,
+    fired: 0, playerFired: 0, hits: 0, playerHits: 0,
     blocked: 0, outOfBounds: 0, fizzled: 0, splashes: 0,
   };
 }
@@ -1156,6 +1175,7 @@ export function spawnFromMap(map: ArenaMap): Skeleton[] {
     statuses: [],
     awake: false,
     goal: 'none',
+    skillCd: [],
   }));
 }
 

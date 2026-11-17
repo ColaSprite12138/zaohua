@@ -174,6 +174,13 @@ run_json projectile "$FX" project play \
   --script scripts/playthrough-projectile.mjs --json
 check_report projectile artifacts/play/scripts/playthrough-projectile/play.json 6
 
+# 怪物技能（2026-11-18，设计 10.2 / 8.4）：法师真的会丢火球、地上真的留火、
+# 禁魔弹真的让玩家沉默。这三条是「四条无来源状态终于有施加者」的可视证明，
+# 而且必须走真地图 —— 夹具里没有法师，也就没有「走位能躲」这回事。
+run_json monster-skill "$FX" project play \
+  --script scripts/playthrough-monster-skill.mjs --json
+check_report monster-skill artifacts/play/scripts/playthrough-monster-skill/play.json 4
+
 # 伤害来源 / 自伤免疫（2026-11-16，用户报「踩自己的火墙掉血」）：自己铺的火墙站进去
 # 不掉血也不挂点燃，同一套元素砸在怪身上照样烧 —— 两条合起来才证明判定是**按阵营**。
 run_json source "$FX" project play \

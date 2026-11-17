@@ -566,10 +566,10 @@ combat/ranged.ts           ← state + attack-spec + projectile-runtime + attack
 combat/reactions.ts        ← state + status + attack(伤害入口) + effects；元素附着 / 5 条反应 / DOT / 地面区域
 combat/movement.ts         ← state + effects + attack + status(禁移动/减速) + world
 combat/skills.ts           ← state + effects + attack + projectile-runtime(`fireProjectile`) + reactions + status + movement(`canStand`) + modifiers(类型)
-combat/enemies.ts          ← state + effects + status(硬控/减速/迟滞) + attack-spec(形态) + projectile-runtime(弓手放箭) + loot(monsterRow 取手感) + world
+combat/monster-skills.ts   ← generated/monster_skill + generated/monster + status(applyStatus) + attack(damagePlayer) + effects + projectile-runtime + world；**怪物技能的 join / 校验 / 施放**（2026-11-18）
+combat/enemies.ts          ← state(类型 + `MONSTER_SWING_TIME`) + effects + status(硬控/减速/迟滞) + attack-spec(普攻形态) + monster-skills(招数) + projectile-runtime + loot(monsterRow 取手感) + world；**AI 与惊醒模型**（`wakeNoise()` 也在这里）
 combat/weapons.ts          ← state + effects
 combat/loot.ts             ← resource/generated/*.ts（只消费生成物，不读 xlsx）；`rollPool()` 是唯一抽样算法
-combat/enemies.ts          ← state + effects + status + loot + world；**惊醒模型**（`wakeNoise()` 也在这里）
 combat/destructibles.ts    ← state + effects(`pinPlayer`) + enemies(`wakeNoise`) + loot(`rollPool`) + world
 combat/events.ts           ← state + destructibles(def) + enemies(wakeNoise) + effects + world
 combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯一对外门面
@@ -664,6 +664,48 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 `pierce` 这一列全是 0（没有穿透弹，机制与单测已就位）；非指向性目前**只能由技能或怪物发出**，
 玩家没有「按住某键朝光标射一发」的键位（`Q W T F G V C` 全给技能了，等输入批次）；
 `magic_bolt`（追踪法术）没有做成技能，表里也没留空行 —— 等技能库批次；怪物不会**边退边射**。
+
+## 怪物技能（设计 10.2 / 8.4，2026-11-18）
+
+**目标**：把「什么怪会什么招」从代码搬进表。此前 `attack-spec.ts::monsterSpec()` 是一个
+`if (monsterId === '200001')`，里面还写死了 `damage: 6` / `cooldown: 1.15` / `range: 40`
+——而 `enemies.ts` 实际读的是表里的 `attack_damage` / `attack_interval`，也就是说
+**那三个数字改了不生效**。现在它只剩「查行 + 缓存」。
+
+### 表
+
+| 表 | 管什么 |
+|:--|:--|
+| `monster.xlsx` | `attack_kind`（`melee` / `projectile`）、`projectile`（普攻弹道，近战留空）、`skills`（逗号分隔的招数 id，**顺序就是 AI 冷却数组的下标**） |
+| `monster_skill.xlsx` | 一行一招：`kind`（`projectile` / `burst`）、`damage`、`cooldown`、`range`（弹道=施放距离 / burst=半径）、`projectile`、`status`、`status_duration`、`hint`。**没有 `element` 列**：玩家侧没有元素反应链（`applyElement` 只吃怪物下标），写了也是死列 |
+| `projectile.xlsx` | 弹道的速度 / 射程 / 半径 / 溅射 / **`status`**（弹道技能的状态挂在这里） |
+
+### 契约
+
+- **状态挂在弹道上，不挂在技能上**：`monster_skill.xlsx` 里 `kind=projectile` 的行填了
+  `status` 会**加载即抛错**。同一条弹道给谁用都长一样，「沉默箭」就是「会沉默的弹」。
+  只有 `burst`（没有弹道可挂）允许自带 `status`。
+- **`monster.xlsx::skills` 写错 = 抛错**：`monsterSkillsOf()` 在解析时校验，别让「那只怪
+  静默没技能」变成线上问题。
+- **AI 顺序**：技能优先于普攻；`pickMonsterSkill()` 选**冷却最长（最贵）**的那一招，
+  否则法师的石化（18s）永远抢不过火球（6s）。放出去的那一帧不走也不普攻。
+- **一进场就在冷却**（初始 `skillCd[i] = cooldown`）：否则剑士看见你就缴械，玩家一刀都出不来。
+- **白放不占 CD**：够不着 / 隔墙（`lineOfSight`）/ 被翻滚躲掉（`invuln`）都返回 `false`。
+- **射程必须够得着站位**：远程怪停在 `0.9 × 普攻弹道射程`，技能射程比它短就永远不放；
+  单测有一条专门守这个（`a projectile monster can reach the distance it stops at`）。
+- **弹道命中玩家时也挂弹道状态**：`resolveHit()` 的玩家分支此前只扣血 ——
+  `monster_arrow` 没有 `status`，所以从没人发现。沉默 / 石化靠这一条才成立。
+
+### 落地的四招
+
+| 技能 | 怪 | 形态 | 效果 |
+|:--|:--|:--|:--|
+| `mage_fireball` 火球 | 100002 骷髅法师 | `projectile: fireball` | 14 伤、落点炸开 + 留火；CD 6 |
+| `mage_silence` 禁魔诅咒 | 100002 | `projectile: silence_orb` | 6 伤 + **`silence` 2 秒**；CD 10 |
+| `mage_petrify` 石化凝视 | 100002 | `projectile: petrify_gaze` | 5 伤 + **`petrify` 2 秒**；CD 18 |
+| `sunder` 碎骨击 | 100001 骷髅剑士 | `burst` 96px | 9 伤 + **`disarm` 2 秒**；CD 9 |
+
+`sleep` 仍无来源（它和"躺着的怪 / 受击即醒"绑在一起，留给下一批）。
 
 ## 死亡掉落与保险格（设计 4 / 5.2，2026-11-15 深夜）
 
@@ -774,6 +816,8 @@ node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真�
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-worldmap.mjs --json # 分区 / 大地图：四区走一圈 + M 开关 + 1280x600
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-source.mjs --json # 伤害来源：站自己火墙里不掉血 + 同一片火烧得到怪
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-facing.mjs --json # 朝向：八方向各走一遍，朝向跟随移动方向（16 档）
+./node_modules/.bin/forgeax project play --script scripts/playthrough-monster-skill.mjs --json # 怪物技能：法师丢火球 + 降沉默，真地图
+./node_modules/.bin/forgeax project play --script scripts/playthrough-projectile.mjs --json # 弹道：锁定箭 / 火球 / 骷髅箭 / 箭矢按件消耗
 
 ```
 

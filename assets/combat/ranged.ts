@@ -38,7 +38,10 @@ const RANGE_SLACK = 8;
 export function resolveAttackOrder(s: GameState, mods: CombatModifiers): void {
   if (s.player.dodge > 0 || !s.attackOrder || s.targetEnemy === null) return;
   // 缴械 / 硬控（晕眩、冻结、麻痹…）：普攻入口在这里一次性挡住。
+  // **必须说一句话**：静默吞掉会让「点了没反应」看起来像卡了 —— 这一句也是
+  // 玩家第一次知道「打我的是缴械，不是我的鼠标」（2026-11-18 怪物技能批次）。
   if (lockedFlags(s.player).noAttack) {
+    say(s, '被缴械 · 这一下打不出去');
     clearAttackOrder(s);
     return;
   }

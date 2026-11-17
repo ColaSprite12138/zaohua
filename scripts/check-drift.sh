@@ -33,8 +33,14 @@ PROTECTED=(
   assets/meta/workshop.ts
   assets/resource/tables/shop.xlsx
   assets/resource/tables/workshop.xlsx
+  assets/combat/attack-spec.ts
+  assets/combat/monster-skills.ts
+  assets/combat/enemies.ts
+  assets/resource/tables/monster.xlsx
+  assets/resource/tables/monster_skill.xlsx
   scripts/playthrough.mjs
   scripts/playthrough-resize.mjs
+  scripts/playthrough-monster-skill.mjs
   scripts/verify-all.sh
   HANDOFF.md
 )

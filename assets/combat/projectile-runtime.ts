@@ -189,6 +189,7 @@ export function fireProjectile(s: GameState, options: FireOptions): Projectile |
   });
   s.projectiles.push(made);
   s.projectileStats.fired += 1;
+  if (options.owner === 'player') s.projectileStats.playerFired += 1;
   // 出手的一小簇火花：远程攻击必须「看得见从哪出去的」，否则读成凭空掉血。
   burst(s, from.x, from.y, profile.visual === 'orb' ? '#fb923c' : '#e8e4d8', 5, 80);
   return made;
@@ -242,11 +243,16 @@ function resolveHit(s: GameState, hit: ProjectileHit): void {
     if (index !== null) damageMonster(s, index, damage, hit.projectile, profile, 1);
   } else {
     // 无敌帧（闪避 / 受击硬直）在这里生效：翻滚躲开一支箭是设计允许的答案。
-    damagePlayer(s, damage, {
-      color: '#ff6b6b',
-      source: sourceOf(hit.projectile, profile),
-    });
+    const src = sourceOf(hit.projectile, profile);
+    const hpBefore = s.hp;
+    damagePlayer(s, damage, { color: '#ff6b6b', source: src });
     s.projectileStats.playerHits += 1;
+    // 弹道自带的状态（`projectile.xlsx::status`，例如禁魔弹 / 石化凝视）：
+    // 扣到血才挂，翻滚躲开的那一发不该留下 debuff。玩家侧没有元素反应链，
+    // 所以这里**只上状态**，不调 `applyElement`（那是给怪挂附着用的）。
+    if (profile.status !== null && s.hp < hpBefore && !s.gameOver) {
+      applyStatus(s.player, profile.status, { source: src });
+    }
   }
   explode(s, profile, hit.projectile, hit.x, hit.y, hit.target.kind === 'monster' ? monsterIndexOf(hit.target.id) : null);
 }

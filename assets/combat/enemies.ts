@@ -14,6 +14,7 @@ import { monsterSpec } from './attack-spec.ts';
 import { damagePlayer } from './attack.ts';
 import { burst } from './effects.ts';
 import { monsterRow } from './loot.ts';
+import { castMonsterSkill, monsterSkillsOf, pickMonsterSkill } from './monster-skills.ts';
 import { fireProjectile } from './projectile-runtime.ts';
 import { monsterSource } from './source.ts';
 import {
@@ -109,6 +110,10 @@ export function updateSkeletons(s: GameState, dt: number): void {
     sk.swing = Math.max(0, sk.swing - dt);
     sk.bob += dt * 3.4;
     sk.repath = Math.max(0, sk.repath - dt);
+    // 技能冷却：数组是按 `monster.xlsx::skills` 的顺序建的（稀疏，未写过的当 0）。
+    if (sk.skillCd !== undefined && sk.skillCd.length > 0) {
+      sk.skillCd = sk.skillCd.map((cd) => Math.max(0, cd - dt));
+    }
     const sdx = p.x - sk.x;
     const sdy = p.y - sk.y;
     const sd = Math.hypot(sdx, sdy);
@@ -150,6 +155,33 @@ export function updateSkeletons(s: GameState, dt: number): void {
     // 箭全部飞到一半消散，看起来像「弓手在乱射」。
     const spec = monsterSpec(sk.monsterId);
     const engage = spec.kind === 'projectile' ? spec.range * 0.9 : STRIKE_RANGE;
+
+    // 技能优先于普攻（2026-11-18）：射程内、CD 好、没被控住就放，放完这一帧
+    // 不再走也不再砍 —— 一次出手只结算一件事，读起来才不会像"同时挥刀又施法"。
+    // 沉默 / 缴械同样封住怪物：它们和玩家读同一张状态表（`lockedFlags`）。
+    const skills = monsterSkillsOf(sk.monsterId);
+    if (skills.length > 0) {
+      const cds = sk.skillCd ?? (sk.skillCd = []);
+      for (let i = 0; i < skills.length; i += 1) {
+        // 第一次见到这只怪：**技能一进场就在冷却中**。否则剑士看见你就缴械，
+        // 玩家一刀都砍不出来，也读不到任何预兆 —— 起手该先是一次普攻。
+        if (cds[i] === undefined) cds[i] = skills[i]!.cooldown;
+      }
+    }
+    if (goal === 'player' && skills.length > 0 && !locks.noSkill && !locks.noAttack) {
+      const at = pickMonsterSkill(sk, skills, sd);
+      if (at >= 0) {
+        const def = skills[at]!;
+        if (castMonsterSkill(s, sk, def)) {
+          const cds = sk.skillCd ?? (sk.skillCd = []);
+          cds[at] = def.cooldown;
+          sk.path = [];
+          sk.moving = false;
+          continue;
+        }
+      }
+    }
+
     if (locks.noMove) {
       // 动不了（晕眩 / 冻结 / 麻痹 / 禁锢 / 石化 / 睡眠）：不走路、不绕路，
       // 但仍要维持「面朝玩家」的姿势，否则画面上一只会被冻成背对。
