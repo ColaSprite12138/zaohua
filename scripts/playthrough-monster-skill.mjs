@@ -129,4 +129,38 @@ export default async function monsterSkill(play) {
     const st = await play.state('game.state');
     throw new Error(`16 秒内没有中过禁魔弹（玩家状态=${JSON.stringify(st.playerStatuses.map((s) => s.id))}）`);
   });
+
+  // 状态栏（2026-11-18 用户要求）：技能栏上方一行正方形图标，不悬停看时针阴影，
+  // 悬停看名字 / 描述 / 剩余时间。绘制在 canvas 里，node 断言不了像素，所以这一节
+  // 钉的是「剩余时间真的在走」+ 抓两张图自证；几何与文案由 `status-bar.test.ts` 守。
+  //
+  // 一口气做完，不拆成两步：站在法师跟前每秒都在掉血，「等一个够长的状态」这种写法
+  // 第一次跑就把玩家等死了（hp=0，20 秒里没等到第二条 ≥1 秒的状态）。
+  await play.step('the status row above the skill bar draws a clock, and hover explains it', async () => {
+    for (let i = 0; i < 120; i += 1) {
+      const st = await play.state('game.state');
+      if (st.gameOver) throw new Error(`等状态栏的时候被打死了（hp=${st.hp}）`);
+      const live = st.playerStatuses.find((s) => s.left >= 1);
+      if (live !== undefined) {
+        await play.screenshot('status-row-clock');
+        // 第一格的中心：技能栏左端 504、行底 622-10、格 34（见 assets/game/status-bar.ts）
+        await play.mouse.move([(504 + 17) / VIEW_W, (622 - 10 - 34 + 17) / VIEW_H]);
+        await play.advance(0.1);
+        await play.screenshot('status-row-tooltip');
+        // 剩余时间必须真的在走：状态栏画的是 `left`，它不动 = 时针阴影也不会动。
+        await play.advance(0.25);
+        const after = await play.state('game.state');
+        const same = after.playerStatuses.find((s) => s.id === live.id);
+        if (same !== undefined && same.left >= live.left) {
+          throw new Error(`${live.id} 的剩余时间没有递减（${live.left} → ${same.left}）`);
+        }
+        return;
+      }
+      const { sk, d } = nearestOf(st, MAGE);
+      if (sk === null) throw new Error('法师死了，没法再给玩家挂状态');
+      if (d > 460) await stepToward(play, st, sk);
+      await play.advance(0.05);
+    }
+    throw new Error('10 秒内没有出现剩余 ≥1 秒的状态，状态栏无从截起');
+  });
 }

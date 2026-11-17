@@ -43,6 +43,7 @@ import {
   zoneAt,
   zoneRect,
   type StatusId,
+  type StatusInstance,
   type DestructibleObj,
   type Drop,
   type GameState,
@@ -96,6 +97,17 @@ import {
 // 挥砍运动学是**纯数学**，单独成文件（`swing.ts`）并带单测：
 // 弧线必须围绕目标方向，而不是围绕"屏幕向下"。详见该文件头注释。
 import { bladeAngle, ease, handPose } from './swing.ts';
+// 状态栏的布局 / 命中 / 进度也是纯函数（`status-bar.ts`）：画出来的矩形与命中判定
+// 必须是同一份数据，否则会出现「指着图标但提示不出来」。
+import {
+  STATUS_CATEGORY_LABEL,
+  formatStatusSeconds,
+  statusBarHit,
+  statusBarLayout,
+  statusGlyph,
+  statusSweep,
+  type StatusIconRect,
+} from './status-bar.ts';
 
 export type Painter = CanvasRenderingContext2D;
 
@@ -1733,7 +1745,143 @@ function drawCastBar(g: Painter, s: GameState): void {
   text(g, def?.name ?? '读条', p.x, y - 12, 11, '#8be9fd', 'center', '700');
 }
 
-function hud(g: Painter, s: GameState): void {
+/**
+ * 一格状态图标：正方形底板 + 一个汉字 + 顺时针时针阴影 + 层数角标。
+ *
+ * 阴影画在字**上面**：「已经过去多久」要能一眼盖住字形，否则 3 秒的硬控和刚上身的
+ * 硬控看起来一模一样。时针那条边单独描一条 1px 亮线，没有它扇形边缘会读成「糊了」。
+ */
+function drawStatusIcon(
+  g: Painter,
+  rect: StatusIconRect,
+  inst: StatusInstance,
+  color: string,
+  hovered: boolean,
+): void {
+  const x = Math.round(rect.x);
+  const y = Math.round(rect.y);
+  const size = rect.size;
+  const cx = x + size / 2;
+  const cy = y + size / 2;
+  // 底板要够亮，阴影才读得出来：深灰底 + 黑阴影 = 两团黑，等于没画。
+  g.fillStyle = 'rgba(28,42,56,0.92)';
+  g.fillRect(x, y, size, size);
+  text(g, statusGlyph(inst.id), cx, cy + 1, Math.round(size * 0.5), color, 'center', '800');
+
+  // 已流逝的比例 → 从 12 点顺时针扫过的扇形。扫满 = 到点。
+  // 悬停的那一格不画阴影：两种读法（时钟 / 说明）不共存，指针指着它时就该看清字形，
+  // 精确剩余时间交给上面那块面板。
+  const frac = hovered ? 0 : statusSweep(inst.left, inst.total);
+  if (frac > 0.0001) {
+    const a0 = -Math.PI / 2;
+    const a1 = a0 + frac * Math.PI * 2;
+    g.save();
+    g.beginPath();
+    g.rect(x, y, size, size);
+    g.clip();
+    g.beginPath();
+    g.moveTo(cx, cy);
+    // 半径取整个边长：扇形要盖到四角，否则正方形四角永远亮着
+    g.arc(cx, cy, size, a0, a1);
+    g.closePath();
+    g.fillStyle = 'rgba(0,0,0,0.68)';
+    g.fill();
+    g.beginPath();
+    g.moveTo(cx, cy);
+    g.lineTo(cx + Math.cos(a1) * size, cy + Math.sin(a1) * size);
+    g.strokeStyle = color;
+    g.globalAlpha = 0.95;
+    g.lineWidth = 1;
+    g.stroke();
+    g.restore();
+  }
+
+  // 边框：平时半透明，悬停实色 + 2px —— 指针在图标上必须一眼看出「我在说的是它」。
+  g.globalAlpha = hovered ? 1 : 0.5;
+  g.strokeStyle = color;
+  g.lineWidth = hovered ? 2 : 1;
+  g.strokeRect(x + 0.5, y + 0.5, size - 1, size - 1);
+  g.globalAlpha = 1;
+
+  if (inst.stacks > 1) {
+    text(g, `×${inst.stacks}`, x + size - 4, y + size - 7, 9, color, 'right', '800');
+  }
+}
+
+/** 悬停时的说明框：名字 + 剩余秒数 + 「分类 · 一句人话」。画在图标上方。 */
+function drawStatusTooltip(
+  g: Painter,
+  rect: StatusIconRect,
+  inst: StatusInstance,
+  def: { name: string; category: string; hint: string; color: string },
+): void {
+  const title = inst.stacks > 1 ? `${def.name} ×${inst.stacks}` : def.name;
+  const time = `剩 ${formatStatusSeconds(inst.left)} 秒`;
+  const cat = STATUS_CATEGORY_LABEL[def.category] ?? '';
+  const body = cat === '' ? def.hint : `${cat} · ${def.hint}`;
+  g.font = `600 11px ${FONT}`;
+  const bodyW = g.measureText(body).width;
+  g.font = `800 13px ${FONT}`;
+  const titleW = g.measureText(title).width;
+  g.font = `700 11px ${FONT}`;
+  const timeW = g.measureText(time).width;
+  const w = Math.round(Math.max(184, bodyW + 24, titleW + timeW + 44));
+  const h = 56;
+  let tx = Math.round(rect.x + rect.size / 2 - w / 2);
+  tx = Math.max(12, Math.min(VIEW_W - 12 - w, tx));
+  const ty = Math.max(12, Math.round(rect.y - 8 - h));
+  g.fillStyle = 'rgba(6,12,18,0.94)';
+  g.fillRect(tx, ty, w, h);
+  g.globalAlpha = 0.8;
+  g.strokeStyle = def.color;
+  g.lineWidth = 1;
+  g.strokeRect(tx + 0.5, ty + 0.5, w - 1, h - 1);
+  g.globalAlpha = 1;
+  // 顶部 2px 类型色：和图标同一套配色，扫一眼就知道是哪一条
+  g.fillStyle = def.color;
+  g.fillRect(tx, ty, w, 2);
+  text(g, title, tx + 10, ty + 18, 13, def.color, 'left', '800');
+  text(g, time, tx + w - 10, ty + 18, 11, '#e8f4ff', 'right', '700');
+  text(g, body, tx + 10, ty + 40, 11, '#a9c4d6', 'left', '600');
+}
+
+/**
+ * 技能栏上方一行：当前身上的**全部**状态（增益 / 减益 / 元素附着），正方形图标。
+ *
+ * 这一行的存在理由是 8.8 那条红线「看不见的 debuff 等于不存在」。此前只有怪物头顶
+ * 有状态标记，玩家自己中了沉默 / 石化 / 缴械只能从「按技能没反应」倒推。
+ *
+ * 不悬停时读「时钟」：阴影从 12 点顺时针扫过来，扫满就该没了；
+ * 悬停时读「说明」：名字 + 分类 + 一句人话 + 剩余秒数。两者不共存，因为
+ * 一行图标同时塞进度和文字就都读不清。
+ */
+function drawStatusBar(
+  g: Painter,
+  s: GameState,
+  barX: number,
+  skillTopY: number,
+  barW: number,
+  pointer: { x: number; y: number } | undefined,
+): void {
+  const list = s.player.statuses;
+  if (list.length === 0) return;
+  const layout = statusBarLayout(barX, skillTopY, list.length, barW);
+  const hovered = pointer === undefined
+    ? null
+    : statusBarHit(layout.icons, pointer.x, pointer.y);
+  let tip: { rect: StatusIconRect; inst: StatusInstance } | null = null;
+  for (const rect of layout.icons) {
+    const inst = list[rect.index];
+    if (inst === undefined) continue;
+    const def = statusDef(inst.id);
+    drawStatusIcon(g, rect, inst, def.color, hovered === rect.index);
+    if (hovered === rect.index) tip = { rect, inst };
+  }
+  // 提示框最后画：它可能盖到相邻图标，先画就会被后面的格子压掉。
+  if (tip !== null) drawStatusTooltip(g, tip.rect, tip.inst, statusDef(tip.inst.id));
+}
+
+function hud(g: Painter, s: GameState, pointer?: { x: number; y: number }): void {
   /**
    * 底部一条：**武器槽 ← 双液面球 → 技能栏**（用户 2026-11-15 指定的传奇式布局）。
    * 左上角的血条面板、左下角的冷却条、右下角的操作说明都已经删掉：
@@ -1747,7 +1895,11 @@ function hud(g: Painter, s: GameState): void {
   const skillW = (SKILL_SLOTS + 1) * HUD_SLOT + SKILL_SLOTS * HUD_GAP;
   const groupX = (VIEW_W - (weaponW + 28 + skillW)) / 2;
   drawWeaponSlots(g, s, groupX, rowY);
-  drawSkillBar(g, s, groupX + weaponW + 28, rowY);
+  const skillX = groupX + weaponW + 28;
+  drawSkillBar(g, s, skillX, rowY);
+  // 状态行贴在技能栏上沿、左端对齐技能栏左端：它是「我现在身上有什么」，
+  // 和「我能按什么」是同一块信息，不该分到屏幕两头。
+  drawStatusBar(g, s, skillX, rowY, skillW, pointer);
 
   // 本局剩余时间 + 阶段：搜打撤的「撤」是从这里读的。
   const phaseText = s.extracted
@@ -1901,8 +2053,18 @@ function hud(g: Painter, s: GameState): void {
   }
 }
 
-/** One complete frame: world-space scene first, screen-space HUD on top. */
-export function paint(g: Painter, s: GameState): void {
+/**
+ * One complete frame: world-space scene first, screen-space HUD on top.
+ *
+ * `pointer` 是**视图坐标**（0..VIEW_W × 0..VIEW_H）下的自由光标位置，只有 HUD 用它
+ * （状态图标的悬停提示）。它缺省时按「没指着任何东西」处理 —— 无头截图 / 单测不需要
+ * 造一个假指针出来。
+ */
+export function paint(
+  g: Painter,
+  s: GameState,
+  pointer?: { x: number; y: number },
+): void {
   prepareScene(g);
   loadAtlas();
   g.clearRect(0, 0, VIEW_W, VIEW_H);
@@ -1971,7 +2133,7 @@ export function paint(g: Painter, s: GameState): void {
   // 读条提示盖在场景之上（它必须比头顶的粒子更显眼），但仍然属于世界空间。
   drawCastBar(g, s);
   g.restore();
-  hud(g, s);
+  hud(g, s, pointer);
   drawMinimap(g, s);
   // 大地图**盖在最上层**（包括 HUD 与小地图）：它是模态查看层。
   if (s.bigMap) drawBigMap(g, s);

@@ -14,6 +14,7 @@ PROTECTED=(
   assets/game/paint.ts
   assets/game/voxel.ts
   assets/game/atlas.ts
+  assets/game/status-bar.ts
   assets/combat/status.ts
   assets/combat/reactions.ts
   assets/combat/attack.ts
