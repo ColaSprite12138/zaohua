@@ -12,7 +12,8 @@ import { describe, expect, it } from 'vitest';
 import { damageSkeleton } from '../attack.ts';
 import { countConsumable, drinkPotion, healPotion, POTION_HP_ID, POTION_HP_HEAL, POTION_MP_ID } from '../consumables.ts';
 import {
-  activeWeaponBroken, durabilityOf, maxDurability, wearWeapon,
+  activeWeaponBroken, durabilityMaxOf, durabilityOf, durabilitySnapshot, maxDurability,
+  weaponUsable, wearWeapon,
 } from '../durability.ts';
 import {
   createState, deployRun, NO_MODIFIERS, projection, reset, step,
@@ -199,5 +200,56 @@ describe('only weapons may occupy a weapon slot (design 7.4)', () => {
     const res = collectDrop(s.runInventory, 'drop-sword', '10006');
     expect(res.where).toBe('weapon');
     expect(s.runInventory.equipped[0]?.defId).toBe('10006');
+  });
+});
+
+/**
+ * 修过一次的武器**上限就短了**（用户 2026-11-17 定的抗通胀口径，设计 5.2）：
+ * 局外工坊按补回的量永久扣上限，存在 `durabilityMax` 上。战斗侧只认
+ * `durabilityMaxOf()` —— 用出厂上限当分母，会让"修过的武器"永远显示满格，
+ * 玩家也看不到自己把一件好装备越修越薄。
+ */
+describe('a repaired weapon has a shorter ceiling (design 5.2)', () => {
+  it('no durabilityMax field = factory ceiling (old saves read as untouched)', () => {
+    expect(durabilityMaxOf(SWORD)).toBe(maxDurability('10001'));
+    expect(durabilityOf(SWORD)).toBe(maxDurability('10001'));
+  });
+
+  it('the worn ceiling is the denominator: 100/120, not 100/160', () => {
+    const worn: ItemInstance = { ...SWORD, durability: 100, durabilityMax: 120 };
+    expect(durabilityMaxOf(worn)).toBe(120);
+    expect(durabilityOf(worn)).toBe(100);
+  });
+
+  it('a freshly repaired weapon reads as full instead of 120/160', () => {
+    const repaired: ItemInstance = { ...SWORD, durability: 120, durabilityMax: 120 };
+    expect(durabilityOf(repaired)).toBe(durabilityMaxOf(repaired));
+  });
+
+  it('a tampered ceiling above the factory one is clamped down', () => {
+    expect(durabilityMaxOf({ ...SWORD, durabilityMax: 9999 })).toBe(maxDurability('10001'));
+  });
+
+  it('a ceiling of 0 becomes 1 — otherwise the weapon turns immortal', () => {
+    // `maxDurability <= 0` 的战斗语义是「不参与耐久」：真降到 0，一把磨废的武器
+    // 会突然变成永不磨损，比"上限很低"糟糕得多，所以这里硬夹 1。
+    expect(durabilityMaxOf({ ...SWORD, durabilityMax: 0 })).toBe(1);
+    expect(weaponUsable({ ...SWORD, durability: 0, durabilityMax: 0 })).toBe(false);
+  });
+
+  it('wear is measured against the worn ceiling', () => {
+    const s = deployWithSword();
+    s.runInventory.equipped[0] = { ...SWORD, durability: 120, durabilityMax: 120 };
+    wearWeapon(s, 100, 0);
+    expect(durabilityOf(s.runInventory.equipped[0] ?? null)).toBeCloseTo(116, 5);
+  });
+
+  it('the projection reports the worn ceiling so the HUD bar is honest', () => {
+    const s = deployWithSword();
+    s.runInventory.equipped[0] = { ...SWORD, durability: 60, durabilityMax: 120 };
+    const snap = durabilitySnapshot(s)[0]!;
+    expect(snap.max).toBe(120);
+    expect(snap.current).toBe(60);
+    expect(snap.broken).toBe(false);
   });
 });

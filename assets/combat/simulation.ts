@@ -594,7 +594,8 @@ export {
   countConsumable, healPotion,
 } from './consumables.ts';
 export {
-  activeWeaponBroken, durabilityOf, durabilitySnapshot, maxDurability, weaponUsable,
+  activeWeaponBroken, durabilityMaxOf, durabilityOf, durabilitySnapshot, maxDurability,
+  weaponUsable,
   wearWeapon,
 } from './durability.ts';
 export type { SkillDef, SkillKind, SkillZone } from './skills.ts';

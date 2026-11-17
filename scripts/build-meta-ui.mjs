@@ -65,6 +65,13 @@ const targets = [
     global: 'MetaShop',
   },
   {
+    // 工坊（设计 5.2 的后两个金币出口）：重铸价与修理单价由宿主注入
+    // （`MetaShell.workshop`）。掷词条是页面注入的，所以这里也不认识 affix.ts。
+    source: 'assets/meta/workshop.ts',
+    output: 'meta-ui/workshop.js',
+    global: 'MetaWorkshop',
+  },
+  {
     // The voxel model library is import-free by design, so the standalone page
     // can draw the very same item models the game draws -- one art authority,
     // no duplicated shapes and no bitmaps to keep in sync.

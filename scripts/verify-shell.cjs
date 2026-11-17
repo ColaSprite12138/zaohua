@@ -356,6 +356,67 @@ const SELFTEST = `
       out.shop.safe4Label = safe4
         ? (safe4.querySelector('.so-state') || {}).textContent || '' : '';
 
+      // ---- 工坊（设计 5.2）：重铸词条 + 修耐久 ----
+      // 夹具是件**真武器**（紫巨剑 10004）：白装没词条、也没耐久上限，两条都验不了。
+      (function () {
+        var lobby = H.getLobbyState();
+        // 夹具放**仓库**（仓库不进战局），用完立刻拿掉：后面的出征断言数的是
+        // 真实背包 —— 往背包里塞一件武器会把「cleared 带回 6 件」那几条一起搞红。
+        lobby.stash.push({
+          uid: 'ws-purple', defId: '10004', container: 'stash', col: 8, row: 0,
+          durability: 60, affixes: [{ id: 'keen', stat: 'dmg_pct', value: 0.06 }],
+        });
+        H.wallet.gold = 1000;
+        H.render();
+        document.getElementById('workshop-toggle').click();
+        var rowOf = function () {
+          return [].slice.call(document.querySelectorAll('.ws-row'))
+            .filter(function (n) { return n.dataset.uid === 'ws-purple'; })[0];
+        };
+        var btnOf = function (act) {
+          var row = rowOf();
+          return row ? row.querySelector('[data-act="' + act + '"]') : null;
+        };
+        var itemOf = function () {
+          return H.getState().stash.filter(function (i) { return i.uid === 'ws-purple'; })[0];
+        };
+        out.workshop = {
+          panelOpen: !document.getElementById('workshop-panel').hidden,
+          reforgeLabel: btnOf('reforge') ? btnOf('reforge').textContent : null,
+          repairLabel: btnOf('repair') ? btnOf('repair').textContent : null,
+        };
+        btnOf('reforge').click();
+        var afterR = itemOf();
+        out.workshop.reforged = {
+          reforges: afterR.reforges,
+          affix: (afterR.affixes || [])[0] ? afterR.affixes[0].id : null,
+          gold: H.wallet.gold,
+          // 重铸不碰耐久：两条独立出口（用户 2026-11-17 定）。
+          durability: afterR.durability,
+          durabilityMax: afterR.durabilityMax,
+          btnLabel: btnOf('reforge') ? btnOf('reforge').textContent : null,
+        };
+        // 再点一次：每件只能洗一次 —— 钱一分不动。
+        if (btnOf('reforge')) btnOf('reforge').click();
+        out.workshop.goldAfterSecond = H.wallet.gold;
+        btnOf('repair').click();
+        var afterP = itemOf();
+        out.workshop.repaired = {
+          durability: afterP.durability,
+          durabilityMax: afterP.durabilityMax,
+          repairs: afterP.repairs,
+          gold: H.wallet.gold,
+          // 洗过 + 修满 → 这一行从「可处理」列表里消失。
+          rowGone: rowOf() === undefined,
+        };
+        // 夹具收工：仓库恢复原样（snap('initial') 就记在下一行）。
+        var stash = H.getLobbyState().stash;
+        for (var i = stash.length - 1; i >= 0; i -= 1) {
+          if (stash[i].uid === 'ws-purple') stash.splice(i, 1);
+        }
+        H.render();
+      })();
+
       out.sharedState = H.state === H.getState() && H.getLobbyState() === H.state;
       snap('initial');
 
@@ -884,6 +945,23 @@ const checks = [
       && result.shop.safeCols === 3 && result.shop.safeGold === 110
       && result.shop.safe4Enabled === false
       && /金币不足/.test(result.shop.safe4Label || ''), result.shop],
+  ['工坊：重铸扣 260 直接换词条、洗过锁死，且一个耐久字节都不动',
+    result.workshop.panelOpen === true
+      && result.workshop.reforgeLabel === '重铸 260'
+      && result.workshop.reforged.reforges === 1
+      && result.workshop.reforged.affix !== 'keen'
+      && result.workshop.reforged.gold === 740
+      && result.workshop.reforged.durability === 60
+      && result.workshop.reforged.durabilityMax === undefined
+      && result.workshop.goldAfterSecond === 740
+      && /已重铸/.test(result.workshop.reforged.btnLabel || ''), result.workshop],
+  ['工坊：修理补满耐久，上限从 160 永久磨到 135',
+    result.workshop.repairLabel === '修 240'
+      && result.workshop.repaired.durability === 135
+      && result.workshop.repaired.durabilityMax === 135
+      && result.workshop.repaired.repairs === 1
+      && result.workshop.repaired.gold === 500
+      && result.workshop.repaired.rowGone === true, result.workshop],
   ['出征把星图技能与乘区快照给 Worker，局内星图面板隐藏',
     !!d.stars && d.stars.skills.indexOf('fire_wall') >= 0
       && d.stars.nodes.indexOf('ember_wall') >= 0

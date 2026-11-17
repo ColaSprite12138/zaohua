@@ -47,6 +47,30 @@
   .shop-offer:disabled { opacity: .5; cursor: not-allowed; border-color: var(--line); color: var(--muted); }
   .shop-offer:disabled .so-price { color: var(--muted); }
   .shop-offer .so-owned { color: var(--green); }
+  /* ---- 工坊（重铸 + 修理） ---- */
+  .workshop-panel { margin-bottom: 14px; }
+  .ws-list {
+    display: flex; flex-direction: column; gap: 6px;
+    margin-top: 6px; max-height: 248px; overflow-y: auto;
+  }
+  .ws-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 5px 8px; background: var(--panel2);
+    border: 1px solid var(--line); border-radius: 4px;
+  }
+  .ws-row .ws-name { min-width: 92px; font-size: 12px; font-weight: 700; }
+  .ws-row .ws-where { min-width: 34px; font-size: 10px; color: var(--muted); }
+  .ws-row .ws-affix {
+    flex: 1; min-width: 0; font-size: 11px; color: #b9c6d4;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .ws-row .ws-dura { min-width: 104px; font-size: 11px; color: #9fb0c2; text-align: right; }
+  .ws-row .ws-dura.worn { color: var(--gold); }
+  .ws-row .ws-dura.broken { color: #ff6b6b; }
+  .ws-acts { display: flex; gap: 6px; }
+  .ws-btn { font-size: 11px; padding: 3px 9px; }
+  .ws-btn:disabled { opacity: .45; cursor: not-allowed; border-color: var(--line); color: var(--muted); }
+  .ws-empty { font-size: 12px; color: var(--muted); padding: 4px 2px; }
   .panel-title small { color: var(--muted); font-size: 11px; font-weight: 400; }
   .equip-grid { display: grid; grid-template-columns: repeat(2, 84px); gap: 10px; margin-top: 4px; }
   .equip-slot {
@@ -220,6 +244,7 @@
     <button id="reset">重置演示数据</button>
     <button id="shop-toggle" title="花金币补给：红蓝药、保险格扩容（价目表在 tables/shop.xlsx）">商店</button>
     <button id="sell" title="把背包 / 保险格 / 仓库里的收藏品换成金币（武器与药品不会动）">卖出收藏品</button>
+    <button id="workshop-toggle" title="工坊：金币重铸词条（每件一次、直接生效）/ 修武器耐久（回满，但上限永久下降）">工坊</button>
     <span class="coin" id="fx-gold" title="金币：收藏品换来的，用来在商店买补给与扩容">0 金</span>
     <span class="status" id="status"></span>
   </div>
@@ -233,6 +258,18 @@
       <small id="shop-hint">金币来自卖出收藏品</small>
     </div>
     <div class="shop-offers" id="shop-offers"></div>
+  </section>
+
+  <!-- 工坊（设计 5.2 的后两个金币出口）：重铸词条 + 修武器耐久。价目来自
+       `tables/workshop.xlsx`，由 inject-shell.mjs 注入；页面不写价格。
+       局内不可用 —— 洗词条、修装备都是"下场前"的决定。
+       **默认收起**：不像商店那样需要第一眼看到，它要先有值得处理的装备才有内容。 -->
+  <section class="panel workshop-panel" id="workshop-panel" hidden>
+    <div class="panel-title">
+      <h2>工坊</h2>
+      <small id="workshop-hint">重铸：每件一次、直接生效 · 修理：回满但上限永久下降</small>
+    </div>
+    <div class="ws-list" id="workshop-list"></div>
   </section>
 
   <!-- The 4174 shell reuses this whole block as the IN-RUN bag overlay. In the
@@ -309,6 +346,7 @@
 <script src="./affix.js"></script>
 <script src="./trade.js"></script>
 <script src="./shop.js"></script>
+<script src="./workshop.js"></script>
 <script>
 (function () {
   'use strict';
@@ -428,6 +466,13 @@
     // `tipUid` 让卡片能读到**实例上的词条**（词条属于实例、不属于 defId，设计 7.1）。
     node.dataset.tipDef = item.defId;
     node.dataset.tipDura = item.durability === undefined ? '' : String(item.durability);
+    // 被修磨过的上限（缺省 = 出厂上限）：卡片的分母必须是**这一件现在**的上限，
+    // 否则一把从 160 磨到 120 的剑会永远显示"120 / 160"、看着像掉了一半耐久。
+    node.dataset.tipDuraMax = item.durabilityMax === undefined ? '' : String(item.durabilityMax);
+    // 工坊账本（设计 5.2）：洗过几次、修过几次。0 次不写，卡片上不出现噪声。
+    node.dataset.tipBook = (item.reforges ? '重铸 ' + item.reforges + ' 次' : '')
+      + (item.reforges && item.repairs ? ' · ' : '')
+      + (item.repairs ? '修过 ' + item.repairs + ' 次' : '');
     // 生成时掷定的恒定伤害（2026-11-17）：卡片显示**这一把**的值，不是表里的区间。
     node.dataset.tipDmg = item.damage === undefined ? '' : String(item.damage);
     node.dataset.tipUid = item.uid;
@@ -505,6 +550,10 @@
       if (item) {
         node.dataset.tipDef = item.defId;
         node.dataset.tipDura = item.durability === undefined ? '' : String(item.durability);
+        node.dataset.tipDuraMax = item.durabilityMax === undefined ? '' : String(item.durabilityMax);
+        node.dataset.tipBook = (item.reforges ? '重铸 ' + item.reforges + ' 次' : '')
+          + (item.reforges && item.repairs ? ' · ' : '')
+          + (item.repairs ? '修过 ' + item.repairs + ' 次' : '');
         node.dataset.tipDmg = item.damage === undefined ? '' : String(item.damage);
         node.dataset.tipUid = item.uid;
       }
@@ -525,12 +574,17 @@
         label.textContent = def.name;
         node.appendChild(label);
         // 耐久（设计 5.2）：扣到 0 的装备还在槽里但伤害回落空手，所以必须看得见。
+        // 分母用**实例上限**：修过的东西更短，用出厂上限画会让磨过的武器永远满格。
         if (def.durability) {
-          const cur = item.durability ?? def.durability;
-          const ratio = Math.max(0, Math.min(1, cur / def.durability));
+          const cap = M.durabilityCap(def.durability, item.durabilityMax);
+          const cur = M.durabilityCurrent(cap, item.durability);
+          const ratio = Math.max(0, Math.min(1, cur / cap));
           const bar = document.createElement('span');
           bar.className = 'slot-dura' + (ratio <= 0 ? ' broken' : ratio < 0.3 ? ' low' : '');
-          bar.title = ratio <= 0 ? '已损坏 · 伤害按空手算' : '耐久 ' + Math.round(cur) + ' / ' + def.durability;
+          bar.title = ratio <= 0
+            ? '已损坏 · 伤害按空手算'
+            : '耐久 ' + Math.round(cur) + ' / ' + cap
+              + (cap < def.durability ? '（上限已从 ' + def.durability + ' 修磨）' : '');
           const fill = document.createElement('i');
           fill.style.width = Math.round(ratio * 100) + '%';
           bar.appendChild(fill);
@@ -645,6 +699,8 @@
     // 商店按钮的可用状态依赖金币与保险格档位，状态一变就得重画（面板收起时也画，
     // 只是看不见 —— 省得展开时先闪一帧旧状态）。
     if (typeof renderShop === 'function') renderShop();
+    // 工坊同理：金币或装备一变，「重铸 / 修」两个按钮的可用状态就跟着变。
+    if (typeof renderWorkshop === 'function') renderWorkshop();
     if (host.onRender) host.onRender();
   }
 
@@ -1024,6 +1080,240 @@
     if (!panel.hidden) renderShop();
   });
 
+  /* ---------------------------- 工坊（设计 5.2） ------------------------- */
+  // 重铸：每件一次、扣金币、**直接生效**（用户 2026-11-17：没有新旧二选一）。
+  // 修理：扣金币把耐久补回上限，但**上限按补回的量永久下降**，价格还随次数递增 ——
+  // 两条一起把"无限修"堵死，磨废了就销毁 / 卖掉 / 换一把。
+  // 规则全在 `meta-ui/workshop.js`（源 `assets/meta/workshop.ts`）：页面只管挑目标、
+  // 掷骰、写回容器和文案，一个价格都不写。
+  const WORK = window.MetaWorkshop ?? null;
+  const WORKSHOP_ROWS = host.workshop ?? [];
+
+  /** 局外读一件武器的耐久；上限与当前都走 `inventory.ts` 的同一份夹取规则。 */
+  function duraOf(def, item) {
+    const cap = M.durabilityCap(def.durability ?? 0, item.durabilityMax);
+    return { cur: M.durabilityCurrent(cap, item.durability), cap };
+  }
+
+  /**
+   * 工坊候选：装备槽 + 背包 + 保险格 + 仓库里**现在能做点什么**的东西。
+   * 白装满耐久不进列表 —— 否则 160 格仓库会把真正要处理的那三件淹掉。
+   */
+  function workshopTargets() {
+    const rows = [];
+    const add = (item, where, label, slot) => {
+      if (!WORK) return;
+      let def;
+      try {
+        def = M.itemDef(item.defId);
+      } catch (err) {
+        return; // 独立页没注入表目录：静默跳过，不炸整页。
+      }
+      const dura = duraOf(def, item);
+      const hasAffix = (item.affixes ?? []).length > 0;
+      const rq = hasAffix
+        ? WORK.reforgeQuote(WORKSHOP_ROWS, def.quality, item.reforges ?? 0) : null;
+      const pq = dura.cap > 0
+        ? WORK.repairQuote(WORKSHOP_ROWS, def.quality, dura.cur, dura.cap, item.repairs ?? 0)
+        : null;
+      const canReforge = !!(rq && rq.ok);
+      const canRepair = !!(pq && pq.ok);
+      if (!canReforge && !canRepair) return;
+      rows.push({ item, def, where, label, slot, dura, rq, pq, canReforge, canRepair });
+    };
+    (state.equipped || []).forEach((it, i) => {
+      if (it) add(it, 'equip', '装 ' + (i + 1), i);
+    });
+    state.bag.forEach((it) => add(it, 'bag', '背包', -1));
+    (state.safe ?? []).forEach((it) => add(it, 'safe', '保险', -1));
+    state.stash.forEach((it) => add(it, 'stash', '仓库', -1));
+    return rows;
+  }
+
+  /** 把工坊产出的新实例写回原来的容器；背包 / 仓库 / 保险格要保留格子坐标。 */
+  function writeBack(target, next) {
+    if (target.where === 'equip') {
+      state.equipped[target.slot] = next;
+      return true;
+    }
+    for (const list of [state.bag, state.safe ?? [], state.stash]) {
+      const i = list.findIndex((it) => it.uid === target.item.uid);
+      if (i < 0) continue;
+      const at = list[i];
+      list[i] = { ...next, container: at.container, col: at.col, row: at.row };
+      return true;
+    }
+    return false;
+  }
+
+  function wsNote(text) {
+    const el = document.createElement('div');
+    el.className = 'ws-empty';
+    el.textContent = text;
+    return el;
+  }
+
+  function renderWorkshop() {
+    const box = $('workshop-list');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!WORK || WORKSHOP_ROWS.length === 0) {
+      box.appendChild(wsNote('工坊价目表没加载（tables/workshop.xlsx → workshop.ts）'));
+      return;
+    }
+    if (runMode) {
+      box.appendChild(wsNote('局内不能开工 · 重铸与修理都是下场前的决定'));
+      return;
+    }
+    const rows = workshopTargets();
+    if (rows.length === 0) {
+      box.appendChild(wsNote('没有要处理的装备：洗完的洗完了，武器耐久也都是满的'));
+      return;
+    }
+    for (const t of rows) box.appendChild(workshopRow(t));
+  }
+
+  function workshopRow(t) {
+    const row = document.createElement('div');
+    row.className = 'ws-row';
+    row.dataset.uid = t.item.uid;
+
+    const art = makeArtNode(t.def, 30, 30);
+    if (art) row.appendChild(art);
+
+    const name = document.createElement('span');
+    name.className = 'ws-name';
+    name.style.color = t.def.color;
+    name.textContent = t.def.name;
+    row.appendChild(name);
+
+    const where = document.createElement('span');
+    where.className = 'ws-where';
+    where.textContent = t.label;
+    row.appendChild(where);
+
+    const affix = document.createElement('span');
+    affix.className = 'ws-affix';
+    const list = t.item.affixes ?? [];
+    affix.textContent = list.length === 0 ? '无词条'
+      : list.map((a) => (AFFIX ? AFFIX.affixText(a, AFFIX_ROWS) : a.id)).join(' · ');
+    row.appendChild(affix);
+
+    const dura = document.createElement('span');
+    dura.className = 'ws-dura';
+    if (t.dura.cap > 0) {
+      const worn = t.dura.cap < (t.def.durability ?? 0);
+      dura.classList.toggle('worn', worn && t.dura.cur > 0);
+      dura.classList.toggle('broken', t.dura.cur <= 0);
+      dura.textContent = Math.round(t.dura.cur) + ' / ' + t.dura.cap + (worn ? ' 修磨' : '');
+      dura.title = '出厂上限 ' + (t.def.durability ?? 0)
+        + ' · 修过 ' + (t.item.repairs ?? 0) + ' 次';
+    } else {
+      dura.textContent = '—';
+    }
+    row.appendChild(dura);
+
+    const acts = document.createElement('div');
+    acts.className = 'ws-acts';
+
+    const rb = document.createElement('button');
+    rb.className = 'ws-btn';
+    rb.dataset.act = 'reforge';
+    rb.textContent = !t.rq || t.rq.max <= 0 ? '不可重铸'
+      : t.rq.ok ? '重铸 ' + t.rq.cost : '已重铸';
+    rb.title = t.rq && t.rq.max > 0
+      ? '洗一次词条（' + t.rq.used + '/' + t.rq.max + '）· 扣费后直接生效，不满意也不能退回'
+      : '白装没有词条，不能重铸';
+    rb.disabled = !t.canReforge || goldOf() < (t.rq ? t.rq.cost : 0);
+    rb.addEventListener('click', () => doReforge(t));
+    acts.appendChild(rb);
+
+    const pb = document.createElement('button');
+    pb.className = 'ws-btn';
+    pb.dataset.act = 'repair';
+    pb.textContent = t.pq && t.pq.ok ? '修 ' + t.pq.cost
+      : (t.pq && t.pq.reason === 'pristine' ? '耐久满' : '不可修');
+    pb.title = t.pq && t.pq.ok
+      ? '补回 ' + t.pq.restored + ' 点耐久 · 上限 ' + (t.pq.newMax + t.pq.maxLoss)
+        + ' → ' + t.pq.newMax + '（永久）· 第 ' + (t.pq.repairs + 1) + ' 次修理'
+      : '没有耐久上限或已经修满';
+    pb.disabled = !t.canRepair || goldOf() < (t.pq ? t.pq.cost : 0);
+    pb.addEventListener('click', () => doRepair(t));
+    acts.appendChild(pb);
+
+    row.appendChild(acts);
+    return row;
+  }
+
+  function doReforge(t) {
+    if (runMode) {
+      say('局内不能重铸 · 洗词条是下场前的决定', true);
+      return;
+    }
+    if (!WORK || !AFFIX) {
+      say('工坊规则没加载（meta-ui/workshop.js）', true);
+      return;
+    }
+    const w = wallet();
+    const out = WORK.reforge(t.item, t.def.quality, WORKSHOP_ROWS, w, () => {
+      // 条数不变：拿"这件现在有几条"当这一档的 slot 行，页面不必再加载 affix_slot.xlsx。
+      // 掷骰走掉落那条同一份规则（同 stat 不重复、按 weight 加权、按部位锁池）。
+      const slots = [{ id: t.def.quality, count: (t.item.affixes ?? []).length }];
+      return AFFIX.rollAffixes(AFFIX_ROWS, slots, t.def.quality, t.def.equip, Math.random);
+    });
+    if (out.outcome !== 'done') {
+      say(out.outcome === 'poor' ? '金币不够 · 先去卖收藏品'
+        : out.outcome === 'used' ? '这件已经重铸过了（每件只能洗一次）'
+          : '重铸失败 · 一个铜板都没扣', true);
+      return;
+    }
+    if (!writeBack(t, out.item)) {
+      // 理论上不会发生（目标就是刚扫出来的那件）；真发生了就把钱退回去。
+      wallet().gold += t.rq.cost;
+      say('找不到这件装备 · 已退款', true);
+      return;
+    }
+    render();
+    say('重铸完成 · ' + (out.item.affixes ?? [])
+      .map((a) => AFFIX.affixText(a, AFFIX_ROWS)).join(' · ') + ' · 剩 ' + goldOf() + ' 金');
+  }
+
+  function doRepair(t) {
+    if (runMode) {
+      say('局内不能修 · 修装备是下场前的决定', true);
+      return;
+    }
+    if (!WORK) {
+      say('工坊规则没加载（meta-ui/workshop.js）', true);
+      return;
+    }
+    const q = t.pq;
+    if (!q || !q.ok) {
+      say(q && q.reason === 'pristine' ? '这件耐久是满的' : '这件不能修', true);
+      return;
+    }
+    const out = WORK.repair(t.item, q, wallet());
+    if (out.outcome !== 'done') {
+      say(out.outcome === 'poor' ? '金币不够 · 先去卖收藏品' : '修不了这件', true);
+      return;
+    }
+    if (!writeBack(t, out.item)) {
+      wallet().gold += q.cost;
+      say('找不到这件装备 · 已退款', true);
+      return;
+    }
+    render();
+    say('修好了 · 耐久 ' + q.newCurrent + ' / ' + q.newMax + '，上限永久 '
+      + (q.newMax + q.maxLoss) + ' → ' + q.newMax + '（第 ' + (q.repairs + 1) + ' 次修理）');
+  }
+
+  $('workshop-toggle').addEventListener('click', () => {
+    const panel = $('workshop-panel');
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) renderWorkshop();
+  });
+
   $('reset').addEventListener('click', () => {
     if (runMode) return;
     host.setState(M.createInventoryState(0));
@@ -1080,7 +1370,7 @@
     return String(Math.round((def.damageMin + def.damageMax) / 2));
   }
 
-  function tipHtml(def, duraRaw, affixes, dmgRaw, countRaw) {
+  function tipHtml(def, duraRaw, affixes, dmgRaw, countRaw, duraMaxRaw, bookRaw) {
     const parts = [];
     parts.push('<div class="tip-name" style="color:' + def.color + '">' + def.name + '</div>');
     const meta = [def.itemType, def.quality, def.itemType === '武器' ? def.weaponSubtype : null]
@@ -1098,12 +1388,19 @@
       parts.push('<div class="tip-row"><span>伤害</span><b>' + damageText(def, dmgRaw) + '</b></div>');
     }
     if (def.durability) {
-      const cur = duraRaw === '' ? def.durability : Number(duraRaw);
-      const ratio = Math.max(0, Math.min(1, cur / def.durability));
+      // 分母是**实例上限**（缺省 = 出厂上限）：修过的东西上限更短，两者都要显示。
+      const capRaw = duraMaxRaw === '' || duraMaxRaw === undefined ? def.durability : Number(duraMaxRaw);
+      const cap = Number.isFinite(capRaw) && capRaw > 0 ? capRaw : def.durability;
+      const cur = duraRaw === '' ? cap : Number(duraRaw);
+      const ratio = Math.max(0, Math.min(1, cur / cap));
       const cls = ratio <= 0 ? ' broken' : ratio < 0.3 ? ' low' : '';
       parts.push('<div class="tip-dura"><div class="tip-row"><span>耐久</span><b>'
-        + Math.round(cur) + ' / ' + def.durability + '</b></div>'
+        + Math.round(cur) + ' / ' + cap + '</b></div>'
         + '<div class="tip-bar' + cls + '"><i style="width:' + Math.round(ratio * 100) + '%"></i></div></div>');
+      if (cap < def.durability) {
+        parts.push('<div class="tip-row"><span>上限</span><b>' + cap + ' / ' + def.durability
+          + '（修磨）</b></div>');
+      }
       if (ratio <= 0) parts.push('<div class="tip-broken">已损坏 · 伤害按空手算（带回局外可换）</div>');
     } else if (def.itemType === '消耗品') {
       parts.push('<div class="tip-row"><span>使用</span><b>'
@@ -1120,6 +1417,8 @@
       }).join('');
       parts.push('<div class="tip-affix">' + lines + '</div>');
     }
+    // 工坊账本（设计 5.2）：这件洗过 / 修过几次 —— 决定它还能不能洗、下一次修多贵。
+    if (bookRaw) parts.push('<div class="tip-size">' + bookRaw + '</div>');
     parts.push('<div class="tip-size">占 ' + def.cols + ' × ' + def.rows + ' 格'
       + (def.stackSize > 1 ? ' · 可叠 ' + def.stackSize : '')
       + (def.equip ? ' · 可装备' : '') + '</div>');
@@ -1161,11 +1460,14 @@
     }
     const affixes = affixesOf(node.dataset.tipUid);
     const key = node.dataset.tipDef + '|' + (node.dataset.tipDura || '')
+      + '|' + (node.dataset.tipDuraMax || '')
+      + '|' + (node.dataset.tipBook || '')
       + '|' + (node.dataset.tipDmg || '')
       + '|' + (node.dataset.tipCount || '')
       + '|' + JSON.stringify(affixes);
     const html = tipHtml(def, node.dataset.tipDura || '', affixes,
-      node.dataset.tipDmg || '', node.dataset.tipCount || '');
+      node.dataset.tipDmg || '', node.dataset.tipCount || '',
+      node.dataset.tipDuraMax || '', node.dataset.tipBook || '');
     if (tipEl.dataset.for !== key) {
       tipEl.dataset.for = key;
       tipEl.innerHTML = html;

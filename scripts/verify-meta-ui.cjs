@@ -263,6 +263,73 @@ const SELFTEST = `
         gold: HS.wallet.gold,
       };
     })();
+    // ---- 工坊（设计 5.2）：重铸词条 + 修耐久 ----
+    // 夹具是一件**真武器**（紫巨剑）：白装没词条洗不了、也没耐久上限，验不了这两条。
+    // 词条池来自 generated/affix.ts（见文件末尾的预注入），掷骰走页面的真实路径。
+    out.workshop = (function () {
+      const MI = window.MetaInventory, HS = window.MetaShell;
+      HS.wallet.gold = 1000;
+      const seed = { id: 'keen', stat: 'dmg_pct', value: 0.06 };
+      MI.addToBag(HS.getLobbyState(), 'ws-purple', '10004', 60, [seed]);
+      HS.render();
+
+      const panel = document.getElementById('workshop-panel');
+      const hiddenByDefault = panel.hidden === true;
+      document.getElementById('workshop-toggle').click();
+      const allRows = () => [...document.querySelectorAll('.ws-row')];
+      const mine = () => allRows().find((n) => n.dataset.uid === 'ws-purple');
+      const rowCount = allRows().length;
+      const btn = (row, act) => row.querySelector('[data-act="' + act + '"]');
+
+      const labels = {
+        reforge: btn(mine(), 'reforge').textContent,
+        repair: btn(mine(), 'repair').textContent,
+      };
+
+      // 重铸：扣 260、词条必须**换一种且立刻生效**（没有确认框）。
+      btn(mine(), 'reforge').click();
+      const afterR = HS.getLobbyState().bag.find((i) => i.uid === 'ws-purple');
+      const reforged = {
+        gold: HS.wallet.gold,
+        reforges: afterR.reforges,
+        affixCount: (afterR.affixes || []).length,
+        changed: JSON.stringify(afterR.affixes) !== JSON.stringify([seed]),
+        durability: afterR.durability,
+        durabilityMax: afterR.durabilityMax,
+        btnDisabled: btn(mine(), 'reforge').disabled,
+        btnLabel: btn(mine(), 'reforge').textContent,
+      };
+
+      // 修理：耐久回满，但上限从 160 永久磨到 135（补 100 掉 25）。
+      const repairLabel = btn(mine(), 'repair').textContent;
+      btn(mine(), 'repair').click();
+      const afterP = HS.getLobbyState().bag.find((i) => i.uid === 'ws-purple');
+      // 列表只列「现在能做点什么」的东西：洗过 + 修满之后，这一行应当**整条消失**
+      // —— 这比"按钮变灰"更能说明状态机走完了（也顺带证明列表不是静态 HTML）。
+      const repaired = {
+        durability: afterP.durability,
+        durabilityMax: afterP.durabilityMax,
+        repairs: afterP.repairs,
+        gold: HS.wallet.gold,
+        label: repairLabel,
+        rowGone: mine() === undefined,
+      };
+      return { hiddenByDefault, rowCount, labels, reforged, repaired };
+    })();
+    // 给截图留一件**待处理**的装备（紫巨剑、耐久 70/160、带词条）：工坊那一张图要
+    // 看得见「重铸 260 / 修 …」两个按钮，而不是空列表。
+    (function () {
+      const HS = window.MetaShell;
+      const lobby = HS.getLobbyState ? HS.getLobbyState() : HS.state;
+      // 放**仓库**（空位多、也不占背包的拖拽用例留下的空间）。
+      lobby.stash.push({
+        uid: 'ws-shot', defId: '10004', container: 'stash', col: 0, row: 4,
+        durability: 70, affixes: [{ id: 'brutal', stat: 'dmg_pct', value: 0.11 }],
+      });
+      HS.render();
+      const panel = document.getElementById('workshop-panel');
+      if (panel.hidden) document.getElementById('workshop-toggle').click();
+    })();
     out.ok = true;
   } catch (e) {
     out.ok = false;
@@ -282,15 +349,28 @@ const absOf = (f) => 'file:///' + path.join(root, 'meta-ui', f).replace(/\\/g, '
 // 价目表与两个可堆叠物品的 def 在**页面脚本之前**注入（页面的 `SHOP_ROWS` 是
 // 初始化时读一次的快照，`registerItemDefs` 也只会在启动时跑）。数据来自生成物，
 // 所以这里没有第二份价格。
-const shopBody = fs.readFileSync(path.join(root, 'assets/resource/generated/shop.ts'), 'utf8')
-  .replace(/^[\s\S]*?export const shop = /, '')
-  .replace(/\n\] as const;[\s\S]*$/, '\n]');
-const shopRows = JSON.parse(shopBody.replace(/([a-z_]+):/g, '"$1":').replace(/,\s*\]$/, ']'));
+const readGenerated = (file) => {
+  const body = fs.readFileSync(path.join(root, 'assets/resource/generated', file), 'utf8')
+    .replace(/^[\s\S]*?export const \w+ = /, '')
+    .replace(/\n\] as const;[\s\S]*$/, '\n]');
+  return JSON.parse(body.replace(/([a-z_]+):/g, '"$1":').replace(/,\s*\]$/, ']'));
+};
+const shopRows = readGenerated('shop.ts');
+const workshopRows = readGenerated('workshop.ts');
+const affixRows = readGenerated('affix.ts');
 const preset = JSON.stringify({
   shop: shopRows,
+  workshop: workshopRows,
+  affix: affixRows,
   authoredItems: [
     { id: '30002', name: '红药', item_type: '消耗品', stack_size: 5 },
     { id: '30003', name: '蓝药', item_type: '消耗品', stack_size: 5 },
+    // 工坊夹具要一件**有词条、有耐久上限**的真武器：白装两样都没有。
+    {
+      id: '10004', name: '紫巨剑', item_type: '武器', stack_size: 1,
+      quality: '紫', durability: 160, damage_min: 100, damage_max: 120,
+      weapon_subtype: '近战',
+    },
   ],
 });
 let html = source;
@@ -301,6 +381,7 @@ for (const [tag, file] of [
   ['./affix.js', 'affix.js'],
   ['./trade.js', 'trade.js'],
   ['./shop.js', 'shop.js'],
+  ['./workshop.js', 'workshop.js'],
 ]) {
   const next = html.replace('<script src="' + tag + '"></script>',
     '<script src="' + absOf(file) + '"></script>');
@@ -331,7 +412,7 @@ fs.writeFileSync(domPath, run.stdout || '', 'utf8');
 // 同一张测试页再跑一次截图（自测结束后的状态：背包里有 2 瓶红药叠成一格、
 // 保险格已扩到 3 格、商店面板开着）。这条是**堆叠与商店的视觉证据**：
 // `--dump-dom` 只能证明 DOM 里的角标文字，截图能证明它真的画在格子上。
-const shotPath = path.join(outDir, 'meta-ui-shop.png');
+const shotPath = path.join(outDir, 'meta-ui-workshop.png');
 spawnSync(chrome, [
   '--headless=new', '--disable-gpu', '--no-sandbox',
   '--allow-file-access-from-files', '--virtual-time-budget=4000',
@@ -399,6 +480,26 @@ const checks = [
   ['商店：保险格付费扩容把网格从 2 格变成 3 格',
     result.shop.safeCells === 3 && result.shop.safeCols === 3
       && result.shop.gold === 500 - 50 - 250, result.shop],
+  ['工坊：重铸扣 260 直接换词条，洗过就锁死（不能二选一、不能再洗）',
+    result.workshop.hiddenByDefault === true
+      && result.workshop.labels.reforge === '重铸 260'
+      && result.workshop.reforged.gold === 740
+      && result.workshop.reforged.reforges === 1
+      && result.workshop.reforged.affixCount === 1
+      && result.workshop.reforged.changed === true
+      // 重铸不碰耐久：两条独立出口（用户 2026-11-17 定）。
+      && result.workshop.reforged.durability === 60
+      && result.workshop.reforged.durabilityMax === undefined
+      && result.workshop.reforged.btnDisabled === true
+      && /已重铸/.test(result.workshop.reforged.btnLabel), result.workshop],
+  ['工坊：修理回满耐久，但上限从 160 永久磨到 135',
+    result.workshop.labels.repair === '修 240'
+      && result.workshop.repaired.label === '修 240'
+      && result.workshop.repaired.durability === 135
+      && result.workshop.repaired.durabilityMax === 135
+      && result.workshop.repaired.repairs === 1
+      && result.workshop.repaired.gold === 500
+      && result.workshop.repaired.rowGone === true, result.workshop],
   ['信息卡显示掷定伤害（不是区间）：实例值优先 / 无实例值取中值',
     /^伤害\d+$/.test(result.tip.dmgRolled || '')
       && result.tip.dmgRolled === '伤害271'

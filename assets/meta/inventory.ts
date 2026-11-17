@@ -359,6 +359,21 @@ export interface ItemInstance {
    */
   readonly durability?: number;
   /**
+   * 被修磨过的**耐久上限**（2026-11-17，设计 5.2「修不如重铸」）。
+   *
+   * 出厂上限仍是 `weapon.xlsx::durability`；每次修理按补回的量永久扣掉一部分，
+   * 结果写在这里。**缺省 = 还是出厂上限**（新捡到的、从没修过的都不写这个字段），
+   * 所以老存档读回来天然是"没被磨过"。
+   *
+   * 战斗侧的唯一读法是 `durabilityMaxOf()`（夹在 [1, 出厂上限] 之间）——
+   * 不要直接读这个字段：它可能是旧存档的脏值，也可能比出厂上限大。
+   */
+  readonly durabilityMax?: number;
+  /** 这件被重铸过几次（2026-11-17）。缺省 = 0；上限由 `workshop.xlsx::max_times` 定。 */
+  readonly reforges?: number;
+  /** 这件被修过几次（2026-11-17）。缺省 = 0；每修一次，下一次的单价 × `step_pct`。 */
+  readonly repairs?: number;
+  /**
    * 词条（设计 7.1 / 7.2）。**属于实例、不属于 defId** —— 同一个 `10003`
    * 可以是锋锐 +6%，也可以是坚韧 +8%。空数组与 undefined 等价（白装）。
    *
@@ -468,6 +483,9 @@ export interface StackLike {
   readonly count?: number;
   readonly affixes?: readonly AffixOnItem[];
   readonly durability?: number;
+  readonly durabilityMax?: number;
+  readonly reforges?: number;
+  readonly repairs?: number;
   readonly damage?: number;
 }
 
@@ -475,7 +493,12 @@ export interface StackLike {
 export function isStackable(item: StackLike): boolean {
   if (stackLimit(item.defId) <= 1) return false;
   if (item.affixes !== undefined && item.affixes.length > 0) return false;
+  // 任何"跟着这一件走过路"的账本都不叠：耐久、被磨过的上限、重铸 / 修理次数。
+  // 合起来以后"这一叠里的第二件"从哪来说不清，洗一次会改掉一整叠。
   if (item.durability !== undefined) return false;
+  if (item.durabilityMax !== undefined) return false;
+  if (item.reforges !== undefined) return false;
+  if (item.repairs !== undefined) return false;
   if (item.damage !== undefined) return false;
   return true;
 }
@@ -485,6 +508,31 @@ export function countOf(items: readonly { readonly defId: string; readonly count
   let total = 0;
   for (const it of items) if (it.defId === defId) total += itemCount(it);
   return total;
+}
+
+/**
+ * 这一件的**耐久上限**：出厂上限 + 被修磨过的值。
+ *
+ * 唯一实现 —— 战斗侧（`combat/durability.ts::durabilityMaxOf`）与局外工坊面板
+ * 都调它，否则"工坊说还能修 130 点、战斗说上限 160"这种账会立刻对不上。
+ *
+ * 夹在 `[1, 出厂]`：修过的只会更低；存档里比出厂还大的脏值按出厂算；
+ * 下限 1 是因为**上限 0 的战斗语义是「不参与耐久」**，那会让磨废的武器变成永不磨损。
+ * 出厂上限 0（演示长剑 / 消耗品）= 不参与耐久，直接返回 0。
+ */
+export function durabilityCap(tableMax: number, durabilityMax?: number): number {
+  const table = Number.isFinite(tableMax) && tableMax > 0 ? Math.floor(tableMax) : 0;
+  if (table <= 0) return 0;
+  if (durabilityMax === undefined || !Number.isFinite(durabilityMax)) return table;
+  return Math.max(1, Math.min(table, Math.floor(durabilityMax)));
+}
+
+/** 当前耐久：缺省 = 满（刚捡到），夹在 `[0, 上限]`。 */
+export function durabilityCurrent(cap: number, durability?: number): number {
+  const top = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0;
+  if (top <= 0) return 0;
+  if (durability === undefined || !Number.isFinite(durability)) return top;
+  return Math.max(0, Math.min(durability, top));
 }
 
 /**

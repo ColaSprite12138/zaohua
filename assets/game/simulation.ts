@@ -77,6 +77,7 @@ export {
   ELEMENT_LABEL,
   // 耐久与消耗品（设计 5.2 / 7.4 / 8.3）：绘制层读耐久条与药瓶数。
   countConsumable,
+  durabilityMaxOf,
   durabilityOf,
   maxDurability,
   POTION_HP_ID,

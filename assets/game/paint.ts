@@ -32,8 +32,8 @@ import {
   VIEW_H,
   VIEW_W,
   countConsumable,
+  durabilityMaxOf,
   durabilityOf,
-  maxDurability,
   POTION_HP_ID,
   POTION_MP_ID,
   skillDef,
@@ -1356,7 +1356,8 @@ function drawWeaponSlots(g: Painter, s: GameState, x: number, y: number): void {
     }
     // 耐久（设计 5.2 / 7.4）：3px 细条压在槽底。损坏时整条变红 + 角标「坏」。
     const item = s.runInventory.equipped[i] ?? null;
-    const dmax = maxDurability(item?.defId ?? '');
+    // 上限读实例（修过的东西更短）：用出厂上限当分母会让"修过的武器"永远显示满格。
+    const dmax = durabilityMaxOf(item);
     if (dmax > 0) {
       const dcur = durabilityOf(item);
       const ratio = Math.max(0, Math.min(1, dcur / dmax));

@@ -128,6 +128,9 @@ function buildBlock() {
   // 商店价目表（设计 5.2）：补给与保险格扩容的价格 / 件数 / 档位全在这里，
   // 页面只显示，不写数字。
   const shopRows = generatedRows('shop.ts', 'shop');
+  // 工坊价目（设计 5.2）：重铸价 / 次数上限 / 修单价 / 涨价系数 / 上限损耗比例。
+  // 页面的工坊面板只显示这些数，自己一个数字都不写。
+  const workshopRows = generatedRows('workshop.ts', 'workshop');
   const ruleRow = generatedRows('combat_rule.ts', 'combat_rule')[0];
   const starRule = {
     mainline_star_points: ruleRow.mainline_star_points,
@@ -136,13 +139,14 @@ function buildBlock() {
   const sources = [
     'meta-ui/index.html', 'meta-ui/voxel.js', 'meta-ui/inventory.js',
     'meta-ui/account.js', 'meta-ui/talent.js', 'meta-ui/affix.js', 'meta-ui/trade.js',
-    'meta-ui/shop.js',
+    'meta-ui/shop.js', 'meta-ui/workshop.js',
     'meta-ui/platform-store.js',
     'meta-ui/shell.css', 'meta-ui/shell-bridge.js',
     'assets/resource/generated/item.ts',
     'assets/resource/generated/weapon.ts',
     'assets/resource/generated/treasure.ts',
     'assets/resource/generated/shop.ts',
+    'assets/resource/generated/workshop.ts',
     'assets/resource/generated/affix.ts',
     'assets/resource/generated/level.ts',
     'assets/resource/generated/starmap.ts',
@@ -166,6 +170,7 @@ ${read('meta-ui/shell.css')}
   affix: ${JSON.stringify(affixRows)},
   treasure: ${JSON.stringify(treasureRows)},
   shop: ${JSON.stringify(shopRows)},
+  workshop: ${JSON.stringify(workshopRows)},
   levels: ${JSON.stringify(levelRows)},
   starmap: ${JSON.stringify(starRows)},
   constellations: ${JSON.stringify(constellationRows)},
@@ -181,6 +186,7 @@ ${markup}
 <script>${read('meta-ui/affix.js')}</script>
 <script>${read('meta-ui/trade.js')}</script>
 <script>${read('meta-ui/shop.js')}</script>
+<script>${read('meta-ui/workshop.js')}</script>
 <script>${script}</script>
 <script>${read('meta-ui/platform-store.js')}</script>
 <script>${read('meta-ui/shell-bridge.js')}</script>

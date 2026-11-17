@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 92af8acb2270bef149cb22af2fc441645a844bc4e8db8591b566715769625f4a
+ * Source SHA-256: 9e37e0fda9fb2589cd38e4b01bf68b42c08a2960a97388375f2f4125bc55158f
  */
 (function (root) {
 "use strict";
@@ -43,6 +43,8 @@ exports.stackLimit = stackLimit;
 exports.itemCount = itemCount;
 exports.isStackable = isStackable;
 exports.countOf = countOf;
+exports.durabilityCap = durabilityCap;
+exports.durabilityCurrent = durabilityCurrent;
 exports.normalizeStackCounts = normalizeStackCounts;
 exports.takeFromStack = takeFromStack;
 exports.takeOneFromBag = takeOneFromBag;
@@ -325,7 +327,15 @@ function isStackable(item) {
         return false;
     if (item.affixes !== undefined && item.affixes.length > 0)
         return false;
+    // 任何"跟着这一件走过路"的账本都不叠：耐久、被磨过的上限、重铸 / 修理次数。
+    // 合起来以后"这一叠里的第二件"从哪来说不清，洗一次会改掉一整叠。
     if (item.durability !== undefined)
+        return false;
+    if (item.durabilityMax !== undefined)
+        return false;
+    if (item.reforges !== undefined)
+        return false;
+    if (item.repairs !== undefined)
         return false;
     if (item.damage !== undefined)
         return false;
@@ -338,6 +348,33 @@ function countOf(items, defId) {
         if (it.defId === defId)
             total += itemCount(it);
     return total;
+}
+/**
+ * 这一件的**耐久上限**：出厂上限 + 被修磨过的值。
+ *
+ * 唯一实现 —— 战斗侧（`combat/durability.ts::durabilityMaxOf`）与局外工坊面板
+ * 都调它，否则"工坊说还能修 130 点、战斗说上限 160"这种账会立刻对不上。
+ *
+ * 夹在 `[1, 出厂]`：修过的只会更低；存档里比出厂还大的脏值按出厂算；
+ * 下限 1 是因为**上限 0 的战斗语义是「不参与耐久」**，那会让磨废的武器变成永不磨损。
+ * 出厂上限 0（演示长剑 / 消耗品）= 不参与耐久，直接返回 0。
+ */
+function durabilityCap(tableMax, durabilityMax) {
+    const table = Number.isFinite(tableMax) && tableMax > 0 ? Math.floor(tableMax) : 0;
+    if (table <= 0)
+        return 0;
+    if (durabilityMax === undefined || !Number.isFinite(durabilityMax))
+        return table;
+    return Math.max(1, Math.min(table, Math.floor(durabilityMax)));
+}
+/** 当前耐久：缺省 = 满（刚捡到），夹在 `[0, 上限]`。 */
+function durabilityCurrent(cap, durability) {
+    const top = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0;
+    if (top <= 0)
+        return 0;
+    if (durability === undefined || !Number.isFinite(durability))
+        return top;
+    return Math.max(0, Math.min(durability, top));
 }
 /**
  * 读档 / 跨堆 / 手改数据的兜底：把非法的 `count` 修回 1。

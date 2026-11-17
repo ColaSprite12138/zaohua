@@ -246,7 +246,9 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 | 扣耐久 | 造成：`damageSkeleton` 之后按「这一下的伤害」扣；承受：怪物出刀与 DOT 掉血各扣一次。比值在 `combat_rule.xlsx::durability_dealt / durability_taken`（0.04 / 0.16 ≈ 3:7） |
 | 只在激活槽 | 副手不磨损（否则玩家要为不用的武器付账）；空手 / 无耐久物品 / 已损坏都是 no-op |
 | 损坏 | 耐久 0 → 装备**仍在槽里**，但伤害回落空手 22、近战距离回落空手值 58（`combat_rule.xlsx::melee_range_bare`）、HUD 槽底细条变红并标「坏」 |
-| 不做修理 | 设计原话是「修不如重铸」。修理 / 重铸要等金币经济 + 词条批次；本轮坏了就换（5.3 装备是消耗品） |
+| 修理在局外 | 2026-11-17 起可以在**局外工坊**修（`meta/workshop.ts`），战斗侧不提供任何"修"的入口。修完耐久回满，但**上限永久下降**（`durabilityMax`），所以"修"是延缓消耗、不是取消消耗 |
+| 上限挂实例 | `durabilityMaxOf(item)` = `inventory.ts::durabilityCap(出厂上限, item.durabilityMax)`，夹在 `[1, 出厂]`。**不要再直接用 `maxDurability(defId)` 当分母**：被修过的东西更短，用出厂值会让磨过的武器永远显示满格 |
+| 上限硬底 | 不低于 1。`maxDurability <= 0` 的语义是"不参与耐久"，磨到 0 会让废武器变成永不磨损 |
 | 耐久跨局 | 耐久写在 `ItemInstance.durability` 上，跟着物品跨堆 / 进存档；**重开一局不会修满** |
 | 药是物品 | 红药 `30002` / 蓝药 `30003` 在 `item.xlsx`，1×1 格、`equip=null`，从两个掉落池都能刷到。`GameState.potions` 计数器**已删除** |
 | 药会叠 | 2026-11-17 起一格 5 瓶（`item.xlsx::stack_size`）。`countConsumable()` 数的是**件数**（`countOf`），喝一瓶走 `takeOneFromBag()` 扣 1、扣空才删格。**不要再数 `bag.length`**，那会显示"只有 1 瓶"、并在第二瓶时就丢格 |
@@ -254,7 +256,7 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 | 只有武器进武器槽（7.4） | 三处执行：`equipItem()`（拖放）、`collectDrop()`（**拾取优先空武器槽只对武器成立**，药/箭落进背包）、`normalizeEquipped()`（读存档 / 出征 / 结算时把非法穿戴挪回背包，背包满则丢弃）。三处缺一条，就会出现"捡到一瓶药被装备在主手" |
 | 喝药 | `X` 蓝药（缓慢回复，`POTION_SECONDS` 秒内 `POTION_MANA` 点）/ `Z` 红药（一口 `hp_potion_heal`）。都是从**局内背包**取走一件；满蓝 / 满血 / 没有药 → 拒绝且不消耗 |
 | 夹具 | `createState()` 给背包塞 `POTION_COUNT` 蓝 + `FIXTURE_HP_POTIONS` 红，供 playthrough / 单测；正式出征由局外背包决定 |
-| 投影 | `durability[2]`（`{slot,current,max,broken}`）/ `weaponBroken` / `potions` / `hpPotions`（后两个是背包**件数**）/ `runInventory.bag[].count`（堆叠数量，缺省不写） |
+| 投影 | `durability[2]`（`{slot,current,max,broken}`，**max 是实例上限**，不是出厂值）/ `weaponBroken` / `potions` / `hpPotions`（后两个是背包**件数**）/ `runInventory.bag[].count`（堆叠数量，缺省不写） |
 
 ### 装备词条（战斗侧，2026-11-17 第一批，设计文档 7.1 / 7.2）
 

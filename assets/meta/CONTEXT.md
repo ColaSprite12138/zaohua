@@ -117,7 +117,31 @@
 | 幂等 | 卖第二次是 0，不会凭空生钱 |
 
 **这一批没做**：~~物品堆叠~~（**2026-11-17 已做，见下一节**）、~~商店~~（**同日已做**）、
-**词条重铸**（要扣金币，规则层已就绪：`affix.ts::rollAffixes` + 每件 1–3 次上限待加）。
+~~词条重铸~~（**同日已做**，见下面的「词条重铸与修理」）。
+
+## 词条重铸与修理（设计 5.2 / 7.2，2026-11-17）
+
+金币的最后两个出口，也是「废装率高」的唯一缓解手段（7.2）。两块共用一套**实例账本**：
+`reforges` / `repairs` / `durabilityMax` 都写在 `ItemInstance` 上，跟着物品跨堆、跨局、进存档。
+
+| 项 | 契约 |
+|:--|:--|
+| 价目表 | `tables/workshop.xlsx`（`kind / quality / cost / max_times / unit_price / step_pct / max_loss_pct`）。**代码里没有一个价格**；`meta/workshop.ts` 零 import，页面与单测同一份 |
+| 重铸语义 | **整件重掷**：条数不变、种类与数值全部重掷。不单条洗 —— 4 条词条的紫装单条计数就等于 12 次，直接破掉「每件 N 次」的上限 |
+| 重铸次数 | `ItemInstance.reforges`，上限 `workshop.xlsx::max_times`。**当前全是 1 次**（用户 2026-11-17 定；设计稿 7.2 写的是 1–3 次，取最小值）。价格**不随次数涨**：次数本身就是上限，再叠涨价是双重惩罚 |
+| 重铸直接生效 | 扣费 → 新词条立刻写进实例。**没有新旧二选一**（用户 2026-11-17 定）：它是真实的风险支出，不是预览。所以只保留一个弱保护：掷出来和原来**种类完全一样**就重掷，最多 7 次（花钱零变化最难解释） |
+| 重铸不碰耐久 | 只改 `affixes` / `reforges`。设计 5.2 把耐久与词条列成两条独立出口，重铸顺手修满等于吞掉一条 |
+| 品质从参数来 | `reforge(item, quality, ...)` —— **实例上没有 quality 字段**（品质是 `ItemDef` 的展示副本）。从实例读会静默拿到 `undefined` → 被当成未知品质一律拒绝（踩过，见单测「品质由参数传入」） |
+| 掷骰注入 | `roll: () => AffixInstance[]`。页面传 `AFFIX.rollAffixes(rows, [{id:quality,count:当前条数}], quality, def.equip, Math.random)`；单测给固定序列。掷出 0 条 = 数据异常 → `failed`，**不扣钱不改物品** |
+| 修理价格 | `cost = ceil(补回量 × unit_price × step_pct^已修次数)`。单价不变（用户定），贵在次数系数 1.6 |
+| 修理上限损耗 | `maxLoss = ceil(补回量 × max_loss_pct)`（当前 0.25），`newMax = max(1, 上限 − maxLoss)`，耐久回满到 `newMax`。**补得越多掉得越多**（用户定）→ 大修最伤、勤修最贵，两条互相制衡 |
+| 上限硬底 | 绝不低于 **1**。`maxDurability <= 0` 的战斗语义是「不参与耐久」，磨到 0 会让一把废武器变成永不磨损 |
+| 上限读数 | `inventory.ts::durabilityCap(出厂上限, durabilityMax)` / `durabilityCurrent(cap, durability)` —— **唯一实现**。战斗侧 `durabilityMaxOf()` 与工坊面板都调它，不允许页面自己再 `Math.min` 一遍 |
+| 账本字段 | `durability` / `durabilityMax` / `reforges` / `repairs` 全部**缺省不写**（老存档读回 = 没修过）。`instanceOf()` 是黑名单透传，新增字段自动跟随，**不要改成白名单** |
+| 可叠性 | 带上面任一账本的实例**不叠**（`isStackable()`）—— 合起来就分不清"这一叠的第二件" |
+| UI | 顶栏「工坊」按钮，面板**默认收起**（要先有值得处理的装备）。列表只列**现在能做点什么**的：洗过的 + 修满的会整行消失。买不起 / 已洗过 / 耐久满 = 按钮 `disabled`；局内禁止 |
+| 失败不扣钱 | 顺序铁律同 `shop.ts`：先看钱 → 再改物品 → 最后扣钱。`writeBack()` 万一找不到目标容器，页面把金币退回去 |
+| 没做 | 套装词条 / 技能附加词条（还没有可洗的对象，`AffixRow.kind` 是给它们留的钩子）；「废装变原料」的材料系统（当前回收 = 卖收藏品换金） |
 
 ## 物品堆叠与商店（设计 5.1 / 5.2 第二批，2026-11-17）
 
@@ -150,7 +174,7 @@
 | 落盘 | `safeCols` 在 InventoryState 里，跟着同一份 blob 走；`normalizeContainers()` 会把 NaN / 0 / 超上限修回合法值 |
 | 金币落盘 | `extra.wallet` **余额 0 也写**（以前省略 0）。省略会让读档走"新号起始金币"兜底，等于每次刷新白送一笔钱 |
 | UI | 顶栏「商店」按钮；面板**默认展开**（价目与余额要第一眼看到）；买不起 = 按钮 `disabled` + 角标「金币不足」；局内禁止（`runMode`） |
-| 没做 | **修理 / 词条重铸**（同属金币出口，等重铸批次一起做，设计 5.2「修不如重铸」） |
+| 没做 | ~~修理 / 词条重铸~~（**2026-11-17 已做，见下一节**） |
 
 
 ## 单页流程与搜打撤契约（2026-11-11）
@@ -328,11 +352,11 @@ module script），壳层在 `</body>` 前，两者互不干扰。实测玩家�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/meta/__tests__      # 107 条（inventory 20 + stack 16 + shop 10 + affix 19 + account 14 + run-settlement 10 + insurance 8 + trade 7 + meta 3）
+./node_modules/.bin/vitest run assets/meta/__tests__      # 127 条（inventory 20 + stack 16 + workshop 20 + affix 19 + account 14 + shop 10 + run-settlement 10 + insurance 8 + trade 7 + meta 3）
 node scripts/build-meta-ui.mjs --check                     # 七个生成物（inventory / account / talent / affix / trade / shop / voxel）与源码同步
-node scripts/verify-meta-ui.cjs                            # 独立页面 20 条（13 条真实拖放 + 像素断言 + 悬停信息卡 + 商店 2 条），并截 artifacts/verify/meta-ui-shop.png
+node scripts/verify-meta-ui.cjs                            # 独立页面 22 条（13 条真实拖放 + 像素断言 + 悬停信息卡 + 商店 2 条 + 工坊 2 条），并截 artifacts/verify/meta-ui-workshop.png
 node scripts/inject-shell.mjs --check                      # dist 注入块与源同步
-node scripts/verify-shell.cjs                              # 4174 单页 57 条（含 5 条星图 / 商店 2 条 / 卖出收藏品 / 金币落盘 / 词条信息卡）
+node scripts/verify-shell.cjs                              # 4174 单页 59 条（含 5 条星图 / 商店 2 条 / 工坊 2 条 / 卖出收藏品 / 金币落盘 / 词条信息卡）
 ```
 
 `scripts/build-meta-ui.mjs` 把 `inventory.ts` / `account.ts` / `game/voxel.ts` 用 `ts.transpileModule`

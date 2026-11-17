@@ -182,6 +182,30 @@ describe('resource table contract', () => {
     expect(tiers[0]).toBeGreaterThan(2); // 赠送的 2 格不在商店里重复卖
   });
 
+  it('workshop.xlsx covers every quality and keeps the reforge/repair columns honest', async () => {
+    const { workshop } = await import('../generated/workshop.ts');
+    const qualities = ['白', '绿', '蓝', '紫', '橙', '暗金'];
+    for (const quality of qualities) {
+      const rf = workshop.find((r) => r.kind === 'reforge' && r.quality === quality);
+      const rp = workshop.find((r) => r.kind === 'repair' && r.quality === quality);
+      expect(rf, `${quality} 缺重铸行`).toBeDefined();
+      expect(rp, `${quality} 缺修理行`).toBeDefined();
+    }
+    for (const row of workshop.filter((r) => r.kind === 'reforge')) {
+      // 用户 2026-11-17 定的口径：每件只能洗一次；白装没有词条 → 0 次。
+      expect(row.max_times).toBe(row.quality === '白' ? 0 : 1);
+      if (row.max_times > 0) expect(row.cost).toBeGreaterThan(0);
+    }
+    for (const row of workshop.filter((r) => r.kind === 'repair')) {
+      expect(row.unit_price).toBeGreaterThan(0);
+      // step_pct < 1 = 越修越便宜，和 5.2「修理成本随次数递增」相反，一定是填错了。
+      expect(row.step_pct).toBeGreaterThanOrEqual(1);
+      // 上限损耗是「修不如重铸」的另一半：没有它，修理就变成无限续命。
+      expect(row.max_loss_pct).toBeGreaterThan(0);
+      expect(row.max_loss_pct).toBeLessThan(1);
+    }
+  });
+
   it('every source .xlsx is a well-formed OOXML package Excel can open', () => {
     // Regression guard: a hand-written styles.xml once had `<border/>` followed
     // by `</border>`. The exporter never reads styles.xml, so --check stayed

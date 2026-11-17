@@ -7,40 +7,63 @@
  * 2. **按造成 / 承受伤害扣**，承受 : 造成 ≈ 7 : 3 —— 比值在
  *    `combat_rule.xlsx::durability_taken / durability_dealt`，代码里没有数字。
  *    所以近战（贴身挨打多）天然更费，远程天然更省：这不是惩罚，是堵住「远程完全免费」的口子。
- * 3. **扣到 0 = 损坏**：装备还在槽里，但伤害回落空手、HUD 标红。**本轮不做修理** ——
- *    设计 5.2 的原话是「修不如重铸」，修理/重铸要等金币经济与词条批次一起做。
- *    装备真的是消耗品：坏了就换下一件（5.3）。
+ * 3. **扣到 0 = 损坏**：装备还在槽里，但伤害回落空手、HUD 标红。
+ * 4. **上限会被修低**（2026-11-17，用户定的抗通胀口径）：局外工坊修理时按补回的
+ *    耐久永久扣掉一部分上限（`workshop.xlsx::max_loss_pct`），存在
+ *    `ItemInstance.durabilityMax` 上。磨到很低以后玩家自然会销毁 / 卖掉 / 换一把 ——
+ *    这就是设计 5.2「修不如重铸」的落地方式（价格递增 + 上限损耗，双重收敛）。
  *
  * 耐久写在 `ItemInstance.durability` 上，跟着物品跨堆 / 跨局 / 进存档；缺口只在
  * 「捡到时没有这个字段」—— 那时按上限补齐，所以新装备永远是满耐久。
+ *
+ * ⚠ 读上限一律走 `durabilityMaxOf(item)`，**不要直接读 `weapon.xlsx`**：
+ * 出厂上限只是第一任上限，被修过的东西更短。
  */
 
 import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { weapon } from '../resource/generated/weapon.ts';
 import type { ItemInstance } from '../meta/inventory.ts';
+import { durabilityCap, durabilityCurrent } from '../meta/inventory.ts';
 import { say } from './effects.ts';
 import type { GameState } from './state.ts';
 
 const RULE = combat_rule[0];
 const WEAPON_BY_ID = new Map(weapon.map((row) => [String(row.id), row]));
 
-/** 耐久上限；表里没有这一行（例如演示用的 `longsword`）按 0 = 不参与耐久。 */
+/**
+ * **出厂**耐久上限；表里没有这一行（例如演示用的 `longsword`）按 0 = 不参与耐久。
+ *
+ * 只用来判断「这件东西有没有耐久这个概念」，以及作为实例上限的上界。
+ * 要读"这件现在还耐多久"用 `durabilityMaxOf()`。
+ */
 export function maxDurability(defId: string): number {
   return WEAPON_BY_ID.get(defId)?.durability ?? 0;
+}
+
+/**
+ * 这一件**现在**的耐久上限（设计 5.2：修一次就永久掉一截）。
+ *
+ * - 没有 `durabilityMax` 字段 = 没修过 = 出厂上限（老存档天然如此）。
+ * - 夹在 `[1, 出厂上限]`：修过的只会更低；存档里出现比出厂还大的值（篡改 / 旧数据）
+ *   按出厂算，**绝不放宽**。下限 1 是硬底 —— 上限 0 的战斗语义是"不参与耐久"，
+ *   那会让一把磨废的武器突然变成永不磨损。
+ */
+export function durabilityMaxOf(item: ItemInstance | null): number {
+  if (item === null) return 0;
+  // 夹取规则只有一份：`inventory.ts::durabilityCap`（局外工坊面板读的是同一个）。
+  return durabilityCap(maxDurability(item.defId), item.durabilityMax);
 }
 
 /** 当前耐久。没有字段＝刚捡到，按上限算（**不写回**，读了就知道）。 */
 export function durabilityOf(item: ItemInstance | null): number {
   if (item === null) return 0;
-  const max = maxDurability(item.defId);
-  if (max <= 0) return 0;
-  return item.durability === undefined ? max : Math.min(item.durability, max);
+  return durabilityCurrent(durabilityMaxOf(item), item.durability);
 }
 
 /** 这把武器还能不能用。没有耐久概念的物品（演示长剑）永远可用。 */
 export function weaponUsable(item: ItemInstance | null): boolean {
   if (item === null) return true;
-  const max = maxDurability(item.defId);
+  const max = durabilityMaxOf(item);
   if (max <= 0) return true;
   return durabilityOf(item) > 0;
 }
@@ -60,7 +83,7 @@ export function wearWeapon(s: GameState, dealt: number, taken = 0): void {
   const slot = s.activeWeaponSlot;
   const item = s.runInventory.equipped[slot] ?? null;
   if (item === null) return;
-  const max = maxDurability(item.defId);
+  const max = durabilityMaxOf(item);
   if (max <= 0) return;
   const before = durabilityOf(item);
   if (before <= 0) return;
@@ -83,7 +106,7 @@ export function durabilitySnapshot(
 ): { slot: number; current: number; max: number; broken: boolean }[] {
   return [0, 1].map((slot) => {
     const item = s.runInventory.equipped[slot] ?? null;
-    const max = item === null ? 0 : maxDurability(item.defId);
+    const max = item === null ? 0 : durabilityMaxOf(item);
     const current = item === null ? 0 : durabilityOf(item);
     return { slot, current, max, broken: item !== null && max > 0 && current <= 0 };
   });

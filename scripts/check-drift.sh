@@ -30,7 +30,9 @@ PROTECTED=(
   assets/meta/inventory.ts
   assets/meta/trade.ts
   assets/meta/shop.ts
+  assets/meta/workshop.ts
   assets/resource/tables/shop.xlsx
+  assets/resource/tables/workshop.xlsx
   scripts/playthrough.mjs
   scripts/playthrough-resize.mjs
   scripts/verify-all.sh
