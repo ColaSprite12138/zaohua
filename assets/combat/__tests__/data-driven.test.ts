@@ -27,9 +27,9 @@ import { event as eventRows } from '../../resource/generated/event.ts';
 import { DESTRUCTIBLE_IDS, destructibleDef } from '../destructibles.ts';
 import { EVENTS } from '../events.ts';
 import {
-  DASH_SPEED, DOT_TICK_SECONDS, PLAYER_ATTACK_CD, PLAYER_DODGE_CD, PLAYER_MANA_MAX,
-  POTION_COUNT, POTION_MANA, POTION_SECONDS, REACTION_CHAIN_RADIUS, ZONE_RADIUS_MAX,
-  ZONE_TICK_SECONDS, createState, projection,
+  DASH_SPEED, DOT_TICK_SECONDS, MELEE_RANGE_BARE, PLAYER_ATTACK_CD, PLAYER_DODGE_CD,
+  PLAYER_MANA_MAX, POTION_COUNT, POTION_MANA, POTION_SECONDS, REACTION_CHAIN_RADIUS,
+  ZONE_RADIUS_MAX, ZONE_TICK_SECONDS, createState, projection,
 } from '../simulation.ts';
 import { WALL_BOUNCE_DAMAGE, WALL_BOUNCE_KNOCKBACK } from '../attack.ts';
 
@@ -132,6 +132,9 @@ describe('combat_rule.xlsx owns the tuning knobs', () => {
     expect(REACTION_CHAIN_RADIUS).toBe(rule.reaction_chain_radius);
     expect(WALL_BOUNCE_DAMAGE).toBe(rule.wall_bounce_damage);
     expect(WALL_BOUNCE_KNOCKBACK).toBe(rule.wall_bounce_knockback);
+    // 空手距离（2026-11-17 数值表化）：判定读 `weaponSpec(null).range`，
+    // 这个常量是同一格表的转出 —— 有人手写一个 58 在代码里，这条会红。
+    expect(MELEE_RANGE_BARE).toBe(rule.melee_range_bare);
   });
 
   it('has sane tuning values (no zero cooldowns, no negative multipliers)', () => {
@@ -143,6 +146,9 @@ describe('combat_rule.xlsx owns the tuning knobs', () => {
     expect(rule.zone_tick_seconds).toBeGreaterThan(0);
     expect(rule.wall_bounce_knockback).toBeGreaterThan(1);
     expect(rule.detonate_per_stack).toBeGreaterThan(0);
+    // 空手一个身位多一点，但不能短过怪物攻击距离（否则空手开局永远打不到怪）。
+    expect(rule.melee_range_bare).toBeGreaterThanOrEqual(rule.monster_strike_range);
+    expect(rule.melee_range_bare).toBeLessThan(rule.monster_strike_range * 3);
   });
 });
 

@@ -130,14 +130,17 @@
 > ③ **掉落落地才显名、才可点、才可捡**：唯一判据 `state.ts::dropLanded()`；空中 → 无名牌
 > （`dropLabelRect` 返回 null）、`dropAtPoint` 跳过、`layoutDrops` 不让它挤占列队、`updateDrops`
 > 的拾取结算也等它。`playthrough.mjs` 改成「等牌子出现再点」并在击杀那一帧断言 `dropLabel === null`。
-> ④ **长剑攻击范围的诊断与定值（重要，别再重复排查）**：近战可达距离是常量
-> `MELEE_RANGE_ARMED` / `MELEE_RANGE_BARE`（砸箱 `SMASH_RANGE=72`，宽容 `RANGE_SLACK=8`），
-> 自 `a27981c` 模块化后**一直没有"自己变大"**。真实增量只有两处加成：`ea445ad` 起装备词条
+> ④ **长剑攻击范围的诊断与定值（重要，别再重复排查）**：近战可达距离自 `a27981c` 模块化后
+> **从没有"自己变大"过**。真实增量只有两处加成：`ea445ad` 起装备词条
 > **「长臂 +10~22 攻击距离」对近战生效**（只算激活的那把武器），以及星图 `range_px` 节点
 > （+12 / +16 / +20）。**2026-11-17 第二轮用户拍板「还是太长，快成远程武器了」→ 从
-> 170 / 140 收紧到 `88 / 58`**（仍比怪物近战 40 长，`MELEE_RANGE_ARMED > BARE` 由单测钉住，
-> 上限 120 也钉住了）。`attack-spec.ts` 的 `BARE_HANDS.range` / `MELEE_WEAPON.range` 是镜像值，
-> 两边必须同时改 —— `attack-spec.test.ts` 会红。
+> 170 / 140 收紧到 `88 / 58`**（仍比怪物近战 40 长，上限 120 由单测钉住）。
+> **2026-11-17 第三轮（用户问「能在 excel 里配吗」）→ 距离彻底搬进表**：
+> `weapon.xlsx::range` = 近战每把武器自己的可达距离（当前六把都是 88，可以各配各的）；
+> 远程行填 `0`，表示交给 `projectile.xlsx::arrow.range`（箭飞多远由弹道决定，不写两份）；
+> `combat_rule.xlsx::melee_range_bare` = 空手距离（58）。代码里 `MELEE_RANGE_ARMED` **已删除**，
+> `combat/ranged.ts` 只读 `weaponSpec(id).range`（`MELEE_RANGE_BARE` 是表的转出）。
+> **改距离 = 改 `.xlsx` + `python scripts/export_tables.py`**，别再去 TS 里找常量。
 > 验收（`bash scripts/verify-all.sh` **ALL GREEN**，2026-11-17 21:17，10m48s）：单测 **452**
 > （+11 `swing.test.ts`）/ 单页 `verify-meta-ui` **17/17**（+1 掷定伤害）/ 单页壳层 **56/56** /
 > 主端到端 `playthrough` **97 步**（新增「空中无名牌」「等牌子出现再点」；轮询步数每次 ±1，

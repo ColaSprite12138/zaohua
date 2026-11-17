@@ -6,7 +6,8 @@
  * `attack-spec.ts` 里了（`weapon_subtype` 决定），只是没人读它。本文件就是那个读者。
  *
  * 三条规则：
- * 1. **范围从 spec 来**：近战用 `MELEE_RANGE_*`（+ 星图近战范围），远程用弹道射程。
+ * 1. **范围从 spec 来**：近战读 `weapon.xlsx::range`（空手读 `combat_rule.xlsx::melee_range_bare`），
+ *    远程读 `projectile.xlsx` 的射程；星图 / 词条的 `range_px` 再叠一层。
  * 2. **远程扣弹药，不扣「出手耐久」**：箭是消耗品（`costKind: 'ammo'`），
  *    武器耐久在**命中**时按伤害扣（`projectile-runtime.ts`）—— 打空只丢一支箭。
  * 3. **没箭就是打不出去**：拒绝要说话（toast），并且**不进冷却、不扣耐久**，
@@ -23,7 +24,7 @@ import type { CombatModifiers } from './modifiers.ts';
 import { weaponDamage } from './run-inventory.ts';
 import { lockedFlags } from './status.ts';
 import {
-  activeWeapon, MELEE_RANGE_ARMED, MELEE_RANGE_BARE, PLAYER_SWING_TIME,
+  activeWeapon, PLAYER_SWING_TIME,
   type GameState,
 } from './state.ts';
 
@@ -52,9 +53,11 @@ export function resolveAttackOrder(s: GameState, mods: CombatModifiers): void {
   const spec = weaponSpec(armed ? weaponId : null);
   // 射程词条（设计 7.1）只对**拿着的那把它**生效：损坏 / 空手不加。
   const gearRange = armed ? gearAffixTotal(s.runInventory, 'range_px') : 0;
+  // 距离的真源就是 `spec`：近战 = 这把武器在 `weapon.xlsx::range` 里的值，
+  // 空手 / 拿坏了的武器 = `BARE_HANDS`（`combat_rule.xlsx::melee_range_bare`），
+  // 远程 = `projectile.xlsx` 的弹道射程。这里不再有第二份常量。
   const range = spec.kind === 'melee'
-    // 损坏 = 空手距离（同一条判定，不要只看槽里有没有东西）。
-    ? (armed ? MELEE_RANGE_ARMED : MELEE_RANGE_BARE) + mods.meleeRangeBonus() + gearRange
+    ? spec.range + mods.meleeRangeBonus() + gearRange
     : spec.range + gearRange;
   const d = Math.hypot(sk.x - s.player.x, sk.y - s.player.y);
   if (d > range - RANGE_SLACK) {

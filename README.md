@@ -198,8 +198,11 @@ Engine Worker 经同源 `BroadcastChannel('forgeax-arena-run')` 收 `deploy`、�
 
 **攻击指令**只在点击敌人时产生：距离大于 `range - 8` 时朝该敌人移动；进入范围后若攻击
 冷却结束则挥砍一次并停下（冷却中则站定等待），一次点击只结算一次。伤害只扣锁定目标，
-不再有锥形范围判定、软锁定或溅射。`range` = 近战常量 `MELEE_RANGE_ARMED=88`（空手 58）
-+ 星图 `range_px` 节点 + 激活武器上的「长臂」词条（+10~22，只算手上那把）。
+不再有锥形范围判定、软锁定或溅射。`range` **来自数值表**：近战 = 手上那把在
+`weapon.xlsx::range` 里的值（当前 88），空手 / 武器损坏 = `combat_rule.xlsx::melee_range_bare`（58），
+远程 = `projectile.xlsx` 的弹道射程；再叠星图 `range_px` 节点与激活武器上的「长臂」词条
+（+10~22，只算手上那把）。**改距离只改表**：`python scripts/export_tables.py` 之后
+`weaponSpec(id).range` 就是新值，代码里没有第二份常量。
 挥砍动画的手/剑角度全部由 `assets/game/swing.ts` 产出：弧线以**目标方向**为中心
 （起手 −35.5°、收势 +28.6°），中段剑与小臂共线。闪避期间 `p.dodge > 0`，鼠标不改写落点、攻击指令也
 不结算，冲刺不会被带偏。

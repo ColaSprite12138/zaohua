@@ -12,10 +12,14 @@
  *    **非指向性**（`targeting: 'directional'`，朝起手角度直飞，可以打空）两种。
  *    这是两种形态，不是两个开关：指向性换「必中」，非指向性换「射程 / 溅射」。
  *
- * 数值全部来自 `tables/projectile.xlsx`（弹速 / 射程 / 碰撞半径）与
- * `tables/weapon.xlsx`（伤害 / 耐久），这里只做 join，不写数字。
+ * 数值全部来自表，这里只做 join，不写数字：
+ *  - `weapon.xlsx`：`weapon_subtype`（形态权威）、`damage_min/max`、`durability`、
+ *    **`range`（这把武器能锁到多远；远程填 0 = 交给弹道）**；
+ *  - `projectile.xlsx`：弹速 / 射程 / 碰撞半径（远程武器的真实飞行距离）；
+ *  - `combat_rule.xlsx`：`melee_range_bare`（空手距离，没有武器行可挂）。
  */
 
+import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { projectile as projectileRows } from '../resource/generated/projectile.ts';
 import { weapon } from '../resource/generated/weapon.ts';
 
@@ -72,19 +76,24 @@ export interface AttackRequest {
 export const RANGED_ATTACK_CD = 0.55;
 
 /**
- * 近战的 `range` 是**镜像值**：真正参与判定的是 `state.ts` 的
- * `MELEE_RANGE_BARE` / `MELEE_RANGE_ARMED`（`ranged.ts` 只读那两个）。
- * 这里留着是为了让 `AttackSpec` 自洽、并让 `attack-spec.test.ts` 能同时盯住两边 ——
- * 改一处忘另一处，测试会红（2026-11-17 用户要求把近战距离从 140/170 收紧到 58/88）。
+ * 近战武器的**模板**距离：`weapon.xlsx` 里第一把近战武器的 `range`。
+ * 具体武器走 `weaponSpec()` 的行值（每把可以不同）；这里只是没有行时的模板。
+ */
+const MELEE_TEMPLATE_RANGE = weapon.find((row) => row.weapon_subtype === '近战')?.range ?? 0;
+
+/**
+ * 空手：没有武器行，距离来自 `combat_rule.xlsx::melee_range_bare`（2026-11-17 数值表化）。
+ * 尺度见 `state.ts::MELEE_RANGE_BARE` 的注释（一个身位多一点）。
  */
 export const BARE_HANDS: AttackSpec = Object.freeze({
-  id: 'bare_hands', kind: 'melee', damage: 22, range: 58,
+  id: 'bare_hands', kind: 'melee', damage: 22,
+  range: combat_rule[0].melee_range_bare,
   cooldown: 0.4, costKind: 'none',
 });
 
 /** Melee weapon: costs weapon durability for the player, nothing else. */
 export const MELEE_WEAPON: AttackSpec = Object.freeze({
-  id: 'melee_weapon', kind: 'melee', damage: 46, range: 88,
+  id: 'melee_weapon', kind: 'melee', damage: 46, range: MELEE_TEMPLATE_RANGE,
   cooldown: 0.4, costKind: 'durability',
 });
 
@@ -127,11 +136,37 @@ const SUBTYPE_SPEC: Readonly<Record<string, AttackSpec>> = Object.freeze({
 
 const WEAPON_BY_ID = new Map(weapon.map((row) => [row.id as string, row]));
 
+/**
+ * 按武器行派生出的 spec 缓存。
+ * 距离进了表之后，同一个 `kind` 的两把剑可能有一长一短 —— 不能共用一个 spec，
+ * 但也不该每次调用都 new 一个（调用方会拿 `spec` 做身份比较 / 当 Map 键）。
+ * 每把武器解析一次，之后返回同一个冻结对象。
+ */
+const SPEC_BY_ID = new Map<string, AttackSpec>();
+
+/**
+ * 当前武器（或空手）的出手规格。
+ *
+ * `range` 的口径（2026-11-17，用户要求「攻击距离能在 excel 里配」）：
+ *  - **近战**：读 `weapon.xlsx::range`（这把剑自己的距离）→ 每把可不同；
+ *  - **远程**：行的 `range` 约定为 `0`，表示「交给弹道」→ 用 `projectile.xlsx` 的射程。
+ *    （箭能飞多远由弹道决定，玩家看得见；在两处各写一份必然漂移。）
+ *  - **空手 / 未知 id / 非武器 subtype**：`BARE_HANDS`（`combat_rule.xlsx`）。
+ */
 export function weaponSpec(itemId: string | null | undefined): AttackSpec {
   if (!itemId) return BARE_HANDS;
+  const cached = SPEC_BY_ID.get(itemId);
+  if (cached !== undefined) return cached;
   const row = WEAPON_BY_ID.get(itemId);
-  if (row === undefined) return BARE_HANDS;
-  return SUBTYPE_SPEC[row.weapon_subtype] ?? BARE_HANDS;
+  const base = row === undefined ? undefined : SUBTYPE_SPEC[row.weapon_subtype];
+  if (row === undefined || base === undefined) {
+    SPEC_BY_ID.set(itemId, BARE_HANDS);
+    return BARE_HANDS;
+  }
+  const range = row.range > 0 ? row.range : base.range;
+  const spec = range === base.range ? base : Object.freeze({ ...base, range });
+  SPEC_BY_ID.set(itemId, spec);
+  return spec;
 }
 
 /**

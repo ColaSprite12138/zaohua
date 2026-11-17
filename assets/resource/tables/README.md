@@ -36,7 +36,7 @@ sharedStrings，**不读 `styles.xml`**。曾有两张表的 `styles.xml` 把 `<
 | 表 | 字段 | 消费方 |
 |:--|:--|:--|
 | `item.xlsx` | `id, name, item_type, stack_size` | `combat` / `meta`（身份、类型、堆叠；`item_type=消耗品` → 1×1 且不可装备） |
-| `weapon.xlsx` | `id, quality, weapon_subtype, damage_min, damage_max, durability` | `combat`（伤害、攻击方式、耐久上限）、`meta`（品质颜色 / 耐久条） |
+| `weapon.xlsx` | `id, quality, weapon_subtype, damage_min, damage_max, durability, range` | `combat`（伤害、攻击方式、耐久上限、**近战可达距离**）、`meta`（品质颜色 / 耐久条） |
 | `monster.xlsx` | `id, name, loot_pool_id` | `combat`（怪物 → 掉落池） |
 | `loot_pool.xlsx` | `id, loot_pool_id, item_id, weight` | `combat`（权重掉落；武器阶梯 + 两瓶药） |
 | `skill.xlsx` | `id, name, cost, cooldown, cast_time, damage, reach, width, zone_radius, zone_life, hint` | `combat`（技能数值） |
@@ -66,6 +66,20 @@ sharedStrings，**不读 `styles.xml`**。曾有两张表的 `styles.xml` 把 `<
 `30001` 是 `item_type=弹药` / `weapon_subtype=子弹` 的弹药，**不是可发射武器本体**；
 禁止用 id 前缀（`1xxxx` / `2xxxx`）推断攻击方式。未来加「法术」只需在
 `attack-spec.ts::SUBTYPE_SPEC` 加一行映射。
+
+**`range` = 这把武器能锁到多远（像素）**（2026-11-17 加，用户要求「攻击距离能在 excel 里配」）：
+
+- **近战**行填具体距离（当前六把长剑都是 `88`），**每把可以不同** —— 短剑 70 / 长剑 88 /
+  巨剑 110 这种梯度直接改表即可，不动代码；
+- **远程**行的 `range` 约定为 `0`，表示「交给弹道」：射程由 `projectile.xlsx::arrow.range`
+  决定（箭能飞多远玩家看得见，两处各写一份必然漂移）。谁在远程行填了具体数字，
+  `attack-spec.test.ts` 会红；
+- **非武器**（`30001` 子弹）同样是 `0`，不会被误当成武器；
+- **空手**没有武器行，距离在 `combat_rule.xlsx::melee_range_bare`（当前 `58`）。
+
+判定链只有一处：`attack-spec.ts::weaponSpec(itemId).range` → `combat/ranged.ts` 拿它和
+星图 `range_px`、词条「长臂」相加。改表流程照旧：改 `.xlsx` → `python scripts/export_tables.py`
+→ `python scripts/export_tables.py --check` → 跑验收。
 
 原始表由用户提供的 `xls/item.xlsx` / `xls/loot.xlsx` 规范化而来：中文表头改为英文
 snake_case、首列补唯一 `id`、伤害范围 `10,15` 拆成 `damage_min` / `damage_max` 两列数值、

@@ -96,21 +96,18 @@ export function syncWeaponSlots(s: GameState): void {
 
 export const CLICK_DRAG_PIXELS = 12;
 /**
- * 近战可达距离（屏幕像素，玩家中心 → 怪物中心）。
+ * 近战可达距离（屏幕像素，玩家中心 → 怪物中心）**空手**那一条。
  *
- * 2026-11-17 用户第二轮**回调**：原来空手 140 / 持械 170，是怪物近战（攻击距离 40）
- * 的 3.5~4.3 倍，剑尖够出去半个屏幕，「都快成远程武器了」。现在按视觉尺度重定：
- *   - 手臂 `ARM_REACH=14` + 剑模型 ≈ 38px 从肩算起，加怪物半宽 ≈ 视觉够到 60 左右；
- *   - 空手 58 = 一个身位多一点（拳头）；
- *   - 持械 88 ≈ 2 个身位（剑比拳长一半，仍是 1.5 倍关系）；
- *   - 参照：怪物近战 40 / 砸箱 `SMASH_RANGE=72` / 弓 900（真正的远程）。
+ * 真源是 `tables/combat_rule.xlsx::melee_range_bare`（2026-11-17 数值表化）：
+ * 持械距离跟着武器走（`weapon.xlsx::range`，每把可以不同），空手没有武器行，
+ * 所以落在全局规则表里。战斗判定读的是 `attack-spec.ts::weaponSpec()` 给出的
+ * `spec.range`，这个常量只是同一格表的转出（`data-driven.test.ts` 钉住两边相等）。
  *
- * 这两个数**必须与 `attack-spec.ts` 的 `BARE_HANDS.range` / `MELEE_WEAPON.range` 一致**：
- * 战斗读这里，`weaponSpec()` 的 `range` 只在远程分支被使用，近战那两份是镜像值，
- * 测试同时盯两边（`attack-spec.test.ts`）。
+ * 尺度（2026-11-17 用户第二轮回调）：手臂 `ARM_REACH=14` + 剑模型 ≈ 38px，
+ * 空手 58 = 一个身位多一点（拳头），持械 88 ≈ 2 个身位；参照怪物近战 40 /
+ * 砸箱 `SMASH_RANGE=72` / 弓 900（真正的远程）。
  */
-export const MELEE_RANGE_BARE = 58;
-export const MELEE_RANGE_ARMED = 88;
+export const MELEE_RANGE_BARE = RULE.melee_range_bare;
 /**
  * Screen pixels of ground travel per walk-cycle frame. Animation is advanced by
  * DISTANCE, not by time: a body that walks faster must step faster, and a body

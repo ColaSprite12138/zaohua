@@ -37,7 +37,7 @@
 | 单击敌人 | 锁定该敌人 + 压入一条攻击指令；距离不够先接近，**进距离才挥砍一次**，只扣这一只 |
 | 长按左键（拖动） | 落点实时跟随光标；松开按最后落点走完停下；**全程不攻击** |
 | 单击掉落物 | **显式拾取指令**：点中**名字牌矩形**（展开后的牌面，或距小模型中心 ≤12px）→ 走过去、到达 `<50px` 才拾取（走过不拾取）；优先空武器槽 → 局内背包占 2×3 格 → 都不行则留在地上 |
-| **1 / 2** | 切换激活武器槽；只有激活槽参与攻击，空槽＝徒手（22 伤害 / 58 范围）；有武器取 `weapon.xlsx` 中值，无表行回落 46 / 88 |
+| **1 / 2** | 切换激活武器槽；只有激活槽参与攻击，空槽＝徒手（22 伤害 / `combat_rule.xlsx::melee_range_bare`=58 范围）；有武器取 `weapon.xlsx` 的伤害中值与 `range` 行值（当前 88），无表行回落 46 / 88 |
 | 空格 / R | 闪避（无敌 + 冷却 + 残影）/ 重开 |
 
 单击判定**只看位移，不看时长**：屏幕空间（`mouse − camera`）位移 `< 12` 逻辑像素即算单击，
@@ -207,7 +207,7 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 |:--|:--|:--|
 | `tables/skill.xlsx` | 7 个技能的 `cost / cooldown / cast_time / damage / reach / width / zone_radius / zone_life / name / hint` | `SKILL_MECHANICS`：`kind` / `icon` / `element` / `status` / `zoneElement` |
 | `tables/status.xlsx` | 18 条状态的 `duration / max_stacks / dot / move_mul / attack_interval_mul / damage_taken_mul / no_* / name / hint` | `STATUS_MECHANICS`：`color` + `element` |
-| `tables/combat_rule.xlsx`（单行 `id=combat`） | 普攻 CD、闪避 CD、法力上限、蓝药三件套、冲锋速度、怪物攻击距离、DOT/区域 tick、区域半径上限、反应传导半径、撞墙伤害与击退阈值、引爆每层伤害 | — |
+| `tables/combat_rule.xlsx`（单行 `id=combat`） | 普攻 CD、闪避 CD、法力上限、蓝药三件套、冲锋速度、怪物攻击距离、**空手攻击距离 `melee_range_bare`**、DOT/区域 tick、区域半径上限、反应传导半径、撞墙伤害与击退阈值、引爆每层伤害 | 持械距离在 `weapon.xlsx::range`（每把可不同） |
 | `tables/monster.xlsx` | 每只怪的 `walk_speed / attack_interval / attack_damage` | — |
 
 | 项 | 契约 |
@@ -245,7 +245,7 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 | 耐久上限 | `weapon.xlsx::durability`（巨剑 160 / 弓 110）。**三类武器都有**；演示用 `longsword` 没有表行 → 不参与耐久 |
 | 扣耐久 | 造成：`damageSkeleton` 之后按「这一下的伤害」扣；承受：怪物出刀与 DOT 掉血各扣一次。比值在 `combat_rule.xlsx::durability_dealt / durability_taken`（0.04 / 0.16 ≈ 3:7） |
 | 只在激活槽 | 副手不磨损（否则玩家要为不用的武器付账）；空手 / 无耐久物品 / 已损坏都是 no-op |
-| 损坏 | 耐久 0 → 装备**仍在槽里**，但伤害回落空手 22、近战距离回落 58、HUD 槽底细条变红并标「坏」 |
+| 损坏 | 耐久 0 → 装备**仍在槽里**，但伤害回落空手 22、近战距离回落空手值 58（`combat_rule.xlsx::melee_range_bare`）、HUD 槽底细条变红并标「坏」 |
 | 不做修理 | 设计原话是「修不如重铸」。修理 / 重铸要等金币经济 + 词条批次；本轮坏了就换（5.3 装备是消耗品） |
 | 耐久跨局 | 耐久写在 `ItemInstance.durability` 上，跟着物品跨堆 / 进存档；**重开一局不会修满** |
 | 药是物品 | 红药 `30002` / 蓝药 `30003` 在 `item.xlsx`，1×1 格、`equip=null`，从两个掉落池都能刷到。`GameState.potions` 计数器**已删除** |
@@ -364,7 +364,9 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 ## 不变量（任一破坏 = 验收必须红）
 
 1. `projection()` 的字段名与归一化范围不得变 —— playthrough 断言直接读它。
-2. `NO_MODIFIERS` 必须与重构前完全一致：裸手 22 伤害 / 58 范围，持剑 46 / 88。
+2. `NO_MODIFIERS` 必须与重构前完全一致：裸手 22 伤害 / 58 范围（`combat_rule.xlsx`），
+   持剑 46 / 88（`weapon.xlsx::range`）。**近战距离没有代码常量**：`ranged.ts` 读
+   `weaponSpec(id).range`，改距离只改表（2026-11-17）。
 3. 长按绝不产生 `attackOrder`；闪避期间不改写落点、不结算攻击。
 4. 掉落物点击优先于敌人，但**只在名字牌 / 小模型内**优先；否则压在骷髅脚下的长剑要么永远捡不到、要么整只怪点不动。
 5. `assets/game/simulation.ts` 是**兼容门面**，只做 re-export，禁止在此写玩法逻辑。
