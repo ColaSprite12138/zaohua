@@ -152,6 +152,8 @@ export function affixTotal(
 /** 一件能带词条的东西的最小形状（`ItemInstance` 满足它）。 */
 export interface AffixCarrier {
   readonly affixes?: readonly AffixLike[];
+  /** 生成时掷好的恒定伤害（2026-11-17）；`weaponDamage()` 优先读它。 */
+  readonly damage?: number;
 }
 
 /** 穿戴中的十个槽 + 当前激活的武器槽。结构上不需要 import `InventoryState`。 */

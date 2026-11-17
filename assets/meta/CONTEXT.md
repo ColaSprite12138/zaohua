@@ -81,6 +81,18 @@
 | 生效点 | `dmg_pct` → 普攻与远程（`weaponDamage(defId, gear)`）；`hp_pct` / `mana_pct` → 出征时 `applyStarMods()`（局内换装**不重算上限**）；`range_px` → 近战范围 / 弹道射程（损坏武器不给）；`dodge_cd_pct` → `applyDodge()` 的冷却 |
 | sanitize | 读存档 / 收跨堆消息过 `sanitizeAffixes()`：丢未知 id、丢非有限值、同 stat 裁到第一条。**不重掷** |
 
+## 恒定伤害属性（2026-11-17 用户纠正，与词条同通路）
+
+武器**基础伤害不再是攻击时按区间现随机**，而是这件武器生成时掷一次、当场定死的实例属性。
+
+| 项 | 契约 |
+|:--|:--|
+| 归属 | `ItemInstance.damage`（可选整数）**属于实例、不属于 defId**。同一把 `10006` 两件可以分别是 271 和 388；不在 `weapon.xlsx` 里查「当前值」 |
+| 掷值 | `combat/loot.ts::rollWeaponDamage(defId, rng)` 从 `weapon.xlsx::[damage_min,damage_max]` 掷整数；唯一调用点是三个掉落生成点（怪物死亡 / 砸箱 / 遗物不带新掷），与词条共用 `s.rng` 同 seed 可复现 |
+| 跨堆 | 与 `affixes` / `durability` 同一条路：`Drop.damage` → `collectDrop()` → 武器槽 / 背包 → 遗物 → 存档。`instanceOf()` 自动跟随；显式白名单 `wearWeapon` / `shell-bridge::relicOf` / `result.lost` 都必须带它 |
+| 生效 | `combat/run-inventory.ts::weaponDamage(defId, gear)` 优先读激活槽实例 `damage`，再乘 `dmg_pct` 词条；**没有字段**（老存档 / 演示剑）回落旧中值，向后兼容 |
+| 红线 | 攻击时不得现算区间；任何一次拷贝漏字段都会让这件剑过一道界面后「变回中值」。对应 combat 不变量 73 |
+
 **这一批没做**（别当成已完成）：套装词条（凑齐生效）、独立词条 = 技能附加词条（仅最高品质）、
 **词条重铸**（每件 1–3 次、扣金币）、收藏品与金币产出。三层词条届时共用同一个 `affixes` 容器，
 只需在 `AffixRow` 上加 `kind`。

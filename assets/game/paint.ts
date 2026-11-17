@@ -18,6 +18,7 @@ import {
   BODY_LIFT,
   dropLabelName,
   dropLabelRect,
+  dropFlightPose,
   MINIMAP,
   MONSTER_SWING_TIME,
   PLAYER_ATTACK_CD,
@@ -1121,14 +1122,18 @@ function drawDrop(g: Painter, drop: Drop, hovered: boolean): void {
   // Quantise the float to whole pixels: a voxel item hovers in 1px steps.
   const float = Math.round(Math.sin(drop.t * 3) * 3);
   const color = qualityColor(drop.quality);
-  shadow(g, drop.x, drop.y + 2, hovered ? 13 : 10, hovered ? 5 : 4, 0.34);
+  // 喷射式掉落（2026-11-17）：物品本体沿抛物线飞，影子始终贴着它的地面投影。
+  // 落点 / 名牌 / 拾取判定都不读这里 —— 纯表现，点名字牌走过去落地即拾取。
+  const pose = dropFlightPose(drop);
+  shadow(g, pose.x, pose.groundY + 2, hovered ? 13 : 10, hovered ? 5 : 4, 0.34);
   // 尸体遗物（设计 4）：脚下一圈冷白虚线。普通战利品没有这圈，
   // 所以「地上这堆是我上一局掉的」一眼就能读出来 —— 不用靠名字牌去猜。
   if (drop.fromDeathDrop === true) {
-    drawPixelRing(g, drop.x, drop.y + 2, 22, 10, '#dff1ff', { alpha: hovered ? 0.75 : 0.45, lineWidth: 1 });
+    drawPixelRing(g, pose.x, pose.groundY + 2, 22, 10, '#dff1ff', { alpha: hovered ? 0.75 : 0.45, lineWidth: 1 });
   }
   // Blocky aura instead of a radial gradient: same read, same grid.
-  drawPixelGlow(g, drop.x, drop.y - 8 + float, hovered ? 26 : 20, hovered ? 22 : 17, color,
+  const bodyY = (pose.airborne ? pose.y : drop.y + 4) + float;
+  drawPixelGlow(g, pose.x, bodyY - 8, hovered ? 26 : 20, hovered ? 22 : 17, color,
     hovered ? 0.34 : 0.22);
 
   // Slow turn, never edge-on: the item has to stay readable while it hovers.
@@ -1136,13 +1141,13 @@ function drawDrop(g: Painter, drop: Drop, hovered: boolean): void {
   // hard-coded sword, so the ground object is the thing you are about to pick.
   const spin = Math.cos(drop.t * 1.3);
   const art = itemArtOf(drop.itemId, drop.quality);
-  drawVoxel(g, itemModel(art), drop.x, drop.y + 4 + float, {
-    rotation: -0.42,
+  drawVoxel(g, itemModel(art), pose.x, bodyY, {
+    rotation: pose.airborne ? drop.flight!.t * 9 : -0.42,
     squash: Math.max(0.55, Math.abs(spin)),
     scale: 0.95,
   });
   if (hovered) {
-    drawPixelRing(g, drop.x, drop.y + 2, 17, 7, color, { alpha: 0.85, lineWidth: 2 });
+    drawPixelRing(g, pose.x, pose.groundY + 2, 17, 7, color, { alpha: 0.85, lineWidth: 2 });
   }
 }
 

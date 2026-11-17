@@ -612,6 +612,66 @@ export interface Skeleton {
   goal: 'player' | 'portal' | 'none';
 }
 
+/**
+ * 一件掉落物从爆点飞到落点的表现状态（用户 2026-11-17「喷射式掉落」）。
+ * **只影响绘制**：拾取、命中、名字牌仍以 `Drop.x/y`（落点）为权威，
+ * 所以飞行期间玩家点名字牌走过去，落地那一刻正好能捡 —— 玩法断言不用改。
+ */
+export interface DropFlight {
+  /** 爆点（世界像素）：怪的死亡点 / 箱子中心 / 上一局的死亡点。 */
+  readonly fromX: number;
+  readonly fromY: number;
+  /** 抛物线峰值高度（像素）。 */
+  readonly height: number;
+  /** 飞行时长（秒，不含 delay）。 */
+  readonly duration: number;
+  /** 起跳延迟（秒）：多件依次错开 = 一件一件往外掉。 */
+  readonly delay: number;
+  /** 已经过的时间（秒）；由 `updateDrops()` 每帧推进。 */
+  t: number;
+}
+
+/** 喷射式掉落的统一节奏：峰值高度 / 飞行时长 / 每件起跳间隔。 */
+export const DROP_FLIGHT_HEIGHT = 58;
+export const DROP_FLIGHT_SECONDS = 0.58;
+export const DROP_FLIGHT_STAGGER = 0.12;
+
+/** 一件掉落物的飞行初始状态；`index` 决定它在「一件接一件往外掉」里的次序。 */
+export function makeDropFlight(fromX: number, fromY: number, index: number): DropFlight {
+  return {
+    fromX,
+    fromY,
+    height: DROP_FLIGHT_HEIGHT + (index % 3) * 7,
+    duration: DROP_FLIGHT_SECONDS,
+    delay: index * DROP_FLIGHT_STAGGER,
+    t: 0,
+  };
+}
+
+/**
+ * 飞行中物品本体的视觉位置（世界像素）。**落点 `Drop.x/y` 与名牌从不改变** ——
+ * 拾取判定、命中、投影、点击坐标全部锚在落点，只有绘制层读这里把剑画在半空。
+ * 这样「飞到空中再落地」是纯表现，不会让正在点名字牌的玩家点空。
+ */
+export function dropFlightPose(drop: Drop): {
+  x: number; y: number; groundY: number; airborne: boolean;
+} {
+  const flight = drop.flight;
+  if (flight === undefined) {
+    return { x: drop.x, y: drop.y, groundY: drop.y, airborne: false };
+  }
+  const stage = flight.t - flight.delay;
+  if (stage >= flight.duration) {
+    return { x: drop.x, y: drop.y, groundY: drop.y, airborne: false };
+  }
+  // 起跳前停在爆点：一件一件错开，而不是同时弹出。
+  const u = Math.max(0, stage) / flight.duration;
+  const groundY = flight.fromY + (drop.y - flight.fromY) * u;
+  const x = flight.fromX + (drop.x - flight.fromX) * u;
+  const lift = Math.sin(Math.PI * u) * flight.height;
+  return { x, y: groundY - lift, groundY, airborne: stage >= 0 };
+}
+
 export interface Drop {
   /** Stable identity for an explicit pickup order / cross-window request. */
   uid: string;
@@ -641,12 +701,20 @@ export interface Drop {
    */
   affixes?: readonly AffixOnItem[];
   /**
+   * 生成（掉落）时从 `weapon.xlsx` 的 [min,max] 掷出的**恒定伤害**（2026-11-17）。
+   * 与词条一样属于实例：捡起 → 武器槽 / 背包 → 遗物 → 存档，整条链跟着走。
+   * 没有这个字段 = 老存档 / 演示剑：攻击侧回落到旧的中值口径，保证向后兼容。
+   */
+  damage?: number;
+  /**
    * Result of `layoutDrops()` for the CURRENT frame. `undefined` means "not
    * laid out yet" (a drop created this frame, or a unit-test fixture), which
    * falls back to the single-item anchor. `null` means "deliberately hidden by
    * the fan-out cap" -- such a drop has no plate and cannot be clicked by name.
    */
   label?: DropLabel | null;
+  /** 飞行动画状态；落地后由 `updateDrops()` 清掉。详见 `DropFlight`。 */
+  flight?: DropFlight;
 }
 
 /**

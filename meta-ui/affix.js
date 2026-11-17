@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/affix.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 43e9a7abf72ab03dfebf60b75e99586508b6a554bbd8e6183fe47580fbf852d8
+ * Source SHA-256: 9252d78309b46572b5c8e63fd3590c724cf4c9698d0bbcf0fe29aa98f393f23f
  */
 (function (root) {
 "use strict";

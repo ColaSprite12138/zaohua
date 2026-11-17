@@ -69,7 +69,9 @@ export function wearWeapon(s: GameState, dealt: number, taken = 0): void {
     + Math.max(0, taken) * RULE.durability_taken;
   if (loss <= 0) return;
   const after = Math.max(0, before - loss);
-  s.runInventory.equipped[slot] = { uid: item.uid, defId: item.defId, durability: after };
+  // 整份实例透传，只覆盖 durability —— 白名单会顺手抹掉词条与生成时掷好的
+  // 恒定伤害（damage），那会让「打了一刀以后这把剑突然变回中值伤害」。
+  s.runInventory.equipped[slot] = { ...item, durability: after };
   if (after <= 0 && before > 0) {
     say(s, '武器损坏 · 伤害回落空手（带回局外可换一把）');
   }

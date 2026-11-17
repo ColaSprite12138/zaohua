@@ -12,14 +12,14 @@ import { affix_slot } from '../resource/generated/affix_slot.ts';
 import { rollAffixes, type AffixEquipKind } from '../meta/affix.ts';
 import { activeWeaponBroken, weaponUsable, wearWeapon } from './durability.ts';
 import { burst, say } from './effects.ts';
-import { authoredItem, monsterXp, rollLoot } from './loot.ts';
+import { authoredItem, monsterXp, rollLoot, rollWeaponDamage } from './loot.ts';
 import { weaponDamage } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
 import { hurts, type DamageSource } from './source.ts';
 import { applyStatus, clearStatus, damageTakenMultiplier, lockedFlags, statusOf } from './status.ts';
 import { walkable, type World } from './world.ts';
 import {
-  activeWeapon, DROP_MODEL_RADIUS, dropLabelRect, nextDropUid,
+  activeWeapon, DROP_MODEL_RADIUS, dropLabelRect, makeDropFlight, nextDropUid,
   PLAYER_ATTACK_CD, PLAYER_SWING_TIME, type Drop, type GameState,
 } from './state.ts';
 
@@ -236,12 +236,13 @@ export function damageSkeleton(
   // remain valid; the authored identity rides in itemId/name/quality.
   const loot = rollLoot(sk.monsterId, s.rng);
   if (loot !== null) {
-    // 词条在**掉落时**掷一次，结果落在实例上（设计 7.1）。用 `s.rng` 而不是
-    // Math.random：同一 seed 的掉落序列必须可复现，否则 playthrough 与掉落报告
-    // 每次都不一样。药与弹药品质为白 / 空 → 0 条，不会白送强度。
+    // 恒定伤害与词条都在**掉落这一刻**掷一次（2026-11-17 / 设计 7.1），
+    // 结果落在实例上：同一把剑每一下都一样，不同实例各有各的固定值。
+    // 用 `s.rng` 而不是 Math.random：同 seed 的整条序列必须可复现。
     const affixes = rollAffixes(
       affix, affix_slot, loot.quality, affixEquipKind(loot.itemId), s.rng,
     );
+    const damage = rollWeaponDamage(loot.itemId, s.rng);
     s.lootLog.push({
       monsterId: sk.monsterId,
       itemId: loot.itemId,
@@ -257,6 +258,9 @@ export function damageSkeleton(
       itemId: loot.itemId, name: loot.name, quality: loot.quality,
       monsterId: sk.monsterId,
       ...(affixes.length === 0 ? {} : { affixes }),
+      ...(damage === null ? {} : { damage }),
+      // 从怪物倒下的位置抛起，落到脚边（同一坐标），表现层画弧线。
+      flight: makeDropFlight(sk.x, sk.y, 0),
     });
     burst(s, sk.x, sk.y - 24, '#e8e4d8', 22, 210);
     say(s, `骷髅被击杀 · 掉落「${loot.name}」(${loot.quality})`);

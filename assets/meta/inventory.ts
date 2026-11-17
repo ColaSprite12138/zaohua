@@ -313,6 +313,15 @@ export interface ItemInstance {
    */
   readonly affixes?: readonly AffixOnItem[];
   /**
+   * 这一件武器在**生成（掉落）时**从 `weapon.xlsx` 的 [damage_min, damage_max]
+   * 掷出的恒定伤害（2026-11-17）。和词条一样属于实例，不属于 defId —— 同一把
+   * `10003` 分别是 41 和 58 点，捡到哪把用哪把。没有字段 = 老存档 / 演示剑，
+   * 战斗侧回落到旧的中值口径（`weaponDamage()`），保持不变。
+   *
+   * 存的是掷好的绝对值，不是"再按区间算一次"，否则每次读档都会变。
+   */
+  readonly damage?: number;
+  /**
    * 悬停信息卡用的展示字段（2026-11-15）。都是**为读而存**的只读副本：
    * 数值权威仍是 `item.xlsx` / `weapon.xlsx`，这里只是让局外页面不必再自己 join 一次表。
    */
@@ -596,6 +605,8 @@ export function addToBag(
   durability?: number,
   /** 掉落时就掷好的词条（设计 7.1）。局外伸手拿的种子物品没有这个字段。 */
   affixes?: readonly AffixOnItem[],
+  /** 生成时掷好的恒定伤害（2026-11-17）；非武器没有。 */
+  damage?: number,
 ): PlacedItem | null {
   if (ITEM_DEFS[defId] === undefined) return null;
   const def = itemDef(defId);
@@ -606,6 +617,7 @@ export function addToBag(
           uid, defId, container: 'bag', col, row,
           ...(durability === undefined ? {} : { durability }),
           ...(affixes === undefined ? {} : { affixes: affixes.map((a) => ({ ...a })) }),
+          ...(damage === undefined ? {} : { damage }),
         };
         state.bag.push(placed);
         return placed;

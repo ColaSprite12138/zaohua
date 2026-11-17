@@ -23,7 +23,7 @@ import {
   type AffixOnItem, type ItemInstance, type RunLoadout,
 } from '../meta/inventory.ts';
 import { nearestWalkable } from './world.ts';
-import { nextDropUid, type GameState } from './state.ts';
+import { makeDropFlight, nextDropUid, type GameState } from './state.ts';
 import { say } from './effects.ts';
 
 /** 遗物只需要「是什么」和「磨到多少」：位置由摆点规则重新算，不在存档里存坐标。 */
@@ -32,6 +32,8 @@ export interface DeathDropItem {
   readonly durability?: number;
   /** 词条跟着遗物走（设计 7.1）：捡回来的还是那一把，不是重掷的一把。 */
   readonly affixes?: readonly AffixOnItem[];
+  /** 生成时掷好的恒定伤害（2026-11-17）：同样跟着遗物回到主人手里。 */
+  readonly damage?: number;
 }
 
 /** 上一局掉在副本里的东西：落点 + 物品（耐久跟着走）。 */
@@ -48,6 +50,7 @@ export interface LeftoverItem {
   readonly y: number;
   readonly durability?: number;
   readonly affixes?: readonly AffixOnItem[];
+  readonly damage?: number;
 }
 
 /** 一次死亡结出的两份账。 */
@@ -84,8 +87,8 @@ function nameOf(defId: string): string {
  * 所以过一遍 `nearestWalkable()`：死亡点本身就可能被尸体 / 墙占住。
  */
 function placeLeftover(
-  s: GameState, defId: string, x: number, y: number, t: number,
-  durability?: number, affixes?: readonly AffixOnItem[],
+  s: GameState, defId: string, x: number, y: number, t: number, index: number,
+  durability?: number, affixes?: readonly AffixOnItem[], damage?: number,
 ): void {
   const spot = nearestWalkable(s.world, x, y);
   s.drops.push({
@@ -101,6 +104,9 @@ function placeLeftover(
     // 耐久必须跟着遗物走：捡回来的是「磨过的那把」，不是新的（设计 5.2 的出口）。
     ...(durability === undefined ? {} : { durability }),
     ...(affixes === undefined ? {} : { affixes: affixes.map((a) => ({ ...a })) }),
+    ...(damage === undefined ? {} : { damage }),
+    // 从遗物摊开区中心依次抛出：一件一件落回地面。
+    flight: makeDropFlight(x, y, index),
   });
 }
 
@@ -120,8 +126,8 @@ export function spawnDeathDrop(s: GameState, payload: DeathDropPayload | undefin
     const ox = (col - (span - 1) / 2) * DROP_COL_STEP;
     const oy = row * DROP_ROW_STEP;
     placeLeftover(
-      s, item.defId, payload.x + ox, payload.y + oy, i * 0.17,
-      item.durability, item.affixes,
+      s, item.defId, payload.x + ox, payload.y + oy, i * 0.17, i,
+      item.durability, item.affixes, item.damage,
     );
   });
   if (total > 0) {
@@ -140,6 +146,7 @@ export function leftoverDeathDrops(s: GameState): LeftoverItem[] {
       y: d.y,
       ...(d.durability === undefined ? {} : { durability: d.durability }),
       ...(d.affixes === undefined ? {} : { affixes: d.affixes.map((a) => ({ ...a })) }),
+      ...(d.damage === undefined ? {} : { damage: d.damage }),
     }));
 }
 

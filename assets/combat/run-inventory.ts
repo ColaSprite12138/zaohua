@@ -136,6 +136,8 @@ export function collectDrop(
   durability?: number,
   /** 掉落时掷好的词条（`affix.ts::rollAffixes`）；药 / 箭没有。 */
   affixes?: readonly AffixOnItem[],
+  /** 生成时掷好的恒定伤害（`loot.ts::rollWeaponDamage`）；非武器没有。 */
+  damage?: number,
 ): PickupResult {
   ensureItemCatalog();
   // **只有武器能进武器槽**（设计 7.4）。掉落池里现在有药，以前这里无条件塞空槽，
@@ -149,10 +151,11 @@ export function collectDrop(
       defId,
       ...(durability === undefined ? {} : { durability }),
       ...(affixes === undefined ? {} : { affixes: affixes.map((a) => ({ ...a })) }),
+      ...(damage === undefined ? {} : { damage }),
     };
     return { where: 'weapon', slot: empty as 0 | 1 };
   }
-  return addToBag(run, uid, defId, durability, affixes) !== null
+  return addToBag(run, uid, defId, durability, affixes, damage) !== null
     ? { where: 'bag' }
     : { where: 'full' };
 }
@@ -167,10 +170,17 @@ export function collectDrop(
  *
  * `gear` 传 `runInventory` 即可（它满足 `AffixGear`）：**双武器槽只算激活那把**，
  * 副手的词条不生效（设计 7.2）。不传 = 纯基础伤害（耐久 / 报告等只读场景用）。
+ *
+ * 基础值优先取**激活槽实例生成时掷好的恒定伤害**（2026-11-17）；没有这个字段
+ * （老存档 / 演示剑 / 不传 gear）才回落到 `weapon.xlsx` 的中值。这样同一把剑的
+ * 每一下伤害相同，而不同实例各有各的固定值。
  */
 export function weaponDamage(defId: string, gear?: AffixGear): number | null {
   const row = weapon.find((w) => String(w.id) === defId);
   if (row === undefined) return null;
-  const base = (row.damage_min + row.damage_max) / 2;
+  const active = gear?.equipped[gear.activeWeaponSlot];
+  const base = active !== null && active !== undefined && typeof active.damage === 'number'
+    ? active.damage
+    : (row.damage_min + row.damage_max) / 2;
   return gear === undefined ? base : base * gearMultiplier(gear, 'dmg_pct');
 }

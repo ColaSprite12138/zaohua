@@ -36,7 +36,13 @@ export function switchWeaponSlot(s: GameState, slot: 0 | 1): void {
  * A full bag leaves the drop on the ground.
  */
 export function updateDrops(s: GameState, dt: number): void {
-  for (const drop of s.drops) drop.t += dt;
+  for (const drop of s.drops) {
+    drop.t += dt;
+    if (drop.flight === undefined) continue;
+    // 飞行只推进表现；落地即清掉状态，之后绘制回到原来的静止浮动。
+    drop.flight.t += dt;
+    if (drop.flight.t >= drop.flight.delay + drop.flight.duration) drop.flight = undefined;
+  }
   if (s.pickupTarget === null) return;
   const index = s.drops.findIndex((d) => d.uid === s.pickupTarget);
   if (index < 0) { s.pickupTarget = null; return; }
@@ -45,7 +51,9 @@ export function updateDrops(s: GameState, dt: number): void {
 
   const label = drop.name ? `「${drop.name}」` : '长剑';
   const itemId = drop.itemId ?? 'longsword';
-  const picked = collectDrop(s.runInventory, drop.uid, itemId, drop.durability, drop.affixes);
+  const picked = collectDrop(
+    s.runInventory, drop.uid, itemId, drop.durability, drop.affixes, drop.damage,
+  );
   // Clear the order even on failure so the toast is not re-emitted every frame.
   s.pickupTarget = null;
   if (picked.where === 'full') {

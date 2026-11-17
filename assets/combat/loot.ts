@@ -157,6 +157,21 @@ export function rollPool(poolId: number, rng: () => number): LootRoll | null {
 }
 
 /**
+ * 一件武器在**生成（掉落）时**从 `weapon.xlsx` 的 [damage_min, damage_max]
+ * 掷出的恒定伤害（2026-11-17）。这是实例属性，和词条一样掷一次就定，
+ * 之后跟着这件物品跨堆 / 进存档；攻击时不再每次现算区间。
+ *
+ * 没有表行 / 区间无效（药、演示剑）→ null，调用方不写这个字段，
+ * 攻击侧回落到旧的中值口径，老存档因此不受影响。
+ * `rng` 由调用方给（Worker 用 `GameState.rng`），同 seed 可复现。
+ */
+export function rollWeaponDamage(defId: string, rng: () => number): number | null {
+  const row = authoredItem(defId);
+  if (row === undefined || row.damage_max <= row.damage_min) return null;
+  return Math.round(row.damage_min + (row.damage_max - row.damage_min) * rng());
+}
+
+/**
  * Roll one item for a killed monster.
  * Falls back to the first item of the table only if the authored data is
  * inconsistent (unknown monster / empty pool) — that is a data bug, and the

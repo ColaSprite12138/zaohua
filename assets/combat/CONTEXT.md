@@ -318,6 +318,23 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 `Drop.kind` 恒为 `'longsword'`（视觉 / 兼容类别），真实身份走 `drop.itemId` / `name` / `quality`。
 表结构、join 点、`weapon_subtype` 权威与 OOXML 约束见 `assets/resource/CONTEXT.md`「现有表与消费方登记」。
 
+**恒定伤害 = 生成时掷一次（2026-11-17 用户纠正）**：每件武器在**掉落那一刻**由
+`loot.ts::rollWeaponDamage(defId, s.rng)` 从 `weapon.xlsx::[damage_min,damage_max]` 掷一个整数，
+写进 `Drop.damage` → 拾取时 `collectDrop()` → `ItemInstance.damage`（进武器槽 / 背包）→
+遗物 / 存档 / 跨堆搬运整份跟随。**不是每次攻击在区间里现随机**：`weaponDamage(defId, gear)`
+优先读激活槽实例的 `damage`，没有该字段（老存档 / 演示剑 / 不传 gear）才回落旧的中值口径，
+所以向后兼容。`dmg_pct` 词条仍乘在这份恒定基数上（设计 6.2：装备管白值）。
+`wearWeapon` 用实例展开而非白名单重建，否则磨损一次就把 `damage` / `affixes` 抹掉。
+
+**喷射式掉落（2026-11-17）**：三种来源（怪物死亡 / 玩家死亡遗物 / 砸可破坏物）都给
+`Drop` 挂 `flight`（`makeDropFlight(fromX, fromY, index)`）：物品本体沿抛物线从爆点飞到落点、
+自转加速，`index * DROP_FLIGHT_STAGGER=0.12s` 依次起跳，形成「一件接一件往外喷」。
+`updateDrops()` 每帧推进 `flight.t`，落地即清掉状态。**落点 `Drop.x/y`、名牌 `dropLabelRect()`
+与拾取判定全程锚在落点、不读 `flight`**：飞行是纯表现，玩家点名字牌走过去、落地那一刻
+正好在 50px 内拾取，所有点击类 playthrough 断言不受飞行影响。绘制层只读
+`dropFlightPose()`（唯一视觉位置权威），禁止在 paint 里另算抛物线。
+参数：`DROP_FLIGHT_HEIGHT=58px` / `DROP_FLIGHT_SECONDS=0.58s` / `DROP_FLIGHT_STAGGER=0.12s`。
+
 ### 地图运行时（2026-11-13 接入）
 
 | 项 | 契约 |
@@ -506,6 +523,17 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 72. **词条只在掉落时掷**：拾取 / 拖放 / 读存档 / 结算都不得调用 `rollAffixes()`。
     重掷会让同一件装备的词条在过一道界面后变一次，而存档 diff 里看不出来。
     唯一合法的重掷是**重铸**（尚未实现，届时必须扣金币并计入每件 1–3 次上限）。
+
+73. **武器伤害是实例属性，不在每次攻击掷**：`rollWeaponDamage()` 只在掉落那一刻调用一次，
+    攻击只读激活槽实例的 `damage`（没有才回落中值）。禁止在 `weaponDamage()` / `attack.ts` /
+    `ranged.ts` 里再按区间现算 —— 那会让同一把剑每一下伤害都不同（2026-11-17 用户纠正）。
+    `damage` 必须与 `affixes` / `durability` 同路径跨堆 / 进存档，任何显式白名单拷贝
+    （`wearWeapon` / `relicOf` / `result.lost`）漏了它都会让这件剑在过一道界面后「变性」。
+
+74. **飞行动画不参与规则**：`Drop.flight` 只被 `updateDrops()` 推进与 `paint.ts::drawDrop()`
+    读取。落点 / 名牌 / 拾取命中 / 投影坐标（`dropAt` / `dropLabel` / `dropPlates`）一律读
+    `Drop.x/y`，不得读 `dropFlightPose()` 的结果 —— 飞行中物品画在半空，但玩家点落点的
+    名字牌走过去，落地瞬间正好拾取。绘制层不许另算抛物线，只读 `dropFlightPose()`。
 
 ## 目录与依赖方向（单向，禁止反向 import）
 
@@ -722,7 +750,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 ## 独立验收
 
 ```bash
-./node_modules/.bin/vitest run assets/combat/__tests__                 # 289 条（18 个文件；来源/自伤 7 条是本批新增，其余见各文件）
+./node_modules/.bin/vitest run assets/combat/__tests__                 # 独立单测（含 drop-damage-flight.test.ts 10 条：恒定伤害 + 喷射掉落）
 python scripts/export_tables.py --check                                # 数值表与生成物是否同步
 node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真实 rollLoot 跑批
 ./node_modules/.bin/forgeax project play --script scripts/playthrough.mjs --viewports "1600x900,1280x600" --json

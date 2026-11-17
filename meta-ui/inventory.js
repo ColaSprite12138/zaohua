@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 9a2a2cf206e499bc55b8f2be2859ebdc4e7dca948f4ceb4f69dad67af683fa2b
+ * Source SHA-256: 3b26470f030fa5d0ab6bfc1d320b2004e883ae5923c3df47067ca2d8d0962bac
  */
 (function (root) {
 "use strict";
@@ -429,7 +429,9 @@ function addToBag(state, uid, defId,
 /** 从尸体上捡回来的武器带着它磨过的耐久（普通掉落没有这个字段）。 */
 durability, 
 /** 掉落时就掷好的词条（设计 7.1）。局外伸手拿的种子物品没有这个字段。 */
-affixes) {
+affixes, 
+/** 生成时掷好的恒定伤害（2026-11-17）；非武器没有。 */
+damage) {
     if (exports.ITEM_DEFS[defId] === undefined)
         return null;
     const def = itemDef(defId);
@@ -440,6 +442,7 @@ affixes) {
                     uid, defId, container: 'bag', col, row,
                     ...(durability === undefined ? {} : { durability }),
                     ...(affixes === undefined ? {} : { affixes: affixes.map((a) => ({ ...a })) }),
+                    ...(damage === undefined ? {} : { damage }),
                 };
                 state.bag.push(placed);
                 return placed;

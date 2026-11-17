@@ -74,7 +74,7 @@ export type RunResult = {
    * 失败时**丢下**的部分。副本把它写进死亡掉落槽（下次进本捡回一次），
    * 搜打撤直接消失。主线阵亡为空数组。
    */
-  lost?: { defId: string; durability?: number; affixes?: readonly AffixOnItem[] }[];
+  lost?: { defId: string; durability?: number; affixes?: readonly AffixOnItem[]; damage?: number }[];
   /** 阵亡位置（世界像素）；副本用它决定遗物落在哪。 */
   deathAt?: { x: number; y: number } | null;
   /** 地上还没捡走的遗物（撤离时仍留在副本里，下次进来还在）。 */
@@ -292,6 +292,8 @@ export const game: Plugin = {
         lost: lost ? settlement.lost.map((it) => ({
           defId: it.defId,
           ...(it.durability === undefined ? {} : { durability: it.durability }),
+          ...(it.affixes === undefined ? {} : { affixes: it.affixes }),
+          ...(it.damage === undefined ? {} : { damage: it.damage }),
         })) : [],
         // 阵亡点：副本遗物落在这里。玩家被冻结后不再移动，所以结算时读到的就是死点。
         deathAt: lost ? { x: state.player.x, y: state.player.y } : null,

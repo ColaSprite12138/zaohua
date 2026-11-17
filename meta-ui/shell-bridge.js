@@ -39,6 +39,7 @@
     var out = { defId: it.defId };
     if (it.durability !== undefined) out.durability = it.durability;
     if (it.affixes !== undefined) out.affixes = it.affixes;
+    if (it.damage !== undefined) out.damage = it.damage;
     return out;
   }
 

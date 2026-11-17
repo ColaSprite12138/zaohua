@@ -20,9 +20,9 @@
 import { destructible as destructibleRows } from '../resource/generated/destructible.ts';
 import { burst, pinPlayer, say, setTarget } from './effects.ts';
 import { wakeNoise } from './enemies.ts';
-import { rollPool } from './loot.ts';
+import { rollPool, rollWeaponDamage } from './loot.ts';
 import {
-  nextDropUid, PLAYER_SWING_TIME, RUBBLE_SECONDS, SMASH_RANGE, SMASH_SWING_SECONDS,
+  makeDropFlight, nextDropUid, PLAYER_SWING_TIME, RUBBLE_SECONDS, SMASH_RANGE, SMASH_SWING_SECONDS,
   type DestructibleObj, type GameState,
 } from './state.ts';
 import { nearestWalkable } from './world.ts';
@@ -205,6 +205,7 @@ function breakOpen(s: GameState, obj: DestructibleObj): void {
       obj.x + Math.cos(angle) * 34,
       obj.y + Math.sin(angle) * 22,
     );
+    const damage = rollWeaponDamage(loot.itemId, s.rng);
     s.drops.push({
       uid: nextDropUid(),
       x: spot.x,
@@ -215,6 +216,9 @@ function breakOpen(s: GameState, obj: DestructibleObj): void {
       name: loot.name,
       quality: loot.quality,
       monsterId: `destructible:${def.id}`,
+      ...(damage === null ? {} : { damage }),
+      // 从箱子中心向外抛，`i` 决定次序 —— 一件接一件喷出来。
+      flight: makeDropFlight(obj.x, obj.y, i),
     });
     names.push(`${loot.name}(${loot.quality})`);
   }
