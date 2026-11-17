@@ -37,7 +37,7 @@
 | 单击敌人 | 锁定该敌人 + 压入一条攻击指令；距离不够先接近，**进距离才挥砍一次**，只扣这一只 |
 | 长按左键（拖动） | 落点实时跟随光标；松开按最后落点走完停下；**全程不攻击** |
 | 单击掉落物 | **显式拾取指令**：点中**名字牌矩形**（展开后的牌面，或距小模型中心 ≤12px）→ 走过去、到达 `<50px` 才拾取（走过不拾取）；优先空武器槽 → 局内背包占 2×3 格 → 都不行则留在地上 |
-| **1 / 2** | 切换激活武器槽；只有激活槽参与攻击，空槽＝徒手（22 伤害 / 140 范围）；有武器取 `weapon.xlsx` 中值，无表行回落 46 / 170 |
+| **1 / 2** | 切换激活武器槽；只有激活槽参与攻击，空槽＝徒手（22 伤害 / 58 范围）；有武器取 `weapon.xlsx` 中值，无表行回落 46 / 88 |
 | 空格 / R | 闪避（无敌 + 冷却 + 残影）/ 重开 |
 
 单击判定**只看位移，不看时长**：屏幕空间（`mouse − camera`）位移 `< 12` 逻辑像素即算单击，
@@ -245,7 +245,7 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 | 耐久上限 | `weapon.xlsx::durability`（巨剑 160 / 弓 110）。**三类武器都有**；演示用 `longsword` 没有表行 → 不参与耐久 |
 | 扣耐久 | 造成：`damageSkeleton` 之后按「这一下的伤害」扣；承受：怪物出刀与 DOT 掉血各扣一次。比值在 `combat_rule.xlsx::durability_dealt / durability_taken`（0.04 / 0.16 ≈ 3:7） |
 | 只在激活槽 | 副手不磨损（否则玩家要为不用的武器付账）；空手 / 无耐久物品 / 已损坏都是 no-op |
-| 损坏 | 耐久 0 → 装备**仍在槽里**，但伤害回落空手 22、近战距离回落 140、HUD 槽底细条变红并标「坏」 |
+| 损坏 | 耐久 0 → 装备**仍在槽里**，但伤害回落空手 22、近战距离回落 58、HUD 槽底细条变红并标「坏」 |
 | 不做修理 | 设计原话是「修不如重铸」。修理 / 重铸要等金币经济 + 词条批次；本轮坏了就换（5.3 装备是消耗品） |
 | 耐久跨局 | 耐久写在 `ItemInstance.durability` 上，跟着物品跨堆 / 进存档；**重开一局不会修满** |
 | 药是物品 | 红药 `30002` / 蓝药 `30003` 在 `item.xlsx`，1×1 格、`equip=null`，从两个掉落池都能刷到。`GameState.potions` 计数器**已删除** |
@@ -329,10 +329,18 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 **喷射式掉落（2026-11-17）**：三种来源（怪物死亡 / 玩家死亡遗物 / 砸可破坏物）都给
 `Drop` 挂 `flight`（`makeDropFlight(fromX, fromY, index)`）：物品本体沿抛物线从爆点飞到落点、
 自转加速，`index * DROP_FLIGHT_STAGGER=0.12s` 依次起跳，形成「一件接一件往外喷」。
-`updateDrops()` 每帧推进 `flight.t`，落地即清掉状态。**落点 `Drop.x/y`、名牌 `dropLabelRect()`
-与拾取判定全程锚在落点、不读 `flight`**：飞行是纯表现，玩家点名字牌走过去、落地那一刻
-正好在 50px 内拾取，所有点击类 playthrough 断言不受飞行影响。绘制层只读
-`dropFlightPose()`（唯一视觉位置权威），禁止在 paint 里另算抛物线。
+`updateDrops()` 每帧推进 `flight.t`，落地即清掉状态。
+
+**落地才显名、才可点、才可捡**（用户同日第二轮纠正：以前飞行中就有名牌，"看起来像空中掉落"）。
+唯一判据是 `state.ts::dropLanded(drop)`（`flight === undefined` 或已过 `delay + duration`）：
+- `dropLabelRect()` 对未落地的掉落返回 **null** —— 名牌既不画（`paint.ts::drawDropLabels`）也不可点；
+- `attack.ts::dropAtPoint()` 跳过它 —— 模型本身也不是"隐形靶子"；
+- `layoutDrops()` 不让它参与列队（不挤占地上名字牌的位置）；
+- `updateDrops()` 的拾取结算也等它 —— 已有 `pickupTarget` 也不会在空中被结算。
+
+落地之后一切回到"锚在落点"的老规则：`Drop.x/y`、名牌、拾取命中、投影（`dropAt` / `dropLabel` /
+`dropPlates`）全读落点，不读 `flight`。绘制层只读 `dropFlightPose()`（唯一视觉位置权威），
+禁止在 paint 里另算抛物线。
 参数：`DROP_FLIGHT_HEIGHT=58px` / `DROP_FLIGHT_SECONDS=0.58s` / `DROP_FLIGHT_STAGGER=0.12s`。
 
 ### 地图运行时（2026-11-13 接入）
@@ -356,7 +364,7 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 ## 不变量（任一破坏 = 验收必须红）
 
 1. `projection()` 的字段名与归一化范围不得变 —— playthrough 断言直接读它。
-2. `NO_MODIFIERS` 必须与重构前完全一致：裸手 22 伤害 / 140 范围，持剑 46 / 170。
+2. `NO_MODIFIERS` 必须与重构前完全一致：裸手 22 伤害 / 58 范围，持剑 46 / 88。
 3. 长按绝不产生 `attackOrder`；闪避期间不改写落点、不结算攻击。
 4. 掉落物点击优先于敌人，但**只在名字牌 / 小模型内**优先；否则压在骷髅脚下的长剑要么永远捡不到、要么整只怪点不动。
 5. `assets/game/simulation.ts` 是**兼容门面**，只做 re-export，禁止在此写玩法逻辑。
@@ -530,10 +538,11 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
     `damage` 必须与 `affixes` / `durability` 同路径跨堆 / 进存档，任何显式白名单拷贝
     （`wearWeapon` / `relicOf` / `result.lost`）漏了它都会让这件剑在过一道界面后「变性」。
 
-74. **飞行动画不参与规则**：`Drop.flight` 只被 `updateDrops()` 推进与 `paint.ts::drawDrop()`
-    读取。落点 / 名牌 / 拾取命中 / 投影坐标（`dropAt` / `dropLabel` / `dropPlates`）一律读
-    `Drop.x/y`，不得读 `dropFlightPose()` 的结果 —— 飞行中物品画在半空，但玩家点落点的
-    名字牌走过去，落地瞬间正好拾取。绘制层不许另算抛物线，只读 `dropFlightPose()`。
+74. **飞行动画不参与规则，但会把「可交互」推迟到落地**：`Drop.flight` 只被 `updateDrops()`
+    推进与 `paint.ts::drawDrop()` 读取；`dropLanded()` 之前没有名牌、点不到、捡不起
+    （用户 2026-11-17：爆出来的东西要掉到地上才显名、才能拾取）。落地之后落点 / 名牌 /
+    拾取命中 / 投影坐标（`dropAt` / `dropLabel` / `dropPlates`）一律读 `Drop.x/y`，不得读
+    `dropFlightPose()` 的结果。绘制层不许另算抛物线，只读 `dropFlightPose()`。
 
 ## 目录与依赖方向（单向，禁止反向 import）
 

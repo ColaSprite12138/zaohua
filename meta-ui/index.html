@@ -305,7 +305,7 @@
   // LOBBY state is the only object the platform KV save ever sees. During a
   // run the UI renders a COPY of the Engine Worker's own state instead; all
   // edits become commands and the Worker answers with a fresh snapshot.
-  let lobbyState = host.state ?? M.createInventoryState(3);
+  let lobbyState = host.state ?? M.createInventoryState(0);
   // 三个容器必须都在：老存档 / 手改数据 / 旧快照都可能缺 `safe`（独立容器的第一批）。
   M.normalizeContainers(lobbyState);
   host.state = lobbyState;
@@ -396,6 +396,8 @@
     // `tipUid` 让卡片能读到**实例上的词条**（词条属于实例、不属于 defId，设计 7.1）。
     node.dataset.tipDef = item.defId;
     node.dataset.tipDura = item.durability === undefined ? '' : String(item.durability);
+    // 生成时掷定的恒定伤害（2026-11-17）：卡片显示**这一把**的值，不是表里的区间。
+    node.dataset.tipDmg = item.damage === undefined ? '' : String(item.damage);
     node.dataset.tipUid = item.uid;
     node.style.width = w + 'px';
     node.style.height = h + 'px';
@@ -461,6 +463,7 @@
       if (item) {
         node.dataset.tipDef = item.defId;
         node.dataset.tipDura = item.durability === undefined ? '' : String(item.durability);
+        node.dataset.tipDmg = item.damage === undefined ? '' : String(item.damage);
         node.dataset.tipUid = item.uid;
       }
 
@@ -896,8 +899,8 @@
 
   $('reset').addEventListener('click', () => {
     if (runMode) return;
-    host.setState(M.createInventoryState(3));
-    say('已重置演示数据');
+    host.setState(M.createInventoryState(0));
+    say('已重置（仓库与背包清空）');
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === '1' || e.key === '2') {
@@ -930,7 +933,23 @@
     return item && item.affixes ? item.affixes : [];
   }
 
-  function tipHtml(def, duraRaw, affixes) {
+  /**
+   * 这件实例的伤害数字（用户 2026-11-17：「面板还显示一个范围，没有显示随机后的值」）。
+   *
+   * 武器伤害在**掉落那一刻**就从 weapon.xlsx 的 [min,max] 掷定，之后每次攻击都用它
+   * （`combat/loot.ts::rollWeaponDamage` → `attack.ts`）。所以卡片必须显示实例值：
+   *   · 有实例值 → 直接显示那一个数；
+   *   · 没有（局外演示剑 / 老存档）→ 显示战斗代码会用的**中值**，不是区间。
+   * 区间只属于表，不属于任何一件具体装备。
+   */
+  function damageText(def, dmgRaw) {
+    const rolled = dmgRaw === undefined || dmgRaw === '' ? NaN : Number(dmgRaw);
+    if (Number.isFinite(rolled)) return String(Math.round(rolled));
+    if (def.damageMax === undefined || def.damageMax === def.damageMin) return String(def.damageMin);
+    return String(Math.round((def.damageMin + def.damageMax) / 2));
+  }
+
+  function tipHtml(def, duraRaw, affixes, dmgRaw) {
     const parts = [];
     parts.push('<div class="tip-name" style="color:' + def.color + '">' + def.name + '</div>');
     const meta = [def.itemType, def.quality, def.itemType === '武器' ? def.weaponSubtype : null]
@@ -939,10 +958,7 @@
     parts.push('<div class="tip-meta">' + (meta || '物品') + '</div>');
 
     if (typeof def.damageMin === 'number') {
-      const dmg = def.damageMax !== undefined && def.damageMax !== def.damageMin
-        ? def.damageMin + ' – ' + def.damageMax
-        : String(def.damageMin);
-      parts.push('<div class="tip-row"><span>伤害</span><b>' + dmg + '</b></div>');
+      parts.push('<div class="tip-row"><span>伤害</span><b>' + damageText(def, dmgRaw) + '</b></div>');
     }
     if (def.durability) {
       const cur = duraRaw === '' ? def.durability : Number(duraRaw);
@@ -1007,8 +1023,9 @@
     }
     const affixes = affixesOf(node.dataset.tipUid);
     const key = node.dataset.tipDef + '|' + (node.dataset.tipDura || '')
+      + '|' + (node.dataset.tipDmg || '')
       + '|' + JSON.stringify(affixes);
-    const html = tipHtml(def, node.dataset.tipDura || '', affixes);
+    const html = tipHtml(def, node.dataset.tipDura || '', affixes, node.dataset.tipDmg || '');
     if (tipEl.dataset.for !== key) {
       tipEl.dataset.for = key;
       tipEl.innerHTML = html;
@@ -1026,7 +1043,7 @@
   if (sellBtn) sellBtn.addEventListener('click', sellTreasures);
   render();
   renderStar();
-  say('三把长剑已在仓库：拖到背包或装备栏开始配装（绿色预览＝可放，红色＝放不下）');
+  say('仓库是空的：出征去副本里捡装备（绿色预览＝可放，红色＝放不下）');
 })();
 </script>
 </body>

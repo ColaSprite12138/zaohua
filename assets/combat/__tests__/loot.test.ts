@@ -200,7 +200,8 @@ describe('arena population and loot settlement', () => {
     s.player.x = drop.x;
     s.player.y = drop.y;
     s.pickupTarget = drop.uid;
-    updateDrops(s, 1 / 60);
+    // 掉落先飞 0.58s，落地那一帧才结算（2026-11-17 用户要求）：别假定一帧就捡。
+    for (let i = 0; i < 90 && s.drops.length > 0; i += 1) updateDrops(s, 1 / 60);
     expect(s.drops.some((d) => d.uid === drop!.uid)).toBe(false);
     expect(s.carriedItems).toEqual([expected]);
     // The authored id now lives in the Worker's OWN inventory, not in a

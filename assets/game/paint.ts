@@ -60,7 +60,6 @@ import {
   propFootprint,
 } from './atlas.ts';
 import {
-  ARM_REACH,
   CORPSE,
   KNIGHT,
   KNIGHT_ARM,
@@ -92,6 +91,9 @@ import {
   type Limb,
   type VoxelModel,
 } from './voxel.ts';
+// 挥砍运动学是**纯数学**，单独成文件（`swing.ts`）并带单测：
+// 弧线必须围绕目标方向，而不是围绕"屏幕向下"。详见该文件头注释。
+import { bladeAngle, ease, handPose } from './swing.ts';
 
 export type Painter = CanvasRenderingContext2D;
 
@@ -479,16 +481,6 @@ function drawMinimap(g: Painter, s: GameState): void {
 
 /* ---------------------------------------------------------------- entities */
 
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-/** Smooth 0..1 ramp. Used for the wind-up / strike curve of a swing. */
-function ease(t: number): number {
-  const c = Math.min(1, Math.max(0, t));
-  return c * c * (3 - 2 * c);
-}
-
 /**
  * Heading -> which baked body to draw.
  *
@@ -499,118 +491,6 @@ function ease(t: number): number {
  * 绘制层和手臂共用这一份结果：要翻一起翻，否则会出现「人朝左走、剑挥向右」。
  */
 const facingOf = yawOf;
-
-const DOWN = Math.PI / 2;
-
-/** Shortest signed turn from `from` to `to`, then read `t` of the way. */
-function blendAngle(from: number, to: number, t: number): number {
-  return from + Math.atan2(Math.sin(to - from), Math.cos(to - from)) * t;
-}
-
-/**
- * Idle arm direction: mostly screen-DOWN (that is where a relaxed arm hangs),
- * leaned a third of the way toward the heading.
- *
- * Deliberately NOT `face + k`: that only means "down" while the body faces
- * right. A body walking straight up would get `face + 0.5` = up-and-right, i.e.
- * the arm raised instead of hanging.
- */
-function restArm(_face: number): number {
-  // 自然下垂：手臂从肩关节竖直向下，剑握在手下。以前会朝朝向偏 38%，
-  // 那是"手臂向前伸"的走姿，和"右手在身体侧面"的 T-pose 约定不符。
-  return DOWN;
-}
-
-/**
- * `face` rotated by `amount` TOWARD screen-down (positive) or away from it
- * (negative), taking the short way round.
- *
- * Used for the swing arc, where "toward the aim then past it" has to mirror on
- * a left-facing body: "chop down" is `face + k` facing right and `face - k`
- * facing left.
- */
-function tilt(face: number, amount: number): number {
-  const a = face + Math.abs(amount);
-  const b = face - Math.abs(amount);
-  const closeness = (x: number): number => Math.abs(Math.atan2(Math.sin(DOWN - x), Math.cos(DOWN - x)));
-  const towardDown = closeness(a) <= closeness(b) ? a : b;
-  return amount >= 0 ? towardDown : 2 * face - towardDown;
-}
-
-/**
- * Arm angle over one swing (0 = wind-up start, 1 = recovered). The arm rises
- * behind the shoulder, chops through the aim direction, then settles back onto
- * the resting angle -- every leg is a shortest-arc blend that ENDS exactly on
- * the next key pose, so there is no snap when the swing counter hits zero.
- */
-function swingArmAngle(face: number, u: number): number {
-  const rest = restArm(face);
-  const raised = tilt(face, -1.45);
-  const strike = tilt(face, 1.25);
-  if (u < 0.3) return blendAngle(rest, raised, ease(u / 0.3));
-  const t = (u - 0.3) / 0.7;
-  return t < 0.6
-    ? blendAngle(raised, strike, ease(t / 0.6))
-    : blendAngle(strike, rest, ease((t - 0.6) / 0.4));
-}
-
-interface HandPose {
-  /** Arm direction in screen radians (0 = right, +PI/2 = down). */
-  arm: number;
-  /** Where the fist (and therefore the grip) is. */
-  x: number;
-  y: number;
-  /** How far the strike has progressed; drives the blade's wrist angle. */
-  swing: number;
-}
-
-/**
- * Where the leading hand is this frame. Everything about a held weapon hangs
- * off this: the blade's pommel sits IN the fist, and the fist is at the end of
- * a limb rotated around the shoulder -- that is what makes it read as "held"
- * instead of "pasted on the chest".
- */
-function handPose(
-  x: number,
-  y: number,
-  face: number,
-  swing: number,
-): HandPose {
-  // 肩在"角色的右手侧"，屏幕横向偏移 = SHOULDER_X · cos(yaw)：
-  // 正对镜头（yaw 0）在右边，完全侧身（yaw ±π/2）落到中线，背对时换到左边。
-  // **以前这里是 `flip ? -1 : 1` 的二值判断**，转身经过正下方时 cos 变号，
-  // 肩膀会在两帧之间从 +14px 跳到 −14px，武器看起来"瞬移"（用户 2026-11-17 报的）。
-  // 肩位是**绕身体转圈的圆**：横向 -sin、纵向 +cos（见 voxel.ts）。
-  // 只算横向会让手永远贴在身体左右两侧，面朝左时该被挡住的手跑到前景。
-  const sx = x + shoulderOffset(face);
-  const sy = y - SHOULDER_Y + shoulderOffsetY(face);
-  const arm = swing > 0 ? swingArmAngle(face, swing) : restArm(face);
-  return {
-    arm,
-    x: sx + Math.cos(arm) * ARM_REACH,
-    y: sy + Math.sin(arm) * ARM_REACH,
-    swing,
-  };
-}
-
-/**
- * Blade wrist angle: raised in a ready stance at rest (tip up and outward, the
- * way a heavy blade is carried), then an extension of the arm as the strike
- * lands. `tilt` keeps the tilt on the correct side for a body facing left, so
- * the blade is never upside down.
- */
-function bladeAngleOf(hand: HandPose): number {
-  // 静止时剑**竖直向上**（`rotation` 要归零），挥砍时顺着手臂甩出去。
-  //
-  // 以前这里拿手臂角去算 `tilt(hand.arm, -π)`：正对（arm = 90°，朝下）时
-  // 结果刚好竖直，但背对时 arm 变成 0.38（朝右上），剑就被算成 −69° ——
-  // 斜着插进身体里，整把剑被躯干盖住，看起来"剑不在手上"（用户 2026-11-17
-  // 的截图）。剑的静止姿态不该跟着手臂角漂。
-  //
-  // `rotation = 返回值 + π/2`：-π/2 → 0（竖直向上）；`hand.arm` → 剑尖朝手臂指向。
-  const upright = -Math.PI / 2;
-  return lerp(upright, hand.arm, Math.min(1, hand.swing * 1.15));
-}
 
 /** Fit a model inside a HUD plate, preferring its authored size (cap 1.6x). */
 function fitScale(model: VoxelModel, maxW: number, maxH: number): number {
@@ -656,14 +536,14 @@ function drawWeaponArm(
       for (let i = 3; i >= 1; i -= 1) {
         const past = handPose(x, y, face, Math.max(0, swing - i * 0.12));
         drawVoxel(g, blade, past.x, past.y, {
-          rotation: bladeAngleOf(past) + Math.PI / 2,
+          rotation: bladeAngle(past) + Math.PI / 2,
           scale,
           alpha: 0.1 * (4 - i),
         });
       }
     }
     drawVoxel(g, blade, hand.x, hand.y, {
-      rotation: bladeAngleOf(hand) + Math.PI / 2,
+      rotation: bladeAngle(hand) + Math.PI / 2,
       scale,
     });
   }

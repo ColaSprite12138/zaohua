@@ -4,18 +4,21 @@
  * 两条契约：
  * 1. 武器伤害是**实例属性**：生成时从 weapon.xlsx 的 [min,max] 掷一次定死，
  *    跟着实例跨堆 / 拾取 / 遗物 / 存档；每次攻击都读这个值，不再现算区间。
- * 2. 掉落是**表现层抛物线**：物品本体飞起落地，但落点 / 名牌 / 拾取判定
- *    始终锚在 Drop.x/y，飞行中点名字牌走过去，落地那一刻正好能捡。
+ * 2. 掉落是**表现层抛物线**：物品本体飞起落地，落点始终是 Drop.x/y；
+ *    但**落地之前不显名、不能点、不能捡**（用户 2026-11-17 的第二条纠正 ——
+ *    以前飞行中就有名牌，看起来像"空中掉落"。空中点不到，所以走过去的时机
+ *    仍然只有落地之后）。
  */
 import { describe, expect, it } from 'vitest';
 import {
   makeRng, rollWeaponDamage, weaponRow,
 } from '../loot.ts';
 import {
-  createState, dropFlightPose, makeDropFlight, nextDropUid,
+  createState, dropFlightPose, dropLabelRect, dropLanded, makeDropFlight, nextDropUid,
   DROP_FLIGHT_HEIGHT, DROP_FLIGHT_SECONDS, DROP_FLIGHT_STAGGER,
   type Drop,
 } from '../state.ts';
+import { dropAtPoint } from '../attack.ts';
 import { collectDrop, applyRunCommand, makeRunInventory, weaponDamage } from '../run-inventory.ts';
 import { updateDrops } from '../weapons.ts';
 import type { RunLoadout } from '../../meta/inventory.ts';
@@ -138,7 +141,7 @@ describe('喷射式掉落的飞行表现', () => {
     expect(drop.flight).toBeUndefined();
   });
 
-  it('飞行期间名牌与落点不变，走过去落地即拾取', () => {
+  it('落到地上才显名、才能捡：空中既没有名牌也不会被拾取', () => {
     const s = createState();
     const drop = mkDrop({
       x: s.player.x, y: s.player.y,
@@ -147,11 +150,33 @@ describe('喷射式掉落的飞行表现', () => {
     });
     s.drops.push(drop);
     s.pickupTarget = drop.uid;
-    // 飞行中：落点就是玩家脚下，名字牌照常可点
-    expect(drop.x).toBe(s.player.x);
-    updateDrops(s, 1 / 60);
-    expect(s.runInventory.equipped[0]!.damage).toBe(333);
+    expect(drop.x).toBe(s.player.x); // 落点仍然是脚下的位置
+
+    // 空中：没有名牌（点击目标不存在），拾取指令也要等。
+    const firstFrame = updateDrops(s, 1 / 60);
+    void firstFrame;
+    expect(dropLanded(drop)).toBe(false);
+    expect(dropLabelRect(drop)).toBeNull();
+    expect(dropAtPoint(s, drop.x, drop.y)).toBeNull();
+    expect(s.drops).toHaveLength(1);
+    expect(s.runInventory.equipped[0]).toBeNull();
+
+    // 落地那一刻：名牌出现、拾取结算。
+    for (let i = 0; i < Math.ceil((DROP_FLIGHT_SECONDS + DROP_FLIGHT_STAGGER) * 60) + 4; i += 1) {
+      updateDrops(s, 1 / 60);
+    }
+    expect(dropLanded(drop)).toBe(true);
     expect(s.drops).toHaveLength(0);
+    expect(s.runInventory.equipped[0]!.damage).toBe(333);
+  });
+
+  it('地上的东西（没有 flight）立刻显名：老存档 / 遗物不受影响', () => {
+    const s = createState();
+    const drop = mkDrop({ x: s.player.x, y: s.player.y, itemId: '10001' });
+    s.drops.push(drop);
+    expect(dropLanded(drop)).toBe(true);
+    expect(dropLabelRect(drop)).not.toBeNull();
+    expect(dropAtPoint(s, drop.x, drop.y)).not.toBeNull();
   });
 
   it('飞行高度是整数像素常量，绘制层只读 pose 不另算', () => {

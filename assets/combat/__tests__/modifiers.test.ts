@@ -4,6 +4,7 @@ import {
   type CombatModifiers, type StepInput,
 } from '../simulation.ts';
 import { damageSkeleton } from '../attack.ts';
+import { MELEE_RANGE_BARE } from '../state.ts';
 import { monsterXp } from '../loot.ts';
 import { starmap } from '../../resource/generated/starmap.ts';
 
@@ -49,18 +50,21 @@ describe('talent-effect hook lives in combat', () => {
   });
 
   it('a range modifier lets a distant target be hit; default still approaches', () => {
-    const reach: CombatModifiers = {
+    const reachMods: CombatModifiers = {
       starNodes: ['test.reach+100'],
       damageMultiplier: (base) => base,
       meleeRangeBonus: () => 100,
       maxHpMultiplier: () => 1,
       maxManaMultiplier: () => 1,
     };
-    const extended = queuedSwing(200);
-    step(extended.s, 0.016, idle, reach);
+    // 基础近战 58 +「长臂」100 = 158，减 RANGE_SLACK 8 之后仍有 150 的可达半径；
+    // 取 128 留余量，且没词条的裸手（50）够不到 —— 一条用例同时验两件事。
+    const dist = MELEE_RANGE_BARE + 100 - 30;
+    const extended = queuedSwing(dist);
+    step(extended.s, 0.016, idle, reachMods);
     expect(extended.s.attacks).toBe(1);
 
-    const baseline = queuedSwing(200);
+    const baseline = queuedSwing(dist);
     step(baseline.s, 0.016, idle, NO_MODIFIERS);
     expect(baseline.s.attacks).toBe(0);
     expect(baseline.s.attackOrder).toBe(true);

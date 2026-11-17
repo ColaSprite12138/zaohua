@@ -32,7 +32,8 @@
   }
 
   var slots = M.EQUIP_SLOTS.length;
-  var fallback = function () { return M.createInventoryState(3); };
+  // 空仓库就是新开局的全部家当（用户 2026-11-17：删掉初始三把长剑）。
+  var fallback = function () { return M.createInventoryState(0); };
   var queue = null; // stays null until the platform adapter is mounted
   var identity = { id: '', name: '', mode: 'off' };
   var applying = false;

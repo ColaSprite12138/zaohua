@@ -10,6 +10,7 @@ import {
   type GameState,
   type StepInput,
 } from '../simulation.ts';
+import { MELEE_RANGE_BARE } from '../state.ts';
 import { VIEW_H, VIEW_W } from '../../shared/constants.ts';
 import { cameraFor, nearestWalkable } from '../world.ts';
 import { arena } from '../../resource/maps/arena.generated.ts';
@@ -141,7 +142,9 @@ describe('targeted melee contract', () => {
     const s = createState();
     const target = s.skeletons[0]!;
     const bystanderHp = s.skeletons[1]!.hp;
-    s.player.x = target.x - 80;
+    // 空手可达距离是 58（2026-11-17 收紧，原先 140）；留 18px 余量，
+    // 免得"玩家被 nearestWalkable 挪几像素"就把这条边界用例推翻。
+    s.player.x = target.x - (MELEE_RANGE_BARE - 18);
     s.player.y = target.y;
     const hpBefore = target.hp;
 
@@ -196,7 +199,7 @@ describe('targeted melee contract', () => {
     const sx = s.skeletons[0]!.x;
     const sy = s.skeletons[0]!.y;
     s.drops.push({ uid: 'test-drop-b', x: sx, y: sy, kind: 'longsword', t: 0 });
-    s.player.x = sx - 80;
+    s.player.x = sx - (MELEE_RANGE_BARE - 18);
     s.player.y = sy;
 
     click(s, sx, sy - 30);

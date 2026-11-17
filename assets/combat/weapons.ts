@@ -4,7 +4,7 @@ import { burst, say } from './effects.ts';
 import { itemDef } from '../meta/inventory.ts';
 import { collectDrop, ensureItemCatalog } from './run-inventory.ts';
 import {
-  activeWeapon, dropLabelAnchor, dropQualityRank, syncWeaponSlots,
+  activeWeapon, dropLabelAnchor, dropLanded, dropQualityRank, syncWeaponSlots,
   DROP_LABEL_MAX, DROP_LABEL_STEP, DROP_PILE_GAP, type Drop, type GameState,
 } from './state.ts';
 
@@ -47,6 +47,9 @@ export function updateDrops(s: GameState, dt: number): void {
   const index = s.drops.findIndex((d) => d.uid === s.pickupTarget);
   if (index < 0) { s.pickupTarget = null; return; }
   const drop = s.drops[index]!;
+  // 还在空中：**等它落地**。点不到（没有名牌）就不会下单，这里是兜底：
+  // 手快 / 旧指令 / 传送门回程都可能在人已经站上落点时东西还在飞。
+  if (!dropLanded(drop)) return;
   if (Math.hypot(drop.x - s.player.x, drop.y - s.player.y) >= 50) return;
 
   const label = drop.name ? `「${drop.name}」` : '长剑';
@@ -95,6 +98,8 @@ function platesCollide(a: Drop, b: Drop): boolean {
  * `dropAtPoint()` read that same result, so what is drawn is what is clickable.
  */
 export function layoutDrops(s: GameState): void {
+  // 还在飞的物件不参与排版：它们既没有名牌，也不该把地上的杂物挤开。
+  for (const drop of s.drops) if (!dropLanded(drop)) drop.label = null;
   const n = s.drops.length;
   if (n === 0) return;
 
@@ -109,7 +114,9 @@ export function layoutDrops(s: GameState): void {
     return i;
   };
   for (let i = 0; i < n; i += 1) {
+    if (!dropLanded(s.drops[i]!)) continue;
     for (let j = i + 1; j < n; j += 1) {
+      if (!dropLanded(s.drops[j]!)) continue;
       if (!platesCollide(s.drops[i]!, s.drops[j]!)) continue;
       const a = find(i);
       const b = find(j);
@@ -140,7 +147,7 @@ export function layoutDrops(s: GameState): void {
     const hidden = pile.length - count;
     for (let i = 0; i < pile.length; i += 1) {
       const drop = s.drops[pile[i]!]!;
-      if (i >= count) {
+      if (i >= count || !dropLanded(drop)) {
         drop.label = null;
         continue;
       }

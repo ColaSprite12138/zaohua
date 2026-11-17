@@ -81,7 +81,8 @@ describe('副本死亡掉落：摆点与拾取', () => {
     s.player.x = drop.x;
     s.player.y = drop.y;
     s.pickupTarget = drop.uid;
-    step(s, 0.1, idle());
+    // 遗物也是「先飞、落地才可捡」（2026-11-17）：推进到落地，不假定一步就成。
+    for (let i = 0; i < 30 && s.drops.length > 0; i += 1) step(s, 0.1, idle());
     expect(s.runInventory.equipped[0]?.defId).toBe('10006');
     // 磨过的还是那把（设计 5.2：耐久是出口，捡回来不该是新的）
     expect(s.runInventory.equipped[0]?.durability).toBe(11);
@@ -101,7 +102,7 @@ describe('副本死亡掉落：摆点与拾取', () => {
     s.player.x = drop.x;
     s.player.y = drop.y;
     s.pickupTarget = drop.uid;
-    step(s, 0.1, idle());
+    for (let i = 0; i < 30 && s.drops.length > 1; i += 1) step(s, 0.1, idle());
     const left = leftoverDeathDrops(s);
     expect(left).toHaveLength(1);
     expect(left[0]!.defId).toBe('30003');

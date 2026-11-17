@@ -174,10 +174,15 @@
   `ItemLocation` 分支 + `unplaceItem()` + `settleRun()` 的 `bag → stash → loose` 兜底 +
   `meta-ui/index.html` 的 `.tray` CSS / `buildTray()` / `bindTray()` / 「补充一把长剑」按钮 +
   生成物 `inventory.js` + 所有断言。只改页面会被 `--check` 抓到漂移。
-- **三把长剑默认在仓库**：`createInventoryState(3)` 把 `sword-1..3` 放进 `stash`
-  的 `(0,0) / (2,0) / (4,0)`（`perRow = floor(STASH.cols/2)`，更多则换 3 行带）。
-  首屏不再是 `loose`，`verify-meta-ui.cjs` 的拖放源全部改成 `#wrap-stash .grid-item`，
-  13 条断言总数不变但语义重写为「仓库起步 / stash → bag / 无 loose tray」。
+- **仓库默认空**（2026-11-17 用户要求删掉起步的三把长剑）：`createInventoryState()` 的
+  `seedSwords` 默认 0，`seedSwords = 3` 只给测试 / 演示显式用（`sword-1..3` 进
+  `(0,0) / (2,0) / (4,0)`，`perRow = floor(STASH.cols/2)`，更多则换 3 行带）。
+  改这个默认值会连带三处验收：`verify-meta-ui.cjs`（先拍空仓库，再自造 3 把做拖放）、
+  `verify-shell.cjs`（初始 `stash.length === 0`，平台探针后 1 / 2）、以及页面两处
+  `host.setState(...)`（重置按钮 / `platform-store.js` 的 fallback）。**漏掉任何一处
+  都会变成"仓库看着是空的，但测试还在按 3 把算"**。
+  首屏不再是 `loose`；`verify-meta-ui.cjs` 的拖放源仍是 `#wrap-stash .grid-item`，
+  只是那 3 把剑由验收自己塞进去（现在是 18 条：先断言空仓库，再造演示物品）。
 - **换装不再往 `loose` 塞**：`equipItem()` 若目标槽已有物品，被换下的必须先能落回网格
   （优先对方原格位，其次 `findFirstFit()` 的 bag → stash）；**放不下就整次换装拒绝、状态不变**，
   绝不静默丢物品。这比"塞进待分配区"更符合三处存放契约。

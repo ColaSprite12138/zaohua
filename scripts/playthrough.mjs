@@ -302,9 +302,13 @@ export default async function playthrough(play) {
       const live = livingEnemy(st);
       if (!live) break;
       await clickEnemy(live);
-      await play.advance(0.5);
-      const after = await play.state('game.state');
-      if (after.kills >= 1) killed = true;
+      // 按 1/20 秒小步推进：要在**刚击杀的那一帧**读到状态（掉落还在飞），
+      // 一口气推 0.5s 只会读到已经落地的样子。
+      for (let f = 0; f < 30 && !killed; f += 1) {
+        await play.advance(1 / 20);
+        const after = await play.state('game.state');
+        if (after.kills >= 1) killed = true;
+      }
     }
     const s = await play.state('game.state');
     assert.ok(killed, `enemy clicks must kill a skeleton (attacks=${s.attacks}, hp=${s.hp}, kills=${s.kills})`);
@@ -313,13 +317,28 @@ export default async function playthrough(play) {
     // Pickups are explicit: walking to the kill spot must NOT collect the drop.
     assert.ok(s.drops.includes('longsword'), 'killing a skeleton leaves a longsword on the ground');
     assert.equal(s.equippedWeapon, null, 'walking past a drop never equips it automatically');
-    await play.screenshot('longsword-drop');
+    // 用户 2026-11-17：**爆出来的东西要先飞、落地才显名**。刚击杀这一帧它还在空中，
+    // 所以地上有东西、却没有名字牌 —— 这条就是"落地才显名"的现场证据。
+    assert.equal(
+      s.dropLabel,
+      null,
+      'a drop that was just thrown out is still airborne: it must have NO name plate yet',
+    );
+    await play.screenshot('longsword-drop-airborne');
   });
 
   await play.step('loot is picked up by clicking its highlighted name plate', async () => {
-    const before = await play.state('game.state');
+    // 用户 2026-11-17：掉出来的东西**先飞一段，落地才显名**。所以这里不能
+    // 直接读一次状态就断言有名牌（飞行 0.58s，写死秒数会变成偶发失败），
+    // 而是推进到牌子真的出现 —— 牌子出现本身就是"已经落地"的证据。
+    let before = null;
+    for (let i = 0; i < 12 && before === null; i += 1) {
+      const s = await play.state('game.state');
+      if (s.dropLabel) before = s;
+      else await play.advance(0.2);
+    }
+    assert.ok(before, 'the drop name plate must appear once the drop has landed');
     assert.ok(before.dropAt, 'the drop must be on the ground before an explicit pickup');
-    assert.ok(before.dropLabel, 'the drop name plate must be projected');
     assert.equal(before.equippedWeapon, null, 'no weapon before the pickup click');
 
     // The name plate is the click target: even with a monster standing on the

@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 3b26470f030fa5d0ab6bfc1d320b2004e883ae5923c3df47067ca2d8d0962bac
+ * Source SHA-256: ff83a59e12444a3df04431ac6e639542966df04f5afd78fd7dbe5ff341bac2d6
  */
 (function (root) {
 "use strict";
@@ -222,7 +222,13 @@ function itemDef(defId) {
         throw new Error(`unknown item def: ${defId}`);
     return def;
 }
-function createInventoryState(seedSwords = 3) {
+/**
+ * 新开局的仓库**是空的**（用户 2026-11-17：「把仓库初始三把长剑删掉」）。
+ *
+ * `seedSwords` 只留给测试 / 演示显式使用（拖拽用例需要现成物品），
+ * 默认值必须是 0 —— 别在调用点再写一个 3 出来。
+ */
+function createInventoryState(seedSwords = 0) {
     const stash = [];
     // Demo longswords start in the stash, side by side (2x3 each). First three
     // land on (0,0), (2,0), (4,0); larger seeds wrap to the next 3-row band.

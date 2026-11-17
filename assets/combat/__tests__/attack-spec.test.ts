@@ -6,6 +6,7 @@ import {
   SPELL_RESERVED_COST, monsterSpec, projectileRow, weaponSpec,
 } from '../attack-spec.ts';
 import { NO_COST, costKindOf, costPolicyFor, type CostPolicy } from '../cost.ts';
+import { MELEE_RANGE_ARMED, MELEE_RANGE_BARE } from '../state.ts';
 
 const SWORD_IDS = ['10001', '10002', '10003', '10004', '10005', '10006'];
 const BOW_IDS = ['20001', '20002', '20003', '20004', '20005', '20006'];
@@ -19,7 +20,10 @@ describe('the active weapon slot decides the attack kind and its cost', () => {
     expect(BARE_HANDS.kind).toBe('melee');
     expect(BARE_HANDS.costKind).toBe('none');
     expect(BARE_HANDS.damage).toBe(22);
-    expect(BARE_HANDS.range).toBe(140);
+    // 绝对值钉死（用户 2026-11-17 定的尺度：一个身位多一点），
+    // 第二行保证它和战斗判定读的常量没有分叉。
+    expect(BARE_HANDS.range).toBe(58);
+    expect(BARE_HANDS.range).toBe(MELEE_RANGE_BARE);
   });
 
   it('every 近战 subtype sword is melee and would consume durability', () => {
@@ -29,11 +33,20 @@ describe('the active weapon slot decides the attack kind and its cost', () => {
       expect(spec.kind).toBe('melee');
       expect(spec.costKind).toBe('durability');
       expect(spec.damage).toBe(46);
-      expect(spec.range).toBe(170);
+      expect(spec.range).toBe(88);
+      expect(spec.range).toBe(MELEE_RANGE_ARMED);
       // 近战没有弹道，也不该被误挂上弹药。
       expect(spec.projectileId).toBeUndefined();
       expect(spec.ammoId).toBeUndefined();
     }
+  });
+
+  it('近战距离必须还是一个身位，不许再调回「半个屏幕」', () => {
+    // 回归（2026-11-17 用户：「都快成远程武器了」）：曾经是 170 = 弓的 19%。
+    // 现在钉上限，顺带钉住「持械比空手长、但仍是同一个量级」。
+    expect(MELEE_RANGE_ARMED).toBeLessThanOrEqual(120);
+    expect(MELEE_RANGE_ARMED).toBeLessThan(RANGED_WEAPON.range / 8);
+    expect(MELEE_RANGE_ARMED).toBeGreaterThan(MELEE_RANGE_BARE);
   });
 
   it('every 远程 subtype bow is a LOCKED projectile paying ammunition', () => {

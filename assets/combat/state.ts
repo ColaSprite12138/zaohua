@@ -95,8 +95,22 @@ export function syncWeaponSlots(s: GameState): void {
 }
 
 export const CLICK_DRAG_PIXELS = 12;
-export const MELEE_RANGE_BARE = 140;
-export const MELEE_RANGE_ARMED = 170;
+/**
+ * 近战可达距离（屏幕像素，玩家中心 → 怪物中心）。
+ *
+ * 2026-11-17 用户第二轮**回调**：原来空手 140 / 持械 170，是怪物近战（攻击距离 40）
+ * 的 3.5~4.3 倍，剑尖够出去半个屏幕，「都快成远程武器了」。现在按视觉尺度重定：
+ *   - 手臂 `ARM_REACH=14` + 剑模型 ≈ 38px 从肩算起，加怪物半宽 ≈ 视觉够到 60 左右；
+ *   - 空手 58 = 一个身位多一点（拳头）；
+ *   - 持械 88 ≈ 2 个身位（剑比拳长一半，仍是 1.5 倍关系）；
+ *   - 参照：怪物近战 40 / 砸箱 `SMASH_RANGE=72` / 弓 900（真正的远程）。
+ *
+ * 这两个数**必须与 `attack-spec.ts` 的 `BARE_HANDS.range` / `MELEE_WEAPON.range` 一致**：
+ * 战斗读这里，`weaponSpec()` 的 `range` 只在远程分支被使用，近战那两份是镜像值，
+ * 测试同时盯两边（`attack-spec.test.ts`）。
+ */
+export const MELEE_RANGE_BARE = 58;
+export const MELEE_RANGE_ARMED = 88;
 /**
  * Screen pixels of ground travel per walk-cycle frame. Animation is advanced by
  * DISTANCE, not by time: a body that walks faster must step faster, and a body
@@ -672,6 +686,19 @@ export function dropFlightPose(drop: Drop): {
   return { x, y: groundY - lift, groundY, airborne: stage >= 0 };
 }
 
+/**
+ * 落地了没有 —— 掉出来的东西**落地之后才显名、才能点、才能捡**
+ * （用户 2026-11-17：「爆出来的物品要掉到地上才显示名称，才可以拾取」）。
+ *
+ * 判据是飞行状态自己：`updateDrops()` 在落地那一帧清掉 `flight`，
+ * 这里再兜一层时间判断，所以单测里手搓的 Drop 也能问。
+ */
+export function dropLanded(drop: Drop): boolean {
+  const flight = drop.flight;
+  if (flight === undefined) return true;
+  return flight.t >= flight.delay + flight.duration;
+}
+
 export interface Drop {
   /** Stable identity for an explicit pickup order / cross-window request. */
   uid: string;
@@ -797,6 +824,9 @@ export function dropLabelAnchor(drop: Drop): { x: number; y: number; w: number; 
  * never disagree. Returns null when the fan-out cap hides this drop.
  */
 export function dropLabelRect(drop: Drop): DropLabel | null {
+  // 还在空中：**没有名牌**。名牌就是点击目标（见 `attack.ts::dropAtPoint`），
+  // 所以"落地才显名"和"落地才能捡"是同一条判据，不会各走一套。
+  if (!dropLanded(drop)) return null;
   if (drop.label !== undefined) return drop.label;
   return { ...dropLabelAnchor(drop), index: 0, count: 1, hidden: 0 };
 }

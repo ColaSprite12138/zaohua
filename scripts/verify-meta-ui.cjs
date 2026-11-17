@@ -97,6 +97,19 @@ const SELFTEST = `
       && getComputedStyle(document.getElementById('safe-panel')).display !== 'none';
     out.gridCells.insuredInBag = document.querySelectorAll('#grid-bag .cell.insured').length;
     out.equipSlots = document.querySelectorAll('.equip-slot').length;
+    // 新开局仓库**是空的**（用户 2026-11-17：「把仓库初始三把长剑删掉」）。
+    // 先拍这张空快照，再自己造演示长剑 —— 后面的拖拽用例不能依赖页面的初始数据。
+    snap('initial');
+    {
+      const lobby = window.MetaShell.getLobbyState();
+      for (let i = 0; i < 3; i += 1) {
+        lobby.stash.push({
+          uid: 'demo-' + (i + 1), defId: 'longsword', container: 'stash',
+          col: i * 2, row: 0,
+        });
+      }
+      window.MetaShell.render();
+    }
     // Items must be drawn as VOXEL MODELS, not as text: every item node has a
     // canvas, all of them actually painted pixels, and none fell back to glyphs.
     out.art = (() => {
@@ -120,7 +133,7 @@ const SELFTEST = `
         glyphs: document.querySelectorAll('.item .glyph, .equip-slot .glyph').length,
       };
     })();
-    snap('initial');
+    snap('seeded');
 
     // stash -> bag (0,0): a 2x3 longsword fits a 5x8 bag.
     dragToGrid(document.querySelector('#wrap-stash .grid-item'), 'bag', 0, 0);
@@ -173,11 +186,34 @@ const SELFTEST = `
       out.tip.name = (tip.querySelector('.tip-name') || {}).textContent || '';
       out.tip.rows = [...tip.querySelectorAll('.tip-row')].map((n) => n.textContent);
       out.tip.bar = !!tip.querySelector('.tip-bar');
+      out.tip.dmgLegacy = dmgRowText(tip);
+
+      // 第二件：**带实例伤害**（掉落时掷定）。用户 2026-11-17：
+      // 「面板还显示一个范围，没有显示随机后的值」—— 有实例值就必须只显示那一个数。
+      MI.registerItemDefs([{
+        id: '10006', name: '暗金巨剑', item_type: '武器', quality: '暗金',
+        damage_min: 250, damage_max: 400, weapon_subtype: '近战', durability: 160,
+      }]);
+      MI.addToBag(HS.getLobbyState(), 'tip-probe-2', '10006', undefined, undefined, 271);
+      HS.render();
+      const target2 = document.querySelector('#wrap-bag [data-tip-uid="tip-probe-2"]');
+      if (target2) {
+        const r2 = target2.getBoundingClientRect();
+        target2.dispatchEvent(new MouseEvent('mousemove', {
+          bubbles: true, clientX: r2.left + r2.width / 2, clientY: r2.top + r2.height / 2,
+        }));
+        out.tip.dmgRolled = dmgRowText(tip);
+      }
       // 移开必须收起，否则卡片会一直挂在屏幕上
       document.body.dispatchEvent(new MouseEvent('mousemove', {
         bubbles: true, clientX: 2, clientY: 2,
       }));
       out.tip.hiddenAfterLeave = tip.hidden === true;
+
+      function dmgRowText(el) {
+        const row = [...el.querySelectorAll('.tip-row')].find((n) => /伤害/.test(n.textContent));
+        return row ? row.textContent.trim() : '';
+      }
     })();
     out.ok = true;
   } catch (e) {
@@ -251,7 +287,9 @@ const checks = [
   ['every stash item is drawn as a painted voxel model, not a glyph',
     result.art.canvases >= 3 && result.art.painted === result.art.canvases
       && result.art.glyphs === 0, result.art],
-  ['starts with 3 swords in the stash and no loose tray', S.initial.stash === 3 && S.initial.bag === 0 && S.initial.tray === 0, S.initial],
+  // 用户 2026-11-17：「把仓库初始三把长剑删掉」—— 新开局仓库必须是空的。
+  ['新开局仓库是空的（不再有初始三把长剑）', S.initial.stash === 0 && S.initial.bag === 0 && S.initial.tray === 0, S.initial],
+  ['验收自造的 3 把演示长剑落在仓库里（后续拖拽用例的前提）', S.seeded.stash === 3 && S.seeded.bag === 0, S.seeded],
   ['drag stash -> bag places one 2x3 item', S.dropIntoBag.bag === 1 && S.dropIntoBag.stash === 2, S.dropIntoBag],
   ['overlapping drop rejected without state change', S.overlapRejected.bag === 1 && S.overlapRejected.stash === 2 && /放不下/.test(S.overlapRejected.status), S.overlapRejected],
   ['a second sword fits a free 2x3 spot', S.secondBagSlot.bag === 2 && S.secondBagSlot.stash === 1, S.secondBagSlot],
@@ -268,6 +306,12 @@ const checks = [
       && result.tip.rows.some((t) => /耐久/.test(t))
       && result.tip.bar === true
       && result.tip.hiddenAfterLeave === true, result.tip],
+  // 用户 2026-11-17：卡片必须显示**掷定后的那一个数**，不再是表里的区间。
+  ['信息卡显示掷定伤害（不是区间）：实例值优先 / 无实例值取中值',
+    /^伤害\d+$/.test(result.tip.dmgRolled || '')
+      && result.tip.dmgRolled === '伤害271'
+      && /^伤害\d+$/.test(result.tip.dmgLegacy || '')
+      && result.tip.dmgLegacy === '伤害13', result.tip],
 ];
 
 let failed = 0;

@@ -282,6 +282,12 @@ export function projection(s: GameState) {
     attackOrder: s.attackOrder,
     /** Enemy under the free cursor; drives the sword cursor and the hover ring. */
     hoverEnemy: s.hoverEnemy,
+    /**
+     * 挥砍动画还剩几秒（0..`PLAYER_SWING_TIME`）。只给验收看：
+     * 「这一刀真的挥出去了、现在在第几帧」没法从别的字段推出来，
+     * 而挥砍姿态（剑的角度）是纯绘制层的，浏览器验收只能靠**抓帧截图**。
+     */
+    attackFx: Math.round(s.player.attackFx * 1000) / 1000,
     /** Drop uid under the free cursor (name plate wins over the enemy). */
     hoverDrop: s.hoverDrop,
     /** 指针下的可破坏物 uid（点它就是砸）。 */

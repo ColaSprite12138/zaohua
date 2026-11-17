@@ -192,14 +192,15 @@ const SELFTEST = `
     try {
       // ---- NO local save; platform KV contract over a mocked bridge ----
       var slots = M.EQUIP_SLOTS.length;
-      var fallback = function () { return M.createInventoryState(3); };
+      // 新开局仓库是空的（用户 2026-11-17 删掉初始三把长剑），fallback 也是空仓库。
+      var fallback = function () { return M.createInventoryState(0); };
 
       out.store.noLoginOverlay = !document.getElementById('fx-auth');
       out.store.deployNeedsNoLogin = !document.getElementById('fx-deploy').disabled
         && !/请先登录/.test(logText());
       var noLocalSave = Store.mode() !== 'platform'
         && Store.writeCount() === 0
-        && H.getState().stash.length === 3;
+        && H.getState().stash.length === 0;
 
       addProbe(H.getState(), 'save-probe', 6);
       H.render();
@@ -208,8 +209,8 @@ const SELFTEST = `
         && Store.lastSaved() === null;
 
       out.store.corruptFallback =
-        A.decodeSave({ schemaVersion: 99, state: { bag: null } }, fallback, slots).stash.length === 3
-        && A.decodeSave(null, fallback, slots).stash.length === 3;
+        A.decodeSave({ schemaVersion: 99, state: { bag: null } }, fallback, slots).stash.length === 0
+        && A.decodeSave(null, fallback, slots).stash.length === 0;
 
       var platformWrites = [];
       var mounted = Store.mountPlatform({
@@ -219,14 +220,14 @@ const SELFTEST = `
         read: function () { return null; },
       });
       out.store.mountPlatform = mounted === true && Store.mode() === 'platform'
-        && Store.currentUser() === 'alice' && H.getState().stash.length === 4;
+        && Store.currentUser() === 'alice' && H.getState().stash.length === 1;
       addProbe(H.getState(), 'platform-probe', 8);
       H.render();
       await waitFor(function () { return platformWrites.length >= 1; });
       var written = platformWrites[0] || null;
       out.store.kvEnvelope = !!written && written.schemaVersion === A.SCHEMA_VERSION
         && A.isValidInventoryState(written.state, slots)
-        && written.state.stash.length === 5;
+        && written.state.stash.length === 2;
       out.store.platformKvWrite = platformWrites.length === 1
         && !!written
         && written.schemaVersion === A.SCHEMA_VERSION

@@ -42,8 +42,10 @@
 - 装备槽按 `EquipKind` 匹配（`weapon/ring/necklace/gloves/helmet/chest/pants/boots`）；类型不符或同槽重复穿戴直接拒绝。
 - **换装不静默丢物品**：槽位被占用时，被换下的优先回到对方原格位，其次 `findFirstFit()`
   （bag → stash）；**两者都放不下就整次换装拒绝、状态完全不变**（`equipItem()` 返回 `false`）。
-- `createInventoryState(seedSwords = 3)` 把三把长剑默认放进 `stash` 的 `(0,0) / (2,0) / (4,0)`；
-  `bag` 初始为空，首屏不再有待分配物品。
+- `createInventoryState(seedSwords = 0)` **默认空仓库**（用户 2026-11-17：「把仓库初始三把长剑删掉」）：
+  新开局 / 重置 / 存档兜底都不带物品。`seedSwords` 只留给测试与演示显式传参
+  （`createInventoryState(3)` 把 `sword-1..3` 放进 `(0,0) / (2,0) / (4,0)`），
+  任何调用点都不许再写死 3。`bag` 初始为空，首屏没有待分配物品。
 - `addToBag(state, uid, defId)` **只写 bag**：局内拾取占用真实背包 2×3 格，无空位返回 `null`
   且状态不变（掉落物留在地上）；仓库是局外存储，不参与战斗拾取。
   `findFirstFit()`（bag → stash）与 `removeItem(state, uid)` 只在**结算**时用，别与 `addToBag()` 混用。
@@ -63,7 +65,7 @@
 | `ItemDef.durability` | 耐久上限（`weapon.xlsx::durability`）；当前值在物品实例的 `durability` 上（`combat/durability.ts` 写）。局外武器槽底部那条细条读这两个值 |
 | 消耗品 | `item_type=消耗品`（红药 30002 / 蓝药 30003）：`equip=null`、1×1，模型是 `potion:hp` / `potion:mana`。`registerItemDefs` 按 `item_type` 推 equip 与格子，**不再默认成 2×3 武器** |
 | 穿戴合法性（2026-11-15） | `normalizeEquipped(state)`：把 `equip` 与槽位不匹配的物品挪回背包（背包满则丢弃），`runInventoryFrom()` / `bringBack()` 都调用它。**只有武器能进武器槽**，拾取侧由 `combat/run-inventory.ts::collectDrop()` 保证 |
-| 悬停信息卡（2026-11-15 用户要求） | 鼠标移到**背包格 / 仓库格 / 已穿戴槽**上，弹一张卡：名字（品质色）+ `item_type · 品质 · 攻击方式` + 伤害区间 + 耐久（当前/上限 + 彩条，损坏时红字提示「伤害按空手算」）+ 格子大小。内容全部来自 `ItemDef`（表驱动的只读副本）与实例上的 `durability`，**页面不 join 表**；节点上只挂 `data-tip-def` / `data-tip-dura` 两个属性，`render()` 重建节点也不会失效（`document` 上委托 + `mousemove`）。拖拽中不弹卡。局内背包浮层同样生效（`shell.css` 把 `.item-tip` 排除在"战斗全隐藏"之外） |
+| 悬停信息卡（2026-11-15 用户要求 / 2026-11-17 改伤害口径） | 鼠标移到**背包格 / 仓库格 / 已穿戴槽**上，弹一张卡：名字（品质色）+ `item_type · 品质 · 攻击方式` + **伤害（实例值，一个数）** + 耐久（当前/上限 + 彩条，损坏时红字提示「伤害按空手算」）+ 格子大小。内容来自 `ItemDef`（表驱动的只读副本）+ 实例上的 `durability` / `damage` / `affixes`，**页面不 join 表**；节点上挂 `data-tip-def` / `data-tip-dura` / `data-tip-dmg` / `data-tip-uid`，`render()` 重建节点也不会失效（`document` 上委托 + `mousemove`）。**伤害不再显示区间**（用户 2026-11-17：「面板还显示一个范围，没有显示随机后的值」）：有实例 `damage` 就显示那一个数，没有（局外演示剑 / 老存档）显示**中值** —— 战斗代码对这两种情况用的正是中值。拖拽中不弹卡。局内背包浮层同样生效（`shell.css` 把 `.item-tip` 排除在"战斗全隐藏"之外） |
 
 ## 装备词条（设计 7.1 第一批，2026-11-17）
 
@@ -82,6 +84,10 @@
 | sanitize | 读存档 / 收跨堆消息过 `sanitizeAffixes()`：丢未知 id、丢非有限值、同 stat 裁到第一条。**不重掷** |
 
 ## 恒定伤害属性（2026-11-17 用户纠正，与词条同通路）
+
+> 展示口径：信息卡显示**实例值**（`ItemInstance.damage`），没有实例值时显示表里的
+> **中值**（`(damage_min + damage_max) / 2`）—— 与 `weaponDamage()` 战斗侧完全一致，
+> **不许**再把 `min – max` 区间画给玩家看（那是表的属性，不是这件装备的属性）。
 
 武器**基础伤害不再是攻击时按区间现随机**，而是这件武器生成时掷一次、当场定死的实例属性。
 
@@ -132,7 +138,7 @@
 
 | 阶段 | 行为 |
 |:--|:--|
-| 局外 | 配装 / 拖放；三把长剑起步在仓库。顶栏只有「出征 / 返回局外 / 背包」，**没有怪物数量输入** |
+| 局外 | 配装 / 拖放；**新开局仓库是空的**（装备全靠局内捡）。顶栏只有「出征 / 返回局外 / 背包」，**没有怪物数量输入** |
 | 出征 | `M.takeIntoRun(lobby)` 复制 `bag + equipped` 成 `RunLoadout` 并**清空局外这两处**（`stash` 不动）→ 发 `deploy { seed, loadout, kind:'pvpve' }`（**没有任何数量字段**；`kind` 见 `combat/extraction.ts`）→ Worker `setArena(state, arena)` 切正式 LDtk 图并 `makeRunInventory(loadout)`；主窗口 `host.enterRun(loadout)` 把角色面板切成只读快照；战斗态隐藏 meta 面板且 `#fx-shell` 指针透明 |
 | 战斗拾取 | 显式点击掉落物 → 走近才拾取；`combat/run-inventory.ts::collectDrop()` 在 **Worker 堆内**优先写 `equipped` 空武器槽，其次 `addToBag()` 占真实 2×3 格，背包满则留在地上。Worker 每帧比签名，变化才发 `runState` |
 | 局内换装 | 仓库面板隐藏且拖放被拦截；拖放与 1/2 一律走 `runCommand { action: place / equip / unequip / active }`，Worker 校验后回 `runState`；**局内快照永不写平台 KV** |
@@ -319,5 +325,6 @@ node scripts/verify-shell.cjs                              # 4174 单页 56 条�
 （中间曾做过一版「本地多账号注册/登录」与一版「本地镜像存盘」，2026-11-11 晚按用户要求依次整体删除。）
 
 已完成（2026-11-12）：**删除 `loose` 与「待分配物品」UI，收口为 `equipped` / `bag` / `stash` 三处**；
-三把长剑默认进仓库；局内拾取改显式点击且经 `pickup` / `pickupAck` 占真实背包格；
+仓库默认空（2026-11-17 删掉起步的三把长剑，`createInventoryState()` 默认 `seedSwords = 0`）；
+局内拾取改显式点击且经 `pickup` / `pickupAck` 占真实背包格；
 `Settlement` 拆 `lootItemIds` + `carriedUids`，满仓只进 `overflow` 报告、不再静默转移。

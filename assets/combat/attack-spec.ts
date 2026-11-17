@@ -71,14 +71,20 @@ export interface AttackRequest {
 /** 拉弓间隔（秒）：远程比近战（0.4）慢，不然「贴脸砍 vs 远程点」没有取舍。 */
 export const RANGED_ATTACK_CD = 0.55;
 
+/**
+ * 近战的 `range` 是**镜像值**：真正参与判定的是 `state.ts` 的
+ * `MELEE_RANGE_BARE` / `MELEE_RANGE_ARMED`（`ranged.ts` 只读那两个）。
+ * 这里留着是为了让 `AttackSpec` 自洽、并让 `attack-spec.test.ts` 能同时盯住两边 ——
+ * 改一处忘另一处，测试会红（2026-11-17 用户要求把近战距离从 140/170 收紧到 58/88）。
+ */
 export const BARE_HANDS: AttackSpec = Object.freeze({
-  id: 'bare_hands', kind: 'melee', damage: 22, range: 140,
+  id: 'bare_hands', kind: 'melee', damage: 22, range: 58,
   cooldown: 0.4, costKind: 'none',
 });
 
 /** Melee weapon: costs weapon durability for the player, nothing else. */
 export const MELEE_WEAPON: AttackSpec = Object.freeze({
-  id: 'melee_weapon', kind: 'melee', damage: 46, range: 170,
+  id: 'melee_weapon', kind: 'melee', damage: 46, range: 88,
   cooldown: 0.4, costKind: 'durability',
 });
 

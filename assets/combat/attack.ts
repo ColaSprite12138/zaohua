@@ -19,7 +19,7 @@ import { hurts, type DamageSource } from './source.ts';
 import { applyStatus, clearStatus, damageTakenMultiplier, lockedFlags, statusOf } from './status.ts';
 import { walkable, type World } from './world.ts';
 import {
-  activeWeapon, DROP_MODEL_RADIUS, dropLabelRect, makeDropFlight, nextDropUid,
+  activeWeapon, DROP_MODEL_RADIUS, dropLabelRect, dropLanded, makeDropFlight, nextDropUid,
   PLAYER_ATTACK_CD, PLAYER_SWING_TIME, type Drop, type GameState,
 } from './state.ts';
 
@@ -84,6 +84,9 @@ export function dropAtPoint(s: GameState, x: number, y: number): Drop | null {
   let modelHit: Drop | null = null;
   let modelBest = Infinity;
   for (const drop of s.drops) {
+    // 还在空中：点不到。用户 2026-11-17「要掉到地上才能拾取」——
+    // 名字牌本来就不画了（`dropLabelRect`），模型自己也不能当隐形靶子。
+    if (!dropLanded(drop)) continue;
     const rect = dropLabelRect(drop);
     if (rect !== null
       && x >= rect.x && x <= rect.x + rect.w

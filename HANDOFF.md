@@ -118,6 +118,32 @@
 > 「恒定伤害属性」，踩坑见 `docs/feedback.md` 第 47 条。验收：**440 单测**
 > （+10 `drop-damage-flight.test.ts`）/ 增量 `verify.sh combat meta` 全绿（combat 304 / meta 80 /
 > playthrough + resize + destructible + 壳层浏览器断言全过）。
+> ⑯ **挥砍朝目标 + 信息卡显实例伤害 + 掉落落地才显名（2026-11-17 晚，用户四条纠正）**
+> ① **攻击动画**：旧实现把挥砍弧线钉在"屏幕向下"两侧（`tilt()`），打身边的箱子时剑先甩到身侧 83°
+> 再横扫回去 —— 用户看到的「向身后挥剑 / 幅度太大 / 角度不对」。运动学整体搬到
+> **`assets/game/swing.ts`**（纯数学，`paint.ts` 只读）：弧线以目标 `face` 为中心（起手 −35.5° /
+> 收势 +28.6°），中段穿过目标、剑与手臂共线；抬剑只占前 32%；`assets/__tests__/swing.test.ts`
+> 11 条把它钉死（不指向反面 / 扫过目标 / 幅度 ≤ 两者之和 / 每帧不瞬移 / 剑静止竖直 / 拳头在肩臂末端）。
+> ② **武器伤害面板**：`meta-ui/index.html::tipHtml()` 之前只拿 defId 的区间，现在读实例 `damage`
+> （格子 / 槽位节点挂 `data-tip-dmg`）：有实例值显示那一个数，老存档 / 演示剑显示**中值**（战斗代码
+> 对它们用的就是中值），**不再显示区间**。`verify-meta-ui.cjs` 加一条断言（271 / 13）。
+> ③ **掉落落地才显名、才可点、才可捡**：唯一判据 `state.ts::dropLanded()`；空中 → 无名牌
+> （`dropLabelRect` 返回 null）、`dropAtPoint` 跳过、`layoutDrops` 不让它挤占列队、`updateDrops`
+> 的拾取结算也等它。`playthrough.mjs` 改成「等牌子出现再点」并在击杀那一帧断言 `dropLabel === null`。
+> ④ **长剑攻击范围的诊断与定值（重要，别再重复排查）**：近战可达距离是常量
+> `MELEE_RANGE_ARMED` / `MELEE_RANGE_BARE`（砸箱 `SMASH_RANGE=72`，宽容 `RANGE_SLACK=8`），
+> 自 `a27981c` 模块化后**一直没有"自己变大"**。真实增量只有两处加成：`ea445ad` 起装备词条
+> **「长臂 +10~22 攻击距离」对近战生效**（只算激活的那把武器），以及星图 `range_px` 节点
+> （+12 / +16 / +20）。**2026-11-17 第二轮用户拍板「还是太长，快成远程武器了」→ 从
+> 170 / 140 收紧到 `88 / 58`**（仍比怪物近战 40 长，`MELEE_RANGE_ARMED > BARE` 由单测钉住，
+> 上限 120 也钉住了）。`attack-spec.ts` 的 `BARE_HANDS.range` / `MELEE_WEAPON.range` 是镜像值，
+> 两边必须同时改 —— `attack-spec.test.ts` 会红。
+> 验收（`bash scripts/verify-all.sh` **ALL GREEN**，2026-11-17 21:17，10m48s）：单测 **452**
+> （+11 `swing.test.ts`）/ 单页 `verify-meta-ui` **17/17**（+1 掷定伤害）/ 单页壳层 **56/56** /
+> 主端到端 `playthrough` **97 步**（新增「空中无名牌」「等牌子出现再点」；轮询步数每次 ±1，
+> 下限看 `verify-all.sh` 的 35 而不是这里的数字）/ 新增 `playthrough-swing.mjs` 实机抓帧证明
+> 「剑指向目标」（证据 `artifacts/play/scripts/playthrough-swing/01-swing-down-right-u0-42.png`）。
+
 ⑨ **装备规则与药水配置（2026-11-15 23:00）** —— 红蓝药的效果搬进 `tables/consumable.xlsx`（每瓶一行）；
 > **只有武器能进武器槽**（`collectDrop` 不再把药塞进空槽 + `normalizeEquipped()` 兜底 + 3 条测试）；
 > 修「局内背包开着按 1/2 道具整批消失」：页面与 Worker 都在写武器槽（一帧两条快照），改成
@@ -225,8 +251,12 @@
    ⑦ **角色必须有正/背两面**（`BodyModel.poses.front|back`）且走路靠**抬腿一格的 3 个烘焙姿势**，
    转身由 `face` 推「正面/背面 + 镜像」，**不允许**只画一个朝前的精灵横向平移；
    ⑧ 走路相位 `stride` **只按实际位移**推进（`STRIDE_PIXELS=22`），站着/顶墙不得原地踏步；
-   ⑨ 手持武器必须经 `Limb`（绕肩关节）+ 拳头盖住剑柄，剑/手臂角度只能用 `paint.ts::tilt()` 换算，
-   **禁止写 `face + 常数`**（左向身体会把手臂抬过头顶）；
+   ⑨ 手持武器必须经 `Limb`（绕肩关节）+ 拳头盖住剑柄，手臂 / 剑的角度**只由
+   `assets/game/swing.ts` 产出**（`swingArmAngle` / `wristAngle` / `handPose`，零渲染依赖 + 11 条单测）：
+   · **静止 / 走姿**：恒为屏幕向下（`restArm()`），**禁止写 `face + 常数`**（左向身体会把手抬过头顶）；
+   · **挥砍弧线**：以**目标方向 `face` 为中心**（起手 `face-0.62`、收势 `face+0.50`），
+     砍出去那一段偏离目标不超过 35°，中段穿过 `face` —— 用户 2026-11-17 的
+     「向身后挥剑 / 幅度太大 / 角度不对」就是旧 `tilt()`（只认屏幕向下）造成的；
    ⑩ 物品模型一个形状 × 六种品质配色（`itemModel("形状:配色")`），手持/掉落/HUD/背包格子**共用**这一份，
    禁止为某个界面单独画一套图标；① **一个方块 = 一格屏幕高度**（`unit·unit` 像素），顶面高光是格内的 2px 亮条，不要再叠一层「顶面 + 正面」，否则角色高度翻倍、头盔会吞掉脸；② 模型 `y=0` 是地面、`x=0` 是身体中线、**`z` 只允许 0**（一格厚的立牌，体积感靠三面着色）；③ 禁 `createLinearGradient` / `createRadialGradient` / `shadowBlur` / `ctx.arc|ellipse` 描边 / 真圆角，反馈环用 `drawPixelRing`、光晕用 `drawPixelGlow`、阴影用 `drawShadow`；④ **站在地面上的东西必须进 `paint.ts` 的 `items` 按落地 `y` 排序**（墙块 key = `y+grid`，掉落物 `y+0.5`），单独插一层会让墙后被遮挡的角色盖到墙上；⑤ 新增模型只在 `voxel.ts` 加工厂函数 + 登记 `MODELS`，不要在 `paint.ts` 里手摆矩形；⑥ 精灵按「模型 + flash 变体」烘焙缓存，禁止每帧重画方块。
 

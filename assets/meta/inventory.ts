@@ -359,7 +359,13 @@ export function itemDef(defId: string): ItemDef {
   return def;
 }
 
-export function createInventoryState(seedSwords = 3): InventoryState {
+/**
+ * 新开局的仓库**是空的**（用户 2026-11-17：「把仓库初始三把长剑删掉」）。
+ *
+ * `seedSwords` 只留给测试 / 演示显式使用（拖拽用例需要现成物品），
+ * 默认值必须是 0 —— 别在调用点再写一个 3 出来。
+ */
+export function createInventoryState(seedSwords = 0): InventoryState {
   const stash: PlacedItem[] = [];
   // Demo longswords start in the stash, side by side (2x3 each). First three
   // land on (0,0), (2,0), (4,0); larger seeds wrap to the next 3-row band.
