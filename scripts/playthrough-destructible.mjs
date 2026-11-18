@@ -18,12 +18,81 @@ const VIEW_H = 720;
 /** 投影是屏幕归一化的；换算回逻辑像素再比距离。 */
 const logicalGap = (a, b) => Math.hypot((a.x - b.x) * VIEW_W, (a.y - b.y) * VIEW_H);
 
+/**
+ * 快进 N 秒，但**不站着挨打**：有怪走进 420px 就先打掉它，再继续快进。
+ *
+ * 2026-11-18 地图扩容后这里必死：每区 15 只怪，砸箱子的声响会惊醒附近的，
+ * 醒了的怪一路走过来把站桩的玩家磨死（hp=0 → 表停了 → 永远进不了撤离阶段）。
+ * 空手也打得死剑士（`combat_rule` 的裸手 22 伤害 / 58 范围），不必为这一步配武器。
+ */
+async function holdOut(play, seconds) {
+  let left = seconds;
+  while (left > 0) {
+    const s = await play.state('game.state');
+    if (s.gameOver) throw new Error(`快进时被打死了（剩 ${Math.round(s.runSeconds)}s）`);
+    // 血少就喝红药（`HEAL_KEY` = `Z`）。撤离阶段一次要快进十几秒，80 只怪里有
+    // 三四只同时到脸上时，光靠"打掉最近那只"来不及。
+    if (s.hp <= s.maxHp * 0.6) await play.keyboard.press('KeyZ');
+    let live = null;
+    let bestGap = Infinity;
+    for (const sk of s.skeletons) {
+      if (!sk.alive) continue;
+      const gap = logicalGap(sk, s.player);
+      if (gap < bestGap) {
+        bestGap = gap;
+        live = sk;
+      }
+    }
+    // 触发半径放到 900px：怪 3 秒能走 600px 以上，640px 的判据是"它已经贴到脸上了"
+    // 才发现（实测 attacks=0、kills=0 就被打到 hp=0）。
+    if (live !== null && bestGap <= 900) {
+      // 怪的投影坐标是屏幕归一化，可能落在 [0,1] 之外（屏幕比视野宽）。直接点
+      // 那个坐标会被引擎 clamp 成别的落点 —— 打了 60 秒一只都没死就是这么来的。
+      // 屏幕内就点它本人；屏幕外就朝它的方向点一下，下一轮再打。
+      const sx = live.x;
+      const sy = live.y - 30 / VIEW_H;
+      const onScreen = sx > 0.05 && sx < 0.95 && sy > 0.06 && sy < 0.94;
+      if (onScreen) {
+        await play.mouse.click([sx, sy]);
+      } else {
+        await play.mouse.click([
+          Math.min(0.94, Math.max(0.06, sx)),
+          Math.min(0.92, Math.max(0.08, sy)),
+        ]);
+      }
+      await play.advance(1.0);
+      left -= 1.0;
+    } else {
+      // 步长从 5 秒收到 3 秒、再收到 2 秒：地图从 7 只怪涨到 80 只，5 秒足够两批怪
+      // 走到脸上；2 秒 × 205px/s ≈ 一条走廊的长度，够快也太快。
+      await play.advance(2);
+      left -= 2;
+    }
+  }
+}
+
 async function deploy(play, kind) {
   return play.page.evaluate((runKind) => {
     const channel = new BroadcastChannel('forgeax-arena-run');
     channel.postMessage({
       type: 'deploy',
-      deployment: { seed: 0x5eed1234, kind: runKind },
+      deployment: {
+        seed: 0x5eed1234,
+        kind: runKind,
+        // 带一把剑：撤离阶段要"边快进边清场"，裸手 22 伤害顶不住 80 只怪的地图。
+        loadout: {
+          // 三瓶红药（30002，一瓶回 45）：撤离阶段的快进要十几秒，剑不够用的时候
+          // 靠它们撑过去，不然 `hp=0` → 表停了 → 永远进不了撤离结算。
+          bag: [0, 1, 2].map((i) => ({
+            uid: `smash-test-potion-${i}`, defId: '30002', container: 'bag', col: i, row: 0,
+          })),
+          equipped: [
+            { uid: 'smash-test-blade', defId: '10006', durability: 80 },
+            null, null, null, null, null, null, null, null, null,
+          ],
+          activeWeaponSlot: 0,
+        },
+      },
     });
     channel.close();
     return true;
@@ -200,23 +269,9 @@ export default async function destructibles(play) {
     if (spawn.destructibles.length < 6) {
       throw new Error(`真地图应该有 8 个可破坏物，实际 ${spawn.destructibles.length}`);
     }
-    for (let i = 0; i < 40; i += 1) {
-      const s = await play.state('game.state');
-      if (s.hp <= 20) throw new Error('被怪打死了，事件这一步失去意义');
-      const live = s.skeletons.find((sk) => sk.alive);
-      if (!live) break;
-      // 只有走近的怪才杀：远处的怪睡着，杀它们既慢又会把时间耗光。
-      if (logicalGap(live, s.player) > 420) {
-        await play.advance(1.5);
-        continue;
-      }
-      await play.mouse.click([live.x, live.y - 30 / VIEW_H]);
-      await play.advance(1.0);
-    }
-
     let fired = null;
     for (let i = 0; i < 40 && fired === null; i += 1) {
-      await play.advance(15);
+      await holdOut(play, 15);
       const s = await play.state('game.state');
       if (s.eventLog.length > 0) fired = s;
     }
@@ -249,7 +304,7 @@ export default async function destructibles(play) {
   await play.step('in the extract phase the far monsters go guard the portals', async () => {
     let s = await play.state('game.state');
     for (let i = 0; i < 30 && s.phase !== 'extract'; i += 1) {
-      await play.advance(15);
+      await holdOut(play, 15);
       s = await play.state('game.state');
     }
     if (s.phase !== 'extract') throw new Error(`没进入撤离阶段（phase=${s.phase}）`);

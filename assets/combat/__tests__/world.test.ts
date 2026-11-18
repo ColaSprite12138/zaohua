@@ -165,7 +165,9 @@ describe('acceptance fixture vs playable arena', () => {
     // 数量只由地图决定；扩成四区后正式图至少 20 只（地板值防缩回去）。
     expect(s.skeletons).toHaveLength(arena.monsters.length);
     expect(arena.monsters.length).toBeGreaterThanOrEqual(20);
-    expect(s.camera).toEqual({ x: 1584, y: 296 });
+    // 相机跟着出生点走（不钉死坐标：地图一改尺寸，死数字就是噪音）
+    const w = makeWorld(arena);
+    expect(s.camera).toEqual(cameraFor(w, arena.spawn.x, arena.spawn.y));
     expect(spawnFromMap(arena).map((sk) => sk.monsterId))
       .toEqual(arena.monsters.map((m) => m.monsterId));
   });

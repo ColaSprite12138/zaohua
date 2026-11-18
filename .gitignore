@@ -3,6 +3,8 @@ node_modules/
 .forgeax/
 .assetlib/
 artifacts/
+# `preview_map.py` 渲的布局预览（BMP/PNG）：看一眼用的，不是产物。
+out/
 .game-builder/state/
 .game-builder/covers/
 .game-builder/artifacts/

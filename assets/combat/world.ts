@@ -70,9 +70,10 @@ export interface ArenaMap {
     readonly y: number;
   }[];
   /**
-   * 分区（设计 11）：环形动线由 4 个矩形组成，**每区两条以上出入通道**。
-   * 由 `gen_arena_map.py::ZONES` 定义、`import_map.py` 导出并校验（面积铺满 / 通道数 /
-   * 每区有门），所以运行时只有这一份权威：HUD 区域名、大地图、验收都读它。
+   * 分区（设计 11）：四块**不规则地块**，**每两个相邻区之间两条以上通道**。
+   * 这里的矩形只是**包围盒**（大地图标签位置、粗筛）；真实形状是下面 `zoneGrid`
+   * 逐格光栅。由 `arena_layout.py` 定义、`import_map.py` 导出并校验，运行时只有
+   * 这一份权威：HUD 区域名、大地图、验收都读它。
    * 没有这个字段的地图（自动验收夹具）就是「一张没分区的图」。
    */
   readonly zones?: readonly {
@@ -83,6 +84,11 @@ export interface ArenaMap {
     readonly cols: number;
     readonly rows: number;
   }[];
+  /**
+   * 逐格分区归属：每行 `cols` 个字符，`.` = 不属于任何区（崖 / 深林 / 区外走廊），
+   * `0`–`9` = `zones` 里的下标。**这是真实形状** —— 四块地块不铺满地图。
+   */
+  readonly zoneGrid?: readonly string[];
   /**
    * 单局事件点（设计 10.2）：7–8 分钟的高价值物刷在这里。
    * 由 LDtk 的 `EventSite` 实体决定；没有就是「这张图不开事件」。
@@ -102,6 +108,21 @@ export interface World {
   readonly cols: number;
   readonly rows: number;
   readonly grid: number;
+  /**
+   * A* 的**复用缓冲**。地图 720×448 = 322560 格，每次点击都 `new Float64Array(n)`
+   * 再 `fill(Infinity)` 是 2.6MB 分配 + 32 万次写 —— 玩家连点几次就能感到卡顿
+   * （而且 GC 抖动比单次耗时更明显）。改成"一次分配 + 世代标记"，每次搜索只
+   * 摸到真正访问过的格子。
+   */
+  readonly scratch: PathScratch;
+}
+
+export interface PathScratch {
+  readonly g: Float64Array;
+  readonly came: Int32Array;
+  /** 每格的状态：`gen*4 + 1` 在开表里、`+2` 已关闭、其余 = 上次搜索的残留。 */
+  readonly state: Uint32Array;
+  gen: number;
 }
 
 /** IntGrid values that can be walked on: 0 floor, 2 road. */
@@ -116,7 +137,20 @@ export function makeWorld(map: ArenaMap): World {
       tiles[r * map.cols + c] = Number.isFinite(n) && n >= 0 && n <= 3 ? n : 1;
     }
   }
-  return { map, tiles, cols: map.cols, rows: map.rows, grid: map.gridSize };
+  const n = map.cols * map.rows;
+  return {
+    map,
+    tiles,
+    cols: map.cols,
+    rows: map.rows,
+    grid: map.gridSize,
+    scratch: {
+      g: new Float64Array(n),
+      came: new Int32Array(n),
+      state: new Uint32Array(n),
+      gen: 0,
+    },
+  };
 }
 
 export function cellOf(w: World, x: number, y: number): { col: number; row: number } {
@@ -333,19 +367,29 @@ export function findPath(w: World, from: Vec, to: Vec, radius = 10): Vec[] {
     : nearestWalkable(w, from.x, from.y);
   const s = cellOf(w, startPoint.x, startPoint.y);
   const g = cellOf(w, goal.x, goal.y);
-  const n = w.cols * w.rows;
   const start = s.row * w.cols + s.col;
   const target = g.row * w.cols + g.col;
+  const n = w.cols * w.rows;
   if (start === target) return [{ x: goal.x, y: goal.y }];
   if (start < 0 || start >= n || target < 0 || target >= n) {
     return [{ x: goal.x, y: goal.y }];
   }
 
-  const gScore = new Float64Array(n).fill(Infinity);
-  const came = new Int32Array(n).fill(-1);
-  const closed = new Uint8Array(n);
+  // 复用缓冲 + 世代标记：不清空数组，只把"这一代"的标记写进去。
+  const scratch = w.scratch;
+  if (scratch.gen >= 0x3FFFFFFF) {
+    scratch.state.fill(0);
+    scratch.gen = 0;
+  }
+  scratch.gen += 1;
+  const tag = scratch.gen * 4;
+  const gScore = scratch.g;
+  const came = scratch.came;
+  const state = scratch.state;
   const open = new MinHeap();
   gScore[start] = 0;
+  came[start] = -1;
+  state[start] = tag + 1;
   open.push({ idx: start, f: 0 });
 
   const heuristic = (idx: number): number => {
@@ -360,12 +404,12 @@ export function findPath(w: World, from: Vec, to: Vec, radius = 10): Vec[] {
   let found = false;
   while (open.size > 0) {
     const cur = open.pop()!;
-    if (closed[cur.idx] === 1) continue;
+    if (state[cur.idx] === tag + 2) continue;
     if (cur.idx === target) {
       found = true;
       break;
     }
-    closed[cur.idx] = 1;
+    state[cur.idx] = tag + 2;
     const cc = cur.idx % w.cols;
     const cr = Math.floor(cur.idx / w.cols);
     for (const [dc, dr, cost] of NEIGHBOURS) {
@@ -373,7 +417,7 @@ export function findPath(w: World, from: Vec, to: Vec, radius = 10): Vec[] {
       const nr = cr + dr;
       if (nc < 0 || nr < 0 || nc >= w.cols || nr >= w.rows) continue;
       const ni = nr * w.cols + nc;
-      if (!WALKABLE_TILES.has(w.tiles[ni] ?? 1) || closed[ni] === 1) continue;
+      if (!WALKABLE_TILES.has(w.tiles[ni] ?? 1) || state[ni] === tag + 2) continue;
       // Diagonal moves may not cut through two blocked orthogonal neighbours.
       if (dc !== 0 && dr !== 0) {
         const sideA = cr * w.cols + nc;
@@ -382,9 +426,10 @@ export function findPath(w: World, from: Vec, to: Vec, radius = 10): Vec[] {
           || !WALKABLE_TILES.has(w.tiles[sideB] ?? 1)) continue;
       }
       const tentative = gScore[cur.idx]! + cost;
-      if (tentative >= gScore[ni]!) continue;
+      if (state[ni] === tag + 1 && tentative >= gScore[ni]!) continue;
       came[ni] = cur.idx;
       gScore[ni] = tentative;
+      state[ni] = tag + 1;
       open.push({ idx: ni, f: tentative + heuristic(ni) });
     }
   }
