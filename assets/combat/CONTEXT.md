@@ -351,14 +351,14 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
 
 | 项 | 契约 |
 |:--|:--|
-| 权威源 | `resource/maps/arena.ldtk`（**256×160 格 @32px = 8192×5120 世界像素**，四区环形，见下节「分区与大地图」）→ `arena.generated.ts`（`import_map.py` 生成，禁止手改） |
+| 权威源 | `resource/maps/arena.ldtk`（**840×544 格 @32px = 26880×17408 世界像素**，四区环形 + 正中宝库，见下节「分区 / 大地图 / 视野」）→ `arena.generated.ts`（`import_map.py` 生成，禁止手改）。布局本体在 `scripts/arena_layout.py`，**不要直接改 .ldtk** |
 | 逻辑层 | `world.ts`：`makeWorld()` / `walkable()` / `blocks()` / `nearestWalkable()` / `cameraFor()` / `screenToWorld()` / `worldToScreen()` / `findPath()`（8 邻域 A*，禁止对角穿角）/ `lineOfSight()`。只 import `shared/` |
 | 地形 | IntGrid `0` 地面 / `2` 道路可走；`1` 墙 / `3` 深渊挡走 + 挡视线；越界视作阻挡 |
 | 坐标 | `GameState` 一律**世界像素**；`game.pack.ts` 每帧 `screenToWorld(state.camera, ...)`；`paint.ts` 一次 `translate(-cam.x,-cam.y)` 画世界，HUD / 小地图留在屏幕空间 |
 | 相机 | `cameraFor()` 居中跟随 + clamp 到边界；`step()` 末尾更新，是输入与渲染的**唯一权威** |
 | 碰撞 / 寻路 | 玩家与怪物都做分轴滑动（`canStand()` 检查中心 + 极点）；点击目标走 A*（`GameState.path`）；怪物每 0.7 s 重算到玩家的路径 |
 | 小地图 | `MINIMAP = { x:1036, y:20, w:220, h:165 }`，**只能看不能点**：`game.pack.ts` 丢弃该矩形内的全部指针指令 |
-| 怪物 | `spawnFromMap(map.monsters)` 是**唯一**生成入口；运行时**没有任何怪数字段**；正式图 7 只（`100001` ×4 / `200001` ×3），改数量只能改 LDtk 实体层 |
+| 怪物 | `spawnFromMap(map.monsters)` 是**唯一**生成入口；运行时**没有任何怪数字段**；正式图 **60 只**（每区 15：剑士 `100001` / 弓手 `200001` / 法师 `100002`），出生点 36 格内空着，改数量只能改 `arena_layout.place_entities()` |
 | 自动验收夹具 | `resource/maps/arena-test.ts`：40×22 格 = **1280×704**、全可走、spawn `(400,470)`、2 只 `100001`；尺寸 ≤ 视口 ⇒ 相机恒 `(0,0)` ⇒ 屏幕归一化坐标不变。**不入 `import_map.py` 链** |
 | 地图切换 | `createState()` 默认夹具；`deploy` 时 `game.pack.ts` 调 `setArena(state, arena)` 切正式图并重建本局 |
 | 状态形状 | `GameState` 新增 `map` / `world` / `camera` / `path`；`Skeleton` 新增带节流的 `path` / `repath` |
@@ -789,23 +789,39 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 巡逻 / 视野朝向（沉睡的怪不会背对你，`face` 仍指向玩家）；`drops` 只是「抽几次」，
 真正的高价值池细分要等词条批次；事件只有一行（后续加「补给空投」「精英巡回」照表加行即可）。
 
-## 分区与大地图（设计 11，2026-11-16）
+## 分区 / 大地图 / 视野（设计 11，2026-11-16 接入；2026-11-18 两轮重做）
 
-代码：`combat/zones.ts`（纯查询，只 import `world.ts`）+ `assets/game/paint.ts::drawBigMap()`
-+ `game.pack.ts` 的 `KeyM`。地图从 128×96 扩成 **256×160（8192×5120px）四区环形**。
+代码：`combat/zones.ts`（分区查询）+ `combat/sight.ts`（视野，纯函数）+ `assets/game/paint.ts`
+（`drawBigMap` / `drawMinimap` / `drawFog`）+ `game.pack.ts` 的 `KeyM`。
+地图 **840×544 格 @32px = 26880×17408px，四区环形 + 正中宝库、不规则地块**。
+
+> **为什么重做**：用户报「四块太板正 / 区块之间像大平原 / 1 分钟走完」。改法是把分区从
+> 「矩形铺满」换成「手工多边形地块 + 逐格 `zoneGrid`」，区块之间留 VOID 只靠 8 条带墙
+> 走廊连通，地图面积 ×7.9。**任何后续改动都必须保住这两条**：分区归属只能来自 `zoneGrid`、
+> 相邻区之间只能靠 `CORRIDORS` 里的走廊。
 
 | 项 | 契约 |
 |:--|:--|
-| 分区是**地图数据** | `gen_arena_map.py::ZONES` 定义矩形（id / 显示名 / col,row,cols,rows），`import_map.py` 导出成 `ArenaMap.zones`。**代码里不许写死任何分区坐标** —— 扩图、挪墙、调分区都只改这两处脚本 |
-| 四区 | `court` 院落（0,0,128,96）→ `corridor` 东廊（128,0,128,96）→ `cavern` 石窟（128,96,128,64）→ `wateryard` 水榭（0,96,128,64）→ 回到院落。2×2 矩形围出的内环就是「环形动线」，一局按路线只走其中 1–3 个区 |
-| 构建期校验 | `import_map.py` 四道闸：**铺满且不重叠**（面积之和 == 地图面积）、**每区 ≥2 条出入通道**（按地形数连续可走缺口）、**每区至少一扇门**（否则走到那儿没有出口）、**每只怪 / 每扇门 / 每个箱子 / 每个事件点都落在某个区里**。不合规直接失败，不生成 `arena.generated.ts` |
-| 通道计数 | `zoneChannels(map, world)`：沿四条边逐格看「区内格可走 **且** 区外邻格也可走」，连续一段算 1 条。`import_map.py` 有一份 Python 实现，`zones.ts` 这份是运行时的第二份 —— 两份独立算，改坏一份另一份会红 |
-| 查询 | `zonesOf(map)` / `zoneAt(map, x, y)`（世界像素 → 分区，图外或没分区返回 null）/ `zoneRect(zone, grid)`。**没分区的图**（`arena-test.ts` 夹具）返回空数组 / null，不许抛错 |
-| 大地图 | `M` 切换 `GameState.bigMap`。**纯查看层，不暂停世界**（时间、怪、DOT 照常走）—— 看地图本身就是风险，等于把「停下来读图」做成代价。打开时整块画布算 HUD（`onHud = onMinimap || state.bigMap`），点击不会穿透去移动 / 攻击 |
-| 大地图内容 | 地形底图 + 四区描边与名字（**当前所在区高亮金色**）+ 传送门（已耗尽变灰、变小）+ 未砸开的可破坏物（事件刷的金色）+ 事件光柱 + 玩家点与朝向短线 + 图例 |
-| 地形缓存 | `paint.ts::terrainRaster()`：按「地图 id + 世界格数 + 目标像素尺寸」缓存 `OffscreenCanvas`。256×160 = **40960 格**，每帧逐格 `fillRect` 会把 60fps 吃穿，所以小地图与大地图共用这一张，最多留 6 份 |
-| HUD 区域名 | 计时胶囊右侧一枚胶囊：区域名 + `M`。位置 `VIEW_W/2 + 100`，与「当前意图」面板、小地图同一条 y 带，1280×600 下不撞底部留白（`playthrough-worldmap` 的 `layout` 为空） |
-| 投影 | `bigMap`（bool）/ `zone{id,name}`（null = 没分区）/ `regions[{id,name,x,y}]`（**屏幕归一化**，x 除 `VIEW_W`、y 除 `VIEW_H`，和 `player` / `portals` 同一套）。验收脚本靠 `regions` 的中心点「走进下一个区」 |
+| 分区是**地图数据** | `arena_layout.py` 是唯一手写布局：`ZONES` 定**包围盒**（id / 显示名 / col,row,cols,rows）、`OUTLINE` 定每区多边形轮廓、`CORRIDORS` 定 12 条走廊。`gen_arena_map.py` 只做 LDtk 序列化，`import_map.py` 导出 `ArenaMap.zones` + `zoneGrid`。**代码里不许写死任何分区坐标** |
+| 五区 | 环形：`court` 院落（36,24,286,190）→ `corridor` 东廊（516,30,307,194）→ `cavern` 石窟（520,370,302,174）→ `wateryard` 水榭（36,368,291,172）→ 回到院落；**正中 `vault` 宝库（350,244,140,102）**，四区各一条支线通进去。矩形只是包围盒，真实形状是多边形 |
+| 地形语言 | 院落=16 个尺寸不一的院子错位咬合 + 带门连接墙 + 假山；东廊=整区填满再挖的蛇形主廊 + 梳齿支廊 + 贴边廊柱；石窟=fbm 岩体 + 石柱（阈值自适应保主连通块 ≥80%）；水榭=不规则湖 + 三桥 + 池心亭；**宝库=整区填实后挖出 9 间库房 + 3 格门洞 + 货架**（怪 20 / 箱 22，密度是四区的 5–6 倍，只出匣与舍利匣） |
+| 走廊必须最后挖 | `build_terrain()` 的顺序是 land → 各区 → **走廊**。各区会（有意地）把整区砌满墙，先挖的走廊会被重填成 WALL —— 图上还留着路的样子，人走过去是死路（2026-11-18 用户报的「右上与右下画了路却不连通」）。走廊端点还会被吸附到**区内主连通块**（`_zone_main_block`），不会停在墙里的孤坑 |
+| 构建期校验 | `arena_layout.verify()`：出生点可达、**所有**点位可达、每区有门/怪/箱/事件、环形四对每对 ≥2 条走廊 + 四区→宝库各 ≥1 条、最远点 ≥140 秒（用 BFS 量，不靠感觉）。`gen_arena_map.py` 把它当闸门，不合规直接失败 |
+| 分区归属 | **`zoneGrid`（逐格光栅字符表）是唯一真相**。`import_map.py` 生成时与 .ldtk 可走性对账（不一致即 fail）；`zoneIndexAt(map, col, row)` 查光栅，图上没有 `zoneGrid` 才退回按包围盒判 |
+| 通道计数 | `zoneLinks(map, world)`：找出跨区过渡边，按**端点 4 邻接**并查集聚类。**不要改回「按共格合并」**：一条走廊横截面那一排边的两两并不共格，只按共格会把一条走廊数成 7 个口子（`zones.test.ts` 守着「每对相邻区 ≥2 且 ≤6」） |
+| 查询 | `zonesOf(map)` / `zoneAt(map, x, y)`（世界像素 → 分区，图外或没分区返回 null）/ `zoneIndexAt(map, col, row)` / `zoneRect(zone, grid)` / `zoneLinks(map, world)`。**没分区的图**（`arena-test.ts` 夹具）返回空数组 / null，不许抛错 |
+| 大地图 | `M` 切换 `GameState.bigMap`。**纯查看层，不暂停世界**（看地图本身就是风险）。打开时整块画布算 HUD（`onHud = onMinimap || state.bigMap`），点击不会穿透去移动 / 攻击 |
+| 大地图内容 | 地形底图 + **五区不规则色块**（按 `zoneGrid` 逐格上色，当前区 alpha 84 / 其它 30）+ 名字压在包围盒中心 + **传送门** + 玩家点与朝向短线 + 图例。**只有玩家与门**：可破坏物 / 事件光柱 / 怪一律不画（2026-11-18 用户要求）。**不要按矩形描边** —— 那会把半岛 / 凹湾涂成方块，等于把真实形状说错 |
+| 小地图 | **跟随玩家的局部窗口**，不是整张图。窗口格数 = `ceil(视野格 × 2.05)`，`cellPx = innerH / rows`，只画窗口内的墙 / 虚空 + **传送门** + 玩家。怪 / 箱 / 掉落 / 事件一律不画。窗口大小随 `visionRadius` 变 —— 天赋缩视野时小地图一起缩 |
+| 视野半径 | `combat/sight.ts`：`state.visionRadius`（世界像素，默认 **16 格 = 512px**，`clampVision` 夹在 8–120 格）是**唯一来源**，天赋 / buff / debuff 直接改它。`inSight()` 给实体剔除用（怪 / 箱 / 掉落 / 门 / 弹道全部按它剔）。`sightPolygon()` / 360 条射线保留为"物理真相"（单测与需要多边形的调用方），**迷雾渲染不再读它**（见下一行） |
+| 迷雾的**画法**（2026-11-19 第四版，`combat/fog.ts`） | **可见度按世界格存**，不是多边形。`FogField.shade` 是 `cols×rows` 浮点表（0 亮 → 1 暗）：每帧只算"视野圆 ∪ 屏幕"窗口内的格，逐格 `lineOfSight()`（Amanatides–Woo 格遍历，**终点格不检查** → 墙自己被照亮、墙后第一格就暗 = 阴影贴墙；擦角两侧都要求通畅 = 不漏光），再按 `dt` 向目标逼近（**淡出 0.6s / 淡入 0.22s**，`approachShade`）。渲染：格 → 5 次项可分离卷积（`[1,4,6,4,1]/16`，摊成两格宽的梯度）→ 子格双线性写进 `FOG_TEXEL=4` px/格的离屏位图（按世界格对齐）→ 只把屏幕内那块 `drawImage` 放大上屏、`globalAlpha` 已乘进像素（`FOG_MAX_SHADE = 0.56`）。**射线原点取玩家所在格的中心**，所以玩家格内挪动时整张场逐格不变 —— 这是"不抖"的根本原因，不是靠模糊掩盖。**别改回射线多边形**：端点是离散采样，一上屏就是毛刺且随亚像素位置跳；也别在放大后的大画布上加 `blur`（1856×1344 的高斯把 FPS 从 60 打到 52，看不出收益） |
+| 迷雾不做已探索记忆 | 走回旧房间不会记住"以前看过"，只是重新暗下去（有 0.6s 的淡出，不是一帧切换）。要加记忆层得把 `FogField` 的目标值从 0/1 改成"可见=0、去过=0.55、没去过=1"三档，那是独立功能（表已经在世界里，加一档不用改结构） |
+| 地形不按视野剔除 | 2026-11-19 起墙块只按**视口**裁剪（`c0..c1 / r0..r1`），不再按 `visionRadius + 3 格` 粗筛；`props`（院墙段 / 香炉 / 高台）也不再按 `inSight` 剔 —— 它们是地形的一部分。**性能代价**：视野内外的墙都要画，实测宝库场景 **55 FPS**（1280×720，迷雾第四版；第三版 76）—— 差值来自"每帧重算千余格的可见性 + 重写 4 万 texel"，玩家静止时 `advance` 返回 `dirty=false`、位图不重写，帧率会回到 70+ |
+| 地形缓存 | `paint.ts::terrainRaster()`：按「地图 id + 世界格数 + 目标像素尺寸」缓存 `OffscreenCanvas`，并**按行合并连续同值段**再 `fillRect`（32 万格 → 几千段）。逐格画第一版开大地图会明显卡一下 |
+| A* 复用 | `World.scratch = { g, came, state, gen }` 一次分配 + 世代标记（`state[i] = gen*4+n`）。32 万格每次 `new Float64Array(n).fill(Infinity)` 是 2.6MB 分配，连点几次就卡 |
+| HUD 区域名 | 计时胶囊右侧一枚胶囊：区域名 + `M`。位置 `VIEW_W/2 + 100`，与「当前意图」面板、小地图同一条 y 带 |
+| 投影 | `bigMap`（bool）/ `zone{id,name}`（null = 没分区）/ `regions[{id,name,x,y}]`（**屏幕归一化**，和 `player` / `portals` 同一套）/ `worldPlayer{x,y}`（**世界像素**，验收脚本自己算路线时要用）/ `map{w,h}` |
+| 出生安全区 | 出生点曼哈顿 36 格（≈1150px）内**不放怪**（`arena_layout.SAFE_SPAWN_CELLS`）。以前只隔 7 格：开局还没看清画面就有一只剑士贴身，「站着等 7 分钟事件」的验收也必死 |
 
 **命名坑**：`projection().zones` 早就被**地面区域**（火墙 / 毒池 / 冰面）占用了。
 地图分区在投影里叫 `regions`，代码里叫 `ArenaZone` / `zones.ts`。两个都是"区域"，但一个是地形、一个是地面效果 ——
@@ -825,10 +841,11 @@ node --experimental-strip-types scripts/loot-report.mjs --samples 31000  # 真�
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-resize.mjs --json
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-death-drop.mjs --json  # 副本遗物：摆点 / 名字牌 / 点回 / 耐久
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-destructible.mjs --json # 可破坏物 + 7 分钟事件（夹具 + 真地图）
-./node_modules/.bin/forgeax project play --script scripts/playthrough-worldmap.mjs --json # 分区 / 大地图：四区走一圈 + M 开关 + 1280x600
+./node_modules/.bin/forgeax project play --script scripts/playthrough-worldmap.mjs --json # 分区 / 大地图：五区 + M 开关 + 从院落走到东廊（路线由 arena.ldtk 算，见 scripts/lib/map-route.mjs）
+./node_modules/.bin/forgeax project play --script scripts/playthrough-fog.mjs --json      # 视野 / 迷雾 / 局部小地图 / 走进正中宝库
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-source.mjs --json # 伤害来源：站自己火墙里不掉血 + 同一片火烧得到怪
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-facing.mjs --json # 朝向：八方向各走一遍，朝向跟随移动方向（16 档）
-./node_modules/.bin/forgeax project play --script scripts/playthrough-monster-skill.mjs --json # 怪物技能：法师丢火球 + 降沉默，真地图
+./node_modules/.bin/forgeax project play --script scripts/playthrough-monster-skill.mjs --json # 怪物技能：法师丢火球 + 挂沉默，真地图（带剑出征才能活到第二发；走位见 scripts/lib/map-route.mjs）
 ./node_modules/.bin/forgeax project play --script scripts/playthrough-projectile.mjs --json # 弹道：锁定箭 / 火球 / 骷髅箭 / 箭矢按件消耗
 
 ```

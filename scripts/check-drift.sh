@@ -19,11 +19,16 @@ PROTECTED=(
   assets/combat/reactions.ts
   assets/combat/attack.ts
   assets/combat/skills.ts
+  assets/combat/sight.ts
+  assets/combat/fog.ts
+  assets/combat/zones.ts
   assets/resource/maps/arena.ldtk
   assets/resource/maps/arena.generated.ts
   assets/resource/maps/tileset.generated.ts
   assets/resource/maps/tilesets/xianxia.png
   scripts/bake-voxel-atlas.mjs
+  scripts/arena_layout.py
+  scripts/preview_map.py
   scripts/gen_arena_map.py
   scripts/import_map.py
   docs/art-style.md
@@ -42,6 +47,9 @@ PROTECTED=(
   scripts/playthrough.mjs
   scripts/playthrough-resize.mjs
   scripts/playthrough-monster-skill.mjs
+  scripts/playthrough-worldmap.mjs
+  scripts/playthrough-fog.mjs
+  scripts/lib/map-route.mjs
   scripts/verify-all.sh
   HANDOFF.md
 )

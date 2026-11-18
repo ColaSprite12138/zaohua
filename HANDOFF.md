@@ -19,7 +19,7 @@
 > 第 1 版**明确不做组队**（设计文档 2.1），别提前为联机做同步层。
 
 > 工程路径：`D:\tools\zaohua\forgeax-game`
-> 状态：**2026-11-18 全套验收通过**（**540 条单测** / 独立页 22 条 / 单页 59 条 / playthrough 101 steps + **monster-skill 87 steps** + death-drop 2 steps + destructible 131 steps + worldmap 40 steps + **projectile 47 steps** / resize 4 steps；**单局骨架已按设计文档第 10 章落地**；**技能两批已落地（设计 8.2/8.3/9.3）**；**状态与反应链第一批已落地（设计 8.4 / 8.5）：18 条状态注册表 + 6 元素 5 条反应 + 地面区域（火墙/毒池/冰面）+ 8.8 的视觉语言，技能从 3 个扩到 7 个以覆盖全部元素**；**技能 / 状态 / 怪物 / 全局手感数值已全部表化（`skill.xlsx` / `status.xlsx` / `monster.xlsx` / `combat_rule.xlsx`），改数值不用改代码**；**弹道已落地（2026-11-16）：箭矢 / 弹道法术 / 怪物远程共用 `projectile.xlsx` 驱动的飞行体，指向性（锁定追踪）与非指向性（可被走位躲开）两种形态**；**角色/怪物已有走路与转身动画**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；**画面已全量体素化，正式地图是 256×160（四区环形）的仙侠院落**；**大地图 / 分区第一批已落地（设计 11）：四区环形 + `M` 大地图 + HUD 区域名**；**装备词条第一批已落地（设计 7.1 / 7.2）：实例级词条 + 四个生效点 + 双武器槽只算激活那把**；**收藏品与金币第一批已落地（设计 5.1）：换金道具 + 卖出 + 金币随存档落盘**；**物品堆叠与商店已落地（2026-11-17，设计 5.1 / 5.2）：箭 10 / 药 5 / 收藏品可叠，金币买了补给与保险格扩容**；**词条重铸与修理已落地（2026-11-17，设计 5.2 / 7.2）：每件洗一次、扣费直接生效、修理回满但耐久上限永久下降**；**怪物技能已落地（2026-11-18，设计 10.2 / 8.4）：`monster.xlsx` 的普攻形态与招数全部进表 + 新表 `monster_skill.xlsx`，骷髅法师带火球 / 禁魔诅咒 / 石化凝视、剑士带碎骨击，`silence` / `petrify` / `disarm` 终于有施加者**；**玩家状态行已落地（2026-11-18，设计 8.8）：技能栏正上方一行正方形图标，时针阴影 = 已流逝，悬停看名字 / 描述 / 剩余秒数**）。**steps 会浮动**：23 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 92–100 间变化，`verify-all.sh` 下限固定 35。
+> 状态：**2026-11-19 全套验收通过（迷雾第四版）**（**557 条单测** / 独立页 22 条 / 单页 59 条 / playthrough 101 steps + **monster-skill 270–290 steps** + death-drop 2 steps + **destructible 467 steps** + worldmap 55 steps + **fog 44 steps** + **projectile 60 steps** + source 14 steps + facing 29 steps / resize 4 steps；**单局骨架已按设计文档第 10 章落地**；**技能两批已落地（设计 8.2/8.3/9.3）**；**状态与反应链第一批已落地（设计 8.4 / 8.5）：18 条状态注册表 + 6 元素 5 条反应 + 地面区域（火墙/毒池/冰面）+ 8.8 的视觉语言，技能从 3 个扩到 7 个以覆盖全部元素**；**技能 / 状态 / 怪物 / 全局手感数值已全部表化（`skill.xlsx` / `status.xlsx` / `monster.xlsx` / `combat_rule.xlsx`），改数值不用改代码**；**弹道已落地（2026-11-16）：箭矢 / 弹道法术 / 怪物远程共用 `projectile.xlsx` 驱动的飞行体，指向性（锁定追踪）与非指向性（可被走位躲开）两种形态**；**角色/怪物已有走路与转身动画**；**局外与局内两份状态分别位于主窗口与 Engine Worker 两个独立 JS 堆**；局内已接入 LDtk 大地图 / 相机 / A* / 碰撞 / 只读小地图；**画面已全量体素化，正式地图是 840×544（26880×17408，四区环形 + 正中宝库、不规则地块 + 12 条带墙走廊）的仙侠院落（2026-11-18 第二轮）**；**大地图 / 分区 / 战争迷雾已落地（设计 11）：不规则色块大地图 + `M` + HUD 区域名 + 逐格 `zoneGrid` + 视野多边形（半径可配）+ 跟随玩家的局部小地图；迷雾 2026-11-19 第三版 = 只压暗地形（约 35% 亮度）、实体照剔、边缘软过渡 + 散点带**；**装备词条第一批已落地（设计 7.1 / 7.2）：实例级词条 + 四个生效点 + 双武器槽只算激活那把**；**收藏品与金币第一批已落地（设计 5.1）：换金道具 + 卖出 + 金币随存档落盘**；**物品堆叠与商店已落地（2026-11-17，设计 5.1 / 5.2）：箭 10 / 药 5 / 收藏品可叠，金币买了补给与保险格扩容**；**词条重铸与修理已落地（2026-11-17，设计 5.2 / 7.2）：每件洗一次、扣费直接生效、修理回满但耐久上限永久下降**；**怪物技能已落地（2026-11-18，设计 10.2 / 8.4）：`monster.xlsx` 的普攻形态与招数全部进表 + 新表 `monster_skill.xlsx`，骷髅法师带火球 / 禁魔诅咒 / 石化凝视、剑士带碎骨击，`silence` / `petrify` / `disarm` 终于有施加者**；**玩家状态行已落地（2026-11-18，设计 8.8）：技能栏正上方一行正方形图标，时针阴影 = 已流逝，悬停看名字 / 描述 / 剩余秒数**）。**steps 会浮动**：23 个命名场景，报告把 `advance` 子步展开计数，随帧时序在 92–100 间变化，`verify-all.sh` 下限固定 35。
 > **2026-11-15 一天做了什么（新会话速读，三分钟对齐）**：
 > ① **技能两批** —— 7 格技能栏 / 法力（不自动恢复）/ 读条与打断 / 蓝药；第二批补表现：
 > **冲锋改成 0.23 秒的分帧位移**、读条举杖 + 法力球、每个技能一套方块特效 + 3.2 秒地面残留。
@@ -168,7 +168,7 @@
 |:--|:--|
 | 是什么 | ForgeAX 0.4.19 `empty` 模板上的 2.5D 游戏模板；`assets/game/paint.ts` 用 Canvas 2D 画完整场景，经 `CanvasTexture` 贴到 engine root 全屏 quad。**画风是体素/立体积素（Voxel）**：所有实体/地形/反馈都由 `assets/game/voxel.ts` 的方块模型烘焙成精灵后绘制，规格见 `docs/art-style.md` |
 | 怎么开 | 统一用造化插件（Game Builder），**两条预览链路要分清**：① **普通 `preview_start`** 走 `project build` 的 `dist/`，会重建 dist 抹掉构建后注入的壳层 → **只有战斗画面，没有装备界面**；② **`preview_reload(validate: true)` / 上传** 走 `package.json#scripts.package` → `scripts/package-with-shell.mjs`，产物在 `.game-builder/artifacts/forgeax-player/`，**含单页壳层 + 平台 bootstrap**。要看完整单页（局外配装 → 出征 → 结算）必须用 ②（见 feedback 最后一条）。本地 `.bat` 启动器已删除，4174 直连仅作排障与单页验收；局外独立演示页仍可双击 `meta-ui/index.html`。**③ 2026-11-15 定为默认交付链路**（`scripts\preview-stable.cmd` 一条命令包办：`forgeax project build` → `node scripts/inject-shell.mjs` → 复用/启动 58080 → 开 Chrome）：造化预览宿主是每次构建任务的子进程，**turn 结束就被回收**（表现为「刚说能开、一分钟后就打不开」，端口每次还会变）。要一个稳定地址就直接静态托管 `dist/`：`forgeax project build` → `node scripts/inject-shell.mjs` → `cd dist && python -m http.server 58080 --bind 127.0.0.1`，打开 `http://127.0.0.1:58080/index.html`（浏览器缓存时加 `?v=N`）。这条路走壳层的 hostless 分支：**能玩、不写云存档**。**造化的 `previewUrl` 不要交给用户**：它是当次构建任务的子进程，turn 收尾即被回收（用户实测「刚说能开、一分钟就 `ERR_CONNECTION_REFUSED`」，端口每次还变），只当「代码能跑」的旁证；而且 `preview_reload` 会重建 `dist/` 抹掉壳层，跑完必须重新 `inject-shell`。交付前用 `node scripts/inject-shell.mjs --check`（有壳层 `dist/index.html` ≈139–142KB，没壳层 ≈45KB —— 只看 HTTP 200 会被骗）或 headless 截图自证。注意**不要**直接静态托管 `.game-builder/artifacts/forgeax-player`：那是造化产物，缺宿主注入的 provider，页面会卡在初始化 |
-| 地图 | 正式地图 **`256×160` 格 @32px = 8192×5120 世界像素**，**四区环形**（院落 → 东廊 → 石窟 → 水榭 → 院落；分区矩形由 `gen_arena_map.py::ZONES` 定，`import_map.py` 校验铺满 / 每区 ≥2 通道 / 每区有门）。三个图层不变：`Terrain`(IntGrid=碰撞权威) / `Entities`(出生点 + **20 只怪** + **12 扇传送门** + **17 个可破坏物** + **2 个事件点**，数量全由 LDtk 决定) / `Props`(纯装饰，贴素材库图集)。生成链：`bake-voxel-atlas.mjs` → 图集；`gen_arena_map.py` → `arena.ldtk`（之后人工在 LDtk 里改）；`import_map.py` → `arena.generated.ts`（含 `zones`）。**改分区只能改 `ZONES` 并重跑导入**，代码里没有第二份坐标 |
+| 地图 | 正式地图 **`840×544` 格 @32px = 26880×17408 世界像素**，**四区环形 + 正中宝库、不规则地块**（院落 → 东廊 → 石窟 → 水榭 → 院落，四区各有一条支线通向正中的 `vault` 宝库；多边形轮廓由 `scripts/arena_layout.py::OUTLINE` 定，`verify()` 校验可达性 / 环形四对 ≥2 条走廊 / 四区→宝库 ≥1 条 / 最远点 ≥140 秒）。三个图层不变：`Terrain`(IntGrid=碰撞权威) / `Entities`(出生点 + **80 只怪**（四区各 15 + 宝库 20）+ **23 扇传送门**（5×4 + 3）+ **82 个可破坏物**（15×4 + 22）+ **10 个事件点**，数量全由 LDtk 决定) / `Props`(纯装饰，贴素材库图集)。**走廊最后挖**（`build_terrain` 的顺序是 land → 各区 → 走廊，端点吸附到区内主连通块）—— 顺序反了会把走廊中段重填成墙，图上仍像有路。生成链：`bake-voxel-atlas.mjs` → 图集；`arena_layout.py` → `gen_arena_map.py`（只序列化）→ `arena.ldtk`；`import_map.py` → `arena.generated.ts`（含 `zones` 包围盒 + 逐格 `zoneGrid`）。**改布局只能改 `arena_layout.py` 并重跑生成链**，代码里没有第二份坐标 |
 | 怎么验（日常） | `bash scripts/verify.sh` 增量：按改动模块只跑该模块独立单测 + 全局 `tsc`，按模块附加表同步 / 掉落跑批 / 单页壳层验收 |
 | 怎么验（发版） | `bash scripts/verify-all.sh` 全量，对单测数（下限 ≥83，当前 **440**）/ 步骤数设下限；**最后一步重新注入单页壳层**（build/play/package 都会重建 dist） |
 | 怎么打包（发布用） | `node scripts/package-with-shell.mjs --format web-zip --output <zip>`；**`validate:true` 预览 / 上传**经 `package.json#scripts.package` 自动调用（普通预览不调），产物**含单页壳层** |
@@ -360,7 +360,19 @@
    单测会因为重复而红）。⑤ **指针必须是视图坐标**（`game.pack.ts` 传 `screenX/screenY`，
    0..1280×0..720），不是物理像素 —— 传错了 2× 渲染下悬停会整体偏移。
 
-`scripts/check-drift.sh` 会把上面 1–23 涉及的文件单独列出来，接手时先看它。
+`scripts/check-drift.sh` 会把上面 1–24 涉及的文件单独列出来，接手时先看它。
+24. **地图布局红线（2026-11-18，用户三条反馈后重做）**：① **分区归属只有一个真相** ——
+   逐格 `zoneGrid`（`import_map.py` 导出，与 .ldtk 可走性对账）。`ZONES` 的矩形是**包围盒**，
+   不要再拿它当"这个格属于哪个区"的判据（老代码那么干，所以四块只能是规整矩形）。
+   ② **相邻区之间只能靠 `CORRIDORS` 的走廊连通**：布局脚本里任何新岩体 / 水面 / 墙
+   都必须先看 `road` 掩码（`Canvas.wall()` 和 `rock()` 已经跳过它），否则会把走廊堵成虚线。
+   ③ **每对相邻区 ≥2 条口子**，`zoneLinks()` 必须按**端点 4 邻接**聚类 —— 改回"按共格合并"
+   会把一条走廊数成 7 个口子（单测钉着 ≥2 且 ≤6）。④ **`arena_layout.py` 是唯一手写布局**，
+   `gen_arena_map.py` 只做 LDtk 序列化；不要直接改 `.ldtk`（下次重跑就没了）。
+   ⑤ **验收里"走过去"必须由地图数据驱动**（共享实现：`scripts/lib/map-route.mjs`）：
+   读 `arena.ldtk` → BFS → 按 `BODY_RADIUS=10` 拉直 → 点"这一段往前 380px"那一点。**禁止**"朝目标点屏幕边缘"（固定相对偏移会每次
+   吸附到同一处墙后死角 → A* 退回直线 → 原地绕圈，实测 160 轮 39.5k px 仍在出生点旁）。
+   ⑥ **出生点 36 格内不放怪**（`SAFE_SPAWN_CELLS`）：这不只是给验收留活路，是开局体验。
 
 ## 改完必跑（任何一项不绿 = 不许交付）
 
@@ -409,7 +421,7 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 | 检查 | 通过标准 |
 |:--|:--|
 | `check` | `ok` |
-| `test` | **540** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-18 状态行批次 +11：`__tests__/status-bar.test.ts`（贴技能栏上沿 / 缩格子不越界 / 上限与下标 / 命中含左上不含右下 / 缝隙与行外返回 null / **阴影是已流逝**（0→0.5→1）/ `total` 坏掉当到点 / **18 条状态各有唯一汉字** / 秒数口径 9.96→10）；2026-11-18 剪影批次 +2：`__tests__/voxel.test.ts`「法师模型 ≠ 剑士模型（袍色 ≥20 块 / ≥5 个高度 / 紫瞳）」与「法杖 = 细杆 + 大头（杆 1 格宽、顶球 3 格宽、比剑薄）」；2026-11-18 怪物技能批次 +12：`combat/__tests__/monster-skills.test.ts`（表 join 与形态互斥 / 三招按表序 / 空的 `skills` 列不算错 / **贵先放** / 够不着不选 / 火球飞行体 + 沉默挂到玩家 / burst 半径与白放不占 CD / 翻滚躲掉 / **远程怪的技能射程够得着它的站位** / AI 8 秒内真的丢出火球）+ `resource/__tests__/tables.test.ts` 1 条（`monster_skill` 与 `monster.attack_kind/skills` 的引用完整性、三条状态各有施加者）；2026-11-16 弹道批次 +29：`combat/__tests__/projectiles.test.ts` 重写为 17 条（子步防穿透 / 撞墙与出界上报落点 / 射程消散 / 命中容错叠加 / **锁定弹会拐弯追移动目标** / 非指向性打空 / 穿透不重复命中）+ `projectile-runtime.test.ts` 19 条（表 join 缺行抛错 / 锁定与方向两种发射 / 撞墙拦截 / 溅射 / 落地留火 / **点哪炸哪** / 打人走 damagePlayer 且吃无敌帧 / 弹道击杀照样给经验掉战利品 / 箭矢按件消耗与空弹匣免费拒绝）+ `attack-spec.test.ts` 重写为 14 条（弓=锁定+弹药、射程与弹速来自表）；2026-11-16 分区批次 +8：`combat/__tests__/zones.test.ts` 8 条（四区 id / 铺满不重叠 / 世界 256×160 / **每区 ≥2 通道** / 每区有门有怪有箱有事件点 / 出生点可达四区中心 / 图外返回 null / 无分区夹具不崩）；2026-11-16 可破坏物批次 +32：`combat/__tests__/destructibles.test.ts` 18 条（表驱动 / 站桩 / 打断 / 机关 / 产出 / 声响 / 沉睡不动 / **砸开后不复活**）+ `events.test.ts` 9 条（第 7 分钟 / 只触发一次 / 画在事件点 / 光柱衰减 / 惊动 / 结束不刷 / 重开复位 / 守门）+ `data-driven.test.ts` +5；2026-11-15 深夜保险格批次 +20：`combat/__tests__/death-drop.test.ts` 10 条（摆点 / R 重开保留 / 耐久跟着走 / 遗留回传 / 三套规则）+ `meta/__tests__/insurance.test.ts` 9 条（独立容器 2 格 / 老存档补空容器 / 尺寸门槛 / 背包↔保险格移动 / 自动拾取碰不到它 / 分割 / 载荷往返 / 拖放保耐久）+ `account.test.ts` +1（v3 遗物槽）+ `run-inventory.test.ts` +1（局内命令带 container）） |
+| `test` | **547** 项全过（`verify-all.sh` 下限仍为 **83**；2026-11-18 状态行批次 +11：`__tests__/status-bar.test.ts`（贴技能栏上沿 / 缩格子不越界 / 上限与下标 / 命中含左上不含右下 / 缝隙与行外返回 null / **阴影是已流逝**（0→0.5→1）/ `total` 坏掉当到点 / **18 条状态各有唯一汉字** / 秒数口径 9.96→10）；2026-11-18 剪影批次 +2：`__tests__/voxel.test.ts`「法师模型 ≠ 剑士模型（袍色 ≥20 块 / ≥5 个高度 / 紫瞳）」与「法杖 = 细杆 + 大头（杆 1 格宽、顶球 3 格宽、比剑薄）」；2026-11-18 怪物技能批次 +12：`combat/__tests__/monster-skills.test.ts`（表 join 与形态互斥 / 三招按表序 / 空的 `skills` 列不算错 / **贵先放** / 够不着不选 / 火球飞行体 + 沉默挂到玩家 / burst 半径与白放不占 CD / 翻滚躲掉 / **远程怪的技能射程够得着它的站位** / AI 8 秒内真的丢出火球）+ `resource/__tests__/tables.test.ts` 1 条（`monster_skill` 与 `monster.attack_kind/skills` 的引用完整性、三条状态各有施加者）；2026-11-16 弹道批次 +29：`combat/__tests__/projectiles.test.ts` 重写为 17 条（子步防穿透 / 撞墙与出界上报落点 / 射程消散 / 命中容错叠加 / **锁定弹会拐弯追移动目标** / 非指向性打空 / 穿透不重复命中）+ `projectile-runtime.test.ts` 19 条（表 join 缺行抛错 / 锁定与方向两种发射 / 撞墙拦截 / 溅射 / 落地留火 / **点哪炸哪** / 打人走 damagePlayer 且吃无敌帧 / 弹道击杀照样给经验掉战利品 / 箭矢按件消耗与空弹匣免费拒绝）+ `attack-spec.test.ts` 重写为 14 条（弓=锁定+弹药、射程与弹速来自表）；2026-11-16 分区批次 +8：`combat/__tests__/zones.test.ts` 8 条（四区 id / 铺满不重叠 / 世界 256×160 / **每区 ≥2 通道** / 每区有门有怪有箱有事件点 / 出生点可达四区中心 / 图外返回 null / 无分区夹具不崩）；2026-11-16 可破坏物批次 +32：`combat/__tests__/destructibles.test.ts` 18 条（表驱动 / 站桩 / 打断 / 机关 / 产出 / 声响 / 沉睡不动 / **砸开后不复活**）+ `events.test.ts` 9 条（第 7 分钟 / 只触发一次 / 画在事件点 / 光柱衰减 / 惊动 / 结束不刷 / 重开复位 / 守门）+ `data-driven.test.ts` +5；2026-11-15 深夜保险格批次 +20：`combat/__tests__/death-drop.test.ts` 10 条（摆点 / R 重开保留 / 耐久跟着走 / 遗留回传 / 三套规则）+ `meta/__tests__/insurance.test.ts` 9 条（独立容器 2 格 / 老存档补空容器 / 尺寸门槛 / 背包↔保险格移动 / 自动拾取碰不到它 / 分割 / 载荷往返 / 拖放保耐久）+ `account.test.ts` +1（v3 遗物槽）+ `run-inventory.test.ts` +1（局内命令带 container）） |
 | `tsc --noEmit` | 0 error |
 | `tables` | `export_tables.py --check` **二十**张表与 `generated/*.ts` 一致（含新表 `projectile.xlsx`；表目录是唯一权威，别在这里写死数字），且 `validate_package()` 校验全部 OOXML 部件 |
 | `loot` | 31000 次/池跑批，偏差 >1% 或漏项 = 0 |
@@ -419,10 +431,10 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 | `playthrough` 1600x900 | `passed:true`、99–102 steps（下限 35；技能三步 + 反应链两步各含 `advance` 轮询，所以比 44 步多得多）、0 errors |
 | `playthrough-resize` 1700x1000 | `passed:true`、4 steps、0 errors |
 | `death-drop` 1600x900 | `passed:true`、2 steps、0 errors（遗物摆点 + 名字牌 + 点回 + 耐久；截图 `corpse-loot` / `corpse-recovered`） |
-| `destructible` | `passed:true`、**130–133 steps**、0 errors（夹具：三档箱子 / 舍利匣守卫拒绝 / 站桩砸开（玩家零位移）/ 掉落与拾取 / 铜箱两次产出；真地图：**第 7 分钟事件** + 光柱 + `fromEvent` 舍利匣 + 撤离阶段 `goal='portal'`；截图 `destructibles-spawn` / `reliquary-guarded` / `crate-smashing` / `crate-broken` / `crate-loot-picked` / `coffer-broken` / `event-beacon` / `extract-converge`） |
-| `monster-skill`（新增，2026-11-18） | `passed:true`、**87–89 steps**（下限 4）、0 errors：真地图上确实站着骷髅法师（`monster.xlsx::skills` 配的招，不是代码 if）、走过去之后**火球真的在飞、落点真的留火**、禁魔弹命中后 `playerStatuses` 里出现 `silence`；随后**状态行自证**：`playerStatuses` 的 `left` 真的在递减（状态行画的就是它）+ 把指针移到第一格抓 `status-row-tooltip`；截图 `monster-skill-mage-on-map` / `monster-skill-fireball-flight` / `monster-skill-silenced` / `status-row-clock` / `status-row-tooltip` |
-| `worldmap`（新增，设计 11） | `passed:true`、**39–40 steps**（下限 6；8 个命名场景 + `advance` 子步展开）、0 errors：真地图是 **8192×5120 四区**、出生在院落、`M` 开关并吞掉点击、靠腿依次走进东廊 / 石窟 / 水榭 / 回到院落（每区用 `regions` 中心点导航）、1280x600 不裁切；截图 `world-zone-court` / `worldmap-open` / `world-zone-corridor` / `world-zone-cavern` / `world-zone-wateryard` / `world-zone-back-to-court` / `final` / `viewport-1280x600` |
-| `package` | sha256 校验通过，包内 README + feedback 齐全 |
+| `destructible` | `passed:true`、**390–470 steps**（随清场次数浮动）、0 errors（夹具：三档箱子 / 舍利匣守卫拒绝 / 站桩砸开（玩家零位移）/ 掉落与拾取 / 铜箱两次产出；真地图：**第 7 分钟事件** + 光柱 + `fromEvent` 舍利匣 + 撤离阶段 `goal='portal'`；2026-11-18 起快进用 `holdOut()`：**900px 内有怪就先打掉再继续快进**（触发半径 640→900、快进步长 3s→2s、hp≤60% 按 `Z` 喝红药、出征带 3 瓶）—— 只顾快进会被砸箱声响惊醒的怪磨死，hp=0 会停表、永远进不了撤离阶段；截图 `destructibles-spawn` / `reliquary-guarded` / `crate-smashing` / `crate-broken` / `crate-loot-picked` / `coffer-broken` / `event-beacon` / `extract-converge`） |
+| `monster-skill`（2026-11-18） | `passed:true`、**270 steps 上下**（下限 4）、0 errors（2026-11-18 第二轮改写走法：**带剑 + 4 瓶红药出征**（空手、且早先按的是 `Space`=闪避而不是 `HEAL_KEY`=`Z`，活不到第二发招）+ **挑离玩家最近的法师**并给 25% 粘性（按上一帧位置跟踪会在目标死后静默锁到 3.6k px 外那只）+ **`losCells` 判视线**而不是只看直线距离（贴墙 700px 时玩家一直在墙这侧，法师一发都放不出来）+ 走失/无视线时 `planRoute` 归队 + `castBand` 越等越近 + 贴到 200px 的怪先砍）：真地图上确实站着骷髅法师（`monster.xlsx::skills` 配的招，不是代码 if）、走过去之后**火球真的在飞、落点真的留火**、禁魔弹命中后 `playerStatuses` 里出现 `silence`；随后**状态行自证**：`playerStatuses` 的 `left` 真的在递减（状态行画的就是它）+ 把指针移到第一格抓 `status-row-tooltip`；截图 `monster-skill-mage-on-map` / `monster-skill-fireball-flight` / `monster-skill-silenced` / `status-row-clock` / `status-row-tooltip` |
+| `worldmap`（设计 11） | `passed:true`、**55 steps**（下限 6；3 个命名场景 + `advance` 子步展开）、0 errors：真地图是 **26880×17408 五区**、出生在院落、五块分区是**不规则地块**（大地图截图）、`M` 开关并吞掉点击、**带剑从院落走进东廊廊口**（路线由 `scripts/lib/map-route.mjs` 从 `arena.ldtk` 算出：16k px 级；终点判据是**走到廊口 700px 内**而不是 zone 翻面——走廊区在边界上就翻面，那一刻人还在 4.5k px 外的巷道里；位移落在路程 70%–150%、耗时 ≥ 30 秒，hp≤60% 按 `Z` 喝药）；截图 `world-zone-court` / `worldmap-open` / `world-zone-corridor` / `final` / `viewport-1280x600` |
+| `fog`（设计 11 第二轮） | `passed:true`、**44 steps**（下限 5）、0 errors：`game.state.vision` = 512px（16 格）且在 8–120 格内、点视野外的地面**仍然会走**（迷雾是视野限制不是操作限制）、小地图窗口跟着玩家（相机始终居中）、`M` 打开/关闭大地图、**靠腿走进正中宝库**（路线同样由 `arena.ldtk` 算，带剑出征）；截图 `fog-spawn` / `fog-walked` / `minimap-local` / `bigmap-five-zones` / `vault-inside`。**2026-11-19 第四版**（视觉层，用户第 3 轮反馈）：改成**格子级可见度场** `combat/fog.ts` —— 逐格 `lineOfSight()`（终点格不检查 → 墙自己亮、墙后第一格就暗 = 阴影贴墙）、按 `dt` 渐变（**淡出 0.6s / 淡入 0.22s**）、射线原点取玩家**所在格中心**（格内挪动整张表不变 → 零抖动）；渲染 5 次项卷积 + 子格双线性 + 世界格对齐位图（`FOG_MAX_SHADE = 0.56`）。单测 `fog.test.ts` 10 条守它（贴墙 / 擦角不漏光 / 格内移动不变 / 淡入淡出时长 / 墙后不亮）；`sight.test.ts` 删掉 3 条 `sightOutline` 的 || `package` | sha256 校验通过，包内 README + feedback 齐全 |
 | `web-zip shell`（发布产物） | `verify-all.sh` 的 `package` 步骤产出 `artifacts/verify/forgeax-game-web.zip`：`sha256sum -c` 通过、`index.html` 含 `FORGEAX_META_SHELL_BEGIN`、`forgeax-dist.json` 的 `bytes`/`sha256` 与实际一致；Builder 玩家产物同时含壳层与平台 bootstrap |
 
 主验收必含**非 1280x720 视口**：坐标映射的回归只在 drawing buffer 尺寸变化时暴露。
@@ -431,15 +443,16 @@ node scripts/verify-shell.cjs                            # 4174 单页 40/40
 
 下表把**各模块 `CONTEXT.md`「功能契约（正文）」**逐条对应到**会失败的断言**。改动某条功能时，对应行至少要出现红灯；
 若全套依然全绿，说明护栏没覆盖到，必须补断言。断言数下限由 `verify-all.sh` 强制，所以
-删断言不会让这张表悄悄失效。单测 **540** 条＝combat **330**（21 个文件，2026-11-18 新增 `monster-skills.test.ts` 12 条：
+删断言不会让这张表悄悄失效。单测 **557** 条＝combat **340**（22 个文件，2026-11-19 新增 `fog.test.ts` 10 条：贴墙 / 擦角不漏光 / 格内移动不变 / 淡入淡出时长 / 墙后不亮；同日删掉 `sightOutline` 的 3 条；2026-11-18 新增 `monster-skills.test.ts` 12 条：
 表 join / 形态互斥 / 贵先放 / 白放不占 CD / 沉默挂到玩家 / 射程够得着站位）、meta **127**（10 个文件：
 inventory / 堆叠 / 商店 / 重铸修理 / 保险格 / account / run-settlement 等）、battle 4、
 talent 22（talent 15 + starmap-data 7）、resource 17（tables 9 + map 8）、
 **美术 40（`assets/__tests__/` 4 个文件，含 voxel 与 status-bar）**；
 全量下限 83 条（下限不随新增断言抬高）。
 浏览器验收：playthrough 23 个命名场景（展开 92–100 steps，下限 35）、death-drop 2 步
-（遗物摆点 / 点回 / 耐久）、**worldmap 8 个命名场景（展开 40 steps，下限 6）**、
-**projectile 6 个命名场景（展开 42 steps，下限 6：箭在飞 / 锁定命中 / 箭矢耗尽拒绝 / 火球飞行 / 落地留火 / 骷髅箭打人）**、独立页 16 条、4174 单页 53 条（含 7 条平台身份 / KV 存档 +
+（遗物摆点 / 点回 / 耐久）、**worldmap 3 个命名场景（展开 55 steps，下限 6）**、
+**fog 5 个命名场景（展开 44 steps，下限 5：视野半径可配 / 点视野外仍会走 / 小地图跟随 / `M` 开关 / 走进宝库）**、
+**projectile 6 个命名场景（展开 60 steps，下限 6：箭在飞 / 锁定命中 / 箭矢耗尽拒绝 / 火球飞行 / 落地留火 / 骷髅箭打人）**、独立页 16 条、4174 单页 53 条（含 7 条平台身份 / KV 存档 +
 1 条「无宿主不写盘」+ 2 条平台 lifecycle + 2 条光标反馈 + 3 条保险格 / 遗物 / 关卡类型）。
 真实硬件 WebGPU 冒烟（历史一次性脚本）：`node artifacts/smoke-login-bag.mjs` 曾覆盖「强制登录 / 刷新后存档」，
 **该脚本按已删除的本地登录 + 本地存盘流程编写，现已不适用**；现行契约里无宿主不写盘、刷新不恢复，
