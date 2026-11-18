@@ -267,20 +267,34 @@ export default async function projectile(play) {
     // （浏览器里墙在哪取决于玩家此刻站在图的哪个位置，不适合当断言）。
     const before = await play.state('game.state');
     const impactsBefore = before.projectileStats.blocked + before.projectileStats.fizzled;
+    const firedBefore = before.projectileStats.playerFired;
     const zonesBefore = before.zones.length;
     await play.mouse.click([0.5, 0.16]);
     await play.advance(0.4);
     await play.keyboard.press('KeyQ');
-    await play.advance(0.1);
-    const launched = await play.state('game.state');
-    const fireballs = launched.projectiles.filter((p) => p.specId === 'fireball');
-    if (fireballs.length === 0) {
-      throw new Error(`按 Q 应该丢出一个火球，实际 ${JSON.stringify(launched.projectiles)}`);
+    // 「飞在半空」不能当唯一证据：新图里玩家常常贴着货架/墙站，火球出手 40px 就撞墙炸了，
+    // 0.1 秒后采样已经看不到飞行体（`blocked` 却加了 1）。所以逐 0.08s 采样，
+    // 看到飞行体 或 `playerFired` 涨了（= 真的发出去了，只是已经炸了）都算出手。
+    let launched = null;
+    let flying = null;
+    for (let i = 0; i < 6; i += 1) {
+      await play.advance(0.08);
+      const st = await play.state('game.state');
+      flying = st.projectiles.find((p) => p.specId === 'fireball') ?? null;
+      if (flying !== null) { launched = st; break; }
+      if (st.projectileStats.playerFired > firedBefore) { launched = st; break; }
     }
-    if (fireballs[0].locked !== false) {
-      throw new Error('火球是非指向性的：它不该锁定目标');
+    if (launched === null) {
+      const st = await play.state('game.state');
+      throw new Error(
+        `按 Q 没发出火球（playerFired ${firedBefore} → ${st.projectileStats.playerFired}，`
+        + `弹道 ${JSON.stringify(st.projectiles)}）`,
+      );
     }
-    await play.screenshot('projectile-fireball-flight');
+    if (flying !== null) {
+      if (flying.locked !== false) throw new Error('火球是非指向性的：它不该锁定目标');
+      await play.screenshot('projectile-fireball-flight');
+    }
 
     let exploded = null;
     for (let i = 0; i < 40; i += 1) {
