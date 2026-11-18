@@ -26,6 +26,7 @@ import { statusSnapshot } from './status.ts';
 import { updateDestructibles, destructibleDef, destructibleAtPoint } from './destructibles.ts';
 import { updateEvents } from './events.ts';
 import { zoneAt, zonesOf } from './zones.ts';
+import { visionRadiusOf } from './sight.ts';
 import {
   advanceCast, beginSkill, skillDef, skillReady, tickSkills, updateDash,
 } from './skills.ts';
@@ -484,6 +485,11 @@ export function projection(s: GameState) {
     runKind: s.runKind,
     /** 大地图开着（M）。 */
     bigMap: s.bigMap,
+    /**
+     * 视野半径（世界像素）。场景里的迷雾多边形、小地图窗口都按它算 ——
+     * 天赋 / buff / debuff 改 `state.visionRadius`，这里和画面立刻跟着变。
+     */
+    vision: Math.round(visionRadiusOf(s)),
     /** 玩家所在分区（设计 11）；没分区的图是 null。 */
     zone: (() => {
       const z = zoneAt(s.map, s.player.x, s.player.y);
@@ -637,5 +643,15 @@ export { weaponSpec, projectileRow, ARROW_ID, MONSTER_ARROW_ID, FIREBALL_ID } fr
 export { advanceProjectiles, makeProjectile, NO_COLLISION } from './projectiles.ts';
 export type { Projectile, ProjectileHit, ProjectileFrame, HitTarget, CollisionQuery } from './projectiles.ts';
 export type { ProjectileStats } from './state.ts';
-export { zoneAt, zoneRect, zonesOf, zoneChannels } from './zones.ts';
+export { zoneAt, zoneIndexAt, zoneLinks, zoneRect, zonesOf } from './zones.ts';
 export type { ArenaZone } from './zones.ts';
+// 视野（2026-11-18）：绘制层用它算"看得见哪里"，验收读 `state.visionRadius`。
+export {
+  clampVision, inSight, sightPolygon, visionRadiusOf,
+  VISION_BASE_CELLS, VISION_MAX_CELLS, VISION_MIN_CELLS,
+} from './sight.ts';
+// 迷雾（2026-11-19 第四版）：格子级可见度场 + 淡入淡出，绘制层每帧推进一次。
+export {
+  fogFieldFor, FogField, lineOfSight, approachShade,
+  FOG_FADE_IN, FOG_FADE_OUT, FOG_MAX_SHADE, FOG_PAD_CELLS, FOG_TEXEL,
+} from './fog.ts';

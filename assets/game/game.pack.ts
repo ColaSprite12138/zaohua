@@ -438,7 +438,7 @@ export const game: Plugin = {
             painter.setTransform(surfaceScale, 0, 0, surfaceScale, 0, 0);
             // 状态图标的悬停提示要指针位置：传视图坐标（不是物理像素），
             // 否则 2x 渲染下会指到左上角去。
-            paint(painter, state, pointer ? { x: screenX, y: screenY } : undefined);
+            paint(painter, state, pointer ? { x: screenX, y: screenY } : undefined, dt);
             texture.update();
             // Pointer feedback: the source realm cannot touch CSS, so tell the
             // main window which enemy (if any) is under the free cursor. Sent

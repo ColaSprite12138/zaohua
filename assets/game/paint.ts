@@ -42,6 +42,13 @@ import {
   zonesOf,
   zoneAt,
   zoneRect,
+  // 视野（2026-11-19 第四版）：`fogFieldFor` 是格子级可见度场（贴墙 + 渐变），
+  // `inSight` 负责把视野外的东西剔掉 —— 地形不剔，只压暗。
+  fogFieldFor,
+  FOG_MAX_SHADE,
+  FOG_TEXEL,
+  inSight,
+  visionRadiusOf,
   type StatusId,
   type StatusInstance,
   type DestructibleObj,
@@ -296,12 +303,21 @@ function terrainRaster(s: GameState, pxW: number, pxH: number): OffscreenCanvas 
   const sy = pxH / s.map.pxHei;
   const cellW = Math.max(1, wd.grid * sx);
   const cellH = Math.max(1, wd.grid * sy);
+  // **按行合并连续的同值段**：地图 720×448 = 322560 格，逐格 fillRect 要跑 30 万次，
+  // 第一次开大地图会明显卡一下。墙是成片的，合并之后只剩几千段。
   for (let r = 0; r < wd.rows; r += 1) {
-    for (let c = 0; c < wd.cols; c += 1) {
+    let c = 0;
+    while (c < wd.cols) {
       const tile = wd.tiles[r * wd.cols + c] ?? 1;
-      if (tile !== 1 && tile !== 3) continue;
+      if (tile !== 1 && tile !== 3) {
+        c += 1;
+        continue;
+      }
+      let end = c;
+      while (end + 1 < wd.cols && (wd.tiles[r * wd.cols + end + 1] ?? 1) === tile) end += 1;
       layer.fillStyle = tile === 1 ? '#5a7080' : '#04090f';
-      layer.fillRect(c * wd.grid * sx, r * wd.grid * sy, cellW, cellH);
+      layer.fillRect(c * wd.grid * sx, r * wd.grid * sy, cellW * (end - c + 1), cellH);
+      c = end + 1;
     }
   }
   // 缓存别无限长：换图 / 换尺寸只会有几份。
@@ -311,11 +327,225 @@ function terrainRaster(s: GameState, pxW: number, pxH: number): OffscreenCanvas 
 }
 
 /**
+ * 分区色块（逐格上色，1 格 = 1 像素，缩放画到大地图上）。
+ *
+ * 为什么不再按矩形描边：分区已经是不规则地块（2026-11-18 重做），
+ * 矩形框会把"半岛 / 凹湾"涂成一个方块，等于把真实形状说错。
+ */
+const zoneTintCache = new Map<string, OffscreenCanvas>();
+const ZONE_RGB: Record<string, readonly [number, number, number]> = {
+  court: [212, 168, 96],
+  corridor: [104, 196, 156],
+  cavern: [172, 136, 226],
+  wateryard: [98, 152, 224],
+};
+
+function zoneRaster(map: GameState['map'], highlight: string | null): OffscreenCanvas | null {
+  const grid = map.zoneGrid;
+  if (grid === undefined) return null;
+  const key = `${map.id}:${map.cols}x${map.rows}:${highlight ?? ''}`;
+  const hit = zoneTintCache.get(key);
+  if (hit !== undefined) return hit;
+  const canvas = new OffscreenCanvas(map.cols, map.rows);
+  const ctx = canvas.getContext('2d');
+  if (ctx === null) return null;
+  const img = ctx.createImageData(map.cols, map.rows);
+  const zones = zonesOf(map);
+  const data = img.data;
+  for (let r = 0; r < map.rows; r += 1) {
+    const line = grid[r] ?? '';
+    for (let c = 0; c < map.cols; c += 1) {
+      const ch = line[c];
+      if (ch === undefined || ch === '.') continue;
+      const zone = zones[ch.charCodeAt(0) - 48];
+      if (zone === undefined) continue;
+      const rgb = ZONE_RGB[zone.id] ?? [150, 170, 190];
+      const i = (r * map.cols + c) * 4;
+      data[i] = rgb[0];
+      data[i + 1] = rgb[1];
+      data[i + 2] = rgb[2];
+      data[i + 3] = highlight === null ? 46 : highlight === zone.id ? 84 : 30;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  if (zoneTintCache.size > 6) zoneTintCache.clear();
+  zoneTintCache.set(key, canvas);
+  return canvas;
+}
+
+/** 雾的夜色（RGB 三段）。压暗视野外的地形，但**不遮死** —— 地形始终可见。 */
+const FOG_R = 7;
+const FOG_G = 11;
+const FOG_B = 18;
+/**
+ * 上屏时糊多少 px。**0 = 不糊**：位图已经是"5 次项卷积 + 子格双线性"，边界本身就
+ * 是两格宽的连续梯度；再在 1856×1344 的放大图上做高斯，实测把 FPS 从 60 打到 52，
+ * 收益却看不出。真要让边缘更软，就调 `fog.ts` 的卷积核，别加回来。
+ */
+const FOG_BLUR = 0;
+
+/** 离屏位图（世界格 → 暗度）。尺寸随窗口变，够用就复用。 */
+let fogTex: OffscreenCanvas | null = null;
+let fogTexCtx: OffscreenCanvasRenderingContext2D | null = null;
+let fogTexImg: ImageData | null = null;
+/** 位图刚重建过：像素还没写，必须重写一次。 */
+let fogTexFresh = true;
+
+function fogTexture(width: number, height: number): OffscreenCanvasRenderingContext2D | null {
+  if (fogTexCtx !== null && fogTex !== null && fogTex.width === width && fogTex.height === height) {
+    return fogTexCtx;
+  }
+  fogTex = new OffscreenCanvas(width, height);
+  fogTexCtx = fogTex.getContext('2d');
+  fogTexImg = fogTexCtx === null ? null : fogTexCtx.createImageData(width, height);
+  fogTexFresh = true;
+  return fogTexCtx;
+}
+
+/**
+ * 战争迷雾（设计 11，2026-11-19 第四版）。
+ *
+ * 前三版是"射线多边形 + evenodd 遮罩"，三个病治不好（用户三轮反馈都指向同一处）：
+ * 边缘有毛刺且走动时会抖、阴影不贴墙、视野丢失是一帧黑掉。
+ *
+ * 这一版换成 RTS 的格子做法，数据在 `combat/fog.ts`：
+ *  1. **可见度按世界格存**（`FogField.shade`），每格 0 亮 → 1 暗。判定是格子级
+ *     DDA，**墙格自己亮、墙后第一格就暗** —— 阴影天然贴住墙面，不需要任何拟合。
+ *  2. **不对玩家做亚像素采样**：射线起点是玩家所在格的中心，所以玩家在同一格里
+ *     挪动时整张场逐格不变 —— 画面零抖动。跨格才更新一格，且被渐变与 3×3 平滑
+ *     吃掉。上一版的"毛刺随人抖动"就是射线端点跟着亚像素位置跳造成的。
+ *  3. **渐变**：每格按 `dt` 向目标逼近（见 `approachShade`），丢视野 0.6 秒暗下去、
+ *     新探索 0.22 秒亮起来，不是一帧切换。
+ *
+ * 渲染两步：格 → 位图（每格 `FOG_TEXEL` 像素，按世界格对齐）→ 双线性放大上屏。
+ * 上屏位置取整到 1px，位图原点又焊在世界格上，所以相机移动不会让纹理"呼吸"。
+ */
+function drawFog(g: Painter, s: GameState, dt: number): void {
+  const radius = visionRadiusOf(s);
+  const field = fogFieldFor(s.world);
+  // 静止时 `advance` 会返回 false：位图内容一格没变，不必重写 4 万个 texel。
+  const dirty = field.advance(s.player.x, s.player.y, radius, dt);
+
+  const grid = s.world.grid;
+  const camX = Math.round(s.camera.x);
+  const camY = Math.round(s.camera.y);
+  const texW = field.viewCols * FOG_TEXEL;
+  const texH = field.viewRows * FOG_TEXEL;
+  if (texW <= 0 || texH <= 0) return;
+
+  const dx = Math.round(field.viewCol0 * grid - camX);
+  const dy = Math.round(field.viewRow0 * grid - camY);
+
+  const ctx = fogTexture(texW, texH);
+  if (ctx !== null && fogTexImg !== null && (dirty || fogTexFresh)) {
+    const img = fogTexImg;
+    const data = img.data;
+    // 在**子格坐标**上双线性采样：位图每 texel 对 1/4 格，采样点落在格与格之间，
+    // 于是阴影边界是斜的平滑过渡，而不是一级一级的 32px 台阶（用户说的"锯齿"）。
+    const soft = field.soft;
+    const cols = field.viewCols;
+    const rows = field.viewRows;
+    const alphaScale = FOG_MAX_SHADE * 255;
+    for (let ty = 0; ty < texH; ty += 1) {
+      const v = (ty + 0.5) / FOG_TEXEL - 0.5;
+      let r0i = Math.floor(v);
+      const fr = v - r0i;
+      if (r0i < 0) r0i = 0;
+      else if (r0i > rows - 1) r0i = rows - 1;
+      const r1i = r0i + 1 < rows ? r0i + 1 : r0i;
+      const rowA = r0i * cols;
+      const rowB = r1i * cols;
+      let p = ty * texW * 4;
+      for (let tx = 0; tx < texW; tx += 1) {
+        const u = (tx + 0.5) / FOG_TEXEL - 0.5;
+        let c0i = Math.floor(u);
+        const fc = u - c0i;
+        if (c0i < 0) c0i = 0;
+        else if (c0i > cols - 1) c0i = cols - 1;
+        const c1i = c0i + 1 < cols ? c0i + 1 : c0i;
+        const top = (soft[rowA + c0i] ?? 1) * (1 - fc) + (soft[rowA + c1i] ?? 1) * fc;
+        const bot = (soft[rowB + c0i] ?? 1) * (1 - fc) + (soft[rowB + c1i] ?? 1) * fc;
+        const a = (top * (1 - fr) + bot * fr) * alphaScale;
+        data[p] = FOG_R;
+        data[p + 1] = FOG_G;
+        data[p + 2] = FOG_B;
+        // 直通 alpha（putImageData 不做预乘）；夹一下防止平滑溢出。
+        data[p + 3] = a < 0 ? 0 : a > 255 ? 255 : a;
+        p += 4;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    fogTexFresh = false;
+  }
+
+  if (fogTex !== null) {
+    // 位图没盖到的屏幕边条（只有地图边缘把窗口钳住时才会出现）：先铺满纯暗色，
+    // 和位图里的最暗处一致，不会出现一条突兀的亮边。
+    const right = dx + field.viewCols * grid;
+    const bottom = dy + field.viewRows * grid;
+    g.save();
+    g.fillStyle = `rgba(${FOG_R},${FOG_G},${FOG_B},${FOG_MAX_SHADE})`;
+    if (dx > 0) g.fillRect(0, 0, dx, VIEW_H);
+    if (right < VIEW_W) g.fillRect(right, 0, VIEW_W - right, VIEW_H);
+    if (dy > 0) g.fillRect(0, 0, VIEW_W, dy);
+    if (bottom < VIEW_H) g.fillRect(0, bottom, VIEW_W, VIEW_H - bottom);
+
+    // 只把**屏幕内**那一块贴上去：窗口比屏幕大（它还要覆盖视野圆），整张贴会
+    // 白白光栅化几百万像素 —— 实测这是掉帧的主因。
+    const x0 = Math.max(0, dx);
+    const y0 = Math.max(0, dy);
+    const x1 = Math.min(VIEW_W, right);
+    const y1 = Math.min(VIEW_H, bottom);
+    if (x1 > x0 && y1 > y0) {
+      const sx = ((x0 - dx) / grid) * FOG_TEXEL;
+      const sy = ((y0 - dy) / grid) * FOG_TEXEL;
+      const sw = ((x1 - x0) / grid) * FOG_TEXEL;
+      const sh = ((y1 - y0) / grid) * FOG_TEXEL;
+      g.imageSmoothingEnabled = true;
+      if (FOG_BLUR > 0) {
+        try {
+          g.filter = `blur(${FOG_BLUR}px)`;
+        } catch {
+          // 不支持 filter 的引擎：双线性本身已经有过渡，硬一点但不崩。
+        }
+      }
+      g.drawImage(fogTex, sx, sy, sw, sh, x0, y0, x1 - x0, y1 - y0);
+      g.filter = 'none';
+    }
+    g.restore();
+  }
+
+  // 火光衰减：视野内也不是"一样亮"，中心清楚、边缘只剩轮廓。这一层只加在
+  // **看得见**的一侧（暗区已经是最大暗度，再加就浪费了）。
+  const meX = s.player.x - camX;
+  const meY = s.player.y - camY;
+  const glow = g.createRadialGradient(
+    meX, meY, radius * 0.3,
+    meX, meY, radius * 1.05,
+  );
+  glow.addColorStop(0, `rgba(${FOG_R},${FOG_G},${FOG_B},0)`);
+  glow.addColorStop(0.6, `rgba(${FOG_R},${FOG_G},${FOG_B},0.05)`);
+  glow.addColorStop(0.88, `rgba(${FOG_R},${FOG_G},${FOG_B},0.14)`);
+  glow.addColorStop(1, `rgba(${FOG_R},${FOG_G},${FOG_B},0.04)`);
+  // 裁到视野圆内：暗区已经是最大暗度，再叠一层会让地形彻底看不见。
+  g.save();
+  g.beginPath();
+  g.arc(meX, meY, radius * 1.05, 0, Math.PI * 2);
+  g.clip();
+  g.fillStyle = glow;
+  g.fillRect(0, 0, VIEW_W, VIEW_H);
+  g.restore();
+}
+
+/**
  * 大地图（M，设计 11「需要大地图查看功能」）。
  *
- * 只读覆盖层：地形 + 四个分区（名字 + 描边）+ 传送门 + 未砸开的可破坏物 +
- * 事件光柱 + 玩家位置与朝向。**不暂停世界**（时间与怪照常走），打开时点击落在
- * 覆盖层上会被引擎当成 HUD 而丢掉 —— 看地图不是一次误操作。
+ * 只读覆盖层：地形 + 五个分区（不规则色块 + 名字 + 当前区金框）+ 传送门 +
+ * 玩家位置与朝向。**不暂停世界**（时间与怪照常走），打开时点击落在覆盖层上会
+ * 被引擎当成 HUD 而丢掉 —— 看地图不是一次误操作。
+ *
+ * 2026-11-18：**只有玩家与传送门**。这是整张图唯一能看到"全貌"的地方（场景里
+ * 有战争迷雾），所以它给的是地形信息，不是怪物 / 战利品情报。
  */
 function drawBigMap(g: Painter, s: GameState): void {
   g.save();
@@ -335,11 +565,11 @@ function drawBigMap(g: Painter, s: GameState): void {
   roundRect(g, px, py, pw, ph, 14);
   g.stroke();
 
-  text(g, '大地图 · 四区环形', px + 20, py + 26, 16, '#e8f4ff', 'left', '800');
+  text(g, '大地图', px + 20, py + 26, 16, '#e8f4ff', 'left', '800');
   const zones = zonesOf(s.map);
   text(g, zones.length > 0
-    ? `${zones.map((z) => z.name).join(' → ')} → ${zones[0]!.name}`
-    : '这张图没有分区', px + 190, py + 25, 12, '#8fb3c9', 'left', '600');
+    ? `四区环形 · 正中${zones.find((z) => z.id === 'vault')?.name ?? '宝库'}（高价值）`
+    : '这张图没有分区', px + 96, py + 25, 12, '#8fb3c9', 'left', '600');
   text(g, 'M 关闭 · 世界不会暂停', px + pw - 20, py + 25, 12, '#ffd166', 'right', '700');
 
   // 地图区：按世界长宽比塞进面板，居中。
@@ -354,6 +584,14 @@ function drawBigMap(g: Painter, s: GameState): void {
   const oy = Math.round(areaY + (areaH - mapH) / 2);
 
   g.drawImage(terrainRaster(s, mapW, mapH), ox, oy);
+  // 分区色块（不规则地块的真实形状）。当前所在区更亮。
+  const here = zoneAt(s.map, s.player.x, s.player.y);
+  const tint = zoneRaster(s.map, here?.id ?? null);
+  if (tint !== null) {
+    g.imageSmoothingEnabled = false;
+    g.drawImage(tint, ox, oy, mapW, mapH);
+    g.imageSmoothingEnabled = true;
+  }
   g.strokeStyle = 'rgba(103,232,249,0.55)';
   g.lineWidth = 1;
   g.strokeRect(ox + 0.5, oy + 0.5, mapW - 1, mapH - 1);
@@ -363,24 +601,21 @@ function drawBigMap(g: Painter, s: GameState): void {
     y: oy + wy * scale,
   });
 
-  // 分区：描边 + 名字（名字压在每区中心）。
+  // 分区名字：压在包围盒中心（形状本身由色块说，文字只负责"这块叫什么"）。
   for (const zone of zones) {
     const r = zoneRect(zone, s.map.gridSize);
     const p0 = toMap(r.x, r.y);
     const w = r.w * scale;
     const h = r.h * scale;
-    g.strokeStyle = zone.id === (zoneAt(s.map, s.player.x, s.player.y)?.id ?? '')
-      ? 'rgba(255,209,102,0.9)'
-      : 'rgba(167,139,250,0.55)';
-    g.lineWidth = 2;
-    g.strokeRect(p0.x + 1, p0.y + 1, w - 2, h - 2);
     const label = zone.name;
     const tw = Math.max(52, Array.from(label).length * 14 + 16);
     const lx = Math.round(p0.x + w / 2 - tw / 2);
-    const ly = Math.round(p0.y + 8);
-    g.fillStyle = 'rgba(8,16,24,0.82)';
+    const ly = Math.round(p0.y + h / 2 - 10);
+    g.fillStyle = 'rgba(8,16,24,0.78)';
     g.fillRect(lx, ly, tw, 20);
-    g.strokeStyle = 'rgba(150,180,205,0.4)';
+    g.strokeStyle = zone.id === (here?.id ?? '')
+      ? 'rgba(255,209,102,0.95)'
+      : 'rgba(150,180,205,0.4)';
     g.lineWidth = 1;
     g.strokeRect(lx + 0.5, ly + 0.5, tw - 1, 19);
     text(g, label, p0.x + w / 2, ly + 10, 12, '#dbeafe', 'center', '700');
@@ -398,20 +633,8 @@ function drawBigMap(g: Painter, s: GameState): void {
       g.strokeRect(Math.round(p.x - size), Math.round(p.y - size), size * 2, size * 2);
     }
   }
-  // 可破坏物（未砸开的）
-  for (const obj of s.destructibles) {
-    if (obj.broken) continue;
-    const p = toMap(obj.x, obj.y);
-    g.fillStyle = obj.fromEvent ? '#fff3c4' : '#f59e0b';
-    g.fillRect(Math.round(p.x - 2), Math.round(p.y - 2), obj.fromEvent ? 6 : 4, obj.fromEvent ? 6 : 4);
-  }
-  // 事件光柱
-  for (const record of s.events) {
-    if (record.beacon <= 0) continue;
-    const p = toMap(record.x, record.y);
-    g.fillStyle = '#fcd34d';
-    g.fillRect(Math.round(p.x - 3), Math.round(p.y - 3), 7, 7);
-  }
+  // 设计 11 / 2026-11-18：大地图上**只画玩家与传送门**。可破坏物、事件光柱、
+  // 怪物一律不画 —— 这些是"要用腿去换"的信息，标在图上等于给玩家开透视。
 
   // 玩家：白点 + 朝向短线（俯视角里"面朝哪"是玩家最常问的一句）
   const me = toMap(s.player.x, s.player.y);
@@ -427,8 +650,7 @@ function drawBigMap(g: Painter, s: GameState): void {
   // 底部图例
   const legendY = py + ph - 26;
   const legend: readonly (readonly [string, string])[] = [
-    ['#67e8f9', '你'], ['#f0abfc', '传送门'], ['#f59e0b', '可破坏物'],
-    ['#fcd34d', '事件'], ['#5a7080', '墙'], ['#04090f', '深水 / 虚空'],
+    ['#67e8f9', '你'], ['#f0abfc', '传送门'], ['#5a7080', '墙'], ['#04090f', '深水 / 虚空'],
   ];
   let lx = areaX;
   for (const [color, label] of legend) {
@@ -441,9 +663,18 @@ function drawBigMap(g: Painter, s: GameState): void {
 }
 
 /**
- * Read-only minimap, top-right. It shows terrain, entities and the camera
- * viewport but consumes NO pointer input: the engine drops clicks inside
- * MINIMAP before they ever reach the simulation.
+ * 小地图（右上角，只读）。
+ *
+ * 2026-11-18 改版：**不再画整张地图**。以前是把 840×544 的图缩成 220×165 塞进去，
+ * 等于白送一张全图 —— 玩家不用走路就知道哪边有路。现在它是一个**跟随玩家滚动
+ * 的窗口**：只画以玩家为中心约 40×26 格（≈ 视野半径的 1.4 倍），走出这个范围就
+ * 滚出画面。想看全图只能按 `M`（大地图，那颗"展开手上的图"的按钮）。
+ *
+ * 图面上只有三样东西：地形、**传送门**、**你自己**。怪、可破坏物、掉落、事件光柱
+ * 都不画 —— 搜打撤的信息优势必须靠腿和眼去换，不是靠右上角一个雷达。
+ *
+ * 地形是每帧按行合并同值段重画的（窗口 1000 格出头，合并后几十段），不做缓存：
+ * 缓存 key 要跟着玩家走，命中率低，反而更贵。
  */
 function drawMinimap(g: Painter, s: GameState): void {
   const { x, y, w, h } = MINIMAP;
@@ -456,40 +687,97 @@ function drawMinimap(g: Painter, s: GameState): void {
   roundRect(g, x, y, w, h, 12);
   g.stroke();
   text(g, '地图 · 只读', x + 12, y + 15, 11, '#a9c4d6', 'left', '600');
+  text(g, 'M 查看全图', x + w - 12, y + 15, 11, '#7f9bb0', 'right', '600');
 
-  const sx = (w - 16) / s.map.pxWid;
-  const sy = (h - 32) / s.map.pxHei;
-  const ox = x + 8;
-  const oy = y + 24;
-  // 地形走缓存（40960 格逐帧重画会把帧率吃穿），实体仍然每帧画。
-  g.drawImage(terrainRaster(s, w - 16, h - 32), ox, oy);
-  g.strokeStyle = 'rgba(103,232,249,0.85)';
+  const innerX = x + 8;
+  const innerY = y + 22;
+  const innerW = w - 16;
+  const innerH = h - 30;
+  const wd = s.world;
+  const grid = wd.grid;
+  // 窗口格数由**视野半径**决定：视线多远，图上就给多远 + 一点余量。
+  const radiusCells = visionRadiusOf(s) / grid;
+  // 窗口取视野直径的 1.05 倍：视野圆能**完整**落在小地图里（玩家一眼就知道
+  // "圈外是黑的"），而且窗口本身就跟着视野半径走 —— 天赋缩视野时窗口一起缩。
+  const rows = Math.max(18, Math.min(52, Math.ceil(radiusCells * 2.05)));
+  const cellPx = innerH / rows;
+  const cols = Math.max(12, Math.floor(innerW / cellPx));
+  const c0 = s.player.x / grid - cols / 2;
+  const r0 = s.player.y / grid - rows / 2;
+
+  g.save();
+  roundRect(g, innerX, innerY, innerW, innerH, 8);
+  g.clip();
+  g.fillStyle = '#16232e';
+  g.fillRect(innerX, innerY, innerW, innerH);
+
+  // 地形：只画墙与虚空（地面留底色）。按行合并连续同值段，一次 fillRect 画一段。
+  const baseC = Math.floor(c0);
+  const baseR = Math.floor(r0);
+  for (let rr = 0; rr < rows; rr += 1) {
+    const row = baseR + rr;
+    if (row < 0 || row >= wd.rows) continue;
+    const py = innerY + rr * cellPx;
+    let cc = 0;
+    while (cc < cols) {
+      const col = baseC + cc;
+      if (col < 0 || col >= wd.cols) { cc += 1; continue; }
+      const tile = wd.tiles[row * wd.cols + col] ?? 3;
+      if (tile !== 1 && tile !== 3) { cc += 1; continue; }
+      let endc = cc;
+      while (endc + 1 < cols) {
+        const nc = baseC + endc + 1;
+        if (nc < 0 || nc >= wd.cols) break;
+        if ((wd.tiles[row * wd.cols + nc] ?? 3) !== tile) break;
+        endc += 1;
+      }
+      g.fillStyle = tile === 1 ? '#64798b' : '#050a10';
+      g.fillRect(innerX + cc * cellPx, py, cellPx * (endc - cc + 1) + 0.5, cellPx + 0.5);
+      cc = endc + 1;
+    }
+  }
+
+  const toMini = (wx: number, wy: number) => ({
+    x: innerX + (wx - c0 * grid) * (cellPx / grid),
+    y: innerY + (wy - r0 * grid) * (cellPx / grid),
+  });
+
+  // 视野圈：和场景里那团黑对得上（半径改了，这里跟着改）。
+  const me = toMini(s.player.x, s.player.y);
+  g.strokeStyle = 'rgba(103,232,249,0.5)';
   g.lineWidth = 1;
-  g.strokeRect(ox + s.camera.x * sx, oy + s.camera.y * sy, VIEW_W * sx, VIEW_H * sy);
+  g.beginPath();
+  g.arc(me.x, me.y, (visionRadiusOf(s) / grid) * cellPx, 0, Math.PI * 2);
+  g.stroke();
 
-  const dot = (wx: number, wy: number, color: string, size: number): void => {
-    g.fillStyle = color;
-    g.fillRect(Math.round(ox + wx * sx - size / 2), Math.round(oy + wy * sy - size / 2), size, size);
-  };
-  for (const sk of s.skeletons) if (sk.alive) dot(sk.x, sk.y, '#ff6b6b', 4);
-  // 可破坏物：金色方块。高价值事件刷出来的更亮 —— 小地图上也要能看出「值钱的那个在哪」。
-  for (const obj of s.destructibles) {
-    if (obj.broken) continue;
-    dot(obj.x, obj.y, obj.fromEvent ? '#fff3c4' : '#f59e0b', obj.fromEvent ? 5 : 4);
-  }
-  for (const record of s.events) {
-    if (record.beacon <= 0) continue;
-    dot(record.x, record.y, '#fcd34d', 6);
-  }
-  for (const drop of s.drops) dot(drop.x, drop.y, '#ffd166', 4);
-  // 传送门：小地图是玩家找门的唯一线索（不再弹任务提示），所以必须画。
+  // 传送门：小地图上唯一的"目标物"。窗口外的门不画 —— 走到附近才看得到。
   for (const portal of s.portals) {
-    const color = portal.state === 'spent'
+    const p = toMini(portal.x, portal.y);
+    if (p.x < innerX - 4 || p.x > innerX + innerW + 4) continue;
+    if (p.y < innerY - 4 || p.y > innerY + innerH + 4) continue;
+    g.fillStyle = portal.state === 'spent'
       ? '#5a7080'
       : portal.inRange ? '#ffd166' : '#f0abfc';
-    dot(portal.x, portal.y, color, portal.state === 'spent' ? 4 : 6);
+    const size = portal.state === 'spent' ? 4 : 6;
+    g.fillRect(Math.round(p.x - size / 2), Math.round(p.y - size / 2), size, size);
   }
-  dot(s.player.x, s.player.y, '#67e8f9', 5);
+
+  // 玩家：白点 + 朝向短线（俯视角里"我朝哪"是最常问的一句）。
+  g.fillStyle = '#67e8f9';
+  g.fillRect(Math.round(me.x - 3), Math.round(me.y - 3), 6, 6);
+  g.strokeStyle = '#67e8f9';
+  g.lineWidth = 2;
+  g.beginPath();
+  g.moveTo(me.x, me.y);
+  g.lineTo(me.x + Math.cos(s.player.face) * 11, me.y + Math.sin(s.player.face) * 11);
+  g.stroke();
+  g.restore();
+
+  // 边框压在裁切区上（clip 里画会被切掉一半）
+  g.strokeStyle = 'rgba(150,180,205,0.35)';
+  g.lineWidth = 1;
+  roundRect(g, innerX + 0.5, innerY + 0.5, innerW - 1, innerH - 1, 8);
+  g.stroke();
   g.restore();
 }
 
@@ -1456,7 +1744,10 @@ function drawWeaponSlots(g: Painter, s: GameState, x: number, y: number): void {
  * 玩家与怪物的弹用不同配色（金羽 / 暗红羽），一眼分得清该躲哪一发。
  */
 function drawProjectiles(g: Painter, s: GameState): void {
+  const sightR = visionRadiusOf(s);
   for (const p of s.projectiles) {
+    // 弹道也是"东西"：从墙后飞来的一支亮箭会从迷雾里透出来，破坏"看不见"的承诺。
+    if (!inSight(s.world, s.player.x, s.player.y, p.x, p.y, sightR)) continue;
     const profile = projectileProfile(p.specId);
     const angle = Math.atan2(p.vy, p.vx);
     // 地面影子：飞行体也是「离地的东西」，没有影子会读成贴在地板上的贴图。
@@ -2064,6 +2355,8 @@ export function paint(
   g: Painter,
   s: GameState,
   pointer?: { x: number; y: number },
+  // 帧时长（秒）：只有迷雾的淡入淡出读它。缺省按 60fps —— 单测 / 截图不传也能动。
+  dt = 1 / 60,
 ): void {
   prepareScene(g);
   loadAtlas();
@@ -2089,6 +2382,9 @@ export function paint(
   const c1 = Math.min(w.cols - 1, Math.floor((cam.x + VIEW_W) / grid));
   const r0 = Math.max(0, Math.floor(cam.y / grid));
   const r1 = Math.min(w.rows - 1, Math.floor((cam.y + VIEW_H) / grid));
+  // 视野（2026-11-19 第三版）：**地形不再按视野剔除**。视野外只是压暗
+  // （`drawFog` 的 0.34 + 网点 + 两级实色），地砖 / 墙体 / 装饰仍然要画出来 ——
+  // 用户要的是"看不见东西，不是看不见地方"。墙块只按**视口**裁剪，不做距离粗筛。
   for (let r = r0; r <= r1; r += 1) {
     for (let c = c0; c <= c1; c += 1) {
       if ((w.tiles[r * w.cols + c] ?? 1) !== 1) continue;
@@ -2097,23 +2393,34 @@ export function paint(
       items.push({ y: y + grid + 0.5, draw: () => drawWallBlock(g, x, y, drawAtlasWallTop) });
     }
   }
-  // 装饰层（院墙段 / 香炉 / 高台）：深度 key 用占地底边，和角色共用一个排序。
+  /** 看得见才画：地形之外的东西（怪 / 掉落 / 门 / 可破坏物）不进迷雾。 */
+  const sightR = visionRadiusOf(s);
+  const sees = (x: number, y: number): boolean => (
+    inSight(w, s.player.x, s.player.y, x, y, sightR)
+  );
+  // 装饰层（院墙段 / 香炉 / 高台）是**地形的一部分**：不按视野剔，和墙一样常驻。
   for (const prop of s.map.props ?? []) {
     const footprint = propFootprint(prop.kind);
     const px = (prop.col + footprint.w / 2) * grid;
     const py = (prop.row + footprint.h) * grid;
     items.push({ y: py, draw: () => { drawAtlasProp(g, prop.kind, px, py); } });
   }
-  for (const sk of s.skeletons) items.push({ y: sk.y, draw: () => drawSkeleton(g, s, sk) });
+  for (const sk of s.skeletons) {
+    if (!sees(sk.x, sk.y)) continue;        // 视野外的怪连模型都不建
+    items.push({ y: sk.y, draw: () => drawSkeleton(g, s, sk) });
+  }
   // 传送门是「站在地上的建筑」：和角色共用一套深度排序，玩家走到门后会被门挡住。
   for (const portal of s.portals) {
+    if (!sees(portal.x, portal.y)) continue;
     items.push({ y: portal.y, draw: () => drawPortal(g, portal) });
   }
   // 可破坏物也是「站在地上的东西」：和角色、门共用一个深度排序。
   for (const obj of s.destructibles) {
+    if (!sees(obj.x, obj.y)) continue;
     items.push({ y: obj.y, draw: () => drawDestructible(g, s, obj) });
   }
   for (const drop of s.drops) {
+    if (!sees(drop.x, drop.y)) continue;
     // A drop sits in FRONT of a corpse at the same spot, but behind a body
     // standing south of it -- the same rule as any other ground object.
     items.push({ y: drop.y + 0.5, draw: () => drawDrop(g, drop, s.hoverDrop === drop.uid) });
@@ -2133,6 +2440,10 @@ export function paint(
   // 读条提示盖在场景之上（它必须比头顶的粒子更显眼），但仍然属于世界空间。
   drawCastBar(g, s);
   g.restore();
+  // 战争迷雾：视野之外压暗（地形仍可见），实体已在上面的 `sees()` 里剔掉。
+  // **大地图打开时不画** —— 看地图就是把"手上的图"摊开，那是唯一能看到全图
+  // 地形的时候（设计 11）。
+  if (!s.bigMap) drawFog(g, s, dt);
   hud(g, s, pointer);
   drawMinimap(g, s);
   // 大地图**盖在最上层**（包括 HUD 与小地图）：它是模态查看层。

@@ -157,15 +157,23 @@ check_report death-drop artifacts/play/scripts/playthrough-death-drop/play.json 
 
 # 可破坏物 + 单局事件（设计 10.2 / 10.5）：夹具验守卫门槛 / 站桩砸开 / 掉落，
 # 真地图验第 7 分钟的高价值事件与撤离阶段的「怪向门聚集」（快进 430 秒不用真实时间）。
+# 预算 480s：地图 7.9× 之后「快进 430 秒」这一步要 2–3 分钟墙钟（60 只怪跑在图里）。
 run_json destructible "$FX" project play \
-  --script scripts/playthrough-destructible.mjs --json
+  --script scripts/playthrough-destructible.mjs --json --timeout-ms 480000
 check_report destructible artifacts/play/scripts/playthrough-destructible/play.json 6
 
-# 分区 / 大地图（设计 11）：四区走一圈 + M 开关 + 1280x600。真地图（8192x5120），
-# 夹具验不了分区 —— 所以这一支必须跑真图，并且**必须走腿**（不靠传送）。
+# 分区 / 大地图（设计 11）：五区（四角 + 正中宝库）+ M 开关 + 从院落走到东廊。
+# 真地图（26880x17408），夹具验不了分区 —— 所以这一支必须跑真图，并且**必须走腿**。
+# 走法见脚本头：路线由 arena.ldtk 自己算（拉直后 21 段），点屏幕内的路点前进。
 run_json worldmap "$FX" project play \
-  --script scripts/playthrough-worldmap.mjs --json
+  --script scripts/playthrough-worldmap.mjs --json --timeout-ms 300000
 check_report worldmap artifacts/play/scripts/playthrough-worldmap/play.json 6
+
+# 视野 / 迷雾 / 小地图（2026-11-18，设计 11 的第二轮）：视野半径可配置、
+# 迷雾限制"看得见什么"而不是"能走去哪"、小地图只给局部、大地图才给全图。
+run_json fog "$FX" project play \
+  --script scripts/playthrough-fog.mjs --json --timeout-ms 420000
+check_report fog artifacts/play/scripts/playthrough-fog/play.json 5
 
 # 弹道（2026-11-16，设计 7.4 / 8.7 的远程部分）：一支箭必须是**看得见的飞行体**，
 # 指向性（锁定）与非指向性（火球）都要有，箭矢按件消耗（打空了要拒绝并说话），

@@ -17,6 +17,8 @@ import { skill as skillTable } from '../resource/generated/skill.ts';
 import { createInventoryState, type AffixOnItem, type InventoryState } from '../meta/inventory.ts';
 import { gearMultiplier } from '../meta/affix.ts';
 import { makeRng } from './loot.ts';
+// 视野只依赖 `world.ts`（纯查询），不会和本文件形成循环。
+import { VISION_BASE_CELLS } from './sight.ts';
 import { seedFixturePotions } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
 // 只 import 类型：`projectiles.ts` 是纯飞行逻辑，运行时不反向依赖战局状态。
@@ -1055,6 +1057,12 @@ export interface GameState {
   channel: number | null;
   /** 大地图是否打开（纯查看，不暂停世界）。 */
   bigMap: boolean;
+  /**
+   * 视野半径（世界像素）。**运行时字段**：天赋 / buff / debuff 直接改它，
+   * 渲染层每帧按它算"看得见哪里"（`sight.ts::visionRadiusOf` 负责夹紧）。
+   * 默认 18 格 = 576px，见 `VISION_BASE_CELLS`。
+   */
+  visionRadius: number;
   /** 已从传送门撤离：本局成功，整份带回。 */
   extracted: boolean;
   /** 时间耗尽没撤离：本局失败，整份丢失。 */
@@ -1139,6 +1147,7 @@ export function createState(config: RunConfig = {}): GameState {
     portals: [],
     channel: null,
     bigMap: false,
+    visionRadius: VISION_BASE_CELLS * 32,
     extracted: false,
     timedOut: false,
     destructibles: [],

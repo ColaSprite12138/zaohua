@@ -215,8 +215,16 @@ if [ "$combat_play" -eq 1 ]; then
   check_play resize artifacts/play/scripts/playthrough-resize/play.json 4
 
   # 可破坏物 + 单局事件（设计 10.2 / 10.5）：夹具验箱子，真地图验 7 分钟事件。
+  # 300s 是旧图的预算；地图 7.9× 之后「快进 430 秒」这一步本身要 2–3 分钟墙钟
+  # （60 只怪在 32 万格的图上跑），实测 292s —— 贴着上限会偶发超时，给到 480s。
+  log "[RUN ] combat :: playthrough-fog"
+  "$FX" project play --script scripts/playthrough-fog.mjs --json --timeout-ms 420000 \
+    > "$OUT/inc-fog.json" 2> "$OUT/inc-fog.err" \
+    || { tail -n 20 "$OUT/inc-fog.json" "$OUT/inc-fog.err"; die "fog 非零退出"; }
+  check_play fog artifacts/play/scripts/playthrough-fog/play.json 5
+
   log "[RUN ] combat :: playthrough-destructible"
-  "$FX" project play --script scripts/playthrough-destructible.mjs --json \
+  "$FX" project play --script scripts/playthrough-destructible.mjs --json --timeout-ms 480000 \
     > "$OUT/inc-destructible.json" 2> "$OUT/inc-destructible.err" \
     || { tail -n 20 "$OUT/inc-destructible.json" "$OUT/inc-destructible.err"; die "destructible 非零退出"; }
   check_play destructible artifacts/play/scripts/playthrough-destructible/play.json 6

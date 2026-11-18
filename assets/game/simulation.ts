@@ -100,7 +100,15 @@ export {
   zonesOf,
   zoneAt,
   zoneRect,
-  zoneChannels,
+  zoneLinks,
+  zoneIndexAt,
+  // 视野（2026-11-18）：只报告性接口 —— 画遮罩与剔除视野外的实体。
+  inSight,
+  sightPolygon,
+  visionRadiusOf,
+  fogFieldFor,
+  FOG_MAX_SHADE,
+  FOG_TEXEL,
   // 弹道（2026-11-16）：绘制层画箭 / 火球，HUD 读弹药，验收读飞行体与计数。
   BODY_LIFT,
   PROJECTILES,
