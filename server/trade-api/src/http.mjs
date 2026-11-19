@@ -61,19 +61,24 @@ const int = (v, name, { min = 1, max = 1e9 } = {}) => {
   return n
 }
 
-export function createApp ({ db, auth, wallet }) {
-  const routes = new Map()
-  const add = (method, path, handler, needAuth) => routes.set(`${method} ${path}`, { handler, needAuth })
+export function createApp ({ db, auth, wallet, market }) {
+  const routes = []
+  const add = (method, path, handler, needAuth = false) => {
+    routes.push({ method, parts: path.split('/').filter(Boolean), handler, needAuth })
+  }
 
-  // ---- 基础 ----
+  // ---------- 基础 ----------
   add('GET', '/api/v1/health', () => ({
     ok: true,
     service: 'trade-api',
+    version: 2,
     now: new Date().toISOString(),
-    uptimeSec: Math.round(process.uptime())
+    uptimeSec: Math.round(process.uptime()),
+    feeBp: market.FEE_BP,
+    limits: { wallet: wallet.limits, market: market.limits }
   }))
 
-  // ---- 账号 ----
+  // ---------- 账号 ----------
   add('POST', '/api/v1/auth/register', async ({ body }) =>
     auth.register({
       pubkey: str(body.pubkey, 'pubkey', { min: 20, max: 400 }),
@@ -90,7 +95,7 @@ export function createApp ({ db, auth, wallet }) {
       signature: str(body.signature, 'signature', { min: 20, max: 400 })
     }))
 
-  // ---- 用户信息与钱包 ----
+  // ---------- 用户与钱包 ----------
   add('GET', '/api/v1/me', async ({ user }) => ({
     ok: true,
     userId: user.userId,
@@ -113,26 +118,90 @@ export function createApp ({ db, auth, wallet }) {
   add('POST', '/api/v1/wallet/withdraw', async ({ user, body }) =>
     wallet.withdraw(user.userId, int(body.amount, 'amount')), true)
 
+  // ---------- 订单簿（同质商品） ----------
+  add('GET', '/api/v1/market/book', async ({ url }) =>
+    market.bookOf(str(url.searchParams.get('itemId'), 'itemId', { min: 1, max: 40 })))
+
+  add('POST', '/api/v1/market/orders', async ({ user, body }) => {
+    const side = str(body.side, 'side', { min: 3, max: 4 })
+    if (side !== 'buy' && side !== 'sell') throw new HttpError(400, 'bad_side', 'side 只能是 buy 或 sell')
+    const itemId = str(body.itemId, 'itemId', { min: 1, max: 40 })
+    const price = int(body.price, 'price', { min: 1, max: market.limits.maxPrice })
+    const qty = int(body.qty, 'qty', { min: 1, max: market.limits.maxQty })
+    return side === 'buy'
+      ? market.placeBuy(user.userId, itemId, price, qty)
+      : market.placeSell(user.userId, itemId, price, qty)
+  }, true)
+
+  add('GET', '/api/v1/market/orders', async ({ user }) => ({
+    ok: true,
+    open: market.myOrders(user.userId)
+  }), true)
+
+  add('POST', '/api/v1/market/orders/:id/cancel', async ({ user, params }) =>
+    market.cancelOrder(user.userId, int(params.id, 'id')), true)
+
+  // ---------- 寄售（装备等唯一实例） ----------
+  add('GET', '/api/v1/market/listings', async ({ url }) =>
+    ({ ok: true, items: market.listListings({
+      itemId: url.searchParams.get('itemId') || null,
+      limit: url.searchParams.get('limit') || 50
+    }) }))
+
+  add('POST', '/api/v1/market/listings', async ({ user, body }) =>
+    market.placeListing(user.userId, str(body.itemId, 'itemId', { min: 1, max: 40 }), int(body.price, 'price', { min: 1, max: market.limits.maxPrice }), body.snapshot), true)
+
+  add('POST', '/api/v1/market/listings/:id/buy', async ({ user, params }) =>
+    market.buyListing(user.userId, int(params.id, 'id')), true)
+
+  add('POST', '/api/v1/market/listings/:id/cancel', async ({ user, params }) =>
+    market.cancelListing(user.userId, int(params.id, 'id')), true)
+
+  // ---------- 交割 ----------
+  add('GET', '/api/v1/market/claims', async ({ user }) => ({
+    ok: true,
+    pending: market.myClaims(user.userId)
+  }), true)
+
+  add('POST', '/api/v1/market/claims/:id/claim', async ({ user, params }) =>
+    market.claim(user.userId, int(params.id, 'id')), true)
+
+  function matchRoute (method, pathname) {
+    const parts = pathname.split('/').filter(Boolean)
+    for (const r of routes) {
+      if (r.method !== method || r.parts.length !== parts.length) continue
+      const params = {}
+      let hit = true
+      for (let i = 0; i < parts.length; i++) {
+        const p = r.parts[i]
+        if (p.charCodeAt(0) === 58) params[p.slice(1)] = decodeURIComponent(parts[i])
+        else if (p !== parts[i]) { hit = false; break }
+      }
+      if (hit) return { route: r, params }
+    }
+    return null
+  }
+
   return async function handler (req, res) {
     const t0 = Date.now()
     const url = new URL(req.url || '/', 'http://localhost')
     const path = url.pathname.replace(/\/+$/, '') || '/'
 
     if (req.method === 'OPTIONS') {
-      res.writeHead(204, { ...CORS, 'Access-Control-Max-Age': '86400' })
+      res.writeHead(204, CORS)
       return res.end()
     }
 
     let logUser = '-'
     try {
-      const r = routes.get(`${req.method} ${path}`)
-      if (!r) throw new HttpError(404, 'not_found', `没有这个接口：${req.method} ${path}`)
+      const m = matchRoute(req.method, path)
+      if (!m) throw new HttpError(404, 'not_found', `没有这个接口：${req.method} ${path}`)
 
-      const user = r.needAuth ? authenticate(req) : null
+      const user = m.route.needAuth ? authenticate(req) : null
       if (user) logUser = user.userId
 
       const body = req.method === 'POST' ? await readJson(req) : {}
-      const out = await r.handler({ req, body, user, url })
+      const out = await m.route.handler({ req, body, user, url, params: m.params })
       sendJson(res, 200, { ok: true, ...out })
     } catch (e) {
       const isHttp = e instanceof HttpError

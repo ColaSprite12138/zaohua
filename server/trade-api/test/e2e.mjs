@@ -5,6 +5,7 @@ import crypto from 'node:crypto'
 import * as db from '../src/db.mjs'
 import * as auth from '../src/auth.mjs'
 import * as wallet from '../src/wallet.mjs'
+import * as market from '../src/market.mjs'
 import { createApp, start } from '../src/http.mjs'
 
 let pass = 0
@@ -30,7 +31,7 @@ async function call (method, path, { body, token } = {}) {
 }
 
 db.open(':memory:')
-const server = await start({ port: 0, host: '127.0.0.1', handler: createApp({ db, auth, wallet }) })
+const server = await start({ port: 0, host: '127.0.0.1', handler: createApp({ db, auth, wallet, market }) })
 const BASE = `http://127.0.0.1:${server.address().port}`
 console.log('\n服务起在', BASE, '\n')
 
@@ -170,6 +171,64 @@ console.log('\n[5] 一致性与隔离')
   ok(threw, '裸扣到负余额被 DB CHECK 拦住（事务回滚）')
   const after = await call('GET', '/api/v1/me', { token })
   ok(after.body.balance === 40, '失败的事务没有污染余额')
+}
+
+// ---------- 6. 市场路由（HTTP 层：路由匹配、参数解析、鉴权） ----------
+console.log('\n[6] 市场路由')
+{
+  // 新用户 C，充 100
+  const { publicKey: pk3, privateKey: sk3 } = crypto.generateKeyPairSync('ed25519')
+  const reg = await call('POST', '/api/v1/auth/register', {
+    body: { pubkey: pk3.export({ type: 'spki', format: 'der' }).toString('base64'), display: 'C' }
+  })
+  const ch = await call('POST', '/api/v1/auth/challenge', { body: { userId: reg.body.userId } })
+  const vf = await call('POST', '/api/v1/auth/verify', {
+    body: { userId: reg.body.userId, nonce: ch.body.nonce, signature: crypto.sign(null, Buffer.from(ch.body.sign), sk3).toString('base64') }
+  })
+  const tokC = vf.body.token
+  await call('POST', '/api/v1/wallet/deposit', { token: tokC, body: { amount: 100 } })
+
+  const sell = await call('POST', '/api/v1/market/orders', { token, body: { side: 'sell', itemId: 'item:9001', price: 10, qty: 1 } })
+  ok(sell.status === 200 && sell.body.remaining === 1, 'HTTP 挂卖单')
+
+  const book = await call('GET', '/api/v1/market/book?itemId=item:9001')
+  ok(book.status === 200 && book.body.asks.length === 1 && book.body.asks[0].price === 10, 'HTTP 查盘口')
+
+  const badSide = await call('POST', '/api/v1/market/orders', { token: tokC, body: { side: 'hodl', itemId: 'item:9001', price: 10, qty: 1 } })
+  ok(badSide.status === 400 && badSide.body.code === 'bad_side', 'side 非法被拒')
+
+  const noAuth = await call('POST', '/api/v1/market/orders', { body: { side: 'buy', itemId: 'item:9001', price: 10, qty: 1 } })
+  ok(noAuth.status === 401, '下单必须带 token')
+
+  const buy = await call('POST', '/api/v1/market/orders', { token: tokC, body: { side: 'buy', itemId: 'item:9001', price: 10, qty: 1 } })
+  ok(buy.status === 200 && buy.body.filled === 1, 'HTTP 买单撮合成交')
+
+  const cl = await call('GET', '/api/v1/market/claims', { token: tokC })
+  ok(cl.status === 200 && cl.body.pending.length === 1, '买家有待领取物品')
+  const claimId = cl.body.pending[0].claimId
+  const c1 = await call('POST', `/api/v1/market/claims/${claimId}/claim`, { token: tokC })
+  ok(c1.status === 200, 'HTTP 领取成功')
+  const c2 = await call('POST', `/api/v1/market/claims/${claimId}/claim`, { token: tokC })
+  ok(c2.status === 404 && c2.body.code === 'no_claim', 'HTTP 重复领取被拒（路径参数解析正常）')
+
+  const lst = await call('POST', '/api/v1/market/listings', {
+    token, body: { itemId: 'equip:10003', price: 20, snapshot: { defId: 10003, affixes: [{ stat: 'hp_pct', value: 4 }], durability: 100 } }
+  })
+  ok(lst.status === 200 && lst.body.listingId > 0, 'HTTP 上架装备')
+
+  const dup = await call('POST', '/api/v1/market/listings', {
+    token, body: { itemId: 'equip:10003', price: 25, snapshot: { defId: 10003, affixes: [{ stat: 'hp_pct', value: 4 }], durability: 100 } }
+  })
+  ok(dup.status === 409 && dup.body.code === 'duplicate_listing', '同一实例重复上架被拒')
+
+  const lstList = await call('GET', '/api/v1/market/listings?itemId=equip:10003')
+  ok(lstList.status === 200 && lstList.body.items.length === 1, '装备挂单列表')
+
+  const buyL = await call('POST', `/api/v1/market/listings/${lst.body.listingId}/buy`, { token: tokC })
+  ok(buyL.status === 200 && buyL.body.price === 20, 'HTTP 买下装备')
+
+  const selfBuy = await call('POST', `/api/v1/market/listings/${lst.body.listingId}/buy`, { token })
+  ok(selfBuy.status === 404, '已售出的挂单不能再买')
 }
 
 server.close()

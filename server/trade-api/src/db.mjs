@@ -68,6 +68,79 @@ function migrate () {
       created_at  INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_ledger_user ON ledger(user_id, id DESC);
+
+    -- ========== 订单簿（同质商品：同 item_id 完全等价，可堆叠） ==========
+    -- 为什么装备不能进这张表：affix.ts 明写「词条只属于物品实例，不属于 defId」，
+    -- 同一把 10003 可以是锋锐+6% 也可以是坚韧+8%。属性不同即不可互换，
+    -- 订单簿「按价格撮合、任意一件交割」的前提不成立。装备走下面的 listings。
+    CREATE TABLE IF NOT EXISTS book_orders (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     TEXT NOT NULL,
+      side        TEXT NOT NULL CHECK (side IN ('buy','sell')),
+      item_id     TEXT NOT NULL,
+      price       INTEGER NOT NULL CHECK (price > 0),   -- 单价（最小货币单位）
+      qty         INTEGER NOT NULL CHECK (qty > 0),
+      filled      INTEGER NOT NULL DEFAULT 0,           -- 已成交数量，支持部分成交
+      status      TEXT NOT NULL DEFAULT 'open',         -- open | filled | cancelled
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL,
+      CHECK (filled >= 0 AND filled <= qty)
+    );
+    CREATE INDEX IF NOT EXISTS idx_book_sell ON book_orders(item_id, side, price ASC, id ASC);
+    CREATE INDEX IF NOT EXISTS idx_book_buy ON book_orders(item_id, side, price DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_book_user ON book_orders(user_id, id DESC);
+
+    -- ========== 寄售（唯一实例：装备） ==========
+    CREATE TABLE IF NOT EXISTS listings (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     TEXT NOT NULL,
+      item_id     TEXT NOT NULL,
+      price       INTEGER NOT NULL CHECK (price > 0),
+      snapshot    TEXT NOT NULL,          -- 实例全量属性（词条、耐久、强化等级…）JSON
+      fingerprint TEXT NOT NULL,          -- sha256(snapshot) 前 32 hex
+      status      TEXT NOT NULL DEFAULT 'open',   -- open | sold | cancelled
+      buyer_id    TEXT,
+      created_at  INTEGER NOT NULL,
+      sold_at     INTEGER
+    );
+    -- 同一件装备（同一 fingerprint）同时只能有一个在售挂单 → 挡住「同一件挂十次」
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_listing_open ON listings(fingerprint) WHERE status = 'open';
+    CREATE INDEX IF NOT EXISTS idx_listing_item ON listings(item_id, status, price, id);
+    CREATE INDEX IF NOT EXISTS idx_listing_user ON listings(user_id, id DESC);
+
+    -- ========== 成交（两个市场共用，审计与对账的唯一真相） ==========
+    CREATE TABLE IF NOT EXISTS trades (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      market      TEXT NOT NULL CHECK (market IN ('book','listing')),
+      item_id     TEXT NOT NULL,
+      qty         INTEGER NOT NULL,
+      price       INTEGER NOT NULL,       -- 单价（book 用 maker 价，listing 用挂单价）
+      gross       INTEGER NOT NULL,       -- price * qty
+      fee         INTEGER NOT NULL,       -- 从卖家所得里扣的 5%
+      buyer_id    TEXT NOT NULL,
+      seller_id   TEXT NOT NULL,
+      buy_order   INTEGER,
+      sell_order  INTEGER,
+      listing_id  INTEGER,
+      created_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_trades_item ON trades(item_id, id DESC);
+
+    -- ========== 交割队列 ==========
+    -- 成交不能把物品直接塞进玩家背包（服务端看不到客户端存档），
+    -- 所以做成「待领取」：客户端拉到 claim 后在本地入包，再上报已领（幂等）。
+    CREATE TABLE IF NOT EXISTS claims (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id     TEXT NOT NULL,
+      item_id     TEXT NOT NULL,
+      qty         INTEGER NOT NULL,
+      snapshot    TEXT,
+      source      TEXT NOT NULL,          -- trade | listing_cancel
+      trade_id    INTEGER,
+      claimed     INTEGER NOT NULL DEFAULT 0,
+      created_at  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_claims_user ON claims(user_id, claimed, id);
   `)
 }
 
@@ -92,13 +165,18 @@ export function balanceOf (userId) {
 
 // 唯一的余额变更入口。delta 为负时依赖 CHECK 约束兜住透支
 export function applyDelta (userId, delta, reason, ref = null) {
-  return tx((d) => {
-    d.prepare('INSERT OR IGNORE INTO wallets (user_id, balance) VALUES (?, 0)').run(userId)
-    d.prepare('UPDATE wallets SET balance = balance + ? WHERE user_id = ?').run(delta, userId)
-    d.prepare('INSERT INTO ledger (user_id, delta, reason, ref, created_at) VALUES (?,?,?,?,?)')
-      .run(userId, delta, reason, ref, Date.now())
-    return balanceOf(userId)
-  })
+  return tx((d) => applyDeltaNoTx(d, userId, delta, reason, ref))
+}
+
+// 给「已经在事务里」的调用方用（撮合要在一个事务里改多张表 + 多个人的余额，
+// SQLite 不支持嵌套 BEGIN，所以必须能拿到 d 自己写）
+export function applyDeltaNoTx (d, userId, delta, reason, ref = null) {
+  d.prepare('INSERT OR IGNORE INTO wallets (user_id, balance) VALUES (?, 0)').run(userId)
+  d.prepare('UPDATE wallets SET balance = balance + ? WHERE user_id = ?').run(delta, userId)
+  d.prepare('INSERT INTO ledger (user_id, delta, reason, ref, created_at) VALUES (?,?,?,?,?)')
+    .run(userId, delta, reason, ref, Date.now())
+  const row = d.prepare('SELECT balance FROM wallets WHERE user_id = ?').get(userId)
+  return row ? row.balance : 0
 }
 
 export function recentLedger (userId, limit = 20) {

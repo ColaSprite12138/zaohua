@@ -5,6 +5,7 @@
 import * as db from './src/db.mjs'
 import * as auth from './src/auth.mjs'
 import * as wallet from './src/wallet.mjs'
+import * as market from './src/market.mjs'
 import { createApp, start } from './src/http.mjs'
 
 const PORT = Number(process.env.PORT || 8790)
@@ -13,7 +14,7 @@ const HOST = process.env.HOST || '127.0.0.1'
 db.open()
 console.log(`[boot] db opened, path=${process.env.DB_PATH || '(default ./data/app.db)'}`)
 
-const handler = createApp({ db, auth, wallet })
+const handler = createApp({ db, auth, wallet, market })
 const server = await start({ port: PORT, host: HOST, handler })
 console.log(`[boot] trade-api listening on http://${HOST}:${PORT}`)
 
