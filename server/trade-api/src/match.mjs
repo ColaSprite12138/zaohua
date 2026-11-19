@@ -27,9 +27,12 @@ import { get, tx } from './db.mjs'
 import { HttpError } from './errors.mjs'
 
 export const limits = {
-  waitMs: 60_000,          // 不足 4 人时的兜底等待
-  formAt: 4,               // 满几人立即开局
-  maxPlayers: 16,          // 一局上限（平台房间上限）
+  waitMs: 60_000,          // 不足 4 队时的兜底等待
+  // 满几**支队伍**立即开局。组队还没做，现在 1 张票 = 1 队 = 1 人，
+  // 所以这里等价于「满 4 人」。接组队时把「票」换成「队」计数即可。
+  formAt: 4,
+  // 一局上限（平台房间上限），按**人**计：4 队 × 最多 4 人 = 16。
+  maxPlayers: 16,
   roomDeadlineMs: 15_000,  // formed → host 必须在这个时间内回报 roomId
   seatDeadlineMs: 20_000,  // ready → 全员必须在这个时间内入座
   maxRequeue: 1,           // 被连累的人最多回队几次
