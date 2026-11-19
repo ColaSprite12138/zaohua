@@ -140,6 +140,8 @@ function buildBlock() {
     'meta-ui/index.html', 'meta-ui/voxel.js', 'meta-ui/inventory.js',
     'meta-ui/account.js', 'meta-ui/talent.js', 'meta-ui/affix.js', 'meta-ui/trade.js',
     'meta-ui/shop.js', 'meta-ui/workshop.js',
+    'meta-ui/auth-client.js',
+    'meta-ui/save-client.js',
     'meta-ui/platform-store.js',
     'meta-ui/shell.css', 'meta-ui/shell-bridge.js',
     'assets/resource/generated/item.ts',
@@ -187,6 +189,8 @@ ${markup}
 <script>${read('meta-ui/trade.js')}</script>
 <script>${read('meta-ui/shop.js')}</script>
 <script>${read('meta-ui/workshop.js')}</script>
+<script>${read('meta-ui/auth-client.js')}</script>
+<script>${read('meta-ui/save-client.js')}</script>
 <script>${script}</script>
 <script>${read('meta-ui/platform-store.js')}</script>
 <script>${read('meta-ui/shell-bridge.js')}</script>

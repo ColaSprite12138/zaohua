@@ -68,31 +68,40 @@
     }
   }
 
+  /** 把「界面上这一份状态」编成存档信封（不上传）。首写与 persist 共用同一份逻辑。 */
+  function buildEnvelope() {
+    var p = host.getProgress ? host.getProgress() : null;
+    // v3：副本死亡掉落槽（设计 4）跟背包、星图同一份 blob 落盘，否则
+    // 「下次进本捡回一次」在关掉页面之后就没了。空槽不写字段。
+    var drop = host.deathDrop;
+    var extra = drop && drop.items && drop.items.length > 0 ? { deathDrop: drop } : undefined;
+    // 金币（设计 5.1）跟背包 / 星图 / 遗物槽同一份 blob。
+    // **余额 0 也必须写**：商店上线后 0 是一个真实状态（钱花光了），
+    // 省略它会让读档时走"新号起始金币"的兜底，等于每次刷新白送一笔钱。
+    var gold = host.wallet && Number.isFinite(host.wallet.gold)
+      ? Math.round(host.wallet.gold)
+      : null;
+    if (gold !== null) {
+      extra = extra || {};
+      extra.wallet = { gold: gold };
+    }
+    return A.encodeSave(host.getState(), p || undefined, extra);
+  }
+
   var Store = {
     mode: function () { return identity.mode; },
     currentUser: function () { return identity.id; },
     displayName: function () { return identity.name || '—'; },
     saveKey: function () { return A.SAVE_KEY; },
+    /** 当前界面状态的存档信封 —— 首次建档时要用它，不能拿空档去覆盖玩家进度。 */
+    captureEnvelope: buildEnvelope,
     persist: function () {
       // No platform host => no queue => no write. This is the ONLY reason the
       // 4174 preview can play the game without persisting anything.
       if (applying || !queue) return null;
-      var p = host.getProgress ? host.getProgress() : null;
-      // v3：副本死亡掉落槽（设计 4）跟背包、星图同一份 blob 落盘，否则
-      // 「下次进本捡回一次」在关掉页面之后就没了。空槽不写字段。
-      var drop = host.deathDrop;
-      var extra = drop && drop.items && drop.items.length > 0 ? { deathDrop: drop } : undefined;
-      // 金币（设计 5.1）跟背包 / 星图 / 遗物槽同一份 blob。
-      // **余额 0 也必须写**：商店上线后 0 是一个真实状态（钱花光了），
-      // 省略它会让读档时走"新号起始金币"的兜底，等于每次刷新白送一笔钱。
-      var gold = host.wallet && Number.isFinite(host.wallet.gold)
-        ? Math.round(host.wallet.gold)
-        : null;
-      if (gold !== null) {
-        extra = extra || {};
-        extra.wallet = { gold: gold };
-      }
-      return A.writeSave(queue, host.getState(), p || undefined, extra);
+      var env = buildEnvelope();
+      queue.push(env);
+      return env;
     },
     lastSaved: function () { return queue ? queue.last() : null; },
     writeCount: function () { return queue ? queue.calls() : 0; },

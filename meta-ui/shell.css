@@ -72,8 +72,9 @@
   pointer-events: none;
   overflow: hidden;
 }
-/* `.item-tip` 是悬停信息卡：它必须能压在局内背包浮层上，所以不进"战斗全隐藏"名单。 */
-#fx-shell.fx-in-battle > *:not(.fx-bar):not(#fx-bag-content):not(.item-tip) { display: none !important; }
+/* `.item-tip` 是悬停信息卡：它必须能压在局内背包浮层上，所以不进"战斗全隐藏"名单。
+   `#login-gate` 同理：万一开局门禁还在（比如手点了出征），它必须压过一切。 */
+#fx-shell.fx-in-battle > *:not(.fx-bar):not(#fx-bag-content):not(.item-tip):not(#login-gate) { display: none !important; }
 #fx-shell.fx-in-battle > #fx-bag-content { display: none !important; }
 #fx-shell.fx-in-battle .fx-bar { pointer-events: auto; background: rgba(17, 30, 42, .92); }
 

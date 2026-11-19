@@ -37,6 +37,21 @@ const targets = [
     global: 'MetaAccount',
   },
   {
+    // 账号客户端（登录 / 注册 / 会话）。零 import，所以单测和页面共用同一份；
+    // 网络与 WebCrypto 全部通过 deps 注入，Node 里可以用假 fetch 跑全流程。
+    source: 'assets/meta/auth-client.ts',
+    output: 'meta-ui/auth-client.js',
+    global: 'MetaAuth',
+  },
+  {
+    // 云存档客户端（读 / 写 /api/v1/save）。零 import，单测用假 fetch 跑全流程。
+    // 存在的理由：没有造化平台宿主时 platform-store 的 queue 恒为 null，
+    // persist() 全是空操作 —— 这里就是补上那个 adapter。
+    source: 'assets/meta/save-client.ts',
+    output: 'meta-ui/save-client.js',
+    global: 'MetaSave',
+  },
+  {
     // 星图规则（点数 / 路径约束 / 免费洗点 / 升级结算）。零 import，所以局外页面
     // 与 4174 注入壳层共用同一份逻辑；节点与等级数据由宿主注入（inject-shell）。
     source: 'assets/talent/index.ts',

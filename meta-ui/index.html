@@ -230,9 +230,141 @@
     background: var(--panel2); border: 1px solid var(--line); border-radius: 4px;
     padding: 1px 6px; font: inherit; color: var(--gold);
   }
+  /* ---- 账号（登录 / 注册）：可选升级入口，不是关卡 ---- */
+  .acct-badge {
+    font-size: 11px; padding: 3px 10px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+  }
+  .acct-badge.on { color: var(--green); border-color: rgba(74, 222, 128, .45); }
+  .account-panel { max-width: 430px; margin-bottom: 14px; }
+  .acct-tabs { display: flex; gap: 8px; margin: 8px 0 12px; }
+  .acct-tab { font-size: 12px; padding: 5px 16px; }
+  .acct-tab.active { border-color: var(--gold); color: var(--gold); }
+  .acct-form { display: flex; flex-direction: column; gap: 10px; }
+  .acct-form label {
+    display: flex; flex-direction: column; gap: 4px;
+    font-size: 11px; color: var(--muted);
+  }
+  /* `hidden` 的 UA 样式 (display:none) 优先级低于上面的 .acct-form label，
+     少了这条，登录模式下「确认密码」会一直显示。 */
+  .acct-form label[hidden] { display: none; }
+  .acct-form input {
+    background: var(--cell); border: 1px solid var(--line); border-radius: 8px;
+    color: var(--text); font: inherit; font-size: 13px; padding: 8px 10px;
+  }
+  .acct-form input:focus { outline: none; border-color: var(--cyan); }
+  .acct-form input::placeholder { color: #5d7488; }
+  .acct-actions { display: flex; gap: 8px; margin-top: 6px; }
+  .acct-actions button[type="submit"] { border-color: var(--gold); color: var(--gold); }
+  /* 门禁是唯一的登录表单，主按钮占满一行，和下面的「以游客身份进入」对齐。 */
+  .gate-card .acct-actions button[type="submit"] { flex: 1; padding: 10px; }
+  .acct-actions button:disabled { opacity: .5; cursor: not-allowed; }
+  .acct-msg { min-height: 18px; font-size: 12px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+  .acct-msg.bad { color: var(--red); }
+  .acct-msg.good { color: var(--green); }
+  .acct-note {
+    font-size: 11px; color: var(--muted); line-height: 1.7;
+    margin: 10px 0 0; max-width: 390px;
+  }
+  .acct-who { display: flex; align-items: baseline; gap: 10px; margin: 8px 0 10px; }
+  .acct-who b { font-size: 17px; color: var(--gold); }
+  .acct-who span { font-size: 11px; color: var(--muted); }
+  .acct-stat { font-size: 11px; color: var(--muted); line-height: 1.9; }
+  .acct-stat b { color: var(--text); }
+  .acct-stat .warn { color: var(--gold); }
+
+  /* ------------------------- 开局登录门禁 ------------------------- */
+  /* 全屏、不透明：选身份之前，商店 / 背包 / 装备栏一律看不见也点不到。 */
+  #login-gate {
+    position: fixed; inset: 0; z-index: 40;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; overflow: auto;
+    background: radial-gradient(900px 520px at 50% 18%, #16283a 0%, #0b131c 62%);
+    pointer-events: auto;
+  }
+  /* 与 `.acct-form label` 同一个坑：display:flex 会盖掉 hidden 的 UA 样式。 */
+  #login-gate[hidden] { display: none !important; }
+  .gate-card {
+    width: 420px; max-width: 100%;
+    background: #101c28; border: 1px solid var(--line); border-radius: 14px;
+    padding: 22px 24px 20px; box-shadow: 0 24px 70px rgba(0, 0, 0, .55);
+  }
+  .gate-brand { display: flex; align-items: baseline; gap: 10px; }
+  .gate-brand b { font-size: 18px; color: var(--cyan); letter-spacing: .06em; }
+  .gate-brand span {
+    font-size: 11px; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px;
+  }
+  .gate-lead { margin: 8px 0 14px; font-size: 12px; color: var(--muted); line-height: 1.75; }
+  /* 同一个坑：显式给 flex/block 的元素必须自己处理 hidden。 */
+  #gate-resume[hidden] { display: none !important; }
+  .gate-resume-line { margin: 0 0 10px; font-size: 12px; color: var(--muted); }
+  .gate-resume-line b { color: var(--gold); }
+  #gate-resume-go { width: 100%; padding: 10px; border-color: var(--gold); color: var(--gold); }
+  .gate-or {
+    display: flex; align-items: center; gap: 10px;
+    margin: 16px 0 10px; color: var(--muted); font-size: 11px;
+  }
+  .gate-or::before, .gate-or::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+  #gate-guest { width: 100%; padding: 10px; border-color: var(--cyan); color: var(--cyan); }
+  #gate-close {
+    width: 100%; margin-top: 8px; padding: 8px;
+    background: transparent; border-color: transparent; color: var(--muted);
+  }
+  #gate-close:hover { color: var(--text); }
 </style>
 </head>
 <body>
+  <!-- 登录门禁：开局第一屏。玩家必须选一个身份（登录 / 注册 / 游客）才看得到
+       商店、背包、装备栏。它同时是「账号」面板里的升级入口 —— 同一个表单、
+       两处入口，避免两套校验逻辑漂移。
+       身份 / 口令 / 会话全在 `meta-ui/auth-client.js`（源
+       `assets/meta/auth-client.ts`），这里只切换视图、禁用按钮、翻译错误码。
+       **默认可见**：新玩家不该在选身份之前瞥见任何局外面板。 -->
+  <div id="login-gate">
+    <div class="gate-card">
+      <div class="gate-brand"><b>局外 · 备战</b><span>身份</span></div>
+      <p class="gate-lead" id="gate-lead">先选一个身份，再开始配装。</p>
+
+      <div id="gate-resume" hidden>
+        <p class="gate-resume-line">上次身份：<b id="gate-resume-name">—</b></p>
+        <button id="gate-resume-go" type="button">继续进入</button>
+        <div class="gate-or"><span>换个身份</span></div>
+      </div>
+
+      <div class="acct-tabs">
+        <button class="acct-tab active" id="acct-tab-login" type="button">登录</button>
+        <button class="acct-tab" id="acct-tab-register" type="button">注册</button>
+      </div>
+      <form class="acct-form" id="acct-form" autocomplete="off" novalidate>
+        <label>用户名
+          <input id="acct-user" name="username" maxlength="20" autocomplete="username"
+                 placeholder="2–20 个字符，中英文都行">
+        </label>
+        <label>密码
+          <input id="acct-pass" name="password" type="password" maxlength="72" autocomplete="current-password"
+                 placeholder="至少 8 位">
+        </label>
+        <label id="acct-pass2-row" hidden>确认密码
+          <input id="acct-pass2" type="password" maxlength="72" autocomplete="new-password"
+                 placeholder="再输一次">
+        </label>
+        <div class="acct-actions">
+          <button type="submit" id="acct-submit">登录</button>
+        </div>
+      </form>
+      <div class="acct-msg" id="acct-msg"></div>
+
+      <div class="gate-or"><span>或者</span></div>
+      <button id="gate-guest" type="button">以游客身份进入</button>
+      <p class="gate-note" id="gate-note">
+        游客身份绑在这台设备上 —— 换设备、清缓存就找不回了。
+        注册只用用户名和密码，<b>不收手机号、不要造化账号</b>。
+      </p>
+      <button id="gate-close" type="button" hidden>暂不登录，继续玩</button>
+    </div>
+  </div>
+
   <h1>局外系统 · 背包 / 仓库 / 装备栏</h1>
   <div class="sub">
     独立页面，双击即可打开（不依赖游戏、不依赖服务器）。逻辑来自
@@ -245,6 +377,8 @@
     <button id="shop-toggle" title="花金币补给：红蓝药、保险格扩容（价目表在 tables/shop.xlsx）">商店</button>
     <button id="sell" title="把背包 / 保险格 / 仓库里的收藏品换成金币（武器与药品不会动）">卖出收藏品</button>
     <button id="workshop-toggle" title="工坊：金币重铸词条（每件一次、直接生效）/ 修武器耐久（回满，但上限永久下降）">工坊</button>
+    <button id="account-toggle" title="登录后存档跟账号走：换浏览器、换设备都能找回">账号</button>
+    <span class="acct-badge" id="acct-badge" title="当前身份：游客的存档只留在这个浏览器里">游客</span>
     <span class="coin" id="fx-gold" title="金币：收藏品换来的，用来在商店买补给与扩容">0 金</span>
     <span class="status" id="status"></span>
   </div>
@@ -270,6 +404,35 @@
       <small id="workshop-hint">重铸：每件一次、直接生效 · 修理：回满但上限永久下降</small>
     </div>
     <div class="ws-list" id="workshop-list"></div>
+  </section>
+
+  <!-- 账号（登录 / 注册）。**可选升级入口，不是关卡**：游客照样能玩，
+       只是存档留在这台浏览器里。默认收起，只有玩家点「账号」才出现。
+       表单本体在开局门禁 `#login-gate` 里 —— 这里只放「去登录」按钮，
+       不复制第二份输入框（复制就会有两套校验和两套错误文案）。 -->
+  <section class="panel account-panel" id="account-panel" hidden>
+    <div class="panel-title">
+      <h2>账号</h2>
+      <small id="acct-hint">登录后存档跟账号走</small>
+    </div>
+
+    <div id="acct-guest">
+      <p class="acct-note">
+        现在是游客模式：存档只留在这个浏览器里，换设备、清缓存就没了。
+        注册只用用户名和密码，<b>不收手机号、不要造化账号</b>。
+      </p>
+      <div class="acct-actions">
+        <button type="button" id="acct-open-login">登录 / 注册</button>
+      </div>
+    </div>
+
+    <div id="acct-signed" hidden>
+      <div class="acct-who"><b id="acct-name">—</b><span id="acct-kind"></span></div>
+      <div class="acct-stat" id="acct-stat"></div>
+      <div class="acct-actions">
+        <button type="button" id="acct-logout">退出登录</button>
+      </div>
+    </div>
   </section>
 
   <!-- The 4174 shell reuses this whole block as the IN-RUN bag overlay. In the
@@ -347,6 +510,7 @@
 <script src="./trade.js"></script>
 <script src="./shop.js"></script>
 <script src="./workshop.js"></script>
+<script src="./auth-client.js"></script>
 <script>
 (function () {
   'use strict';
@@ -1477,6 +1641,433 @@
   });
   document.addEventListener('mouseleave', hideTip);
   window.addEventListener('blur', hideTip);
+
+  /* ------------------------------- 账号 ------------------------------- */
+  // 身份 / 口令校验 / 会话全部在 `auth-client.js` 里，
+  // 这里只做三件事：切视图、禁用按钮、把错误码翻成人话。
+  // 选完身份必须 `attachCloudSave()`：identity 只决定「是谁」，
+  // 存档读写由 `/api/v1/save` 那条链路负责（见下面的云存档挂载）。
+  const AUTH = window.MetaAuth;
+  let auth = null;
+  let acctMode = 'login';
+  // 'gated' = 开局门禁，必须选身份；'upgrade' = 从「账号」面板打开，可以关掉继续玩。
+  let gateMode = 'gated';
+
+  function acct() {
+    if (auth) return auth;
+    if (!AUTH || typeof AUTH.createAuthClient !== 'function') return null;
+    auth = AUTH.createAuthClient();
+    return auth;
+  }
+
+  function acctMsg(text, kind) {
+    const el = $('acct-msg');
+    if (!el) return;
+    el.textContent = text || '';
+    el.className = 'acct-msg' + (kind ? ' ' + kind : '');
+  }
+
+  /* ---------------------------- 云存档挂载 ---------------------------- */
+  // platform-store.js 的 persist() 在 queue 为 null 时是空操作，而 queue 只能由
+  // mountPlatform() 装上 —— 那个钩子原本留给造化平台 SDK 的 ESM 入口。没有平台
+  // 宿主时（静态预览 / 未接 SDK 的构建），存档一次都不写，刷新即回空仓库。
+  // 这里把自建 API（/api/v1/save）当成 adapter 挂上去，补完这条链路。
+  const SAVE = window.MetaSave;
+  let saveBridge = null;
+  // 'cloud' = 密码账号（存服务器）| 'local' = 游客（只存这台机器）| null = 没挂上
+  let saveMode = null;
+  /** 游客存档。刻意不进服务器：没有账号行就没有孤儿数据。 */
+  const LOCAL_SAVE_KEY = 'forgeax.save.guest.v1';
+
+  /** 背包 / 仓库 / 保险格 / 装备上有没有东西。 */
+  function hasAnyItem(state) {
+    if (!state) return false;
+    return ['bag', 'stash', 'safe', 'equipped'].some(
+      (k) => Array.isArray(state[k]) && state[k].some(Boolean),
+    );
+  }
+
+  /** 区分「云端空档」和「玩家已经在玩」：空档才允许首写，否则会洗掉已有进度。 */
+  function progressIsEmpty() {
+    const host = window.MetaShell;
+    if (!host) return true;
+    if (hasAnyItem(host.getState && host.getState())) return false;
+    const gold = host.wallet && Number.isFinite(host.wallet.gold) ? host.wallet.gold : 0;
+    const startGold = window.MetaShop && Number.isFinite(window.MetaShop.STARTING_GOLD)
+      ? window.MetaShop.STARTING_GOLD
+      : 0;
+    return gold <= startGold;
+  }
+
+  /** 读本地游客存档（envelope 原样，坏数据当没有）。 */
+  function readLocalEnvelope() {
+    try {
+      const raw = localStorage.getItem(LOCAL_SAVE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeLocalEnvelope(env) {
+    try {
+      localStorage.setItem(LOCAL_SAVE_KEY, JSON.stringify(env));
+    } catch (e) {
+      console.warn('[save] 本地写入失败（无痕模式 / 存储满）', e);
+    }
+  }
+
+  function dropLocalEnvelope() {
+    try { localStorage.removeItem(LOCAL_SAVE_KEY); } catch (e) { /* ignore */ }
+  }
+
+  /**
+   * 游客：只挂本地 adapter，一个网络请求都不发。
+   *
+   * 为什么不在服务器建游客账号：那会随每次「清缓存 / 换浏览器」留下一行永远
+   * 没人认领的 accounts + saves，孤儿数据会无限膨胀。
+   * 代价是换设备就没了 —— 这个代价由「注册时把本地存档推上云」补回来。
+   */
+  function attachLocalSave() {
+    const host = window.MetaShell;
+    if (!host || typeof host.mountPlatformStore !== 'function') {
+      console.warn('[save] platform-store.js 没有加载，本地存档也不可用');
+      return false;
+    }
+    let envelope = readLocalEnvelope();
+    // 本地没档、但界面上已经有东西（刚打完一局才点游客）→ 把界面状态当起始档，
+    // 不能拿 null 去 apply，否则这一局的战利品会被当场洗掉。
+    if (!envelope && !progressIsEmpty() && typeof host.captureEnvelope === 'function') {
+      envelope = host.captureEnvelope();
+      if (envelope) writeLocalEnvelope(envelope);
+    }
+    host.mountPlatformStore({
+      userId: 'local',
+      displayName: '游客',
+      initial: envelope,
+      read: () => envelope,
+      write: (env) => {
+        envelope = env;
+        writeLocalEnvelope(env);
+      },
+    });
+    saveBridge = null;
+    saveMode = 'local';
+    return true;
+  }
+
+  /**
+   * 选完身份必须走这里：读云档 → 构造 adapter → mountPlatformStore。
+   *   云端有档 → 应用云端（换设备登录就是靠这条拿回进度）
+   *   云端空档 → 先把界面上这一份推上去，再挂载（**不能用空档 apply**，
+   *              否则玩家这一局刚带出来的东西会被当场洗掉）
+   * `opts.migrateLocal`（注册时传）：界面是空的但本机有游客存档 → 把那份带上去。
+   * 返回 false 表示存档没连上 —— 界面必须说实话，不能假装存了。
+   */
+  async function attachCloudSave(session, opts) {
+    const host = window.MetaShell;
+    if (!SAVE || !session || !session.token) return false;
+    if (!host || typeof host.mountPlatformStore !== 'function') {
+      console.warn('[save] platform-store.js 没有加载，存档不会上传');
+      return false;
+    }
+    let client;
+    try {
+      client = SAVE.createSaveClient({
+        token: session.token,
+        baseUrl: (AUTH && AUTH.API_BASE) || undefined,
+      });
+      let loaded = await client.load(SAVE.SAVE_SLOT);
+      let migrated = false;
+
+      if (loaded.rev === 0) {
+        let env = null;
+        if (!progressIsEmpty()) {
+          // 同一局里玩出来再登录
+          env = typeof host.captureEnvelope === 'function' ? host.captureEnvelope() : null;
+        } else if (opts && opts.migrateLocal) {
+          // 游客玩完刷新过，界面已经重置成空仓库，但本机存档还在
+          env = readLocalEnvelope();
+          migrated = !!env;
+        }
+        if (env) {
+          const out = await client.put(env, undefined);
+          loaded = { payload: env, rev: out.rev };
+        }
+      }
+
+      saveBridge = SAVE.remoteBridge(client, loaded);
+      host.mountPlatformStore({
+        userId: session.userId,
+        displayName: session.display,
+        initial: saveBridge.initial,
+        read: saveBridge.read,
+        write: saveBridge.write,
+      });
+      saveMode = 'cloud';
+      // 已经搬上云了就别在本机留第二份 —— 否则以后退回游客会看到一份旧进度
+      if (migrated) dropLocalEnvelope();
+      return true;
+    } catch (err) {
+      console.warn('[save] 云端存档没连上', err);
+      return false;
+    }
+  }
+
+  /* ---------------------------- 身份门禁 ---------------------------- */
+  // 每次打开都先停在门禁上（用户明确要求：选完身份才能看到局外面板）。
+  // 有有效会话时给一个「继续进入」的快捷按钮 + 预填用户名，避免每次重打密码。
+  let gateTrap = null;
+
+  /** 门禁开着时把焦点锁在卡片里：否则 Tab 能走到后面的「出征」按钮上。 */
+  function trapFocus(on) {
+    if (on && !gateTrap) {
+      gateTrap = (e) => {
+        const gate = $('login-gate');
+        if (!gate || gate.hidden) return;
+        if (e.target && gate.contains(e.target)) return;
+        const first = $('acct-user');
+        if (first) first.focus();
+      };
+      document.addEventListener('focusin', gateTrap, true);
+      return;
+    }
+    if (!on && gateTrap) {
+      document.removeEventListener('focusin', gateTrap, true);
+      gateTrap = null;
+    }
+  }
+
+  function gateOpen() {
+    const gate = $('login-gate');
+    return !!gate && !gate.hidden;
+  }
+
+  function showGate(fromPanel) {
+    const gate = $('login-gate');
+    if (!gate) return;
+    gateMode = fromPanel ? 'upgrade' : 'gated';
+    gate.hidden = false;
+    // 「继续进入」只对已登录会话有意义；从账号面板打开时玩家本来就是游客。
+    const canResume = !fromPanel && !!acct() && !!acct().session();
+    $('gate-resume').hidden = !canResume;
+    $('gate-close').hidden = gateMode !== 'upgrade';
+    $('gate-lead').textContent = gateMode === 'upgrade'
+      ? '登录后存档跟账号走，换设备也能找回。'
+      : (canResume ? '上次的身份还在，可以直接继续；也可以换一个。' : '先选一个身份，再开始配装。');
+    $('gate-note').innerHTML = gateMode === 'upgrade'
+      ? '不登录也能继续玩，只是游客身份绑在这台设备上。注册只用用户名和密码，<b>不收手机号、不要造化账号</b>。'
+      : '游客身份绑在这台设备上 —— 换设备、清缓存就找不回了。注册只用用户名和密码，<b>不收手机号、不要造化账号</b>。';
+    acctMsg('');
+    setAcctMode(acctMode);
+    trapFocus(true);
+    const user = $('acct-user');
+    if (user && !user.value) { try { user.focus(); } catch (e) {} }
+  }
+
+  function hideGate() {
+    const gate = $('login-gate');
+    if (gate) gate.hidden = true;
+    trapFocus(false);
+  }
+
+  function enterAsGuest() {
+    // 一个网络请求都不发：游客没有服务器账号，也就没有孤儿数据。
+    const ok = attachLocalSave();
+    hideGate();
+    renderAccount();
+    say(ok
+      ? '游客 · 存档存在这台设备上，注册后才会跟账号走'
+      : '游客 · 存档没挂上，本局进度只在内存里');
+  }
+
+  function fmtCloud(me) {
+    const usage = me && me.saves ? me.saves : null;
+    const rows = [];
+    rows.push('账号 ID：<b>' + String(me.userId || '').slice(0, 14) + '…</b>');
+    rows.push('云端存档：<b>' + (usage && Number.isFinite(usage.slots) ? usage.slots : 0) + ' / 20</b> 份'
+      + (usage && usage.bytes ? ' · ' + Math.max(1, Math.round(usage.bytes / 1024)) + ' KB' : ''));
+    rows.push('金币余额：<b>' + (Number.isFinite(me.balance) ? me.balance : 0) + '</b>');
+    if (saveMode === 'cloud' && saveBridge) {
+      const rev = typeof saveBridge.rev === 'function' ? saveBridge.rev() : 0;
+      const fails = typeof saveBridge.failures === 'function' ? saveBridge.failures() : 0;
+      rows.push(rev > 0
+        ? '<span class="good">存档已接上云端 · rev ' + rev
+          + (fails ? ' · 有 ' + fails + ' 次写入失败' : '') + '</span>'
+        : '<span class="warn">已登录，但这份存档还没写成功过</span>');
+    } else if (saveMode === 'local') {
+      rows.push('<span class="warn">游客存档存在这台设备上 · 注册后才会跟账号走</span>');
+    } else {
+      rows.push('<span class="warn">存档没挂上：本局进度只在内存里，刷新就没了</span>');
+    }
+    return rows.join('<br>');
+  }
+
+  /** 两个视图 + 工具栏徽章的唯一渲染入口。 */
+  function renderAccount(statHtml) {
+    const client = acct();
+    const session = client ? client.session() : null;
+    const guestBox = $('acct-guest');
+    const signedBox = $('acct-signed');
+    const badge = $('acct-badge');
+    if (!guestBox || !signedBox || !badge) return;
+
+    const loggedIn = !!session;
+    guestBox.hidden = loggedIn;
+    signedBox.hidden = !loggedIn;
+    badge.textContent = loggedIn ? session.display : '游客';
+    badge.className = 'acct-badge' + (loggedIn ? ' on' : '');
+    badge.title = loggedIn
+      ? '已登录：' + session.username + '（' + session.userId + '）'
+      : '当前身份：游客的存档只留在这个浏览器里';
+
+    if (!loggedIn) return;
+    $('acct-hint').textContent = '已登录 · 换设备登录一次即可找回';
+    $('acct-name').textContent = session.display;
+    $('acct-kind').textContent = session.kind === 'guest' ? '游客账号' : '账号 · ' + session.username;
+    $('acct-stat').innerHTML = statHtml || '正在读取云端信息…';
+  }
+
+  function refreshCloud() {
+    const client = acct();
+    if (!client || !client.session()) return;
+    client.me()
+      .then((me) => renderAccount(fmtCloud(me)))
+      .catch(() => renderAccount(
+        '<span class="warn">已登录，但读取云端信息失败（网络或服务端问题）</span>',
+      ));
+  }
+
+  function setAcctMode(mode) {
+    acctMode = mode === 'register' ? 'register' : 'login';
+    const isReg = acctMode === 'register';
+    $('acct-tab-login').classList.toggle('active', !isReg);
+    $('acct-tab-register').classList.toggle('active', isReg);
+    $('acct-pass2-row').hidden = !isReg;
+    $('acct-submit').textContent = isReg ? '注册' : '登录';
+    $('acct-pass').setAttribute('autocomplete', isReg ? 'new-password' : 'current-password');
+    $('acct-hint').textContent = isReg ? '注册后存档跟账号走' : '登录后存档跟账号走';
+    acctMsg('');
+  }
+
+  async function submitAccount(e) {
+    if (e) e.preventDefault();
+    const client = acct();
+    if (!client) {
+      acctMsg('账号模块没有加载（auth-client.js 缺失）', 'bad');
+      return;
+    }
+    const username = $('acct-user').value;
+    const password = $('acct-pass').value;
+    const btn = $('acct-submit');
+
+    if (acctMode === 'register' && $('acct-pass2').value !== password) {
+      acctMsg('两次输入的密码不一致', 'bad');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = acctMode === 'register' ? '注册中…' : '登录中…';
+    acctMsg('');
+    try {
+      const session = acctMode === 'register'
+        ? await client.register({ username, password })
+        : await client.login({ username, password });
+      $('acct-pass').value = '';
+      $('acct-pass2').value = '';
+      // 先读档再进门：mountPlatformStore 会 apply 云端存档并重建界面，
+      // 顺序反了会先闪一下空仓库。注册时额外允许把本机的游客存档带上去。
+      btn.textContent = '正在读取存档…';
+      const ok = await attachCloudSave(session, { migrateLocal: acctMode === 'register' });
+      hideGate();
+      renderAccount('正在读取云端信息…');
+      acctMsg(
+        (acctMode === 'register' ? '注册成功' : '登录成功') + (ok ? ' · 存档已接上' : ' · 但存档没连上云端'),
+        ok ? 'good' : 'bad',
+      );
+      say((acctMode === 'register' ? '注册成功：' : '已登录：') + session.display + (ok ? '' : '（存档未连接）'));
+      refreshCloud();
+    } catch (err) {
+      acctMsg((err && err.message) || '操作失败，请稍后重试', 'bad');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = acctMode === 'register' ? '注册' : '登录';
+    }
+  }
+
+  const acctToggle = $('account-toggle');
+  if (acctToggle) {
+    acctToggle.addEventListener('click', () => {
+      const panel = $('account-panel');
+      if (!panel) return;
+      panel.hidden = !panel.hidden;
+      if (panel.hidden) return;
+      renderAccount();
+      refreshCloud();
+      panel.scrollIntoView({ block: 'nearest' });
+    });
+  }
+  $('acct-tab-login').addEventListener('click', () => setAcctMode('login'));
+  $('acct-tab-register').addEventListener('click', () => setAcctMode('register'));
+  $('acct-form').addEventListener('submit', submitAccount);
+  // 「账号」面板里的升级入口：复用同一个门禁，但允许关掉回来继续玩。
+  $('acct-open-login').addEventListener('click', () => showGate(true));
+  $('gate-guest').addEventListener('click', enterAsGuest);
+  $('gate-resume-go').addEventListener('click', async () => {
+    const client = acct();
+    const session = client ? client.session() : null;
+    if (!session) {
+      acctMsg('上次的身份已经过期，请重新登录', 'bad');
+      return;
+    }
+    const ok = await attachCloudSave(session);
+    hideGate();
+    say('继续以上次身份进入' + (ok ? '' : '（存档未连接）'));
+  });
+  $('gate-close').addEventListener('click', hideGate);
+  // 门禁卡片里的按键不要传给游戏：否则在输入用户名时角色会跟着走。
+  ['keydown', 'keyup', 'keypress'].forEach((type) => {
+    $('login-gate').addEventListener(type, (e) => e.stopPropagation());
+  });
+  $('acct-logout').addEventListener('click', () => {
+    const client = acct();
+    if (client) client.logout();
+    $('gate-resume').hidden = true;
+    $('acct-user').value = '';
+    setAcctMode('login');
+    renderAccount();
+    acctMsg('已退出登录', 'good');
+    say('已退出登录，请重新选择身份');
+    showGate(false);
+  });
+
+  // file:// 打开时 fetch 的 Origin 是 null，登录请求可能被跨域策略拦住 —— 提前说清楚，
+  // 别让玩家以为是"密码错了"。
+  if (location.protocol === 'file:') {
+    const note = document.querySelector('.acct-note');
+    if (note && note.parentNode) {
+      const tip = document.createElement('p');
+      tip.className = 'acct-note';
+      tip.style.color = 'var(--gold)';
+      tip.textContent = '当前是以文件方式打开的独立页面：登录请求可能被浏览器跨域策略拦截，请在游戏内使用。';
+      note.parentNode.insertBefore(tip, note.nextSibling);
+    }
+  }
+
+  /* 开局：一律停在门禁上。有有效会话就多给一个「继续进入」，除此之外没有任何
+     自动跳过的路径 —— 玩家必须明确选一次身份，才看得到商店 / 背包 / 装备栏。 */
+  (function bootIdentity() {
+    const client = acct();
+    const session = client ? client.session() : null;
+    setAcctMode('login');
+    renderAccount();
+    if (session) {
+      $('gate-resume-name').textContent = session.display;
+      if (session.username) $('acct-user').value = session.username;
+      refreshCloud();
+    }
+    showGate(false);
+  })();
 
   bindGrid('bag');
   bindGrid('safe');
