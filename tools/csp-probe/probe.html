@@ -289,11 +289,12 @@
     runBtn.disabled = false;
   });
 
-  // ?auto=1&base=<url> 让无头浏览器也能跑一遍（用于交付前自证页面可用）。
+  // 默认自动跑一遍：发布到造化后宿主地址不带任何参数，页面必须自己出结果，
+  // 否则要人手点按钮才知道结论。?auto=0 可关掉，?base=<url> 可换目标。
   var qs = new URLSearchParams(location.search);
   if (qs.get('base')) host.value = qs.get('base');
-  if (qs.get('auto') === '1') {
-    setTimeout(function () { runBtn.click(); }, 250);
+  if (qs.get('auto') !== '0') {
+    setTimeout(function () { runBtn.click(); }, 400);
   }
 
   document.getElementById('copy').addEventListener('click', function () {
