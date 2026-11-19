@@ -1,0 +1,9 @@
+{
+  "mode": "multiplayer",
+  "server": {
+    "runtime_layout": "dual-dist-v1",
+    "root": "game/server",
+    "output": "game/server/dist/index.js",
+    "maxPlayer": 16
+  }
+}

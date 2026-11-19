@@ -12,5 +12,15 @@
   "resource": "https://zaohua.qq.com/mcp-servers/vag-web/mcp",
   "support_pc": true,
   "support_mobile": false,
-  "recommended_capabilities": ["storage", "game.multiplayer"]
+  "recommended_capabilities": [
+    "storage",
+    "game.multiplayer"
+  ],
+  "multiplayer": {
+    "enabled": true,
+    "max_players": 16,
+    "package_dir": "game/server",
+    "build_script": "build:server",
+    "output_dir": "game/server/dist/index.js"
+  }
 }
