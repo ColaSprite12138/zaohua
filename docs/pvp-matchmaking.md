@@ -145,6 +145,48 @@ Worker reset(seed) → 两端同一张图、同一个掉落序列
 **P1 的边界（诚实记录）**：两人进同一房间、拿同一 seed、各自起局，**但还看不见对方** ——
 输入 relay 是 P2。P1 验的是「撮合 → 建房 → 入座 → 同时开局」这条链路。
 
+### 3.10 真机验收（2026-11-20，已在造化预览跑通）
+
+平台侧的联机集成阶段依次走完 `scaffolded → server_ready → wired → verified`，
+最后一格 `two_player_seat` 由脚本实测通过，不是手工目测。
+
+实测时序（两个独立浏览器上下文 = 两个真玩家，各用各的账号）：
+
+```
+t=0s    A / B 各自入队（queued）
+t=60s   兜底成局：A 显示「已配对」→ 建房并回报 roomId
+t=63s   B 拿到 roomId → join → 占座；双方「已入座」
+t=66s   双方「开局 · 2 人 · seed 420082688」—— seed 完全一致
+```
+
+验证脚本：
+
+| 脚本 | 验什么 | 结果 |
+|:--|:--|:--|
+| `scripts/verify-match-in-host.mjs` | 真宿主里：平台桥接到位、按钮可点、入队打到线上并 200、收尾取消 | 11/11 |
+| `scripts/verify-two-player.mjs` | 两个玩家从入队到同房开局，seed 一致 | 通过 |
+| `scripts/verify-quick-match.mjs` | 本地 58080（无宿主）的降级提示，不发任何线上请求 | 16/16 |
+
+**验收暴露的一个真问题（已修）**：P1 没有「对局结束」上报，打完一局票会一直挂在 `seated`。
+下一个受害者是玩家自己 —— 再点快速匹配会复用旧票（不发入队请求）、取消又只会回
+`409 already_seated`，等于**永久排不进新队**。修法两层：
+
+1. 客户端 `beginMatch()`：拿到 `seated` 的旧票先调 `abort(matchId, 'left_old_match')` 收掉再重排；
+2. 服务端 `tick()`：`playing` 且 `updated_at` 超过 `limits.playingTtlMs`（6h）的局按 `stale` 解散，
+   防止玩家进程崩掉后票永远挂着。已入座的票收掉后是 `done`（进过局），不是 `left`（没进局就退）。
+
+**`build:server` 不许依赖 pnpm**：平台宿主用的是它自己环境里的 pnpm，版本不受我们控制
+（本机就因为 pnpm 大版本与 node_modules 不匹配而整条命令 abort）。现在它是
+`node scripts/build-server.mjs`：按路径加载 `node_modules/.pnpm` 里的 esbuild，
+用 esbuild 插件把 `@vibegame/state-sync-runtime` 指回 `packages/` 源码。
+
+**预览的两个操作坑**：
+
+- 造化预览（`preview_start` / `preview_reload`）会**重建 `dist/` 并抹掉单页壳层**，
+  所以顺序永远是 `build → inject-shell → 用`。重载后不补壳层，看到的是没有局外大厅的裸页面。
+- 预览宿主重建出来的 `dist/`，在本地 58080 上会出现**所有点击都失效**（连登录门禁都点不动，
+  `document` 的捕获监听也收不到事件）。要验 58080 就用 `pnpm build` 的产物，别用宿主那份。
+
 ## 4. 帧同步设计要点
 
 ### 4.1 输入链路
@@ -195,7 +237,7 @@ Engine Worker（无 DOM、无 PlatformClient）
 | 阶段 | 内容 | 状态 |
 |:--|:--|:--|
 | **P0** | 撮合服务 + 队列规则 + 房间回报 + 测试 | **已完成**（`match.mjs` + `test/match.mjs`，56 断言） |
-| **P1** | 局外大厅「快速匹配」按钮 + 排队 UI + 建房/join 接线 | **已完成**（`match-client.ts` / `match-flow.js`，16 条浏览器断言） |
+| **P1** | 局外大厅「快速匹配」按钮 + 排队 UI + 建房/join 接线 | **已完成并在真宿主验收**：`multiplayer_integration.stage=verified`，两人同房同 seed 开局（§3.10） |
 | **P2** | 固定步长 + 输入流 + relay server + hash 对账 | 待做 |
 | **P3** | 同屏互砍：玩家实体进 `GameState`、`hurts()` 扩 `fromPlayerId`/`teamId`（互打 / 友伤关闭）、撤离判定、结算（只给自己看带出价值） | 待做 |
 | **P4** | relay 的 `onCheckJoin`（挡插队）+ 服务端视野裁剪 + 输入限幅 | 待做 |
@@ -204,8 +246,8 @@ Engine Worker（无 DOM、无 PlatformClient）
 ## 6. 验收
 
 - 后端：`cd server/trade-api && npm run test:match`（56 断言，含 4 队（当前 4 人）即开 / 60s 兜底 / 独狼不开 / 版本闸 / 回队一次）。
-- 客户端（本地，能自证的部分）：`node artifacts/verify-quick-match.mjs`（16 条）——
+- 客户端（本地，能自证的部分）：`node scripts/verify-quick-match.mjs`（16 条）——
   按钮存在、游客被明确挡住、登录态在无宿主时被明确挡住、**全程没往 `api/v1/match` 发过请求**、
   页面无 error 级报错。这条脚本故意不假装能验联机。
-- 联机链路：平台上 `multiplayer_integration.stage` 到 `verified`（两个玩家 seated + 对局进入 `playing`）才算接通，
+- 联机链路：平台上 `multiplayer_integration.stage` 到 `verified`（两个玩家 seated + 对局进入 `playing`）才算接通，**当前已到 verified**（§3.10），
   `wired` 只代表能上传。**这一条只能你配合开两个窗口验**，本地任何脚本都替代不了。

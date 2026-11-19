@@ -558,6 +558,8 @@ talent 22（talent 15 + starmap-data 7）、resource 17（tables 9 + map 8）、
 | 大视口四象限点地面被判成点敌人 | 骷髅会追过来；移动类验收步骤前按 R 隔离 |
 | `pnpm: command not found` / build 被拦 | 用 `./node_modules/.bin/*`；build / package 带 `CODEBUDDY_SAFE_DELETE_ENABLED=0`（**手动单跑 `project play` 也要带**，截图要删旧产物，超过 50 个文件会触发安全删除的批量确认） |
 | `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`：任何 pnpm 命令都秒退，连 `pnpm exec node -v` 都跑不了 | PATH 上的 pnpm **大版本** ≠ 装 `node_modules` 的那个 pnpm。pnpm 的 store 按大版本分目录（10→`store/v10`，12→`store/v11`），store 对不上就判定"必须整目录重建"；非交互环境没有 TTY 可确认，直接 abort，脚本一行都没执行。**根治**：`corepack enable pnpm`（已做，之后按工程 `packageManager` 解析版本）。**禁止**用 `CI=true` 或 `confirmModulesPurge=false` 放行 —— 那会真把 `node_modules` 删掉重装 |
+| `build:server` 报 `Command "esbuild" not found` | esbuild 是引擎 SDK 的**传递依赖**，只躺在 `node_modules/.pnpm` 里、没有 `.bin` 链接；而平台宿主跑 `build:server` 用的是**它自己环境里的 pnpm**，版本不受控。统一走 `node scripts/build-server.mjs`（按路径加载 esbuild + 插件把 `@vibegame/state-sync-runtime` 指回 `packages/` 源码），不经过任何包管理器 |
+| 造化预览之后，本地 58080 上所有点击都失效（连登录门禁都点不动） | 预览宿主（`preview_start` / `preview_reload`）会重建 `dist/`，它那份产物在无宿主页面里点不动。验 58080 必须用 `pnpm build` 的产物，并在预览重建后重新 `inject-shell` |
 | 静态托管造化产物 → 页面白屏/转圈 | 那是给宿主用的单页，只拉 `index.html + zaohua-platform-init.js` 就停住。要静态托管就用 `dist/` + `inject-shell.mjs`（走 hostless 分支） |
 | `play.screenshot` 拍不到 0.3 秒的特效 | 截图从调用到成像有 **1~2 秒游戏时间延迟**。短特效要么配地面残留（`sweepMark` / `frostMark`，3.2s），要么只靠单测断言，别指望截图 |
 | HUD 贴着画布底边写字被切一半 | 1280×600 下引擎可见区只到逻辑 y≈704（底部约 16 逻辑像素被吃掉）。底部元素一律按 `paint.ts::HUD_BOTTOM` 留白，别用 `VIEW_H - 个位数` |
