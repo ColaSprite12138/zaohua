@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CSP 放行探针</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px 24px 40px;
+    font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #f7f7f5; color: #1c1c1a;
+  }
+  h1 { font-size: 18px; font-weight: 500; margin: 0 0 4px; }
+  .sub { color: #5f5e5a; font-size: 13px; margin: 0 0 18px; }
+  .panel {
+    background: #fff; border: 1px solid #d3d1c7; border-radius: 12px;
+    padding: 16px 18px; margin-bottom: 14px;
+  }
+  .panel h2 { font-size: 14px; font-weight: 500; margin: 0 0 10px; color: #2c2c2a; }
+  dl { display: grid; grid-template-columns: 118px 1fr; gap: 5px 12px; margin: 0; font-size: 13px; }
+  dt { color: #5f5e5a; }
+  dd { margin: 0; font-family: ui-monospace, Consolas, monospace; font-size: 12px; word-break: break-all; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  input[type=text] {
+    flex: 1 1 320px; min-width: 240px; padding: 8px 10px; font-size: 13px;
+    border: 1px solid #b4b2a9; border-radius: 8px; font-family: ui-monospace, Consolas, monospace;
+  }
+  button {
+    padding: 8px 16px; font-size: 13px; border-radius: 8px; cursor: pointer;
+    border: 1px solid #185fa5; background: #185fa5; color: #fff; font-family: inherit;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: #fff; color: #185fa5; }
+  #results { display: flex; flex-direction: column; gap: 8px; }
+  .item {
+    display: grid; grid-template-columns: 22px 1fr; gap: 10px;
+    padding: 10px 12px; border-radius: 8px; border: 1px solid #d3d1c7; background: #fbfbf9;
+  }
+  .item .mark { font-weight: 500; font-size: 13px; }
+  .item .name { font-weight: 500; font-size: 13px; }
+  .item .detail { font-size: 12px; color: #5f5e5a; font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
+  .ok { border-color: #0f6e56; background: #e1f5ee; }
+  .ok .mark, .ok .name { color: #04342c; }
+  .bad { border-color: #a32d2d; background: #fcebeb; }
+  .bad .mark, .bad .name { color: #501313; }
+  .warn { border-color: #854f0b; background: #faeeda; }
+  .warn .mark, .warn .name { color: #412402; }
+  .idle { border-color: #d3d1c7; }
+  .idle .mark { color: #888780; }
+  #csp { display: flex; flex-direction: column; gap: 6px; }
+  .csp-item {
+    font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+    background: #fcebeb; border: 1px solid #f09595; color: #501313;
+    border-radius: 8px; padding: 8px 10px; word-break: break-all;
+  }
+  .csp-empty { font-size: 13px; color: #5f5e5a; }
+  .note { font-size: 12px; color: #5f5e5a; margin: 10px 0 0; }
+  pre#dump {
+    margin: 0; padding: 12px; background: #f1efe8; border: 1px solid #d3d1c7;
+    border-radius: 8px; font-size: 12px; font-family: ui-monospace, Consolas, monospace;
+    white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto;
+  }
+</style>
+</head>
+<body>
+<h1>CSP 放行探针</h1>
+<p class="sub">这个页面的唯一任务：分清「平台沙箱拦了」和「服务端配置错了」。先在本机双击打开测服务端，再放进造化宿主里测 CSP。</p>
+
+<div class="panel">
+  <h2>1 · 这是谁在跑</h2>
+  <dl>
+    <dt>页面 origin</dt><dd id="env-origin">—</dd>
+    <dt>完整地址</dt><dd id="env-href">—</dd>
+    <dt>referrer</dt><dd id="env-referrer">—</dd>
+    <dt>是否 iframe</dt><dd id="env-iframe">—</dd>
+    <dt>UA</dt><dd id="env-ua">—</dd>
+  </dl>
+  <p class="note">页面上方 origin 就是造化宿主的真实域名 —— 记下它，CVM 的 CORS 白名单要按它配。</p>
+</div>
+
+<div class="panel">
+  <h2>2 · 目标服务</h2>
+  <div class="row">
+    <input type="text" id="base" value="https://api.colasprite.net" spellcheck="false">
+    <button id="run">开始测试</button>
+    <button id="copy" class="ghost">复制结果</button>
+  </div>
+  <div id="results">
+    <div class="item idle"><span class="mark">·</span><div><div class="name">GET /health</div><div class="detail">还没跑</div></div></div>
+    <div class="item idle"><span class="mark">·</span><div><div class="name">POST /echo（自定义头，触发 preflight）</div><div class="detail">还没跑</div></div></div>
+    <div class="item idle"><span class="mark">·</span><div><div class="name">WebSocket /ws</div><div class="detail">还没跑</div></div></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>3 · CSP 违规事件（判据）</h2>
+  <div id="csp"><span class="csp-empty">暂无。如果这里出现条目，说明是宿主 CSP 拦的，不是 CORS 配置问题。</span></div>
+</div>
+
+<div class="panel">
+  <h2>4 · 原始结果</h2>
+  <pre id="dump">跑完测试后这里会有可复制的结果。</pre>
+</div>
+
+<script>
+(function () {
+  var violations = [];
+
+  window.addEventListener('securitypolicyviolation', function (e) {
+    violations.push({
+      directive: e.violatedDirective || e.effectiveDirective || '?',
+      blockedURI: e.blockedURI || '?',
+      sourceFile: e.sourceFile || '',
+      line: e.lineNumber || 0,
+    });
+    renderCsp();
+  });
+
+  function renderCsp() {
+    var box = document.getElementById('csp');
+    if (!violations.length) {
+      box.innerHTML = '<span class="csp-empty">暂无。如果这里出现条目，说明是宿主 CSP 拦的，不是 CORS 配置问题。</span>';
+      return;
+    }
+    box.innerHTML = '';
+    violations.forEach(function (v) {
+      var d = document.createElement('div');
+      d.className = 'csp-item';
+      d.textContent = v.directive + '  ←  ' + v.blockedURI + (v.sourceFile ? '  @ ' + v.sourceFile + ':' + v.line : '');
+      box.appendChild(d);
+    });
+  }
+
+  document.getElementById('env-origin').textContent = String(location.origin);
+  document.getElementById('env-href').textContent = String(location.href);
+  document.getElementById('env-referrer').textContent = document.referrer || '(空)';
+  document.getElementById('env-iframe').textContent = (window.top !== window.self) ? '是（被宿主包着）' : '否（顶层页面）';
+  document.getElementById('env-ua').textContent = navigator.userAgent;
+
+  var slots = [];
+  var host = document.getElementById('base');
+  var runBtn = document.getElementById('run');
+
+  function resetSlot(i, name, detail) {
+    var el = slots[i];
+    el.className = 'item idle';
+    el.querySelector('.mark').textContent = '·';
+    el.querySelector('.name').textContent = name;
+    el.querySelector('.detail').textContent = detail;
+  }
+
+  function setSlot(i, state, name, detail) {
+    var el = slots[i];
+    el.className = 'item ' + state;
+    el.querySelector('.mark').textContent = state === 'ok' ? '✓' : (state === 'bad' ? '✕' : '!');
+    el.querySelector('.name').textContent = name;
+    el.querySelector('.detail').textContent = detail;
+  }
+
+  function baseUrl() {
+    var v = (host.value || '').trim().replace(/\/+$/, '');
+    if (!/^https?:\/\//i.test(v)) v = 'https://' + v;
+    return v;
+  }
+
+  function wsUrl(base) {
+    return base.replace(/^http/i, 'ws') + '/ws';
+  }
+
+  function classify(err, sawViolation) {
+    if (sawViolation) return ['bad', 'CSP 拦了 —— 宿主的 Content-Security-Policy 不放行这个域'];
+    var m = String(err && err.message || err);
+    if (/Failed to fetch|NetworkError|Load failed/i.test(m)) {
+      return ['warn', 'fetch 失败但没有 CSP 事件 —— 多半是 CORS 头或证书。看控制台 Network 面板'];
+    }
+    if (/certificate|SSL|TLS/i.test(m)) return ['bad', '证书问题 —— 自签或链不完整，公共 CA 才能用在 https 页面里'];
+    return ['warn', m];
+  }
+
+  async function stepHealth(base, before) {
+    var t0 = performance.now();
+    try {
+      var res = await fetch(base + '/health', { cache: 'no-store' });
+      var body = await res.json();
+      var ms = Math.round(performance.now() - t0);
+      setSlot(0, 'ok', 'GET /health', res.status + ' · ' + ms + 'ms · 服务端看到的 origin = ' + String(body.origin));
+      return { ok: true, status: res.status, ms: ms, body: body };
+    } catch (err) {
+      var c = classify(err, violations.length > before);
+      var ms2 = Math.round(performance.now() - t0);
+      setSlot(0, c[0], 'GET /health', c[1] + ' · ' + String(err && err.message || err));
+      return { ok: false, error: String(err && err.message || err), verdict: c[1], ms: ms2 };
+    }
+  }
+
+  async function stepPost(base, before) {
+    var t0 = performance.now();
+    try {
+      var res = await fetch(base + '/echo', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-probe': 'hello' },
+        body: JSON.stringify({ hello: 'from-probe', origin: location.origin }),
+        cache: 'no-store',
+      });
+      var body = await res.json();
+      var ms = Math.round(performance.now() - t0);
+      setSlot(1, 'ok', 'POST /echo（自定义头，触发 preflight）', res.status + ' · ' + ms + 'ms · 服务端收到 x-probe = ' + String(body.sawCustomHeader));
+      return { ok: true, status: res.status, ms: ms, body: body };
+    } catch (err) {
+      var c = classify(err, violations.length > before);
+      var ms2 = Math.round(performance.now() - t0);
+      setSlot(1, c[0], 'POST /echo（自定义头，触发 preflight）', c[1] + ' · ' + String(err && err.message || err));
+      return { ok: false, error: String(err && err.message || err), verdict: c[1], ms: ms2 };
+    }
+  }
+
+  function stepWs(base, before) {
+    return new Promise(function (resolve) {
+      var url = wsUrl(base);
+      var t0 = performance.now();
+      var settled = false;
+      var socket;
+      function finish(result) {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      }
+      try {
+        socket = new WebSocket(url);
+      } catch (err) {
+        var c = classify(err, violations.length > before);
+        setSlot(2, c[0], 'WebSocket /ws', c[1] + ' · ' + String(err && err.message || err));
+        finish({ ok: false, error: String(err && err.message || err), verdict: c[1] });
+        return;
+      }
+      var timer = setTimeout(function () {
+        setSlot(2, 'warn', 'WebSocket /ws', '5 秒没连上 —— 握手卡住，可能被中间层吞了。' + url);
+        finish({ ok: false, error: 'timeout', verdict: '握手超时' });
+        try { socket.close(); } catch (e) {}
+      }, 5000);
+
+      socket.onopen = function () {
+        var ms = Math.round(performance.now() - t0);
+        setSlot(2, 'ok', 'WebSocket /ws', '已连接 · ' + ms + 'ms · ' + url);
+        clearTimeout(timer);
+        try { socket.close(); } catch (e) {}
+        finish({ ok: true, ms: ms, url: url });
+      };
+      socket.onerror = function () {
+        clearTimeout(timer);
+        var c = classify(new Error('WebSocket error'), violations.length > before);
+        setSlot(2, c[0], 'WebSocket /ws', c[1] + ' · ' + url);
+        finish({ ok: false, error: 'WebSocket error', verdict: c[1] });
+      };
+    });
+  }
+
+  document.querySelectorAll('#results .item').forEach(function (el, i) {
+    slots[i] = el;
+  });
+
+  runBtn.addEventListener('click', async function () {
+    runBtn.disabled = true;
+    var base = baseUrl();
+    host.value = base;
+    var v0 = violations.length;
+    resetSlot(0, 'GET /health', '正在跑…');
+    resetSlot(1, 'POST /echo（自定义头，触发 preflight）', '等待');
+    resetSlot(2, 'WebSocket /ws', '等待');
+
+    var health = await stepHealth(base, v0);
+    var post = await stepPost(base, v0);
+    var ws = await stepWs(base, v0);
+
+    var summary = {
+      pageOrigin: location.origin,
+      href: location.href,
+      referrer: document.referrer || null,
+      inIframe: window.top !== window.self,
+      target: base,
+      health: health,
+      post: post,
+      ws: ws,
+      cspViolations: violations.slice(),
+    };
+    document.getElementById('dump').textContent = JSON.stringify(summary, null, 2);
+    runBtn.disabled = false;
+  });
+
+  // ?auto=1&base=<url> 让无头浏览器也能跑一遍（用于交付前自证页面可用）。
+  var qs = new URLSearchParams(location.search);
+  if (qs.get('base')) host.value = qs.get('base');
+  if (qs.get('auto') === '1') {
+    setTimeout(function () { runBtn.click(); }, 250);
+  }
+
+  document.getElementById('copy').addEventListener('click', function () {
+    var text = document.getElementById('dump').textContent;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text);
+    } else {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+    var btn = document.getElementById('copy');
+    var old = btn.textContent;
+    btn.textContent = '已复制';
+    setTimeout(function () { btn.textContent = old; }, 1200);
+  });
+})();
+</script>
+</body>
+</html>

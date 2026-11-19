@@ -1,0 +1,11 @@
+{
+  "name": "csp-probe",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "造化宿主 CSP / CORS / WebSocket 放行探针（一次性实验，不是游戏）",
+  "scripts": {
+    "build": "node build.mjs",
+    "serve": "node server.mjs"
+  }
+}
