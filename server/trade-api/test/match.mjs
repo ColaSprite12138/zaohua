@@ -269,6 +269,48 @@ console.log('\n[T9] 取消与超时')
   expectErr(() => match.getTicket({ userId: 'u-nobody', ticketId: 'mt-nope' }), 'ticket_not_found', '不存在的票')
 }
 
+// ================= T9.5 打完一局之后还能再排 =================
+console.log('\n[T9.5] 打完一局：旧票能收掉，人还能重新排')
+{
+  resetQueue()
+  // 走到 playing
+  const p = [newUser(), newUser(), newUser(), newUser()]
+  for (const u of p) match.enqueue({ userId: u, mode: MODE, ruleset: RULES, now: T0 })
+  const m = match.currentTicket({ userId: p[0], now: T0 + 10 }).match
+  match.reportRoom({ userId: p[0], matchId: m.id, roomId: 'room-after', roomCode: '4321', now: T0 + 1000 })
+  for (let i = 0; i < p.length; i += 1) {
+    match.reportSeated({ userId: p[i], matchId: m.id, now: T0 + 2000 + i })
+  }
+  ok(match.currentTicket({ userId: p[0], now: T0 + 3000 }).state === 'seated', '先确认已经在局里')
+
+  // 客户端下次点「快速匹配」时会先 abort 掉旧局（P1 没有对局结束事件）
+  const a = match.abort({ userId: p[0], matchId: m.id, reason: 'left_old_match', now: T0 + 9000 })
+  // 已入座的票收掉后是 'done'（进过局），不是 'left'（没进过局就退）—— 两者都不算活票。
+  ok(a.state === 'done', '旧票被收掉', a.state)
+  const closed = D().prepare('SELECT * FROM matches WHERE id = ?').get(m.id)
+  ok(closed.state === 'closed', '那一局关掉了', closed.state)
+
+  const again = match.enqueue({ userId: p[0], mode: MODE, ruleset: RULES, now: T0 + 9100 })
+  ok(again.state === 'queued', '重新入队拿到新票', again.state)
+  ok(again.ticketId !== a.ticketId, '不是把旧票翻出来用', again.ticketId)
+
+  // playing 空转兜底：没人上报结束时，超时线之后由 tick 收掉
+  resetQueue()
+  const q = [newUser(), newUser(), newUser(), newUser()]
+  for (const u of q) match.enqueue({ userId: u, mode: MODE, ruleset: RULES, now: T0 })
+  const m2 = match.currentTicket({ userId: q[0], now: T0 + 10 }).match
+  match.reportRoom({ userId: q[0], matchId: m2.id, roomId: 'room-stale', roomCode: null, now: T0 + 1000 })
+  for (let i = 0; i < q.length; i += 1) {
+    match.reportSeated({ userId: q[i], matchId: m2.id, now: T0 + 2000 + i })
+  }
+  // 把这一局改成"很久没动过"
+  D().prepare('UPDATE matches SET updated_at = ? WHERE id = ?').run(T0, m2.id)
+  const swept = match.tick(T0 + match.limits.playingTtlMs + 1000)
+  ok(swept.aborted.includes(m2.id), 'playing 空转超时被收掉', swept.aborted)
+  const stale = D().prepare('SELECT * FROM matches WHERE id = ?').get(m2.id)
+  ok(stale.state === 'closed' && stale.close_reason === 'stale', '原因是 stale', stale.close_reason)
+}
+
 // ================= T10 不变量 =================
 console.log('\n[T10] 数据不变量')
 {

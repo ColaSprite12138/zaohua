@@ -89,10 +89,28 @@
 
   function setBusy(on) {
     S.busy = on;
-    // 已入座之后按钮必须一直是灰的：此时点它等于「退房」，而服务端的
-    // `cancel` 只会返回 already_seated —— 人还在房里，界面却已经收摊了。
-    btn.disabled = on || S.reportedSeated || S.started;
-    btn.textContent = on ? '匹配中…' : '快速匹配';
+    renderPhase();
+  }
+
+  /**
+   * 按钮长什么样，只由「阶段」决定，不由"上一次请求有没有发完"决定。
+   * 之前 beginMatch() 结尾无条件 setBusy(false)，结果进了队列、状态条写着"排队中"，
+   * 按钮却退回「快速匹配」并且可点 —— 点了又被守卫静默吞掉，正是最难受的那种"看起来能用"。
+   */
+  function renderPhase() {
+    if (S.reportedSeated || S.started) {
+      btn.disabled = true;
+      btn.textContent = '对局中';
+      return;
+    }
+    if (S.phase === 'queueing' || S.phase === 'pairing') {
+      // 排队中点它 = 取消，所以要保持可点，只是换个文案。
+      btn.disabled = false;
+      btn.textContent = '取消匹配';
+      return;
+    }
+    btn.disabled = !!S.busy;
+    btn.textContent = S.busy ? '匹配中…' : '快速匹配';
   }
 
   /* ----------------------------- 依赖探测 ------------------------------ */
@@ -155,6 +173,9 @@
   async function poll() {
     if (!S.ticket || !S.client) return;
     if (S.busy) return;
+    // 每秒把按钮和阶段对齐一次：阶段可能被服务端推进（queued→paired→ready→seated），
+    // 不在这里重画，界面就会停在上一阶段的文案上。
+    renderPhase();
 
     var view;
     try {
@@ -469,6 +490,17 @@
     try {
       // 刷新/上次没退干净：先看看有没有活票，有就接着用（服务端幂等）。
       var view = await S.client.current();
+      // 但「已经入座」的旧票不能复用：P1 没有"对局结束"事件，打完一局票会一直挂在
+      // seated/playing 上。复用它的后果是——人被送回旧局、而且永远排不进新队
+      // （cancel 会回 409 already_seated）。这里显式收掉再重新排。
+      if (view && view.state === 'seated' && view.match && view.match.id) {
+        try {
+          await S.client.abort(view.match.id, 'left_old_match');
+        } catch (err) {
+          console.warn('[match] 收掉旧局失败，继续尝试排队', err);
+        }
+        view = null;
+      }
       if (!view) view = await S.client.queue({ ruleset: MM.RULESET_EXTRACT });
       S.ticket = view;
       keepWrap.hidden = true;

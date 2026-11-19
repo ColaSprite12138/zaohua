@@ -12,7 +12,10 @@
 import { initialize, game, lifecycle, user, storage } from 'zaohua-platform-sdk'
 
 await initialize({
-  capabilities: ['game.loading', 'game.lifecycle', 'user.current', 'storage'],
+  // `game.multiplayer` 是搜打撤联机的前提：不声明，平台不但把交付判成
+  // `multiplayer_not_declared`，房间 API 也会被当成未授权。它会自动带上
+  // `studio.logging`（座位/掉线/分叉这类问题只有日志能复盘）。
+  capabilities: ['game.loading', 'game.lifecycle', 'user.current', 'storage', 'game.multiplayer'],
 })
 
 // The engine bundle is imported only after this module resolves, so this is

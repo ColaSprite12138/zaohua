@@ -36,7 +36,11 @@ export const limits = {
   roomDeadlineMs: 15_000,  // formed → host 必须在这个时间内回报 roomId
   seatDeadlineMs: 20_000,  // ready → 全员必须在这个时间内入座
   maxRequeue: 1,           // 被连累的人最多回队几次
-  maxKeepWaiting: 10       // 「继续等」最多按几次，防止无限占位
+  maxKeepWaiting: 10,      // 「继续等」最多按几次，防止无限占位
+  // playing 的空转上限。P1 没有"对局结束"上报，玩家关掉页面/进程挂了之后
+  // 票会一直挂在 seated 上；客户端下次排队时会自己 abort 掉（见 match-flow.js），
+  // 这条只是兜底，避免表无限长、也避免有人永远卡在旧局里。
+  playingTtlMs: 6 * 3600_000
 }
 
 const MODES = new Set(['extract'])
@@ -357,6 +361,14 @@ export function tick (now = Date.now()) {
   ).all(now)
   for (const m of overdue) {
     if (abortMatch(m.id, { reason: 'timeout', now })) out.aborted.push(m.id)
+  }
+
+  // playing 没有 deadline（对局时长由玩法决定），所以单独用「多久没动过」兜底。
+  const stale = get().prepare(
+    "SELECT id FROM matches WHERE state = 'playing' AND updated_at <= ?"
+  ).all(now - limits.playingTtlMs)
+  for (const m of stale) {
+    if (abortMatch(m.id, { reason: 'stale', now })) out.aborted.push(m.id)
   }
 
   return out
