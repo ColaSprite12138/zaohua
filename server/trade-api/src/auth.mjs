@@ -1,114 +1,226 @@
-// 鉴权：Ed25519 challenge-response
+// 鉴权：只有一条通道 —— 用户名 + 口令。
 //
-// 为什么不用账号密码 / 不用平台 userId：
-//   造化不提供可验签的身份（gameApiTokens 只对平台房间 API 有效），游戏里的
-//   `user.getCurrent()` 是客户端返回的字符串，A 改成 B 的 id 就能花 B 的钱。
-//   所以身份锚点只能是「玩家自己生成的密钥对」，userId 降级为显示名。
+// 为什么不存设备密钥（Ed25519 公钥）：
+//   原先有一套「设备密钥」用于游客身份和免密快登，代价是服务端要为每个浏览器
+//   存一把公钥（device_keys 表），换来的能力却都不可用 —— 游客改成纯本地存档后
+//   不再需要服务器身份，免密快登也从没接进 UI。既然它唯一的作用是「认这台机器」，
+//   那就是设备信息，不该收。现在服务端关于账号只存两样：
+//       用户名（username / username_lc）+ 口令哈希（scrypt）
+//   没有任何设备标识、IP、UA、指纹。会话表 sessions 只存 token 与过期时间。
+//
+// 为什么不用造化的 userId：它来自宿主 postMessage，是 JS 里的普通字符串，
+// 玩家改一个字段就能冒充别人花别人的钱。身份锚点必须是只有本人知道的口令。
 //
 // 流程：
-//   1) 客户端 WebCrypto 生成 Ed25519 键对，私钥留本地，公钥 POST 注册
-//   2) 要操作时先要一个 nonce（challenge），用私钥签 "colasprite-auth:v1:<nonce>"
-//   3) 服务端验签 → 发短期 session token，后续请求带 Bearer
-//
-// 这样每次敏感操作都可以要求重新签名，而日常读接口用 token 就够。
+//   注册：POST /auth/account/register { username, password } → token
+//   登录：POST /auth/login            { username, password } → token
+//   日常：Authorization: Bearer <token>
 
 import crypto from 'node:crypto'
+import { promisify } from 'node:util'
 import { get } from './db.mjs'
 import { HttpError } from './errors.mjs'
 
-const CHALLENGE_TTL = 5 * 60 * 1000
+const scryptAsync = promisify(crypto.scrypt)
+
 const SESSION_TTL = 7 * 24 * 3600 * 1000
-const SIG_PREFIX = 'colasprite-auth:v1:'
 
-// Ed25519 公钥的 SPKI 头（12 字节），用于把裸 32 字节公钥包装成 DER
-const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex')
+// 口令哈希参数：N=16384,r=8 → 16MB 内存/次，约 50–80ms，单机足够且不需要外部依赖
+const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 32, maxmem: 64 * 1024 * 1024 }
 
-function normalizeB64 (s) {
-  if (typeof s !== 'string') throw new HttpError(400, 'pubkey_required', '公钥缺失')
-  return Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64')
+function randomUserId () {
+  return 'u' + crypto.randomBytes(8).toString('hex')
 }
 
-export function parsePublicKey (b64) {
-  const der = normalizeB64(b64)
-  let keyObj
-  if (der.length === 32) {
-    keyObj = { key: Buffer.concat([ED25519_SPKI_PREFIX, der]), format: 'der', type: 'spki' }
-  } else {
-    keyObj = { key: der, format: 'der', type: 'spki' }
-  }
-  let pub
+// ============ 口令 ============
+
+export async function hashPassword (password) {
+  const salt = crypto.randomBytes(16)
+  const dk = await scryptAsync(password, salt, SCRYPT.keylen, SCRYPT)
+  return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('base64url')}$${dk.toString('base64url')}`
+}
+
+export async function verifyPassword (password, stored) {
+  if (typeof stored !== 'string') return false
+  const parts = stored.split('$')
+  if (parts.length !== 6 || parts[0] !== 'scrypt') return false
+  const [, N, r, p, saltB64, hashB64] = parts
+  const salt = Buffer.from(saltB64, 'base64url')
+  const expected = Buffer.from(hashB64, 'base64url')
+  let dk
   try {
-    pub = crypto.createPublicKey(keyObj)
+    dk = await scryptAsync(password, salt, expected.length, {
+      N: Number(N), r: Number(r), p: Number(p), maxmem: SCRYPT.maxmem
+    })
   } catch {
-    throw new HttpError(400, 'bad_pubkey', '公钥格式不合法（需要 Ed25519 的 SPKI DER 或 32 字节裸公钥）')
+    return false
   }
-  if (pub.asymmetricKeyType !== 'ed25519') {
-    throw new HttpError(400, 'bad_pubkey_type', '只接受 Ed25519 公钥')
-  }
-  return { pub, der }
+  return dk.length === expected.length && crypto.timingSafeEqual(dk, expected)
 }
 
-// user_id 由公钥派生 —— 同一把私钥永远回到同一账号，服务端不需要记住映射
-export function userIdFromDer (der) {
-  return 'u' + crypto.createHash('sha256').update(der).digest('hex').slice(0, 16)
-}
-
-export function register ({ pubkey, display }) {
-  const { der } = parsePublicKey(pubkey)
-  const userId = userIdFromDer(der)
-  const name = String(display || '').trim().slice(0, 24) || '无名旅者'
-  const d = get()
-  const existing = d.prepare('SELECT user_id FROM accounts WHERE pubkey = ?').get(Buffer.from(der).toString('base64'))
-  const pubkeyB64 = Buffer.from(der).toString('base64')
-  if (!existing) {
-    d.prepare('INSERT INTO accounts (user_id, display, pubkey, created_at) VALUES (?,?,?,?)')
-      .run(userId, name, pubkeyB64, Date.now())
-    d.prepare('INSERT OR IGNORE INTO wallets (user_id, balance) VALUES (?, 0)').run(userId)
-  } else {
-    d.prepare('UPDATE accounts SET display = ? WHERE user_id = ?').run(name, existing.user_id)
+// 用户名同时是登录名和默认昵称；中文允许，但大小写不敏感去重
+function normalizeUsername (raw) {
+  const display = String(raw || '').trim()
+  if (display.length < 2 || display.length > 20) {
+    throw new HttpError(400, 'bad_username', '用户名长度应为 2–20 个字符')
   }
-  const uid = existing ? existing.user_id : userId
-  return { userId: uid, display: name, created: !existing }
-}
-
-export function issueChallenge (userId) {
-  const d = get()
-  const acc = d.prepare('SELECT user_id FROM accounts WHERE user_id = ?').get(userId)
-  if (!acc) throw new HttpError(404, 'no_account', '该账号不存在，请先注册公钥')
-  const nonce = crypto.randomBytes(18).toString('base64url')
-  d.prepare('INSERT INTO challenges (nonce, user_id, expires_at, used) VALUES (?,?,?,0)')
-    .run(nonce, userId, Date.now() + CHALLENGE_TTL)
-  return { nonce, sign: SIG_PREFIX + nonce, expiresInMs: CHALLENGE_TTL }
-}
-
-export function verifyChallenge ({ userId, nonce, signature }) {
-  const d = get()
-  const ch = d.prepare('SELECT * FROM challenges WHERE nonce = ? AND user_id = ?').get(String(nonce || ''), String(userId || ''))
-  if (!ch) throw new HttpError(400, 'bad_challenge', 'challenge 不存在')
-  if (ch.used) throw new HttpError(400, 'challenge_used', 'challenge 已被使用（防重放）')
-  if (ch.expires_at < Date.now()) throw new HttpError(400, 'challenge_expired', 'challenge 已过期')
-
-  const acc = d.prepare('SELECT * FROM accounts WHERE user_id = ?').get(userId)
-  if (!acc) throw new HttpError(404, 'no_account', '账号不存在')
-  if (acc.banned) throw new HttpError(403, 'banned', '账号已被封禁')
-
-  const { pub } = parsePublicKey(acc.pubkey)
-  const sig = normalizeB64(signature)
-  let ok = false
-  try {
-    ok = crypto.verify(null, Buffer.from(SIG_PREFIX + ch.nonce), pub, sig)
-  } catch {
-    ok = false
+  if (!/^[\p{L}\p{N}_-]+$/u.test(display)) {
+    throw new HttpError(400, 'bad_username', '用户名只能包含中英文、数字、下划线或短横线')
   }
-  if (!ok) throw new HttpError(401, 'bad_signature', '签名校验失败')
+  return { display, lc: display.toLowerCase() }
+}
 
-  // 一次性使用，验签成功立刻标记
-  d.prepare('UPDATE challenges SET used = 1 WHERE nonce = ?').run(ch.nonce)
+function normalizePassword (raw, usernameLc) {
+  if (typeof raw !== 'string') throw new HttpError(400, 'bad_password', '密码缺失')
+  const pw = raw
+  if (pw.length < 8 || pw.length > 72) {
+    throw new HttpError(400, 'bad_password', '密码长度应为 8–72 位')
+  }
+  if (pw.toLowerCase() === usernameLc) {
+    throw new HttpError(400, 'bad_password', '密码不能与用户名相同')
+  }
+  return pw
+}
+
+// ============ 登录失败限流（进程内，单实例够用） ============
+// 按 IP+用户名 和 用户名 两个维度计；Caddy 在前面，IP 取 X-Forwarded-For 首个。
+// **IP 只在这个 Map 里活 15 分钟，不落库、不写日志** —— 它是防爆破的临时计数，不是数据。
+
+const RATE = { windowMs: 15 * 60 * 1000, ipMax: 10, userMax: 30 }
+const failures = new Map()
+
+function bump (key, max) {
+  const now = Date.now()
+  const e = failures.get(key)
+  if (!e || e.resetAt < now) {
+    failures.set(key, { n: 1, resetAt: now + RATE.windowMs })
+    return
+  }
+  e.n++
+  if (e.n > max) {
+    const sec = Math.ceil((e.resetAt - now) / 1000)
+    throw new HttpError(429, 'too_many_attempts', `登录尝试过于频繁，请 ${sec} 秒后再试`)
+  }
+}
+
+export function assertLoginAllowed (ip, usernameLc) {
+  const now = Date.now()
+  for (const key of [`ip:${ip}|${usernameLc}`, `u:${usernameLc}`]) {
+    const e = failures.get(key)
+    if (!e || e.resetAt < now) continue
+    const max = key.startsWith('ip:') ? RATE.ipMax : RATE.userMax
+    if (e.n >= max) {
+      const sec = Math.ceil((e.resetAt - now) / 1000)
+      throw new HttpError(429, 'too_many_attempts', `登录尝试过于频繁，请 ${sec} 秒后再试`)
+    }
+  }
+}
+
+function noteLoginFailure (ip, usernameLc) {
+  bump(`ip:${ip}|${usernameLc}`, RATE.ipMax)
+  bump(`u:${usernameLc}`, RATE.userMax)
+}
+
+function clearLoginFailures (ip, usernameLc) {
+  failures.delete(`ip:${ip}|${usernameLc}`)
+  failures.delete(`u:${usernameLc}`)
+}
+
+export function sweepLimiter () {
+  const now = Date.now()
+  let n = 0
+  for (const [k, e] of failures) if (e.resetAt < now) { failures.delete(k); n++ }
+  return n
+}
+
+// 用户不存在时也跑一次 scrypt，避免靠响应时间枚举用户名
+let dummyHash = null
+async function burnTime (password) {
+  if (!dummyHash) dummyHash = await hashPassword('dummy-password-for-timing')
+  await verifyPassword(password, dummyHash)
+}
+
+// ============ 账号 ============
+
+function issueToken (userId) {
   const token = crypto.randomBytes(32).toString('hex')
-  d.prepare('INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?,?,?,?)')
+  get().prepare('INSERT INTO sessions (token, user_id, expires_at, created_at) VALUES (?,?,?,?)')
     .run(token, userId, Date.now() + SESSION_TTL, Date.now())
+  return token
+}
 
-  return { token, userId, display: acc.display, expiresInMs: SESSION_TTL }
+function accountOf (userId) {
+  return get().prepare('SELECT * FROM accounts WHERE user_id = ?').get(userId)
+}
+
+function createAccount ({ userId, display, kind = 'password', username = null, usernameLc = null, passwordHash = null }) {
+  const d = get()
+  d.prepare(`INSERT INTO accounts (user_id, display, kind, username, username_lc, password_hash, created_at)
+             VALUES (?,?,?,?,?,?,?)`)
+    .run(userId, display, kind, username, usernameLc, passwordHash, Date.now())
+  d.prepare('INSERT OR IGNORE INTO wallets (user_id, balance) VALUES (?, 0)').run(userId)
+}
+
+function isUniqueViolation (e) {
+  return /UNIQUE constraint failed/.test(String(e && e.message))
+}
+
+// 注册：只认用户名 + 口令，没有任何其他前置条件（不需要签名、不需要设备、不需要邮箱手机）。
+export async function accountRegister ({ username, password }) {
+  const { display, lc } = normalizeUsername(username)
+  const pw = normalizePassword(password, lc)
+
+  const taken = get().prepare('SELECT 1 AS x FROM accounts WHERE username_lc = ?').get(lc)
+  if (taken) throw new HttpError(409, 'username_taken', '用户名已被占用')
+
+  const passwordHash = await hashPassword(pw)
+  const userId = randomUserId()
+  try {
+    createAccount({ userId, display, kind: 'password', username: display, usernameLc: lc, passwordHash })
+  } catch (e) {
+    // 并发注册同一名字：唯一索引是最终裁决
+    if (isUniqueViolation(e)) throw new HttpError(409, 'username_taken', '用户名已被占用')
+    throw e
+  }
+  return {
+    token: issueToken(userId),
+    userId,
+    display,
+    username: display,
+    kind: 'password',
+    expiresInMs: SESSION_TTL
+  }
+}
+
+// 账号密码登录
+export async function login ({ username, password, ip = 'unknown' }) {
+  const raw = String(username || '').trim()
+  const lc = raw.toLowerCase()
+  if (!raw) throw new HttpError(400, 'bad_username', '用户名缺失')
+  assertLoginAllowed(ip, lc)
+
+  const acc = get().prepare('SELECT * FROM accounts WHERE username_lc = ?').get(lc)
+  if (!acc || !acc.password_hash) {
+    await burnTime(String(password || ''))
+    noteLoginFailure(ip, lc)
+    throw new HttpError(401, 'bad_credentials', '用户名或密码错误')
+  }
+  const okPw = await verifyPassword(String(password || ''), acc.password_hash)
+  if (!okPw) {
+    noteLoginFailure(ip, lc)
+    throw new HttpError(401, 'bad_credentials', '用户名或密码错误')
+  }
+  if (acc.banned) throw new HttpError(403, 'banned', '账号已被封禁')
+  clearLoginFailures(ip, lc)
+
+  return {
+    token: issueToken(acc.user_id),
+    userId: acc.user_id,
+    display: acc.display,
+    username: acc.username,
+    kind: acc.kind,
+    expiresInMs: SESSION_TTL
+  }
 }
 
 export function authenticate (req) {
@@ -118,9 +230,9 @@ export function authenticate (req) {
   const d = get()
   const s = d.prepare('SELECT * FROM sessions WHERE token = ?').get(m[1])
   if (!s) throw new HttpError(401, 'bad_token', 'token 无效')
-  if (s.expires_at < Date.now()) throw new HttpError(401, 'token_expired', 'token 已过期，请重新签名登录')
-  const acc = d.prepare('SELECT * FROM accounts WHERE user_id = ?').get(s.user_id)
+  if (s.expires_at < Date.now()) throw new HttpError(401, 'token_expired', 'token 已过期，请重新登录')
+  const acc = accountOf(s.user_id)
   if (!acc) throw new HttpError(401, 'no_account', '账号不存在')
   if (acc.banned) throw new HttpError(403, 'banned', '账号已被封禁')
-  return { userId: acc.user_id, display: acc.display }
+  return { userId: acc.user_id, display: acc.display, kind: acc.kind, username: acc.username }
 }

@@ -7,7 +7,6 @@
 
 import crypto from 'node:crypto'
 import * as db from '../src/db.mjs'
-import * as auth from '../src/auth.mjs'
 import * as wallet from '../src/wallet.mjs'
 import * as market from '../src/market.mjs'
 
@@ -29,11 +28,18 @@ const feeSum = () => Number(D().prepare('SELECT COALESCE(SUM(fee),0) s FROM trad
 const claimsOf = (u) => D().prepare('SELECT * FROM claims WHERE user_id = ? AND claimed = 0').all(u)
 let SEEDED = 0
 
+let SEQ = 0
+// 撮合测试只关心资金与订单，账号行直接造：
+// 走 auth.accountRegister 要跑 scrypt（异步 + 几十毫秒），十几个用户会明显拖慢。
 function newUser (name, seed = 0) {
-  const { publicKey } = crypto.generateKeyPairSync('ed25519')
-  const r = auth.register({ pubkey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'), display: name })
-  if (seed) { db.applyDelta(r.userId, seed, 'test_seed'); SEEDED += seed }
-  return r.userId
+  SEQ++
+  const userId = 'u' + crypto.randomBytes(8).toString('hex')
+  const uname = 'mk' + SEQ
+  D().prepare(`INSERT INTO accounts (user_id, display, kind, username, username_lc, password_hash, created_at)
+               VALUES (?,?,'password',?,?,?,?)`)
+    .run(userId, name, uname, uname, 'scrypt$test$0$0$c2FsdA$aGFzaA', Date.now())
+  if (seed) { db.applyDelta(userId, seed, 'test_seed'); SEEDED += seed }
+  return userId
 }
 function expectErr (fn, code, name) {
   try { fn(); ok(false, name, '没有抛错') } catch (e) { ok(e.code === code, name, { got: e.code, msg: e.message }) }

@@ -1,9 +1,9 @@
-// 真实环境冒烟：打生产域名，走一遍 Ed25519 全链路 + 钱包存取。
+// 真实环境冒烟：打生产域名，走一遍「注册 → 登录 → 钱包存取」。
 //
 //   node test/smoke-live.mjs                       # 默认 https://api.colasprite.net
 //   node test/smoke-live.mjs --base http://127.0.0.1:8790
 //
-// ⚠️ 会在目标库创建/更新一个 display='自检脚本' 的账号，跑完自己打印清理命令。
+// ⚠️ 会在目标库创建一个随机用户名的账号（用户名带 'smoke' 前缀），跑完自己打印清理命令。
 //    （e2e.mjs 用内存库不污染，日常回归优先跑那个）
 
 import crypto from 'node:crypto'
@@ -30,28 +30,24 @@ async function call (method, path, { body, token } = {}) {
   return { status: r.status, body: j }
 }
 
-const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519')
-const pubB64 = publicKey.export({ type: 'spki', format: 'der' }).toString('base64')
-const sign = (m) => crypto.sign(null, Buffer.from(m), privateKey).toString('base64')
+const username = 'smoke' + crypto.randomBytes(4).toString('hex')
+const password = 'smoke-pass-' + crypto.randomBytes(4).toString('hex')
 
 console.log('目标:', BASE, '\n')
 
-const reg = await call('POST', '/api/v1/auth/register', { body: { pubkey: pubB64, display: '自检脚本' } })
-ok(reg.status === 200 && reg.body.created === true, '注册新账号 ' + reg.body.userId, reg.body)
+const reg = await call('POST', '/api/v1/auth/account/register', { body: { username, password } })
+ok(reg.status === 200 && !!reg.body.token, '注册新账号 ' + reg.body.userId, reg.body)
 const userId = reg.body.userId
 
-const c = await call('POST', '/api/v1/auth/challenge', { body: { userId } })
-ok(c.status === 200 && !!c.body.nonce, 'challenge 下发')
+const dup = await call('POST', '/api/v1/auth/account/register', { body: { username, password } })
+ok(dup.status === 409 && dup.body.code === 'username_taken', '同名重复注册 → 409')
 
-const wrong = await call('POST', '/api/v1/auth/verify', { body: { userId, nonce: c.body.nonce, signature: sign('bogus') } })
-ok(wrong.status === 401, '错误签名 → 401')
+const bad = await call('POST', '/api/v1/auth/login', { body: { username, password: 'wrong-password' } })
+ok(bad.status === 401 && bad.body.code === 'bad_credentials', '密码错误 → 401')
 
-const v = await call('POST', '/api/v1/auth/verify', { body: { userId, nonce: c.body.nonce, signature: sign(c.body.sign) } })
-ok(v.status === 200 && !!v.body.token, '验签成功拿到 token')
+const v = await call('POST', '/api/v1/auth/login', { body: { username, password } })
+ok(v.status === 200 && v.body.userId === userId, '口令登录回到同一账号')
 const token = v.body.token
-
-const replay = await call('POST', '/api/v1/auth/verify', { body: { userId, nonce: c.body.nonce, signature: sign(c.body.sign) } })
-ok(replay.status === 400 && replay.body.code === 'challenge_used', 'challenge 重放被拒')
 
 const me = await call('GET', '/api/v1/me', { token })
 ok(me.status === 200 && me.body.balance === 0, 'GET /me 余额 0')
@@ -69,5 +65,5 @@ const led = await call('GET', '/api/v1/wallet', { token })
 ok(led.body?.ledger?.length === 2 && led.body.balance === 300, '流水 2 条、余额 300', led.body)
 
 console.log(`\n=== ${pass} 通过, ${fails.length} 失败 ===`)
-console.log(`清理测试账号：在服务器上删除 user_id='${userId}' 的 accounts/wallets/sessions/challenges/ledger 行`)
+console.log(`清理测试账号：DELETE FROM accounts/saves/sessions/wallets/ledger WHERE user_id='${userId}'`)
 process.exit(fails.length ? 1 : 0)

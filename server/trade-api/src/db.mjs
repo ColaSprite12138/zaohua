@@ -1,6 +1,7 @@
 // 数据库层：node:sqlite（Node 22 内置，零依赖）
 // 设计要点：
-//   1. user_id 由公钥派生 —— 密钥即账号，换浏览器导入同一私钥就回到同一账号（无邮箱无密码）
+//   1. 账号只存 username / username_lc / password_hash —— 没有设备标识、没有公钥、
+//      没有 IP / UA / 指纹。sessions 只存随机 token 与过期时间。
 //   2. 所有余额变更都必须同时写 ledger，禁止裸 UPDATE wallets
 //   3. 金额一律用整数（最小单位），不用浮点
 
@@ -28,23 +29,85 @@ export function get () {
   return db
 }
 
-function migrate () {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      user_id     TEXT PRIMARY KEY,
-      display     TEXT NOT NULL,
-      pubkey      TEXT NOT NULL UNIQUE,
-      created_at  INTEGER NOT NULL,
-      banned      INTEGER NOT NULL DEFAULT 0
-    );
+// accounts 的 DDL 只写一份：新库直接建，老库靠它重建。
+// 一行账号 = user_id + 用户名 + 口令哈希 + 创建时间，仅此而已。
+// kind 是历史字段（曾有 'guest'），现在建号一律 'password'，保留只为兼容旧行的约束。
+const accountsDdl = (name, ifNotExists = false) => `
+  CREATE TABLE ${ifNotExists ? 'IF NOT EXISTS' : ''} ${name} (
+    user_id       TEXT PRIMARY KEY,
+    display       TEXT NOT NULL,
+    kind          TEXT NOT NULL DEFAULT 'password' CHECK (kind IN ('guest','password')),
+    username      TEXT,
+    username_lc   TEXT,
+    password_hash TEXT,
+    created_at    INTEGER NOT NULL,
+    banned        INTEGER NOT NULL DEFAULT 0,
+    -- 密码账号必须同时有用户名和口令哈希，游客两者都为空
+    CHECK (kind = 'guest' OR (username_lc IS NOT NULL AND password_hash IS NOT NULL))
+  );`
 
-    CREATE TABLE IF NOT EXISTS challenges (
-      nonce       TEXT PRIMARY KEY,
-      user_id     TEXT NOT NULL,
-      expires_at  INTEGER NOT NULL,
-      used        INTEGER NOT NULL DEFAULT 0
+function migrate () {
+  // 迁移期必须关外键：accounts 要整表重建（SQLite 不能删列/改约束），
+  // 而 wallets.user_id 引用它。重建完再 foreign_key_check 兜底。
+  db.exec('PRAGMA foreign_keys = OFF')
+  try {
+    migrateSchema()
+    const bad = db.prepare('PRAGMA foreign_key_check').all()
+    if (bad.length) throw new Error('迁移后外键校验失败：' + JSON.stringify(bad))
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON')
+  }
+}
+
+// 老库（只有 user_id/display/pubkey）→ 带用户名口令的账号表。
+// 老库里的 pubkey 列直接丢弃：**账号只认口令，设备公钥不再收**。
+function migrateAccountsLegacy () {
+  const cols = db.prepare("SELECT name FROM pragma_table_info('accounts')").all().map((r) => r.name)
+  if (!cols.length || cols.includes('kind')) return
+  console.log('[migrate] accounts 表结构升级（丢弃 pubkey 列）')
+  db.exec('PRAGMA legacy_alter_table = ON')
+  db.exec('DROP TABLE IF EXISTS accounts_v2')
+  db.exec(accountsDdl('accounts_v2'))
+  db.exec(`INSERT INTO accounts_v2 (user_id, display, kind, created_at, banned)
+           SELECT user_id, display, 'guest', created_at, banned FROM accounts;`)
+  db.exec('DROP TABLE accounts')
+  db.exec('ALTER TABLE accounts_v2 RENAME TO accounts')
+  db.exec('PRAGMA legacy_alter_table = OFF')
+}
+
+// 清掉已经废弃的两张表：device_keys（设备公钥）、challenges（签名 nonce）。
+// 留着它们等于「虽然不写，但历史数据还在」—— 用户明确要求设备相关数据一律不留。
+function dropLegacyAuthTables () {
+  const gone = []
+  for (const t of ['device_keys', 'challenges']) {
+    const has = db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name=?").get(t)
+    if (!has) continue
+    const n = db.prepare(`SELECT COUNT(*) AS c FROM ${t}`).get().c
+    db.exec(`DROP TABLE IF EXISTS ${t}`)
+    gone.push(`${t}(-${n})`)
+  }
+  if (gone.length) console.log('[migrate] 已删除废弃表：' + gone.join(' '))
+}
+
+function migrateSchema () {
+  migrateAccountsLegacy()
+  dropLegacyAuthTables()
+  db.exec(`
+    ${accountsDdl('accounts', true)}
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_username ON accounts(username_lc) WHERE username_lc IS NOT NULL;
+
+    -- 云存档：粒度 = (账号, 存档位)，与造化平台 (account, game, slot) 对齐（单游戏省掉 game 维度）
+    -- rev 是记录版本，用于乐观锁；造化那边 version 恒为 1，后写覆盖，这里补上
+    CREATE TABLE IF NOT EXISTS saves (
+      user_id    TEXT NOT NULL,
+      slot       TEXT NOT NULL,
+      rev        INTEGER NOT NULL DEFAULT 1,
+      payload    TEXT NOT NULL,
+      bytes      INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, slot)
     );
-    CREATE INDEX IF NOT EXISTS idx_challenges_user ON challenges(user_id);
 
     CREATE TABLE IF NOT EXISTS sessions (
       token       TEXT PRIMARY KEY,
@@ -141,6 +204,48 @@ function migrate () {
       created_at  INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_claims_user ON claims(user_id, claimed, id);
+
+    -- ========== 撮合（搜打撤 PVP） ==========
+    -- 我们自己的服务器只当「导演」：决定谁建房、谁加入、什么时候开。
+    -- 房间本身由玩家客户端在造化平台创建，我们从不碰房间的准入 token。
+    --
+    -- 一人同时只能有一张活票（queued/formed/ready/seated），用偏索引兜住，
+    -- 而不是靠应用层查一次再插 —— 并发下那是检查-使用竞态。
+    CREATE TABLE IF NOT EXISTS match_tickets (
+      id              TEXT PRIMARY KEY,
+      user_id         TEXT NOT NULL,
+      mode            TEXT NOT NULL,
+      ruleset         TEXT NOT NULL,      -- 构建 hash / 规则版本：不同版本不进同一局
+      state           TEXT NOT NULL,      -- queued | formed | ready | seated | left | done
+      match_id        TEXT,
+      role            TEXT,               -- host | guest；host 负责建房
+      seed            INTEGER,            -- 整局共用的随机种子，由服务端下发
+      requeues        INTEGER NOT NULL DEFAULT 0,  -- 被连累回队的次数
+      keep_waits      INTEGER NOT NULL DEFAULT 0,  -- 「继续等」按了几次
+      wait_started_at INTEGER NOT NULL,   -- 排队计时起点（「继续等」会重置它）
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_active
+      ON match_tickets(user_id) WHERE state IN ('queued','formed','ready','seated');
+    CREATE INDEX IF NOT EXISTS idx_ticket_queue
+      ON match_tickets(mode, ruleset, state, wait_started_at);
+    CREATE INDEX IF NOT EXISTS idx_ticket_match ON match_tickets(match_id);
+
+    CREATE TABLE IF NOT EXISTS matches (
+      id           TEXT PRIMARY KEY,
+      mode         TEXT NOT NULL,
+      ruleset      TEXT NOT NULL,
+      seed         INTEGER NOT NULL,
+      state        TEXT NOT NULL,        -- formed | ready | playing | closed
+      room_id      TEXT,                 -- host 回报的造化房间 id（只下发给本局成员）
+      room_code    TEXT,
+      deadline     INTEGER,              -- formed/ready 阶段的截止时刻；playing 后置空
+      created_at   INTEGER NOT NULL,
+      updated_at   INTEGER NOT NULL,
+      close_reason TEXT                -- cancelled | timeout | failed:xxx
+    );
+    CREATE INDEX IF NOT EXISTS idx_matches_state ON matches(state, deadline);
   `)
 }
 
@@ -185,12 +290,11 @@ export function recentLedger (userId, limit = 20) {
     .all(userId, limit)
 }
 
-// 定期清理过期数据，避免表无限长
+// 定期清理过期会话，避免表无限长
 export function sweep () {
   const now = Date.now()
   return tx((d) => {
-    const a = d.prepare('DELETE FROM challenges WHERE expires_at < ?').run(now)
     const b = d.prepare('DELETE FROM sessions WHERE expires_at < ?').run(now)
-    return Number(a.changes) + Number(b.changes)
+    return Number(b.changes)
   })
 }

@@ -1,11 +1,11 @@
 // 端到端自测：不起外部依赖，内嵌内存库 + 随机端口
 // 跑法：node test/e2e.mjs        失败即非 0 退出，可直接进 CI
 
-import crypto from 'node:crypto'
 import * as db from '../src/db.mjs'
 import * as auth from '../src/auth.mjs'
 import * as wallet from '../src/wallet.mjs'
 import * as market from '../src/market.mjs'
+import * as save from '../src/save.mjs'
 import { createApp, start } from '../src/http.mjs'
 
 let pass = 0
@@ -31,7 +31,7 @@ async function call (method, path, { body, token } = {}) {
 }
 
 db.open(':memory:')
-const server = await start({ port: 0, host: '127.0.0.1', handler: createApp({ db, auth, wallet, market }) })
+const server = await start({ port: 0, host: '127.0.0.1', handler: createApp({ db, auth, wallet, market, save }) })
 const BASE = `http://127.0.0.1:${server.address().port}`
 console.log('\n服务起在', BASE, '\n')
 
@@ -49,58 +49,59 @@ console.log('[1] 基础与 CORS')
 }
 
 // ---------- 2. 注册 ----------
-const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519')
-const pubB64 = publicKey.export({ type: 'spki', format: 'der' }).toString('base64')
-const sign = (msg) => crypto.sign(null, Buffer.from(msg), privateKey).toString('base64')
-let userId
+// 注册只认用户名和口令：请求体里没有公钥、签名、nonce、设备标识。
+let userId, token
 
 console.log('\n[2] 账号注册')
 {
-  const r = await call('POST', '/api/v1/auth/register', { body: { pubkey: pubB64, display: '测试旅者' } })
+  const r = await call('POST', '/api/v1/auth/account/register', {
+    body: { username: '测试旅者', password: 'test-pass-1234' }
+  })
   ok(r.status === 200 && r.body.ok, '注册成功')
-  ok(r.body.created === true, '首次注册 created=true')
-  ok(/^u[0-9a-f]{16}$/.test(r.body.userId), 'user_id 由公钥派生 (' + r.body.userId + ')')
+  ok(/^u[0-9a-f]{16}$/.test(r.body.userId), 'user_id 是随机 16 hex (' + r.body.userId + ')')
+  ok(r.body.token && r.body.token.length >= 40, '注册直接拿到 token')
+  ok(r.body.kind === 'password' && r.body.username === '测试旅者', '返回 kind/username')
   userId = r.body.userId
 
-  const again = await call('POST', '/api/v1/auth/register', { body: { pubkey: pubB64, display: '改名后' } })
-  ok(again.body.created === false && again.body.userId === userId, '同一公钥重复注册 → 同账号，created=false')
-
-  const { publicKey: otherPub } = crypto.generateKeyPairSync('ed25519')
-  const other = await call('POST', '/api/v1/auth/register', {
-    body: { pubkey: otherPub.export({ type: 'spki', format: 'der' }).toString('base64'), display: 'B' }
+  const again = await call('POST', '/api/v1/auth/account/register', {
+    body: { username: '测试旅者', password: 'another-pass-99' }
   })
-  ok(other.body.userId !== userId, '不同公钥 → 不同 user_id')
+  ok(again.status === 409 && again.body.code === 'username_taken', '同名注册 → 409')
 
-  const bad = await call('POST', '/api/v1/auth/register', { body: { pubkey: 'not-a-key' } })
-  ok(bad.status === 400 && bad.body.code === 'bad_pubkey', '非法公钥被拒')
+  const other = await call('POST', '/api/v1/auth/account/register', {
+    body: { username: '另一个人', password: 'test-pass-1234' }
+  })
+  ok(other.body.userId !== userId, '不同用户名 → 不同 user_id')
+
+  const bad = await call('POST', '/api/v1/auth/account/register', {
+    body: { username: 'a b', password: 'test-pass-1234' }
+  })
+  ok(bad.status === 400 && bad.body.code === 'bad_username', '非法用户名被拒')
+
+  const shortPw = await call('POST', '/api/v1/auth/account/register', {
+    body: { username: '短密码的人', password: '1234567' }
+  })
+  ok(shortPw.status === 400 && shortPw.body.code === 'bad_password', '密码不足 8 位被拒')
 }
 
-// ---------- 3. 签名登录 ----------
-console.log('\n[3] Ed25519 challenge-response')
-let token
+// ---------- 3. 口令登录 ----------
+console.log('\n[3] 口令登录')
 {
-  const c = await call('POST', '/api/v1/auth/challenge', { body: { userId } })
-  ok(c.status === 200 && c.body.nonce, '拿到 challenge')
-  ok(c.body.sign === 'colasprite-auth:v1:' + c.body.nonce, '待签串格式正确')
-
-  const wrong = await call('POST', '/api/v1/auth/verify', {
-    body: { userId, nonce: c.body.nonce, signature: sign('错的串') }
+  const wrong = await call('POST', '/api/v1/auth/login', {
+    body: { username: '测试旅者', password: 'wrong-password' }
   })
-  ok(wrong.status === 401 && wrong.body.code === 'bad_signature', '签错串 → 401')
+  ok(wrong.status === 401 && wrong.body.code === 'bad_credentials', '密码错误 → 401（不暴露账号是否存在）')
 
-  const v = await call('POST', '/api/v1/auth/verify', {
-    body: { userId, nonce: c.body.nonce, signature: sign(c.body.sign) }
+  const ghost = await call('POST', '/api/v1/auth/login', {
+    body: { username: '不存在的人', password: 'whatever-1234' }
   })
-  ok(v.status === 200 && v.body.token && v.body.token.length >= 40, '验签成功拿到 token')
+  ok(ghost.status === 401 && ghost.body.code === 'bad_credentials', '账号不存在 → 同样 401')
+
+  const v = await call('POST', '/api/v1/auth/login', {
+    body: { username: '测试旅者', password: 'test-pass-1234' }
+  })
+  ok(v.status === 200 && v.body.token && v.body.userId === userId, '登录成功回到同一账号')
   token = v.body.token
-
-  const replay = await call('POST', '/api/v1/auth/verify', {
-    body: { userId, nonce: c.body.nonce, signature: sign(c.body.sign) }
-  })
-  ok(replay.status === 400 && replay.body.code === 'challenge_used', '同一 nonce 重放被拒（防重放）')
-
-  const ghost = await call('POST', '/api/v1/auth/challenge', { body: { userId: 'u0000000000000000' } })
-  ok(ghost.status === 404 && ghost.body.code === 'no_account', '不存在的账号要 challenge → 404')
 
   const noTok = await call('GET', '/api/v1/me')
   ok(noTok.status === 401 && noTok.body.code === 'no_token', '无 token 访问 /me → 401')
@@ -114,7 +115,7 @@ console.log('\n[4] 托管钱包')
 {
   const me = await call('GET', '/api/v1/me', { token })
   ok(me.status === 200 && me.body.balance === 0, '新账号余额 0')
-  ok(me.body.display === '改名后', '显示名已被更新')
+  ok(me.body.display === '测试旅者' && me.body.username === '测试旅者', '显示名 = 用户名')
 
   const d1 = await call('POST', '/api/v1/wallet/deposit', { token, body: { amount: 100 } })
   ok(d1.status === 200 && d1.body.balance === 100, '存入 100 → 余额 100')
@@ -150,19 +151,10 @@ console.log('\n[4] 托管钱包')
 // ---------- 5. 事务与隔离 ----------
 console.log('\n[5] 一致性与隔离')
 {
-  const { publicKey: pk2, privateKey: sk2 } = crypto.generateKeyPairSync('ed25519')
-  const reg = await call('POST', '/api/v1/auth/register', {
-    body: { pubkey: pk2.export({ type: 'spki', format: 'der' }).toString('base64'), display: 'B' }
+  const reg = await call('POST', '/api/v1/auth/account/register', {
+    body: { username: '用户乙', password: 'test-pass-1234' }
   })
-  const c = await call('POST', '/api/v1/auth/challenge', { body: { userId: reg.body.userId } })
-  const v = await call('POST', '/api/v1/auth/verify', {
-    body: {
-      userId: reg.body.userId,
-      nonce: c.body.nonce,
-      signature: crypto.sign(null, Buffer.from(c.body.sign), sk2).toString('base64')
-    }
-  })
-  const bWallet = await call('GET', '/api/v1/wallet', { token: v.body.token })
+  const bWallet = await call('GET', '/api/v1/wallet', { token: reg.body.token })
   ok(bWallet.body.balance === 0, 'B 的钱包独立，看不到 A 的 40')
 
   // 直接验证 CHECK 约束：绕过 handler 强行写负余额必须失败
@@ -177,15 +169,10 @@ console.log('\n[5] 一致性与隔离')
 console.log('\n[6] 市场路由')
 {
   // 新用户 C，充 100
-  const { publicKey: pk3, privateKey: sk3 } = crypto.generateKeyPairSync('ed25519')
-  const reg = await call('POST', '/api/v1/auth/register', {
-    body: { pubkey: pk3.export({ type: 'spki', format: 'der' }).toString('base64'), display: 'C' }
+  const reg = await call('POST', '/api/v1/auth/account/register', {
+    body: { username: '用户丙', password: 'test-pass-1234' }
   })
-  const ch = await call('POST', '/api/v1/auth/challenge', { body: { userId: reg.body.userId } })
-  const vf = await call('POST', '/api/v1/auth/verify', {
-    body: { userId: reg.body.userId, nonce: ch.body.nonce, signature: crypto.sign(null, Buffer.from(ch.body.sign), sk3).toString('base64') }
-  })
-  const tokC = vf.body.token
+  const tokC = reg.body.token
   await call('POST', '/api/v1/wallet/deposit', { token: tokC, body: { amount: 100 } })
 
   const sell = await call('POST', '/api/v1/market/orders', { token, body: { side: 'sell', itemId: 'item:9001', price: 10, qty: 1 } })

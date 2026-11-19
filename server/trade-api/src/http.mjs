@@ -3,18 +3,18 @@
 // CORS 一律回 `*` —— 这是刻意选择，不是偷懒：
 //   造化宿主 origin 形如 `preview-mcpv3-<gameId>.zaohuaboxcdn.com`，里面嵌了 game_id，
 //   且预览域 ≠ 正式发布域。按 origin 配白名单，换环境/换 game_id 就挂。
-//   因为鉴权走 Authorization 头 + 签名，不用 cookie，`ACAO: *` 在这里完全安全
+//   因为鉴权走 Authorization 头（随机 token），不用 cookie，`ACAO: *` 在这里完全安全
 //   （绝不能同时加 Access-Control-Allow-Credentials: true，那会被浏览器拒绝）。
 
 import http from 'node:http'
 import { authenticate } from './auth.mjs'
 import { HttpError } from './errors.mjs'
 
-const MAX_BODY = 32 * 1024
+const MAX_BODY = 512 * 1024
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Authorization, Content-Type',
   'Access-Control-Max-Age': '86400'
 }
@@ -61,7 +61,7 @@ const int = (v, name, { min = 1, max = 1e9 } = {}) => {
   return n
 }
 
-export function createApp ({ db, auth, wallet, market }) {
+export function createApp ({ db, auth, wallet, market, save, match }) {
   const routes = []
   const add = (method, path, handler, needAuth = false) => {
     routes.push({ method, parts: path.split('/').filter(Boolean), handler, needAuth })
@@ -71,36 +71,53 @@ export function createApp ({ db, auth, wallet, market }) {
   add('GET', '/api/v1/health', () => ({
     ok: true,
     service: 'trade-api',
-    version: 2,
+    version: 3,
     now: new Date().toISOString(),
     uptimeSec: Math.round(process.uptime()),
     feeBp: market.FEE_BP,
-    limits: { wallet: wallet.limits, market: market.limits }
+    limits: { wallet: wallet.limits, market: market.limits, save: save.limitsInfo }
   }))
 
   // ---------- 账号 ----------
-  add('POST', '/api/v1/auth/register', async ({ body }) =>
-    auth.register({
-      pubkey: str(body.pubkey, 'pubkey', { min: 20, max: 400 }),
-      display: body.display
+  // 只有两条：注册与登录。都是「用户名 + 口令」，不收任何设备标识 / 签名 / 验证码。
+  add('POST', '/api/v1/auth/account/register', async ({ body }) =>
+    auth.accountRegister({
+      username: body.username,
+      password: body.password
     }))
 
-  add('POST', '/api/v1/auth/challenge', async ({ body }) =>
-    auth.issueChallenge(str(body.userId, 'userId', { min: 3, max: 40 })))
-
-  add('POST', '/api/v1/auth/verify', async ({ body }) =>
-    auth.verifyChallenge({
-      userId: str(body.userId, 'userId', { min: 3, max: 40 }),
-      nonce: str(body.nonce, 'nonce', { min: 10, max: 100 }),
-      signature: str(body.signature, 'signature', { min: 20, max: 400 })
+  add('POST', '/api/v1/auth/login', async ({ body, ip }) =>
+    auth.login({
+      username: body.username,
+      password: body.password,
+      ip
     }))
+
+  // ---------- 云存档 ----------
+  add('GET', '/api/v1/saves', async ({ user }) => ({
+    ok: true,
+    items: save.list(user.userId),
+    usage: save.usage(user.userId)
+  }), true)
+
+  add('GET', '/api/v1/save', async ({ user, url }) =>
+    save.getSlot(user.userId, url.searchParams.get('slot') || 'main'), true)
+
+  add('POST', '/api/v1/save', async ({ user, body }) =>
+    save.put(user.userId, body.slot, body.payload, body.baseRev), true)
+
+  add('DELETE', '/api/v1/save/:slot', async ({ user, params }) =>
+    save.remove(user.userId, params.slot), true)
 
   // ---------- 用户与钱包 ----------
   add('GET', '/api/v1/me', async ({ user }) => ({
     ok: true,
     userId: user.userId,
     display: user.display,
-    balance: wallet.balanceOf(user.userId)
+    kind: user.kind,
+    username: user.username,
+    balance: wallet.balanceOf(user.userId),
+    saves: save.usage(user.userId)
   }), true)
 
   add('GET', '/api/v1/wallet', async ({ user }) => ({
@@ -166,6 +183,58 @@ export function createApp ({ db, auth, wallet, market }) {
   add('POST', '/api/v1/market/claims/:id/claim', async ({ user, params }) =>
     market.claim(user.userId, int(params.id, 'id')), true)
 
+  // ---------- 撮合（搜打撤 PVP） ----------
+  // 这里只决定「谁建房、谁加入、什么时候开」，房间本身由客户端在造化平台创建。
+  add('GET', '/api/v1/match/stats', () => ({ ok: true, ...match.stats() }))
+
+  add('POST', '/api/v1/match/queue', async ({ user, body }) =>
+    match.enqueue({
+      userId: user.userId,
+      mode: body.mode,
+      ruleset: body.ruleset
+    }), true)
+
+  // 页面刷新后恢复现场：没有活票就回 null，不等同于错误
+  add('GET', '/api/v1/match/ticket', async ({ user }) => ({
+    ok: true,
+    ticket: match.currentTicket({ userId: user.userId })
+  }), true)
+
+  add('GET', '/api/v1/match/tickets/:id', async ({ user, params }) => ({
+    ok: true,
+    ticket: match.getTicket({ userId: user.userId, ticketId: params.id })
+  }), true)
+
+  add('POST', '/api/v1/match/tickets/:id/keep-waiting', async ({ user, params }) => ({
+    ok: true,
+    ticket: match.keepWaiting({ userId: user.userId, ticketId: params.id })
+  }), true)
+
+  add('POST', '/api/v1/match/tickets/:id/cancel', async ({ user, params }) => ({
+    ok: true,
+    ticket: match.cancel({ userId: user.userId, ticketId: params.id })
+  }), true)
+
+  add('POST', '/api/v1/match/:id/room', async ({ user, body, params }) => ({
+    ok: true,
+    ticket: match.reportRoom({
+      userId: user.userId,
+      matchId: params.id,
+      roomId: body.roomId,
+      roomCode: body.roomCode
+    })
+  }), true)
+
+  add('POST', '/api/v1/match/:id/seated', async ({ user, params }) => ({
+    ok: true,
+    ticket: match.reportSeated({ userId: user.userId, matchId: params.id })
+  }), true)
+
+  add('POST', '/api/v1/match/:id/abort', async ({ user, body, params }) => ({
+    ok: true,
+    ticket: match.abort({ userId: user.userId, matchId: params.id, reason: body.reason })
+  }), true)
+
   function matchRoute (method, pathname) {
     const parts = pathname.split('/').filter(Boolean)
     for (const r of routes) {
@@ -197,11 +266,15 @@ export function createApp ({ db, auth, wallet, market }) {
       const m = matchRoute(req.method, path)
       if (!m) throw new HttpError(404, 'not_found', `没有这个接口：${req.method} ${path}`)
 
+      // Caddy 反代在最前面，真实客户端 IP 只在 X-Forwarded-For 里
+      const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+        req.socket.remoteAddress || 'unknown'
+
       const user = m.route.needAuth ? authenticate(req) : null
       if (user) logUser = user.userId
 
       const body = req.method === 'POST' ? await readJson(req) : {}
-      const out = await m.route.handler({ req, body, user, url, params: m.params })
+      const out = await m.route.handler({ req, body, user, url, ip, params: m.params })
       sendJson(res, 200, { ok: true, ...out })
     } catch (e) {
       const isHttp = e instanceof HttpError
