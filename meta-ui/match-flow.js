@@ -279,6 +279,14 @@
           },
           onReconnected: function () { setStatus('房间连接已恢复'); },
           onError: function (err) { console.warn('[match] 房间错误', err); },
+          // 联机输入 relay：服务端把每个人的输入包按 tick 收在 state.inputs 里，
+          // 这里交给 net-bridge 挑出别人的、转给引擎 Worker。只有一处 subscribe，
+          // 免得第二次订阅把座位事件的回调覆盖掉。
+          onGameUpdate: function (state) {
+            if (host.net && typeof host.net.onGameUpdate === 'function') {
+              host.net.onGameUpdate(state);
+            }
+          },
         });
       } catch (err) {
         console.warn('[match] 订阅房间事件失败', err);
@@ -293,6 +301,8 @@
     S.roomSession = null;
     S.roomId = null;
     S.reportedSeated = false;
+    // 先断 relay：离开房间之后还往会话里 sendAction 只会攒一堆失败计数。
+    if (host.net && typeof host.net.detach === 'function') host.net.detach();
     if (!rs || typeof rs.disconnect !== 'function') return;
     try { rs.disconnect(); } catch (err) { console.warn('[match] 离开房间失败', err); }
   }
@@ -449,7 +459,20 @@
     // seed 由服务端在配对时生成，两端拿到同一个值 —— 帧同步的第一前提。
     host.netSeed = seed;
     var total = view && view.match && view.match.members ? view.match.members.length : 0;
-    setStatus('开局 · ' + total + ' 人 · seed ' + seed);
+
+    // 输入 relay 接线：把房间会话交给 net-bridge，之后引擎 Worker 的每一帧输入
+    // 才会走 sendAction 上去、再随状态广播下来。必须在点「出征」**之前**接，
+    // 因为 deploy 之后引擎就开始跑了，而 netSeat 要先于 deploy 到达 Worker。
+    var relayOn = false;
+    if (host.net && typeof host.net.attach === 'function') {
+      relayOn = host.net.attach(S.roomSession, view);
+    }
+    if (!relayOn && total > 1) {
+      // 有对手但接不上 relay：说出来，别让玩家以为「对面在隐身」。
+      setStatus('开局 · ' + total + ' 人 · seed ' + seed + ' · 输入未接通（看不到对方）', 'bad');
+    } else {
+      setStatus('开局 · ' + total + ' 人 · seed ' + seed + (relayOn ? ' · 输入已接通' : ''));
+    }
 
     // 复用「出征」那一条链路：带装备进本、切界面、BroadcastChannel deploy。
     // 不复制一份 deploy 逻辑 —— 复制就会有两套"死亡规则"。
@@ -581,6 +604,9 @@
     phase: function () { return S.phase; },
     view: function () { return S.ticket; },
     seed: function () { return host.netSeed; },
+    /** 联机会话本体。验收脚本用它读 getPlayerId / 房间号，只用不写。 */
+    session: function () { return S.roomSession; },
+    roomId: function () { return S.roomId; },
   };
 
   setStatus('');

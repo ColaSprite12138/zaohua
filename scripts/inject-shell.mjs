@@ -143,7 +143,7 @@ function buildBlock() {
     'meta-ui/auth-client.js',
     'meta-ui/save-client.js',
     'meta-ui/platform-store.js',
-    'meta-ui/shell.css', 'meta-ui/shell-bridge.js',
+    'meta-ui/shell.css', 'meta-ui/shell-bridge.js', 'meta-ui/net-bridge.js',
     'assets/resource/generated/item.ts',
     'assets/resource/generated/weapon.ts',
     'assets/resource/generated/treasure.ts',
@@ -195,6 +195,7 @@ ${markup}
 <script>${script}</script>
 <script>${read('meta-ui/platform-store.js')}</script>
 <script>${read('meta-ui/shell-bridge.js')}</script>
+<script>${read('meta-ui/net-bridge.js')}</script>
 <script>${read('meta-ui/match-flow.js')}</script>
 ${END}`;
 }

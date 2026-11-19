@@ -36,6 +36,26 @@ import { paint } from './paint.ts';
 import { HEAL_KEY, POTION_KEY, SKILL_KEYS } from '../shared/constants.ts';
 import { arena } from '../resource/maps/arena.generated.ts';
 import { testArena } from '../resource/maps/arena-test.ts';
+// 帧同步（P2）：固定步长 + 输入帧 + 等齐队列 + hash 对账。
+// 这些模块刻意不 import 任何引擎类型 —— 它们只是算数和数据结构，能在 node 里单测。
+import {
+  FIXED_DT, addTime, createStepClock, seekClock, takeStep,
+} from '../net/step-clock.ts';
+import {
+  NO_SKILL, NO_SWITCH, decodePacket, emptyInputFrame, encodeBatch,
+  toStepInput, type InputFrame,
+} from '../net/input-frame.ts';
+import {
+  capture as captureInput, createInputLatch, take as takeLatched,
+  type RawInput,
+} from '../net/input-latch.ts';
+import {
+  DEFAULT_LOCAL_DELAY, createLockstep, noteWait, pendingPeers,
+  pushLocal, pushRemote, retirePeer, runnableTick, take as takeLockstep,
+} from '../net/lockstep.ts';
+import { HASH_INTERVAL_TICKS, hashGameState } from '../net/state-hash.ts';
+import { createRemoteActor, findRemote, stepRemoteActor } from '../net/remote-actor.ts';
+import { decodeBase64, encodeBase64 } from '../net/base64.ts';
 
 const PACKAGE_ID = definePackageId('019fb7ce-3d00-7000-8000-000000000001');
 
@@ -159,6 +179,234 @@ export const game: Plugin = {
     let lastRunSignature = '';
     // 星图乘区：只在 deploy 时换一次（设计 6.4「局内不能换 build」）。
     let modifiers = createModifiers([]);
+    /* ---------------------- 帧同步状态（P2） ---------------------- */
+
+    /**
+     * 固定步长时钟。单机也用它 —— 这是「同一份输入 → 同一份结果」的地基，
+     * 而单机同样需要它：可变 dt 会让重放、回放、验收脚本全部不可复现。
+     */
+    const stepClock = createStepClock();
+    /** 一帧渲染采到的输入，按逻辑步分发（边沿只给第一个步）。 */
+    const latch = createInputLatch();
+    /** 联机中：input relay 已接上，tick 由 lockstep 决定。 */
+    let netActive = false;
+    /** 平台给的座号。服务端广播里的 playerId 与它必须一致。 */
+    let netPlayerId = '';
+    /** 锁步队列。单机时 localDelay = 0 且没有 peer，等价于不排队。 */
+    let lockstep = createLockstep({ localId: '', localDelay: 0 });
+    /** 在场 peer 与「服务端宣布过的离场」，两者重建 lockstep 的等待集合。 */
+    let netPeers = new Set<string>();
+    /** peer 的显示名（服务端 broadcast 里带过来），只用于头顶标签。 */
+    const netPeerNames = new Map<string, string>();
+    const netRetired = new Map<string, number>();
+    /** 还没打包发走的本地帧。攒 3 帧（50ms）发一次，与平台 20Hz 广播同频。 */
+    let netOutbox: InputFrame[] = [];
+    /** 联机诊断：主窗口的 `host.net.status()` 只读这些数，不重复计数。 */
+    const netStat = { ticks: 0, framesOut: 0, framesIn: 0, lateIn: 0, droppedOut: 0, hashes: 0 };
+
+    function rebuildPeers(): void {
+      lockstep.peers = new Set([...netPeers].filter((id) => id !== netPlayerId));
+      for (const [id, from] of netRetired) {
+        if (lockstep.peers.has(id)) lockstep.retired.set(id, from);
+      }
+      syncRemotes();
+    }
+
+    /**
+     * 让「看得见的影子角色」跟上参战名单：新来的人补一个，走了的人删掉。
+     * 位置只在首次创建时定（出生点 + 按 id 的固定偏移），之后完全由输入驱动 ——
+     * 两端算出来是同一个起点，所以不会出现「A 眼里 B 在左、B 眼里自己在右」。
+     */
+    function syncRemotes(): void {
+      if (!netActive) {
+        if (state.remotes.length > 0) state.remotes = [];
+        return;
+      }
+      const spawn = state.map.spawn;
+      const next: typeof state.remotes = [];
+      for (const id of lockstep.peers) {
+        if (lockstep.retired.has(id)) continue;
+        const existing = findRemote(state.remotes, id);
+        if (existing) {
+          existing.name = netPeerNames.get(id) || existing.name;
+          next.push(existing);
+          continue;
+        }
+        next.push(createRemoteActor(id, netPeerNames.get(id) || id.slice(0, 6), spawn, lockstep.tick));
+      }
+      state.remotes = next;
+    }
+
+    /**
+     * 座位/参战名单变化。开局（active=true 且之前不是联机）时重置整条时间轴：
+     * 联机局的 tick 必须从 0 起，两端才对得上 —— 一局一清。
+     */
+    function applySeat(msg: {
+      active?: boolean; playerId?: string; peers?: ({ id: string; name?: string } | string)[];
+    }): void {
+      if (msg.active !== true) {
+        netActive = false;
+        netPlayerId = '';
+        netPeers.clear();
+        netPeerNames.clear();
+        netRetired.clear();
+        netOutbox = [];
+        lockstep = createLockstep({ localId: '', localDelay: 0 });
+        state.remotes = [];
+        return;
+      }
+      const starting = !netActive;
+      netActive = true;
+      netPlayerId = msg.playerId || netPlayerId;
+      const list = Array.isArray(msg.peers) ? msg.peers : [];
+      netPeers = new Set<string>();
+      netPeerNames.clear();
+      for (const entry of list) {
+        const id = typeof entry === 'string' ? entry : entry?.id;
+        if (!id) continue;
+        netPeers.add(id);
+        if (typeof entry !== 'string' && entry.name) netPeerNames.set(id, entry.name);
+      }
+      if (starting) {
+        seekClock(stepClock, 0);
+        lockstep = createLockstep({ localId: netPlayerId, localDelay: DEFAULT_LOCAL_DELAY });
+        // 预热：本地帧提前 delay 个 tick 提交，所以开局这几格先用「无输入」占位，
+        // 否则第一个 tick 永远等不到自己的帧，整局卡死在 0。
+        for (let i = 0; i < DEFAULT_LOCAL_DELAY; i += 1) {
+          pushLocal(lockstep, emptyInputFrame(lockstep.tick + i));
+        }
+        netOutbox = [];
+        netStat.ticks = 0;
+        netStat.framesOut = 0;
+        netStat.framesIn = 0;
+        netStat.lateIn = 0;
+        netStat.droppedOut = 0;
+        netStat.hashes = 0;
+      }
+      rebuildPeers();
+    }
+
+    /** 收到远端输入包：base64 → 批量帧 → 锁步队列。迟到/重复由队列自己记账。 */
+    function applyRemotePackets(packets: { from: string; t: number; n: number; b: string }[]): void {
+      for (const packet of packets) {
+        const decoded = decodePacket(decodeBase64(packet.b));
+        if (decoded.kind !== 'batch') continue;
+        for (const frame of decoded.frames) {
+          const result = pushRemote(lockstep, packet.from, frame);
+          if (result === 'accepted') netStat.framesIn += 1;
+          else if (result === 'late') netStat.lateIn += 1;
+        }
+      }
+    }
+
+    function applyRetired(peers: { peerId: string; fromTick: number }[]): void {
+      for (const entry of peers) {
+        netRetired.set(entry.peerId, entry.fromTick);
+        retirePeer(lockstep, entry.peerId, entry.fromTick);
+      }
+    }
+
+    /** 每 60 tick 一次对账。单机只算不发（用来验证「同一 seed 两遍跑出同一个 hash」）。 */
+    function reportHash(tick: number): void {
+      if (tick <= 0 || tick % HASH_INTERVAL_TICKS !== 0) return;
+      const hash = hashGameState(state, tick);
+      netStat.hashes += 1;
+      channel?.postMessage({ type: 'netHash', tick, hash, active: netActive });
+    }
+
+    let netDiagAt = 0;
+    function publishNetDiag(now: number): void {
+      if (!netActive) return;
+      if (now - netDiagAt < 1000) return;
+      netDiagAt = now;
+      channel?.postMessage({
+        type: 'netStat',
+        stat: {
+          ...netStat,
+          tick: lockstep.tick,
+          waiting: noteWait(lockstep, now),
+          pending: pendingPeers(lockstep),
+          peers: [...lockstep.peers],
+          lateFrames: lockstep.lateFrames,
+          longestWaitMs: lockstep.longestWaitMs,
+        },
+      });
+    }
+
+    /**
+     * 单机推进：采一格走一格。与改造前的行为等价，唯一的差别是 `dt` 固定成
+     * 1/60 —— 这让同一份操作在任何帧率下跑出同一串位置，验收脚本才有意义。
+     */
+    function advanceSolo(delta: number): void {
+      addTime(stepClock, delta);
+      while (takeStep(stepClock)) {
+        const tick = stepClock.tick - 1;
+        const frame = takeLatched(latch, tick);
+        step(state, FIXED_DT, toStepInput(frame), modifiers);
+        if (frame.restart) {
+          lastResult = null;
+          resultSent = false;
+        }
+        reportHash(tick);
+      }
+    }
+
+    /**
+     * 联机推进：**等齐才走**。
+     *
+     * 三条不能动的顺序：
+     * 1. 先确认 acc 够一步、且 `runnableTick` 非空 —— 两者都满足才真的推进；
+     *    缺帧时既不推 tick 也不扣时间，否则恢复后永远追不回来，两端 tick 永久错位。
+     * 2. `takeLockstep()` 取出的本地帧是**三个 tick 前**采的：本地输入和远端走
+     *    同一条延迟队列，没有「我先动了再发」。
+     * 3. 每推进一步才采样下一个待提交 tick，保证「每 tick 恰好一个本地帧」，
+     *    与渲染帧率无关（144Hz 的机器也不会多发）。
+     */
+    function advanceLockstep(delta: number): void {
+      addTime(stepClock, delta);
+      for (;;) {
+        if (stepClock.acc + 1e-9 < FIXED_DT) break;
+        if (runnableTick(lockstep) === null) break;
+        const inputs = takeLockstep(lockstep);
+        if (!inputs) break;
+        takeStep(stepClock);
+        step(state, FIXED_DT, toStepInput(inputs.local), modifiers);
+        if (inputs.local.restart) {
+          lastResult = null;
+          resultSent = false;
+        }
+        // 远端影子：用对方的输入在**我这边**推一遍。两边算的是同一个公式，
+        // 所以 A 屏幕上 B 的走位 = B 自己屏幕上的走位（这也是 P3 的前置验证）。
+        for (const [peerId, frame] of inputs.remote) {
+          const actor = findRemote(state.remotes, peerId);
+          if (actor) stepRemoteActor(actor, frame, FIXED_DT);
+        }
+        reportHash(inputs.tick);
+        netStat.ticks += 1;
+        const frame = takeLatched(latch, lockstep.submitTick);
+        pushLocal(lockstep, frame);
+        netOutbox.push(frame);
+      }
+      flushOutbox();
+    }
+
+    /** 攒够 3 帧（50ms）发一次：与平台 20Hz 的状态广播同频，多发只是浪费。 */
+    function flushOutbox(): void {
+      if (!netActive) {
+        netOutbox.length = 0;
+        return;
+      }
+      if (netOutbox.length < 3) return;
+      const frames = netOutbox.splice(0, 16);
+      netStat.framesOut += frames.length;
+      channel?.postMessage({
+        type: 'netOut',
+        t: frames[0]!.tick,
+        n: frames.length,
+        b: encodeBase64(encodeBatch(frames)),
+      });
+    }
+
     let channel: BroadcastChannel | null = null;
     if (typeof BroadcastChannel !== 'undefined') {
       channel = new BroadcastChannel(RUN_CHANNEL);
@@ -168,6 +416,14 @@ export const game: Plugin = {
           deployment?: Deployment;
           command?: RunCommand;
           requestId?: number;
+          /** netSeat：联机座位/参战名单。 */
+          active?: boolean;
+          playerId?: string;
+          peers?: ({ id: string; name?: string } | string)[];
+          /** netIn：远端输入包（base64 的定长批量帧）。 */
+          packets?: { from: string; t: number; n: number; b: string }[];
+          /** netRetire：服务端宣布的离场。 */
+          gone?: { peerId: string; fromTick: number }[];
         } | null;
         if (!msg || typeof msg !== 'object') return;
         if (msg.type === 'deploy') {
@@ -178,6 +434,13 @@ export const game: Plugin = {
           setArena(state, arena);
           modifiers = createModifiers(msg.deployment?.stars?.nodes ?? []);
           deployRun(state, msg.deployment ?? {});
+          // 新的一局 = 新的时间轴（tick 从 0 起，hash 的「每 60 tick」才有一致的锚点）。
+          //
+          // 联机时**不**在这里归零：`netSeat` 已经归零并预热过队列，而且它一定
+          // 比 deploy 先到（同一个 BroadcastChannel 保序）。这里再归零会只清掉
+          // 墙钟时间、不清 lockstep.tick，两条时间轴当场错开。
+          if (!netActive) seekClock(stepClock, 0);
+          netOutbox = [];
           lastResult = null;
           resultSent = false;
           publishRunState(true);
@@ -196,11 +459,26 @@ export const game: Plugin = {
           state.runInventory = makeRunInventory(EMPTY_RUN);
           modifiers = createModifiers([]);
           reset(state);
+          seekClock(stepClock, 0);
           lastResult = null;
           resultSent = false;
           publishRunState(true);
         } else if (msg.type === 'hello') {
           channel?.postMessage({ type: 'ready' });
+        } else if (msg.type === 'netSeat') {
+          applySeat({ active: msg.active, playerId: msg.playerId, peers: msg.peers });
+        } else if (msg.type === 'netIn') {
+          if (Array.isArray(msg.packets)) applyRemotePackets(msg.packets);
+        } else if (msg.type === 'netRetire') {
+          if (Array.isArray(msg.gone)) applyRetired(msg.gone);
+        } else if (msg.type === 'netSeatRequest') {
+          // 主窗口刚起来 / 刚刷新时不知道 Worker 在不在等座位信息。
+          channel?.postMessage({
+            type: 'netSeat',
+            active: netActive,
+            playerId: netPlayerId,
+            peers: [...netPeers],
+          });
         } else if (msg.type === 'lock') {
           locked = true;
         } else if (msg.type === 'unlock') {
@@ -346,7 +624,10 @@ export const game: Plugin = {
           fn: () => {
             const snapshot = world.getResource<InputSnapshot>(INPUT_SNAPSHOT_RESOURCE_KEY);
             const raw = world.getResource(Time).delta;
-            const dt = Math.min(Math.max(raw, 0), 0.05);
+            // 渲染用的真实帧时长，只喂给绘制层的视觉插值。
+            // 模拟层拿到的永远是 FIXED_DT —— 这是 P2 的第一条改动，也是帧同步的前提：
+            // 60Hz 与 144Hz 的机器跑同一份输入，必须走出同一串位置。
+            const renderDt = Math.min(Math.max(raw, 0), 0.05);
             const reported = snapshot?.mouse?.position;
             if (reported) lastPointer = { x: reported.x, y: reported.y };
             // Sticky: reuse the last known position on frames that omit it.
@@ -390,39 +671,42 @@ export const game: Plugin = {
             );
             // Login overlay AND platform lifecycle pause: freeze simulation and
             // settlement, but keep painting so the canvas shows a live frame.
+            //
+            // 一帧渲染只**采集**一次输入，由锁存按逻辑步分发：边沿（按下/松手/
+            // 按键）只给这一帧的第一个步，持续态（指针位置、按住）保留给后续步。
+            // 不分发的话，一帧跑 3 步会把一次点击变成三连击。
+            captureInput(latch, {
+              mouse: worldMouse ? { x: worldMouse.x, y: worldMouse.y } : null,
+              pointerDown: !onHud && (mouse?.justPressed(0) ?? false),
+              pointerHeld: !onHud && (mouse?.button(0) ?? false),
+              pointerUp: !onHud && (mouse?.justReleased(0) ?? false),
+              dodge: snapshot?.keyboard?.justPressedCode('Space') ?? false,
+              // 主动技能（1..7 格）与蓝药：justPressed 才算，按住不会连发。
+              potion: snapshot?.keyboard?.justPressedCode(POTION_KEY) ?? false,
+              healPotion: snapshot?.keyboard?.justPressedCode(HEAL_KEY) ?? false,
+              // E = 起手 / 取消传送门引导（搜打撤的「撤」）。
+              extractChannel: snapshot?.keyboard?.justPressedCode('KeyE') ?? false,
+              restart,
+              skill: skillSlot >= 0 ? skillSlot : NO_SKILL,
+              switchWeapon: snapshot?.keyboard?.justPressedCode('Digit1') ?? false
+                ? 0
+                : (snapshot?.keyboard?.justPressedCode('Digit2') ?? false) ? 1 : NO_SWITCH,
+              // Hover feedback must not light up while the pointer sits on
+              // the read-only minimap / 大地图: those rectangles are not world space.
+              pointerOnHud: onHud,
+              // M = 大地图（设计 11）。
+              bigMap: snapshot?.keyboard?.justPressedCode('KeyM') ?? false,
+            });
+
             if (!locked && !paused) {
-              step(state, dt, {
-                mouse: worldMouse,
-                pointerDown: !onHud && (mouse?.justPressed(0) ?? false),
-                pointerHeld: !onHud && (mouse?.button(0) ?? false),
-                pointerUp: !onHud && (mouse?.justReleased(0) ?? false),
-                switchWeapon: snapshot?.keyboard?.justPressedCode('Digit1') ?? false
-                  ? 0
-                  : (snapshot?.keyboard?.justPressedCode('Digit2') ?? false) ? 1 : null,
-                dodge: snapshot?.keyboard?.justPressedCode('Space') ?? false,
-                // 主动技能（1..7 格）与蓝药：justPressed 才算，按住不会连发。
-                skill: skillSlot >= 0 ? skillSlot : null,
-                potion: snapshot?.keyboard?.justPressedCode(POTION_KEY) ?? false,
-                healPotion: snapshot?.keyboard?.justPressedCode(HEAL_KEY) ?? false,
-                // E = 起手 / 取消传送门引导（搜打撤的「撤」）。
-                extractChannel: snapshot?.keyboard?.justPressedCode('KeyE') ?? false,
-                restart,
-                // Hover feedback must not light up while the pointer sits on
-                // the read-only minimap / 大地图: those rectangles are not world space.
-                pointerOnHud: onHud,
-                // M = 大地图（设计 11）。
-                bigMap: snapshot?.keyboard?.justPressedCode('KeyM') ?? false,
-              }, modifiers);
-              // An in-run restart (R) starts a fresh settlement window.
-              if (restart) {
-                lastResult = null;
-                resultSent = false;
-              }
+              if (netActive) advanceLockstep(raw);
+              else advanceSolo(raw);
               // Pickups / weapon switches happen INSIDE this Worker now. Only
               // a changed snapshot is sent to the read-only character panel.
               publishRunState();
               settleIfFinished();
             }
+            publishNetDiag(Date.now());
             // Whole multiples only. A fractional ratio would make the 2D
             // rasteriser antialias the block edges -- exactly the softness this
             // change exists to remove. `ceil` (not `round`) because a 1.25x
@@ -438,7 +722,7 @@ export const game: Plugin = {
             painter.setTransform(surfaceScale, 0, 0, surfaceScale, 0, 0);
             // 状态图标的悬停提示要指针位置：传视图坐标（不是物理像素），
             // 否则 2x 渲染下会指到左上角去。
-            paint(painter, state, pointer ? { x: screenX, y: screenY } : undefined, dt);
+            paint(painter, state, pointer ? { x: screenX, y: screenY } : undefined, renderDt);
             texture.update();
             // Pointer feedback: the source realm cannot touch CSS, so tell the
             // main window which enemy (if any) is under the free cursor. Sent

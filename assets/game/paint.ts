@@ -58,6 +58,7 @@ import {
   type Skeleton,
 } from './simulation.ts';
 import { SKILL_KEYS, keyLabel } from '../shared/constants.ts';
+import type { RemoteActor } from '../net/remote-actor.ts';
 import { itemArtKey, itemDef } from '../meta/inventory.ts';
 import {
   atlasReady,
@@ -862,6 +863,34 @@ function drawWeaponArm(
  * 落在身体的另一侧，屏幕上应该被身体挡住 —— 此时手臂要先画。
  * 侧身（cos ≈ 0）时手在身体轮廓边缘，画在前面不会穿帮。
  */
+
+/**
+ * 联机的远端玩家（P2 影子角色）。
+ *
+ * 刻意比 `drawPlayer` 少很多东西：没有武器手臂、没有挥砍姿态、没有血条、
+ * 没有闪避残影。P2 只要玩家能看见「对面真的在动」，多画一样就多一处
+ * 需要跟 P3 的实体化对齐的地方。头顶名字用金色，一眼能和怪的白色名板分开。
+ */
+function drawRemoteActor(g: Painter, actor: RemoteActor): void {
+  const frame = Math.floor(actor.stride);
+  const bob = actor.moving && frame % 2 === 1 ? 1 : 0;
+  shadow(g, actor.x, actor.y + 2, 24, 9, 0.45);
+  drawBody(g, KNIGHT, actor.x, actor.y - bob, {
+    frame: actor.moving ? frame : 0,
+    face: actor.face,
+  });
+  const top = actor.y - bodyHeight(KNIGHT) - 12;
+  g.save();
+  g.font = '12px "Microsoft YaHei", "PingFang SC", sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'alphabetic';
+  g.lineWidth = 3;
+  g.strokeStyle = 'rgba(6, 10, 18, 0.88)';
+  g.strokeText(actor.name, actor.x, top);
+  g.fillStyle = '#f0b429';
+  g.fillText(actor.name, actor.x, top);
+  g.restore();
+}
 
 function drawPlayer(g: Painter, s: GameState): void {
   const p = s.player;
@@ -2408,6 +2437,12 @@ export function paint(
   for (const sk of s.skeletons) {
     if (!sees(sk.x, sk.y)) continue;        // 视野外的怪连模型都不建
     items.push({ y: sk.y, draw: () => drawSkeleton(g, s, sk) });
+  }
+  // 联机的远端玩家（P2 影子角色）：和怪、门、掉落共用同一套深度排序，
+  // 所以「站在他身后」与「站在他身前」的遮挡关系和真人一样。
+  for (const actor of s.remotes) {
+    if (!sees(actor.x, actor.y)) continue;
+    items.push({ y: actor.y, draw: () => drawRemoteActor(g, actor) });
   }
   // 传送门是「站在地上的建筑」：和角色共用一套深度排序，玩家走到门后会被门挡住。
   for (const portal of s.portals) {

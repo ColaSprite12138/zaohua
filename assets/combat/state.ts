@@ -25,6 +25,9 @@ import type { CombatModifiers } from './modifiers.ts';
 import type { Projectile } from './projectiles.ts';
 // 来源类型（`source.ts` 零依赖）：区域与持续性状态都必须记住「谁造成的」。
 import type { DamageSource } from './source.ts';
+// 联机的远端影子角色（P2）。`remote-actor.ts` 只依赖 `net/` 内部两个纯模块，
+// 不反向 import 这里，所以不会形成循环。
+import type { RemoteActor } from '../net/remote-actor.ts';
 import {
   cameraFor, makeWorld, nearestWalkable, type ArenaMap, type Vec, type World,
 } from './world.ts';
@@ -983,6 +986,14 @@ export interface GameState {
   skeletons: Skeleton[];
   drops: Drop[];
   /**
+   * 联机对局里的**远端玩家影子**（P2）。单机时是空数组。
+   *
+   * P2 只让它「看得见、走得动」：位置由对方的输入帧算出，纯派生量，
+   * 不进 `hashGameState()`。血量、攻击、互相伤害与结算都是 P3 的事 ——
+   * 那时它会变成 `GameState.players` 里的真实体。
+   */
+  remotes: RemoteActor[];
+  /**
    * The COMPLETE in-run inventory lives in this Worker's heap: bag + all ten
    * equipment slots, `stash` always empty. The main window holds a separate
    * lobby InventoryState; neither heap can read the other's object.
@@ -1111,6 +1122,7 @@ export function createState(config: RunConfig = {}): GameState {
     press: null,
     skeletons: [],
     drops: [],
+    remotes: [],
     // No run has been deployed yet: the acceptance fixture starts with a couple
     // of potions in the bag (real deploys replace this with the lobby's loadout).
     runInventory: seedFixturePotions(createInventoryState(0), POTION_COUNT, FIXTURE_HP_POTIONS),

@@ -382,6 +382,18 @@ export function projection(s: GameState) {
      * 断言「点 37° 就朝 37° 走」（而不是被 A* 量化到 0/45/90），只能读世界坐标。
      */
     playerWorld: { x: s.player.x, y: s.player.y },
+    /**
+     * 联机对局里的远端玩家（P2 影子角色）。单机恒为空数组。
+     * 世界坐标：验收脚本要断言「A 屏幕上 B 的位置 = B 自己的位置」，
+     * 而屏幕上量不出来（相机跟着自己走）。
+     */
+    remotes: s.remotes.map((actor) => ({
+      id: actor.id,
+      x: actor.x,
+      y: actor.y,
+      lastTick: actor.lastTick,
+      moving: actor.moving,
+    })),
     moveMode: s.moveMode,
     followingPointer: s.moveMode === 'follow',
     target: { x: targetScreen.x / VIEW_W, y: targetScreen.y / VIEW_H },
