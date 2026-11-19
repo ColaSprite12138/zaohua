@@ -4,6 +4,6 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "pnpm exec esbuild source/index.ts --bundle --platform=node --format=esm --outfile=dist/index.js"
+    "build": "node ../../scripts/build-server.mjs"
   }
 }

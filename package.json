@@ -14,7 +14,7 @@
     "doctor": "forgeax project check",
     "test": "forgeax project test",
     "typecheck": "pnpm exec tsc --noEmit",
-    "build:server": "pnpm --dir game/server run build"
+    "build:server": "node scripts/build-server.mjs"
   },
   "forgeax": {
     "metrics": {
