@@ -420,7 +420,11 @@
 `verify-all.sh` 把壳层注入 + 单页验收放在**全流程最后一步**：`build` / `play` / `package`
 **都会重建 `dist/`**，只在 build 后注入会被后面的 `package` 冲掉，4174 又变回无壳层页面。
 
-`pnpm` 不在本机 PATH，一律用本地 shim：`./node_modules/.bin/forgeax`、`./node_modules/.bin/tsc`。
+`pnpm` 现在是 **corepack shim**（2026-11-20 修好）：按工程 `packageManager` 解析版本，
+本工程 = **12.15.0**，store 落在 `D:\.pnpm-store\v11`，与 `node_modules` 的安装者一致，
+`pnpm build` / `pnpm exec` 可以直接用。**不要**再手工 `npm i -g pnpm@<别的版本>` 覆盖它
+（那会把大版本换掉，store 目录跟着换，下一次任何 pnpm 命令都会死在重建判定上，见「已知陷阱速查」）。
+不走 pnpm 时本地 shim 仍然可用：`./node_modules/.bin/forgeax`、`./node_modules/.bin/tsc`。
 `build` / `package` 需要 `CODEBUDDY_SAFE_DELETE_ENABLED=0`（Vite 安全删除在本环境会拦）。
 
 ```bash
@@ -553,6 +557,7 @@ talent 22（talent 15 + starmap-data 7）、resource 17（tables 9 + map 8）、
 | 背包已满但战利品凭空消失 / 出现在仓库 | 满仓时 `addToBag()` 返回 `null`、掉落物留在地上；`findFirstFit()`（bag→stash）只在**结算**时用，别在拾取时调用 |
 | 大视口四象限点地面被判成点敌人 | 骷髅会追过来；移动类验收步骤前按 R 隔离 |
 | `pnpm: command not found` / build 被拦 | 用 `./node_modules/.bin/*`；build / package 带 `CODEBUDDY_SAFE_DELETE_ENABLED=0`（**手动单跑 `project play` 也要带**，截图要删旧产物，超过 50 个文件会触发安全删除的批量确认） |
+| `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`：任何 pnpm 命令都秒退，连 `pnpm exec node -v` 都跑不了 | PATH 上的 pnpm **大版本** ≠ 装 `node_modules` 的那个 pnpm。pnpm 的 store 按大版本分目录（10→`store/v10`，12→`store/v11`），store 对不上就判定"必须整目录重建"；非交互环境没有 TTY 可确认，直接 abort，脚本一行都没执行。**根治**：`corepack enable pnpm`（已做，之后按工程 `packageManager` 解析版本）。**禁止**用 `CI=true` 或 `confirmModulesPurge=false` 放行 —— 那会真把 `node_modules` 删掉重装 |
 | 静态托管造化产物 → 页面白屏/转圈 | 那是给宿主用的单页，只拉 `index.html + zaohua-platform-init.js` 就停住。要静态托管就用 `dist/` + `inject-shell.mjs`（走 hostless 分支） |
 | `play.screenshot` 拍不到 0.3 秒的特效 | 截图从调用到成像有 **1~2 秒游戏时间延迟**。短特效要么配地面残留（`sweepMark` / `frostMark`，3.2s），要么只靠单测断言，别指望截图 |
 | HUD 贴着画布底边写字被切一半 | 1280×600 下引擎可见区只到逻辑 y≈704（底部约 16 逻辑像素被吃掉）。底部元素一律按 `paint.ts::HUD_BOTTOM` 留白，别用 `VIEW_H - 个位数` |
