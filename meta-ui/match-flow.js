@@ -264,34 +264,58 @@
 
   /* ------------------------------ 房间 -------------------------------- */
 
+  /**
+   * 房间事件回调。
+   *
+   * **每次连接之后都要重设一次**（`bindRoomEvents`）：平台的会话在
+   * `createRoom` / `joinRoom` 时会重建底层连接，只在构造后订阅一次的话，
+   * `onGameUpdate` 会静默失效 —— 2026-11-20 实测过一次：两边都 active、
+   * `sends > 0`，但 `updates === 0`，输入上去了、一个包都没下来。
+   * 用 `setEvents`（整体替换）而不是 `subscribeEvents`（追加），避免重绑后
+   * 同一份回调被调用两次。
+   */
+  function roomEvents() {
+    return {
+      onDisconnected: function (info) {
+        console.warn('[match] 房间连接断开', info);
+        setStatus('房间连接断开，正在恢复…', 'bad');
+      },
+      onReconnected: function () { setStatus('房间连接已恢复'); },
+      onError: function (err) { console.warn('[match] 房间错误', err); },
+      onGameLoading: function () { setStatus('房间正在准备对局…'); },
+      // `game_init` 带的是 sequence 0 的完整状态，与 `game_update` 同构。
+      // 只接 update 的话，开局那一瞬间的名单/输入会被漏掉。
+      onGameInit: function (state) {
+        if (host.net && typeof host.net.onGameUpdate === 'function') {
+          host.net.onGameUpdate(state);
+        }
+      },
+      // 联机输入 relay：服务端把每个人的输入包按 tick 收在 state.inputs 里，
+      // 这里交给 net-bridge 挑出别人的、转给引擎 Worker。
+      onGameUpdate: function (state) {
+        if (host.net && typeof host.net.onGameUpdate === 'function') {
+          host.net.onGameUpdate(state);
+        }
+      },
+    };
+  }
+
+  function bindRoomEvents(rs) {
+    if (!rs) return;
+    try {
+      if (typeof rs.setEvents === 'function') rs.setEvents(roomEvents());
+      else if (typeof rs.subscribeEvents === 'function') rs.subscribeEvents(roomEvents());
+    } catch (err) {
+      console.warn('[match] 订阅房间事件失败', err);
+    }
+  }
+
   function roomSession() {
     if (S.roomSession) return S.roomSession;
     var p = platform();
     if (!p) return null;
     var rs = p.stateSync.createOnlineClient({ minPlayersToStart: 2 });
-    // 座位变化只用于日志/诊断：真正的"谁入座了"以撮合服务端的报座记录为准。
-    if (rs && typeof rs.subscribeEvents === 'function') {
-      try {
-        rs.subscribeEvents({
-          onDisconnected: function (info) {
-            console.warn('[match] 房间连接断开', info);
-            setStatus('房间连接断开，正在恢复…', 'bad');
-          },
-          onReconnected: function () { setStatus('房间连接已恢复'); },
-          onError: function (err) { console.warn('[match] 房间错误', err); },
-          // 联机输入 relay：服务端把每个人的输入包按 tick 收在 state.inputs 里，
-          // 这里交给 net-bridge 挑出别人的、转给引擎 Worker。只有一处 subscribe，
-          // 免得第二次订阅把座位事件的回调覆盖掉。
-          onGameUpdate: function (state) {
-            if (host.net && typeof host.net.onGameUpdate === 'function') {
-              host.net.onGameUpdate(state);
-            }
-          },
-        });
-      } catch (err) {
-        console.warn('[match] 订阅房间事件失败', err);
-      }
-    }
+    bindRoomEvents(rs);
     S.roomSession = rs;
     return rs;
   }
@@ -338,6 +362,8 @@
       }
       S.roomId = (out && out.roomId) || rs.roomId || '';
       if (!S.roomId) throw new Error('建房成功但没拿到房间号');
+      // 建连之后重设一次：平台在 createRoom 里可能重建了连接与 handlers。
+      bindRoomEvents(rs);
       await S.client.reportRoom(matchId, { roomId: S.roomId });
       setStatus('房间已建好 · 等对方加入');
     } catch (err) {
@@ -365,6 +391,7 @@
       if (rs.roomId && rs.roomId !== roomId) leaveRoom();
       await rs.joinRoom(roomId, { playerName: displayName() });
       S.roomId = roomId;
+      bindRoomEvents(rs);
       setStatus('已进房 · 正在报座');
     } catch (err) {
       var seat = recoverSeat(err);

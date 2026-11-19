@@ -29,8 +29,15 @@ import { createPlatformStateSyncRuntime } from '@vibegame/state-sync-runtime/ser
 /** 规则集版本闸：数值表 / 技能 / 怪物表一变就要递增，否则新旧客户端会被配进同一局。 */
 const RULESET_EXTRACT = 'extract-v1'
 
-/** 保留最近多少个 tick 的输入包。300ms 足够覆盖一个广播周期 + 网络抖动。 */
-const INPUT_WINDOW_TICKS = 6
+/**
+ * 保留最近多少个**输入包**的 tick 桶（key = 包的第一帧 tick）。
+ *
+ * 客户端每 3 帧（50ms）发一包，服务端 50ms tick 一次；主窗口的状态轮询是
+ * 120ms，再叠加网络抖动，6 个桶（约 300ms）会被新包挤掉旧包 —— 客户端还没
+ * 读到就被 prune，锁步就是「永远在等对方」。24 个桶 ≈ 1.2s，够覆盖一次
+ * 轮询 + 一次广播重发。P4 做增量 ack 之后可以再收窄。
+ */
+const INPUT_WINDOW_TICKS = 24
 
 /** 单个输入包最多多少帧（客户端按 20Hz 发，一批 3~4 帧；给突发留余量）。 */
 const MAX_FRAMES_PER_PACKET = 16
@@ -131,19 +138,43 @@ function readHash(input: unknown): HashReport | null {
 
 function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void }) {
   const state = emptyState(players)
-  /** 这一轮有没有新东西要广播。state-sync runtime 靠它决定要不要推。 */
-  let dirty = false
+
+  /**
+   * 每次都给一份**新对象**。返回同一个可变 `state` 引用时，runtime 若按
+   * 引用/序列化结果判断「这轮有没有变化」，会永远认为没变、一次都不广播
+   * （实测客户端只收到 game_init，之后静默）。serverTick 每轮递增，
+   * 快照天然是新的。独立函数而不是 `this.getState()`：runtime 可能把方法
+   * 解构出来单独调用，`this` 会丢。
+   */
+  function snapshot() {
+    return {
+      ...state,
+      players: state.players.map((player) => ({ ...player })),
+      inputs: { ...state.inputs },
+      hashes: { ...state.hashes },
+      departed: { ...state.departed },
+      stats: { ...state.stats },
+    };
+  }
 
   return {
     start() {
       match?.reportLoading?.()
     },
     stop() {},
+    /**
+     * **返回 true = 本局结束**（platform runtime 会立刻广播 `game_over` 并停掉
+     * tick 循环），不是「这轮有变化要广播」。2026-11-20 真宿主实测：把它改成
+     * 恒 true 之后，事件序列变成 `game_init → game_update → game_over`，
+     * 之后服务端不再推任何状态、客户端所有 sendAction 都落进已结束的房间。
+     *
+     * relay 自己永远不会判定对局结束（结算在客户端），所以恒 false。
+     * 广播由 runtime 每轮取 `getDelta()` 完成 —— 让快照每轮都是新对象即可，
+     * 与这里的返回值无关。
+     */
     tick() {
       state.serverTick += 1
-      if (!dirty) return false
-      dirty = false
-      return true
+      return false
     },
     /**
      * 客户端上行入口（`session.sendAction(payload)`）。
@@ -163,7 +194,6 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
         state.stats.packets += 1
         state.stats.frames += packet.n
         pruneInputs(state)
-        dirty = true
         return
       }
 
@@ -187,7 +217,6 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
             }
           }
         }
-        dirty = true
         return
       }
 
@@ -206,22 +235,24 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
       state.departed[playerId] = lastSeen + 1
       state.stats.retired += 1
       delete state.hashes[playerId]
-      dirty = true
     },
     addPlayer(player: RelayPlayer) {
       if (state.players.some((entry) => entry.id === player.id)) return
       state.players.push({ id: player.id, name: player.name })
       delete state.departed[player.id]
-      dirty = true
     },
     getPlayerCount() {
       return state.players.length
     },
+    /**
+     * 每轮递增的 serverTick 让快照天然是「新的」，runtime 无论按引用还是按
+     * 序列化结果比较，都会认为有变化并广播 game_update。
+     */
     getState() {
-      return state
+      return snapshot();
     },
     getDelta() {
-      return state
+      return snapshot();
     },
     getResult() {
       return {

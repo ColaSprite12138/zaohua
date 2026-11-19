@@ -37,6 +37,18 @@
     divergedTick: -1,
     /** Worker 每秒推一次的锁步诊断（tick / 在等谁 / 迟到帧数）。 */
     lastStat: null,
+    /** 兜底轮询的上一次 state 签名（不变就跳过）。 */
+    lastSignature: '',
+    pollTimer: null,
+    /** 开局握手看门狗：平台只认房主那一次 startGame，晚了/早了都得补。 */
+    startTimer: null,
+    startRetries: 0,
+    /** 会话底层事件的退订函数（detach 时不能留着往死会话里灌包）。 */
+    rawUnsubs: [],
+    /** 会话底层 room 最近收到的事件（只看事件名，不存内容，纯诊断）。 */
+    roomEvents: [],
+    /** 诊断：会话自带 state 的字段名，验收脚本据此判断轮询是不是有效。 */
+    sessionStateKeys: [],
     stats: { sends: 0, packetsIn: 0, errors: 0, updates: 0, seats: 0 },
   };
 
@@ -105,9 +117,17 @@
    * 去重是必须的：服务端保留最近 6 个 tick 的包，同一批会被广播好几次。
    * 不过滤的话 Worker 侧会把它们全当迟到帧计数，真问题就被埋在噪声里了。
    */
-  function onGameUpdate(state) {
-    if (!S.active || !state || typeof state !== 'object') return;
+  function onGameUpdate(raw) {
+    if (!S.active || !raw || typeof raw !== 'object') return;
+    // 不同宿主对 game_update 的包装不一致：有的直接给 game state，有的包一层
+    // `{ type, seq, state }`。两种都认，诊断里能看出解了哪一层。
+    var state = raw;
+    var wrapped = raw.state && typeof raw.state === 'object'
+      && !raw.inputs && !Array.isArray(raw.players);
+    if (wrapped) state = raw.state;
     S.stats.updates += 1;
+    S.sessionStateKeys = (wrapped ? ['(wrapped)'] : [])
+      .concat(Object.keys(raw)).concat(wrapped ? Object.keys(state) : []).slice(0, 24);
 
     var players = Array.isArray(state.players) ? state.players : [];
     var peers = [];
@@ -181,6 +201,93 @@
 
   /* ------------------------------ 生命周期 ----------------------------- */
 
+  /* ---------------------------- 开局握手 ------------------------------- */
+
+  /** 从会话现算参战名单，不依赖事件推送的时机。 */
+  function peersFromSession() {
+    var list = [];
+    if (!S.session) return list;
+    var st = S.session.state;
+    var players = (st && Array.isArray(st.players)) ? st.players
+      : (Array.isArray(S.session.players) ? S.session.players : []);
+    for (var i = 0; i < players.length; i += 1) {
+      var p = players[i];
+      var id = p && (p.id || p.playerId);
+      if (!id || id === S.playerId) continue;
+      list.push({ id: id, name: p.name || p.displayName || '' });
+    }
+    return list;
+  }
+
+  /** 服务端 state 的只读摘要：验收时用来回答「输入到底上去了没有」。 */
+  function sessionSnapshot() {
+    var st = S.active && S.session ? S.session.state : null;
+    if (!st || typeof st !== 'object') return null;
+    var ticks = Object.keys(st.inputs || {}).sort(function (a, b) { return Number(a) - Number(b); });
+    var recent = [];
+    for (var i = Math.max(0, ticks.length - 3); i < ticks.length; i += 1) {
+      recent.push({ t: ticks[i], pids: Object.keys(st.inputs[ticks[i]]) });
+    }
+    return {
+      serverTick: st.serverTick,
+      stats: st.stats || null,
+      inputTicks: ticks.length,
+      recent: recent,
+    };
+  }
+
+  /**
+   * 平台 runtime 只有在**房主**调用 `startGame()` 之后才会 `createGame`、
+   * 进入 `playing`、开始 50ms 的 `tick()` 并广播 `game_init` / `game_update`。
+   * P1 只做了 createRoom/joinRoom/reportSeated，从没调过它 —— 于是服务端
+   * 一直停在 `waiting`，`sendAction` 上去了却没有 game 实例接收，两边
+   * `updates === 0`。这是 P2 第一次双人验收失败的真正原因。
+   *
+   * 非房主调用会被平台忽略；判断一次能少一堆无意义的 game_loading。
+   */
+  function isRoomOwner() {
+    if (!S.session) return false;
+    if (typeof S.session.isRoomOwner === 'function') {
+      try { if (S.session.isRoomOwner()) return true; } catch (err) { /* 落到 isHost */ }
+    }
+    return S.session.isHost === true;
+  }
+
+  function tryStartGame() {
+    if (!S.session || typeof S.session.startGame !== 'function') return;
+    if (!isRoomOwner()) return;
+    try {
+      S.session.startGame();
+    } catch (err) {
+      // 已经开过、或人数还没到 minPlayersToStart：都不是致命错误，
+      // 看门狗会在下一轮再试一次。
+      console.warn('[net] startGame 未被接受', err);
+    }
+  }
+
+  /**
+   * 兜底轮询：`session.state` 是会话自己维护的那份服务端快照
+   * （真宿主探针确认它就在 client 的 own properties 里）。
+   *
+   * 为什么要它：平台事件（`onGameUpdate`）在真宿主里不一定推送。轮询同一份
+   * `session.state` 不依赖事件，只是多花 300ms 一次的比较；事件通了的时候
+   * 它什么都不会多做（签名没变就跳过）。
+   */
+  function pollSession() {
+    if (!S.active || !S.session) return;
+    var state = S.session.state;
+    if (!state || typeof state !== 'object') return;
+    var inputs = state.inputs || {};
+    var players = Array.isArray(state.players) ? state.players.length : 0;
+    var keys = Object.keys(inputs);
+    var lastTick = keys.length > 0 ? keys[keys.length - 1] : 0;
+    var signature = players + ':' + keys.length + ':' + lastTick + ':'
+      + (state.serverTick || 0) + ':' + (state.stats ? state.stats.packets : 0);
+    if (signature === S.lastSignature) return;
+    S.lastSignature = signature;
+    onGameUpdate(state);
+  }
+
   /**
    * 开局时由 match-flow 调用。`session` 是 platform 的在线房间会话。
    * 返回 false 表示这套环境拿不到联机会话（本地静态预览）—— 调用方据此
@@ -194,17 +301,72 @@
     S.session = session;
     S.playerId = typeof session.getPlayerId === 'function' ? (session.getPlayerId() || '') : '';
     S.active = true;
-    S.peers = [];
+    // 第一条 netSeat 就得带名单：Worker 只有看到 peers 才认为「入座完成」并
+    // 开始推进。发一条空的、之后再补，会让 Worker 在空名单下把联机当单机狂跑，
+    // 另一个人永远等不到它的 tick 0（2026-11-20 双人验收实测：B 跑到 732、
+    // A 卡在 0）。
+    S.peers = peersFromSession();
     S.seen = {};
     S.retired = {};
     S.divergedTick = -1;
+    S.lastSignature = '';
+    S.sessionStateKeys = [];
+    S.roomEvents = [];
+    S.startRetries = 0;
+    for (var u = 0; u < S.rawUnsubs.length; u += 1) {
+      try { S.rawUnsubs[u](); } catch (err) { /* 已失效 */ }
+    }
+    S.rawUnsubs = [];
+    if (S.startTimer) {
+      clearTimeout(S.startTimer);
+      S.startTimer = null;
+    }
+    // 顺序不能反：必须先进 `playing`，引擎才开始发输入。否则第一批
+    // sendAction 落在还没有 game 实例的房间上，会被静默丢掉。
+    tryStartGame();
+    // 第三层保险：直接听会话的底层信号。`subscribeEvents` 的 handlers 在
+    // createRoom/joinRoom 重建连接后可能失效，而 `session.state` 若只是快照
+    // 也不会自己更新。底层 `on()` 不依赖这两者。事件名在不同构建里有
+    // game_update / game_updated 两种，都挂上，靠 S.seen 去重挡重复投递。
+    if (typeof session.on === 'function') {
+      ['game_init', 'game_initialized', 'game_update', 'game_updated'].forEach(function (type) {
+        try {
+          var off = session.on(type, function (payload) { onGameUpdate(payload); });
+          if (typeof off === 'function') S.rawUnsubs.push(off);
+        } catch (err) { /* 这个构建没这个事件名 */ }
+      });
+    }
+    // 记录平台底层 room 到底下发了哪些事件。上面几层都过滤过一遍，
+    // 只有这一层能看到「服务端其实什么都没发」这种根因。
+    if (session.room && typeof session.room.on === 'function') {
+      ['welcome', 'room_update', 'game_loading', 'game_init', 'game_update',
+        'game_over', 'error', 'disconnected'].forEach(function (type) {
+        try {
+          var off2 = session.room.on(type, function (payload) {
+            S.roomEvents.push({
+              t: type,
+              keys: payload && typeof payload === 'object' ? Object.keys(payload).slice(0, 8) : [],
+            });
+            if (S.roomEvents.length > 40) S.roomEvents.shift();
+          });
+          if (typeof off2 === 'function') S.rawUnsubs.push(off2);
+        } catch (err) { /* 忽略 */ }
+      });
+    }
+    // 座位消息必须先发、且必须带完整名单，再开始轮询。反过来（先轮询后发）
+    // 会让轮询里那条带名单的 netSeat 被这条空的覆盖掉。
     post({
       type: 'netSeat',
       active: true,
       playerId: S.playerId,
-      peers: [],
+      peers: S.peers,
       members: view && view.match && view.match.members ? view.match.members.length : 0,
     });
+    if (S.pollTimer) clearInterval(S.pollTimer);
+    S.pollTimer = setInterval(pollSession, 120);
+    pollSession();
+    // 不再重试 startGame：每次调用都会让服务端重跑一次 createGame / game_init，
+    // 把刚建立的时间轴打散。房主在双方 seated 之后只调一次就够了。
     return true;
   }
 
@@ -214,6 +376,20 @@
     S.peers = [];
     S.seen = {};
     S.retired = {};
+    S.lastSignature = '';
+    S.sessionStateKeys = [];
+    for (var u = 0; u < S.rawUnsubs.length; u += 1) {
+      try { S.rawUnsubs[u](); } catch (err) { /* 已失效 */ }
+    }
+    S.rawUnsubs = [];
+    if (S.pollTimer) {
+      clearInterval(S.pollTimer);
+      S.pollTimer = null;
+    }
+    if (S.startTimer) {
+      clearTimeout(S.startTimer);
+      S.startTimer = null;
+    }
     post({ type: 'netSeat', active: false, playerId: '', peers: [] });
   }
 
@@ -230,6 +406,31 @@
       seats: S.stats.seats,
       divergedTick: S.divergedTick,
       engine: S.lastStat,
+      /** 诊断：开局握手补了几次、会话 state 里到底有没有 inputs。 */
+      startRetries: S.startRetries,
+      sessionStateKeys: S.sessionStateKeys.slice(),
+      isRoomOwner: isRoomOwner(),
+      /** 服务端 state 摘要：看得到 inputs 里到底是谁的、哪些 tick 的包。 */
+      session: sessionSnapshot(),
+      /** 底层连接是否真的存在、平台实际下发过哪些事件。 */
+      room: (function () {
+        var s = S.session;
+        if (!s) return null;
+        var r = s.room;
+        return {
+          hasRoom: Boolean(r),
+          roomKeys: r ? Object.keys(r).slice(0, 16) : [],
+          roomId: s.roomId || '',
+          isReady: Boolean(s.isReady),
+          isHost: Boolean(s.isHost),
+          players: (s.players || []).map(function (p) {
+            return { id: p.id, isMe: Boolean(p.isMe), isHost: Boolean(p.isHost) };
+          }),
+          sendActionSrc: r && typeof r.sendAction === 'function'
+            ? String(r.sendAction).slice(0, 300) : null,
+          events: S.roomEvents.slice(-12),
+        };
+      })(),
     };
   }
 
