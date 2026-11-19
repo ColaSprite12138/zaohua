@@ -1,15 +1,19 @@
 /**
  * 输入锁存：把「一次渲染帧的输入」正确分给「这一帧要跑的 N 个逻辑步」。
  *
- * 问题出在边沿事件上。浏览器一帧里玩家只按了一次鼠标，但这一帧可能要跑 3 个
- * 逻辑步（掉帧追赶）。如果三个步都读到 `justPressed = true`，一次点击就变成
- * 三连击；而 144Hz 的机器一帧跑 0 步、两帧跑 1 步，同样的操作又会漏掉。
+ * 两个必须同时满足的要求：
  *
- * 规则：**边沿只给这一帧的第一个逻辑步，后续步只保留持续态**。
- * - 边沿（`pointerDown` / `dodge` / `potion` / `skill` / `switchWeapon` / `bigMap` …）：
- *   按下、松手、按键这类一次性动作，跨步不可重复。
- * - 持续态（`mouse` 位置、`pointerHeld`、`pointerOnHud`）：按住拖拽与指针位置
- *   在后续步里仍然成立，否则跑 3 步会在第 2 步突然「松开鼠标」。
+ * 1. **同一渲染帧跑 N 步时，边沿只给第一步**。浏览器一帧里玩家只按了一次
+ *    鼠标，掉帧追赶可能一次跑 3 步；三个步都读到 `justPressed=true` 就会
+ *    把一次点击变成三连击。
+ * 2. **一个渲染帧一个逻辑步都没跑时，边沿不能丢**。联机锁步里 `runnableTick()`
+ *    为 null 表示该 tick 要等对方的帧，此时引擎仍会渲染、`capture()` 仍会
+ *    被调用，但 `take()` 不会被调用。旧实现每帧直接覆盖 `pending`，于是这一
+ *    次点击的边沿被下一帧的「无输入」冲掉 —— 实测表现是「单机点一下就走，
+ *    联机怎么点都不动」。
+ *
+ * 所以边沿按**跨渲染帧累积**保存，由第一次真正推进的逻辑步 `take()` 一次性
+ * 取走并清空；持续态（鼠标位置、按住、HUD）则始终取最新值。
  *
  * 这一层只影响本地采样，远端收到的是「每 tick 一个帧」，所以两端看到的输入
  * 序列天然对齐 —— 谁也不会因为帧率高就多发几个帧。
@@ -54,46 +58,102 @@ export function emptyRawInput(): RawInput {
   };
 }
 
-export type InputLatch = {
-  pending: RawInput;
-  /** 这一帧的第一个逻辑步是否已经被消费掉（决定边沿要不要清）。 */
-  consumed: boolean;
+/** 一次性动作，取走即清。 */
+type Edges = {
+  pointerDown: boolean;
+  pointerUp: boolean;
+  dodge: boolean;
+  potion: boolean;
+  healPotion: boolean;
+  extractChannel: boolean;
+  restart: boolean;
+  bigMap: boolean;
+  skill: number;
+  switchWeapon: number;
 };
 
-export function createInputLatch(): InputLatch {
-  return { pending: emptyRawInput(), consumed: false };
+/** 持续态，永远读最新一帧。 */
+type Held = {
+  mouse: { x: number; y: number } | null;
+  pointerHeld: boolean;
+  pointerOnHud: boolean;
+};
+
+export type InputLatch = {
+  edges: Edges;
+  held: Held;
+};
+
+function emptyEdges(): Edges {
+  return {
+    pointerDown: false,
+    pointerUp: false,
+    dodge: false,
+    potion: false,
+    healPotion: false,
+    extractChannel: false,
+    restart: false,
+    bigMap: false,
+    skill: NO_SKILL,
+    switchWeapon: NO_SWITCH,
+  };
 }
 
-/** 渲染帧开头调一次：把这一帧的输入写进锁存，并重新允许边沿生效。 */
-export function capture(latch: InputLatch, raw: RawInput): void {
-  latch.pending = raw;
-  latch.consumed = false;
+export function createInputLatch(): InputLatch {
+  return {
+    edges: emptyEdges(),
+    held: { mouse: null, pointerHeld: false, pointerOnHud: false },
+  };
 }
 
 /**
- * 每个逻辑步调一次，拿到属于该 tick 的输入帧。
- * 同一渲染帧内的第 2 次及以后调用会清掉边沿，只留持续态。
+ * 渲染帧开头调一次。边沿做 OR 累积（没被 take 走的一律留着），
+ * 持续态取最新值；`mouse` 为 null 时沿用上一个已知位置（引擎有 sticky 语义）。
+ */
+export function capture(latch: InputLatch, raw: RawInput): void {
+  const held = latch.held;
+  held.mouse = raw.mouse ?? held.mouse;
+  held.pointerHeld = raw.pointerHeld;
+  held.pointerOnHud = raw.pointerOnHud;
+
+  const e = latch.edges;
+  e.pointerDown = e.pointerDown || raw.pointerDown;
+  e.pointerUp = e.pointerUp || raw.pointerUp;
+  e.dodge = e.dodge || raw.dodge;
+  e.potion = e.potion || raw.potion;
+  e.healPotion = e.healPotion || raw.healPotion;
+  e.extractChannel = e.extractChannel || raw.extractChannel;
+  e.restart = e.restart || raw.restart;
+  e.bigMap = e.bigMap || raw.bigMap;
+  if (raw.skill !== NO_SKILL) e.skill = raw.skill;
+  if (raw.switchWeapon !== NO_SWITCH) e.switchWeapon = raw.switchWeapon;
+}
+
+/**
+ * 每个逻辑步调一次，拿到属于该 tick 的输入帧。边沿被**整体取走并清空**：
+ * 同一帧的第 2 次及以后调用只剩持续态；跨多个渲染帧攒下来的点击也只生效一次。
  */
 export function take(latch: InputLatch, tick: number): InputFrame {
-  const raw = latch.pending;
-  const edges = !latch.consumed;
-  latch.consumed = true;
-  return {
+  const e = latch.edges;
+  const h = latch.held;
+  const frame: InputFrame = {
     tick,
-    pointerDown: edges && raw.pointerDown,
-    pointerHeld: raw.pointerHeld,
-    pointerUp: edges && raw.pointerUp,
-    dodge: edges && raw.dodge,
-    potion: edges && raw.potion,
-    healPotion: edges && raw.healPotion,
-    extractChannel: edges && raw.extractChannel,
-    restart: edges && raw.restart,
-    skill: edges ? raw.skill : NO_SKILL,
-    switchWeapon: edges ? raw.switchWeapon : NO_SWITCH,
-    mouse: raw.mouse,
-    pointerOnHud: raw.pointerOnHud,
-    bigMap: edges && raw.bigMap,
+    pointerDown: e.pointerDown,
+    pointerHeld: h.pointerHeld,
+    pointerUp: e.pointerUp,
+    dodge: e.dodge,
+    potion: e.potion,
+    healPotion: e.healPotion,
+    extractChannel: e.extractChannel,
+    restart: e.restart,
+    skill: e.skill,
+    switchWeapon: e.switchWeapon,
+    mouse: h.mouse ? { x: h.mouse.x, y: h.mouse.y } : null,
+    pointerOnHud: h.pointerOnHud,
+    bigMap: e.bigMap,
   };
+  latch.edges = emptyEdges();
+  return frame;
 }
 
 /** 本地玩家掉线/暂停时用：给某个 tick 一个「全程无输入」的帧。 */

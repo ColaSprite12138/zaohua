@@ -189,7 +189,12 @@ export function take(ls: Lockstep): TickInputs | null {
   ls.localFrames.delete(tick);
   ls.remoteFrames.delete(tick);
   ls.tick = tick + 1;
-  if (ls.submitTick < ls.tick + ls.localDelay) ls.submitTick = ls.tick + ls.localDelay;
+  // **不要在这里把自己推到 `tick + localDelay`**。
+  // 预热带进来的帧是 0..delay-1，而 `submitTick` 从 delay 起；一旦这里强推，
+  // tick `delay` 那一格会被跳过、永远没人填，整局就卡死在 advance 到它的那一刻
+  // （2026-11-20 实测：tick 停在 3、`pending` 为空、一直 waiting）。
+  // `submitTick` 由调用方每推进一格 `++`，它在任何时刻都只领先 1 格。
+  if (ls.submitTick < ls.tick) ls.submitTick = ls.tick;
   ls.waitingSinceMs = null;
   return { tick, local, remote };
 }

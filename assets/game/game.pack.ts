@@ -201,8 +201,17 @@ export const game: Plugin = {
     const netRetired = new Map<string, number>();
     /** 还没打包发走的本地帧。攒 3 帧（50ms）发一次，与平台 20Hz 广播同频。 */
     let netOutbox: InputFrame[] = [];
+    /**
+     * 参战名单是否已经确定。联机局在名单到达**之前不能推进**：否则会把它当
+     * 单机跑（runnableTick 永远非空），等对方入座时我这边已经跑出几百 tick，
+     * 两端帧号永远对不上。名单一旦见过一次就算 settled，之后有人离场仍继续。
+     */
+    let netSeatSettled = false;
     /** 联机诊断：主窗口的 `host.net.status()` 只读这些数，不重复计数。 */
-    const netStat = { ticks: 0, framesOut: 0, framesIn: 0, lateIn: 0, droppedOut: 0, hashes: 0 };
+    const netStat = {
+      ticks: 0, framesOut: 0, framesIn: 0, lateIn: 0, droppedOut: 0,
+      hashes: 0, flushes: 0, localEdges: 0, localMouse: 0,
+    };
 
     function rebuildPeers(): void {
       lockstep.peers = new Set([...netPeers].filter((id) => id !== netPlayerId));
@@ -246,6 +255,7 @@ export const game: Plugin = {
     }): void {
       if (msg.active !== true) {
         netActive = false;
+        netSeatSettled = false;
         netPlayerId = '';
         netPeers.clear();
         netPeerNames.clear();
@@ -267,28 +277,47 @@ export const game: Plugin = {
         netPeers.add(id);
         if (typeof entry !== 'string' && entry.name) netPeerNames.set(id, entry.name);
       }
+      if (list.length > 0) netSeatSettled = true;
       if (starting) {
         seekClock(stepClock, 0);
         lockstep = createLockstep({ localId: netPlayerId, localDelay: DEFAULT_LOCAL_DELAY });
         // 预热：本地帧提前 delay 个 tick 提交，所以开局这几格先用「无输入」占位，
         // 否则第一个 tick 永远等不到自己的帧，整局卡死在 0。
-        for (let i = 0; i < DEFAULT_LOCAL_DELAY; i += 1) {
-          pushLocal(lockstep, emptyInputFrame(lockstep.tick + i));
-        }
+        // **这几帧也必须发出去**：对方在等 tick 0，而它们是唯一会带上 tick 0
+        // 的本地帧。只 pushLocal 不进 outbox 的话，双方都会永远等对方的第一帧。
         netOutbox = [];
+        for (let i = 0; i < DEFAULT_LOCAL_DELAY; i += 1) {
+          const warm = emptyInputFrame(lockstep.tick + i);
+          pushLocal(lockstep, warm);
+          netOutbox.push(warm);
+        }
         netStat.ticks = 0;
         netStat.framesOut = 0;
         netStat.framesIn = 0;
         netStat.lateIn = 0;
         netStat.droppedOut = 0;
         netStat.hashes = 0;
+        netStat.flushes = 0;
+        netStat.localEdges = 0;
+        netStat.localMouse = 0;
       }
       rebuildPeers();
+      // 预热帧必须立刻发，不能等主循环推进：推进本身在等对方的帧，而对方也在
+      // 等我的 tick 0。等 advanceLockstep 跑起来再 flush 就是典型的鸡生蛋死锁。
+      flushOutbox();
     }
 
     /** 收到远端输入包：base64 → 批量帧 → 锁步队列。迟到/重复由队列自己记账。 */
     function applyRemotePackets(packets: { from: string; t: number; n: number; b: string }[]): void {
+      let rosterChanged = false;
       for (const packet of packets) {
+        // 收到对方的帧 = 对方确实在场。即便 netSeat 那条名单迟到/为空，
+        // 这里也必须解锁，否则「等名单才推进 / 推进才发帧」会互相锁死。
+        if (!netSeatSettled) netSeatSettled = true;
+        if (!netPeers.has(packet.from)) {
+          netPeers.add(packet.from);
+          rosterChanged = true;
+        }
         const decoded = decodePacket(decodeBase64(packet.b));
         if (decoded.kind !== 'batch') continue;
         for (const frame of decoded.frames) {
@@ -297,6 +326,7 @@ export const game: Plugin = {
           else if (result === 'late') netStat.lateIn += 1;
         }
       }
+      if (rosterChanged) rebuildPeers();
     }
 
     function applyRetired(peers: { peerId: string; fromTick: number }[]): void {
@@ -329,6 +359,12 @@ export const game: Plugin = {
           peers: [...lockstep.peers],
           lateFrames: lockstep.lateFrames,
           longestWaitMs: lockstep.longestWaitMs,
+          /** 诊断：卡在 0 时用来一眼分辨「名单没到 / 主循环被锁 / 帧没发出去」。 */
+          settled: netSeatSettled,
+          outbox: netOutbox.length,
+          flushes: netStat.flushes,
+          locked,
+          paused,
         },
       });
     }
@@ -383,8 +419,14 @@ export const game: Plugin = {
         }
         reportHash(inputs.tick);
         netStat.ticks += 1;
+        // 采样下一个待提交的 tick：本地帧和远端走同一条 3 tick 延迟队列。
+        // `submitTick` 每次只 +1 —— 让它一路领先、始终比 `tick` 大 3 格，
+        // 中间不留空洞（留了就会被自己卡死，见 `lockstep.ts::take` 的注释）。
         const frame = takeLatched(latch, lockstep.submitTick);
+        if (frame.pointerDown) netStat.localEdges += 1;
+        if (frame.mouse) netStat.localMouse += 1;
         pushLocal(lockstep, frame);
+        lockstep.submitTick += 1;
         netOutbox.push(frame);
       }
       flushOutbox();
@@ -399,6 +441,7 @@ export const game: Plugin = {
       if (netOutbox.length < 3) return;
       const frames = netOutbox.splice(0, 16);
       netStat.framesOut += frames.length;
+      netStat.flushes += 1;
       channel?.postMessage({
         type: 'netOut',
         t: frames[0]!.tick,
@@ -699,8 +742,11 @@ export const game: Plugin = {
             });
 
             if (!locked && !paused) {
-              if (netActive) advanceLockstep(raw);
-              else advanceSolo(raw);
+              if (netActive) {
+                // 名单没到就冻结：既不推进、也不攒时间。攒了的话名单到达那一刻
+                // 会一次吐出几百步，两端 tick 直接错开。
+                if (netSeatSettled) advanceLockstep(raw);
+              } else advanceSolo(raw);
               // Pickups / weapon switches happen INSIDE this Worker now. Only
               // a changed snapshot is sent to the read-only character panel.
               publishRunState();

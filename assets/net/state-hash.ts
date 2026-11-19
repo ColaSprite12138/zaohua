@@ -56,11 +56,14 @@ export function quantize(value: number): number {
 }
 
 /** hash 只关心这几个字段的最小结构。用结构类型而不是 import GameState，
- *  这样 hash 的单测不需要造一整局。 */
+ *  这样 hash 的单测不需要造一整局。
+ *
+ *  `hp` / `kills` / `player` 是**本地玩家视角**，保留在类型里只是为了兼容
+ *  调用方直接传 `GameState`，它们**不参与** hash（见 `hashGameState`）。 */
 export type HashableState = {
-  readonly hp: number;
-  readonly kills: number;
-  readonly player: { readonly x: number; readonly y: number; readonly face: number };
+  readonly hp?: number;
+  readonly kills?: number;
+  readonly player?: { readonly x: number; readonly y: number; readonly face: number };
   readonly skeletons: readonly {
     readonly x: number;
     readonly y: number;
@@ -86,17 +89,19 @@ export function hashString(text: string): number {
  * - `t`（秒）：两端累加的浮点和会漂，且它由 tick 唯一决定，hash 它等于重复。
  * - `particles` / `toast` / `hoverEnemy`：纯表现，player 之外的视觉随机
  *   （`effects.ts` 里的 `Math.random`）不进模拟，hash 进来只会误报。
- * - `face` 的原始弧度太敏感（朝向插值差一点就报），但朝向会影响「朝哪边跑」，
- *   所以量化后保留。
+ * - **`player` / `hp` / `kills`：本地玩家视角。** P2 的 `GameState` 里只有
+ *   「我这端操控的这一个玩家」，其余人放在 `remotes` 里。A 点了地面走过去、
+ *   B 没点，两端 `s.player` 本来就不同 —— 把它们算进 hash 会在**完全正确**的
+ *   帧同步里报假分叉（2026-11-20 双人验收实测：输入双向通、影子跟着动，
+ *   服务端却判了 diverged）。P3 把玩家实体按 `playerId` 正式放进 `GameState`
+ *   之后，才能按 id 排序对全部玩家做对账。
+ *
+ * 所以 P2 只对**共享世界状态**（活着的怪 + 掉落 uid）做对账：这一份在两端
+ * 由同一份输入序列重放出来，任何确定性偏差都会在这里暴露。
  */
 export function hashGameState(state: HashableState, tick: number): number {
   const hasher = createHasher();
   hasher.add(tick);
-  hasher.add(quantize(state.player.x));
-  hasher.add(quantize(state.player.y));
-  hasher.add(quantize(state.player.face));
-  hasher.add(quantize(state.hp));
-  hasher.add(state.kills);
 
   // 怪：只 hash 活着的。顺序固定（数组下标就是稳定 id），数量写进去，
   // 少一只/多一只立刻能看出来。

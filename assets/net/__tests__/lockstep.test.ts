@@ -108,12 +108,26 @@ describe('确定性锁步队列', () => {
     expect(runnableTick(ls)).toBe(0);
   });
 
-  it('推进之后 submitTick 保持领先 localDelay 个 tick', () => {
+  it('take 不会替调用方推进 submitTick（否则 delay 那一格会出现空洞）', () => {
     const ls = createLockstep({ localId: 'A', localDelay: 3 });
     pushLocal(ls, frame(0));
     take(ls);
+    // 关键：tick 前进一格，submitTick 原地不动。调用方自己 ++。
     expect(ls.tick).toBe(1);
-    expect(ls.submitTick).toBeGreaterThanOrEqual(4);
+    expect(ls.submitTick).toBe(3);
+  });
+
+  it('submitTick 只领先 tick 一格地前进时，队列不会卡死（回归：曾经停在 tick 3）', () => {
+    const ls = createLockstep({ localId: 'A', localDelay: 3 });
+    // 预热：0..2 各放一个空帧，submitTick 从 3 起
+    for (let t = 0; t < 3; t += 1) pushLocal(ls, frame(t));
+    for (let i = 0; i < 40; i += 1) {
+      expect(runnableTick(ls)).toBe(ls.tick);
+      take(ls);
+      pushLocal(ls, frame(ls.submitTick));
+      ls.submitTick += 1;
+    }
+    expect(ls.tick).toBe(40);
   });
 
   it('seek 把整条时间轴平移到 startTick（开局对齐用）', () => {

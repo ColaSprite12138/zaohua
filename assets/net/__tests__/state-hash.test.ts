@@ -28,19 +28,20 @@ describe('状态 hash', () => {
   });
 
   it('1/1024 像素以内的浮点抖动不报分叉（避免跨 V8 版本误杀）', () => {
-    const a = state({ player: { x: 120.5, y: 88.25, face: 0.5 } });
-    const b = state({ player: { x: 120.5 + 1e-9, y: 88.25 - 1e-9, face: 0.5 } });
+    const a = state({ skeletons: [{ x: 300, y: 200, hp: 40, alive: true }] });
+    const b = state({ skeletons: [{ x: 300 + 1e-9, y: 200 - 1e-9, hp: 40, alive: true }] });
     expect(hashGameState(a, 60)).toBe(hashGameState(b, 60));
   });
 
-  it('真的走位差 1 像素一定报', () => {
-    const a = state();
-    const b = state({ player: { x: 121.5, y: 88.25, face: 0.5 } });
-    expect(hashGameState(a, 60)).not.toBe(hashGameState(b, 60));
+  it('本地玩家坐标不进 hash：两端视角不同，绝不能误报分叉', () => {
+    const a = state({ player: { x: 120.5, y: 88.25, face: 0.5 } });
+    const b = state({ player: { x: 900, y: 640, face: -2 } });
+    expect(hashGameState(a, 60)).toBe(hashGameState(b, 60));
   });
 
-  it('血量差一点就报（伤害公式算错必须抓得到）', () => {
-    expect(hashGameState(state({ hp: 100 }), 7)).not.toBe(hashGameState(state({ hp: 99 }), 7));
+  it('本地血量 / 击杀数不进 hash（同理，属于各自视角）', () => {
+    expect(hashGameState(state({ hp: 100, kills: 2 }), 7))
+      .toBe(hashGameState(state({ hp: 3, kills: 99 }), 7));
   });
 
   it('掉落顺序不同不算分叉（两个人捡东西先后不一样）', () => {
@@ -69,10 +70,11 @@ describe('状态 hash', () => {
     expect(hashGameState(a, 30)).not.toBe(hashGameState(b, 30));
   });
 
-  it('NaN / Infinity 不污染 hash（模拟里出现它就是 bug，但不能因此崩在 hash 上）', () => {
-    const bad = state({ player: { x: Number.NaN, y: Infinity, face: 0 } });
+  it('共享世界里的怪坐标出现 NaN 不污染 hash', () => {
+    const bad = state({ skeletons: [{ x: Number.NaN, y: Infinity, hp: 40, alive: true }] });
     expect(() => hashGameState(bad, 1)).not.toThrow();
-    expect(hashGameState(bad, 1)).toBe(hashGameState(state({ player: { x: 0, y: 0, face: 0 } }), 1));
+    expect(hashGameState(bad, 1))
+      .toBe(hashGameState(state({ skeletons: [{ x: 0, y: 0, hp: 40, alive: true }] }), 1));
   });
 
   it('quantize 是四舍五入到 1/1024', () => {
