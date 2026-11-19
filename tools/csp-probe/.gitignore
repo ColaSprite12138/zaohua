@@ -1,0 +1,5 @@
+dist/
+.game-builder/state/
+.game-builder/covers/
+.game-builder/artifacts/
+.game-builder/reference/
