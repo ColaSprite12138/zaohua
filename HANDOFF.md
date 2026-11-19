@@ -616,6 +616,13 @@ talent 22（talent 15 + starmap-data 7）、resource 17（tables 9 + map 8）、
 | 联机时本地输入像「慢半拍」才动 | 这是设计：本地帧提前 3 tick 进队列（和远端走同一条延迟队列），恒定 50ms。别为了手感改成「先动再发」—— 那就等于放弃确定性 |
 | `state.remotes` 里有人，但屏幕上找不到他 | 影子角色也走 `sees()` 视野裁剪。对方在墙后 / 视野外本来就不该看见（反透视的一部分），不是 bug |
 | 冻结 / 眩晕的截图里看不到「冻住」的样子 | 硬控只有 1.2–1.5 秒，而 `play.screenshot` 从调用到成像有 1–2 秒延迟。画面证据看**冰面 / 状态条 / 霜痕**，硬控本身由投影里的 `skeletons[].statuses` 断言证明 |
+| 服务端只发一次 `game_init` 就再不推状态 | **`StateSyncGame.tick()` 返回 `true` 是「本局结束」**，不是「有变化」。恒 `true` 会立刻广播 `game_over` 并停掉 tick 循环，之后所有 `sendAction` 落进死房间。relay 必须恒返回 `false`；广播由 runtime 每轮取 `getDelta()` 完成 |
+| `tick()` 恒 false 了却还是不广播 | `getState()` / `getDelta()` 返回同一个可变 `state` **引用**，runtime 按引用/序列化比较认为没变化。必须每轮返回新快照（独立函数，别用 `this`——runtime 会解构调用） |
+| 两端 `sends > 0` 但 `updates = 0`、服务端停在 `waiting` | 只有**房主** `startGame()` 会触发 `createGame` / `playing`。P1 从没调过它。`net-bridge.attach()` 里判断 `isRoomOwner()` 后调**一次**；重试会反复重建 game 打散时间轴 |
+| 一端 tick 狂跑到几百、另一端卡在 0 | 第一条 `netSeat` 带了空 `peers`：Worker 把联机当单机推进。第一条座位消息必须带完整名单；名单没到时**冻结推进**（`netSeatSettled`），且预热的 3 帧本地输入要**立即 flush**，否则双方都等对方的 tick 0 |
+| 「单机点一下就走，联机怎么点都不动」 | `input-latch` 旧版每渲染帧用 `capture()` 覆盖 pending；等齐那一帧不跑逻辑步、不调 `take()`，点击边沿被下一帧冲掉。现在边沿**跨渲染帧累积**，`take()` 取走即清（`assets/net/__tests__/input-latch.test.ts` 有回归） |
+| 输入明明双向通、影子也在动，服务端却报 diverged | `hashGameState` 旧版算了本地玩家 `x/y/face/hp/kills`。P2 的 `GameState` 只有「我这端的玩家」，两端视角本就不同 → 假分叉。现在只比**共享世界**（活怪 + 掉落 uid）；完整对账等 P3 玩家实体统一 |
+| 造化宿主里自动化脚本点击没反应 | 游戏在 iframe，canvas 是 1280×800，而逻辑布局是 1280×720。裸 `page.mouse.click(1010,430)` 落在 HUD；要按 `canvas.getBoundingClientRect()` 换算（`ly × h/720` → 478）才点中地面。别在 CDP 点击后再派合成 DOM 事件，会把边沿冲掉。见 `scripts/probe-click-in-host.mjs` |
 
 ## 可回滚基线（两层）
 

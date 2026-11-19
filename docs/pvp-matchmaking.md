@@ -261,10 +261,13 @@ Engine Worker（无 DOM、无 PlatformClient）
 | `meta-ui/net-bridge.js` | 主窗口 relay 桥：不碰帧格式，只搬运 |
 | `game/server/source/index.ts` | relay：按 tick 归档输入、记录 hash 分叉、宣布离场 |
 
-**验证**：`assets/net/__tests__/` 48 断言；`scripts/verify-fixed-step.mjs` 6 条（单机回归）；
-`scripts/probe-net-channel.mjs`（宿主通道探针）。
+**验证**：`assets/net/__tests__/` 53 断言；全仓 `vitest run assets` 649 条；
+`scripts/verify-fixed-step.mjs` 6 条（单机回归）；
+`scripts/verify-two-player-net.mjs` **14 条双人真机全通过**（见 §4.7）；
+`scripts/probe-net-channel.mjs`（宿主通道探针）、`scripts/probe-click-in-host.mjs`（iframe 点击探针）。
 
-**当前的可视范围（诚实记录）**：P2 能看到对方在自己屏幕上走动、头顶有金色名字；
+**当前的可视范围（诚实记录）**：P2 双人真机已证明「对方在自己屏幕上走动」——
+A 走位 586px，B 屏幕上 A 的影子同步移动 656px（`scripts/verify-two-player-net.mjs`）。
 但**打不到对方、看不到对方血量**，怪也不共享（各打各的）。这些是 P3：
 玩家实体进 `GameState` + `hurts()` 扩 `fromPlayerId`/`teamId`。
 
@@ -280,14 +283,44 @@ Engine Worker（无 DOM、无 PlatformClient）
 | 卡住超过 0.25s 截断 | 极长停顿会丢时间，两端 tick 错开 | 同上；`stalls` / `droppedSeconds` 已进诊断 |
 | base64 开销 | 每帧 12B → 16 字符，2 人局约 3KB/s | 16 人满房才会变成问题，P4 换二进制通道 |
 | `onCheckJoin` 还是空的 | 开局后理论上有人能挤进房间 | 房间号只发给本局成员；真锁门要等 P4 |
+| hash 是**弱对账** | 只比活怪 + 掉落 uid，不比玩家坐标、不比怪的位置精度 | P2 的 `GameState` 只有一个「本地玩家」，其余人在 `remotes` 里；两端 `s.player` 本来就该不同，怪的 AI 又追本地玩家。完整对账要等 P3 把玩家实体按 `playerId` 统一进 `GameState` |
 
+### 4.7 P2 双人真机验收（2026-11-20，14/14 通过）
+
+```bash
+MATCH_USER_A=.. MATCH_PASS_A=.. MATCH_USER_B=.. MATCH_PASS_B=.. \
+  node scripts/verify-two-player-net.mjs <造化预览地址>
+```
+
+两个独立 headless Chrome，各用一个真账号，走完整撮合（60s 兜底成局 → 建房/进房 →
+报座 → `startGame` → 出征）。**结果**：两端 `sends > 0`、`packetsIn > 0`、锁步 tick
+稳定推进（568 / 583）、服务端 `stats.packets = 200`、`hashReports = 18` 且 `mismatches = 0`、
+`divergedTick = -1`；A 走位 586px，B 屏幕上 A 的影子移动 656px，反向也出现对方。
+
+调试过程中挖出来的**平台 runtime 契约**（全部来自真宿主探针 + 事件日志，不是猜的）：
+
+| 事实 | 踩坑时的症状 | 修法 |
+|:--|:--|:--|
+| **`tick()` 返回 `true` 表示「本局结束」**，不是「有变化要广播」 | 底层事件变成 `game_init → game_update → game_over`，之后 `serverTick` 永远 0、所有 `sendAction` 落进已结束的房间 | relay 恒返回 `false`；广播由 runtime 每轮取 `getDelta()` 自动完成 |
+| `getState()` / `getDelta()` 必须每轮给**新对象** | 返回同一个可变 `state` 引用时，runtime 按引用/序列化比较认为「没变化」，只发一次 `game_init` | `snapshot()` 浅拷贝各层，独立函数（别用 `this`，runtime 可能解构调用） |
+| 只有**房主** `startGame()` 会让服务端 `createGame` / 进入 `playing` | P1 全程没调过它：`sends > 0` 但 `updates = 0`，服务端停在 `waiting` | `net-bridge.attach()` 里 `isRoomOwner()` 判断后调一次；**不能重试**，每次调用都会重建 game 打散时间轴 |
+| `session.state` 只在 `game_init` / `game_update` 时更新；`bindRoom` 还会额外 `emit('game_update', {state})` | 只看 `subscribeEvents` 的 handlers 会漏状态 | 三层保险：`setEvents` 的 `onGameUpdate` + `session.on('game_update')` + 120ms 轮询 `session.state`；靠 `S.seen[pid]` 去重挡重复投递 |
+| `sendAction(p)` 实现是 `room.sendAction({type:'input', input:p})` | 上行格式不用自己包装 | 直接传 `{t,n,b}` 或 `{tick,hash}` |
+
+同一轮里还修掉 4 个**我们自己**的 bug，都写进了 `HANDOFF` 陷阱表：
+① 第一条 `netSeat` 必须带完整名单（空名单会让另一端把联机当单机狂跑）；
+② 预热的 3 帧本地输入必须**立即 flush**（否则双方都等对方的 tick 0，死锁）；
+③ `input-latch` 的边沿要跨渲染帧累积（等齐那一帧没有逻辑步，点击会被下一帧覆盖冲掉 —— 表现为「单机点一下就走、联机怎么点都不动」）；
+④ `hashGameState` 不能含本地玩家坐标/血量（正确的帧同步里两端视角本就不同，会报假分叉）。
 
 ### 4.3 反作弊分层
 
 1. **服务端裁剪视野**：服务端只转发「谁看得见谁」。挡透视 —— 这是帧同步唯一的致命洞，
    搜打撤的核心就是信息不对称（`FogField` 现成的，只需位置 + 地图）。
 2. **服务端输入限幅**：按 tick 去重、限制点击频率。挡「合法但超频」的脚本。
-3. **状态 hash 对账**：改数值/改血量会立刻 diverged，1 秒内被踢。
+3. **状态 hash 对账**：P2 是**弱对账**（只比活怪 + 掉落 uid，见 §4.6），能抓共享世界的确定性偏差；
+   改本地数值/血量这类作弊要等 P3 把玩家实体统一进 `GameState` 后才能靠 hash 抓，
+   当前靠「服务端限幅 + 客户端上报」兜底。
 
 ### 4.4 已知代价（接受）
 
@@ -301,7 +334,7 @@ Engine Worker（无 DOM、无 PlatformClient）
 |:--|:--|:--|
 | **P0** | 撮合服务 + 队列规则 + 房间回报 + 测试 | **已完成**（`match.mjs` + `test/match.mjs`，56 断言） |
 | **P1** | 局外大厅「快速匹配」按钮 + 排队 UI + 建房/join 接线 | **已完成并在真宿主验收**：`multiplayer_integration.stage=verified`，两人同房同 seed 开局（§3.10） |
-| **P2** | 固定步长 + 输入流 + relay server + hash 对账 | **代码完成**：48 条 `net/` 单测 + 单机回归 6 条通过；**双人真机待验**（要两个真账号） |
+| **P2** | 固定步长 + 输入流 + relay server + hash 对账 | **已完成并在双人真机验收（14/14）**：输入双向互通、锁步稳定推进、A 走位后 B 的影子同步移动、18 次 hash 对账零分叉（§4.7） |
 | **P3** | 同屏互砍：玩家实体进 `GameState`、`hurts()` 扩 `fromPlayerId`/`teamId`（互打 / 友伤关闭）、撤离判定、结算（只给自己看带出价值） | 待做 |
 | **P4** | relay 的 `onCheckJoin`（挡插队）+ 服务端视野裁剪 + 输入限幅 | 待做 |
 | **P5** | 组队 PVPVE（`teamId`） | 远期 |
@@ -314,8 +347,13 @@ Engine Worker（无 DOM、无 PlatformClient）
   页面无 error 级报错。这条脚本故意不假装能验联机。
 - 固定步长单机回归：`node scripts/verify-fixed-step.mjs`（6 条）—— 出征后能走、
   第二次指令也生效、单机下 `host.net.status().active === false`、一条 `sendAction` 都没发出去。
-- 帧同步单元：`node_modules/.bin/vitest run assets/net`（48 条）——
-  时钟切分、帧编解码往返、等齐/迟到/掉线、hash 量化与抗误报。
-- 联机链路：平台上 `multiplayer_integration.stage` 到 `verified`（两个玩家 seated + 对局进入 `playing`）才算接通，**当前已到 verified**（§3.10），
-  `wired` 只代表能上传。**这一条只能你配合开两个窗口验**，本地任何脚本都替代不了。
-  验 P2 时要看的是另外两样：双方 `host.net.status().sends > 0`、`state.remotes` 里出现对方且坐标会动。
+- 帧同步单元：`node_modules/.bin/vitest run assets/net`（53 条）——
+  时钟切分、帧编解码往返、等齐/迟到/掉线、hash 量化与抗误报、
+  **输入边沿跨等齐帧不丢**。全仓 `vitest run assets` 649 条。
+- **P2 双人真机**：`scripts/verify-two-player-net.mjs`（14 条，需两个真账号 + 造化宿主）——
+  这是唯一能证明「不是两个平行世界」的脚本。判据全是可读数字：
+  双向 `sends` / `packetsIn`、锁步 tick、`state.remotes` 里对方坐标的变化量、服务端 `diverged`。
+  点击坐标必须按 iframe 内 canvas 的矩形换算（`probe-click-in-host.mjs` 验过：
+  裸 `1010,430` 落在 HUD 上，换算后的 `1010,478` 才点中地面）。
+- 联机链路：平台上 `multiplayer_integration.stage` 到 `verified`（§3.10）代表 P1 接通；
+  P2 的输入链路看上面那 14 条，**本地静态页（58080）永远验不了联机**（没有 PlatformClient）。

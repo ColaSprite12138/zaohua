@@ -69,6 +69,13 @@ PROTECTED=(
   meta-ui/net-bridge.js
   game/server/source/index.ts
   scripts/verify-fixed-step.mjs
+  scripts/verify-two-player-net.mjs
+  scripts/probe-net-channel.mjs
+  scripts/probe-click-in-host.mjs
+  scripts/verify-quick-match.mjs
+  assets/combat/state.ts
+  assets/combat/simulation.ts
+  scripts/inject-shell.mjs
   HANDOFF.md
 )
 

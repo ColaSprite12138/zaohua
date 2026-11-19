@@ -52,6 +52,17 @@ const report = await frame.evaluate(() => {
       const v = c[k]
       return v && typeof v === 'object' && typeof v.sendBinary === 'function'
     })
+    // 会话方法的**实现源码**：光看类型声明猜不出 sendAction 的前置状态，
+    // 而 P2 的症状正是「调了 sendAction、服务端一个包都没收到」。
+    out.ownTypes = Object.fromEntries(Object.keys(c).map((k) => [k, typeof c[k]]))
+    const sd = Object.getOwnPropertyDescriptor(c, 'state')
+    out.stateDescriptor = sd
+      ? { hasGetter: Boolean(sd.get), hasSetter: Boolean(sd.set), valueType: typeof sd.value }
+      : null
+    out.fnSources = {}
+    for (const fn of ['sendAction', 'startGame', 'on', 'emit', 'notifySubscribers', 'bindRoom', 'syncRoster', 'connect', 'join']) {
+      try { out.fnSources[fn] = String(c[fn]).slice(0, 1200) } catch (err) { out.fnSources[fn] = 'ERR ' + String(err) }
+    }
   } catch (err) {
     out.clientErr = String(err)
   }
