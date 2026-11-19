@@ -610,6 +610,11 @@ talent 22（talent 15 + starmap-data 7）、resource 17（tables 9 + map 8）、
 | LDtk 报 `Cannot read properties of null (reading 'externalLevels')` | 这句是**假消息**：`ProjectLoader` 把 `Project.fromJson` 的异常吞了（`p` 变 null）再读 `p.externalLevels`。真因在生成器：① `tileRect` 缺 `tilesetUid`（`JsonTools.readTileRect` 直接 throw，编辑器报 "TileRect contains an invalid value"）；② 字段实例 `defUid: null` / `realEditorValues: []`（值全空）；③ `layerInstances` 与 `defs.layers` 不同序且缺 `iid`。现在 `python scripts/gen_arena_map.py --check` 会逐条报出来 |
 | `project play` 启动即报 `pack-source-revision-conflict` / `pack-malformed-meta` | 跑验收期间**改了源码**（`edit` 或生成器重写）→ 打包捕获的源与发布时不一致。等这次跑完再改，或直接重跑一次即可（不需要清缓存） |
 | 改了 `assets/game/voxel.ts` 后 `verify.sh` 在 meta-ui 步骤红，报的却是 `inventory.js` 不同步 | 实际漂移的是 `meta-ui/voxel.js`（三个生成物之一，报错文案会指向列表里第一条）。跑一次 `node scripts/build-meta-ui.mjs` 再提交，别只信那句文案 |
+| 帧同步里「某人的帧没到就按空输入继续跑」 | **这条一定会分叉**：A 拿空输入推进了 T，B 自己用真实输入推进了 T，此后两端状态永久不同。正确做法是**整局停在 T 等**；真要放行只能由服务端广播「谁从哪个 tick 起离场」，让所有客户端同时跳过。`assets/net/lockstep.ts::runnableTick()` 返回 null 就是在做这件事 |
+| 改了 `game/server/source/` 之后联机行为没变 | 平台宿主跑的是 **`game/server/dist/index.js`**（esbuild 产物），不是源码。必须 `pnpm build:server`，再重开预览 |
+| 两个客户端 tick 差几格、hash 永远对不上 | `addTime()` 把单帧截断到 0.25s，卡过一次就永久落后（帧同步没有自动追帧）。看 `host.net.status().engine.stalls` / `droppedSeconds`；P4 之前只能重开一局 |
+| 联机时本地输入像「慢半拍」才动 | 这是设计：本地帧提前 3 tick 进队列（和远端走同一条延迟队列），恒定 50ms。别为了手感改成「先动再发」—— 那就等于放弃确定性 |
+| `state.remotes` 里有人，但屏幕上找不到他 | 影子角色也走 `sees()` 视野裁剪。对方在墙后 / 视野外本来就不该看见（反透视的一部分），不是 bug |
 | 冻结 / 眩晕的截图里看不到「冻住」的样子 | 硬控只有 1.2–1.5 秒，而 `play.screenshot` 从调用到成像有 1–2 秒延迟。画面证据看**冰面 / 状态条 / 霜痕**，硬控本身由投影里的 `skeletons[].statuses` 断言证明 |
 
 ## 可回滚基线（两层）

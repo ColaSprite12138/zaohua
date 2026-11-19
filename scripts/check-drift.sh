@@ -57,6 +57,18 @@ PROTECTED=(
   scripts/playthrough-fog.mjs
   scripts/lib/map-route.mjs
   scripts/verify-all.sh
+  # 帧同步 P2（2026-11-20）：这几份一起构成「同一份输入 → 同一份结果」的契约。
+  # 改任何一份都等于改协议，必须同步更新 docs/pvp-matchmaking.md 的手册页。
+  assets/net/step-clock.ts
+  assets/net/input-frame.ts
+  assets/net/input-latch.ts
+  assets/net/lockstep.ts
+  assets/net/state-hash.ts
+  assets/net/remote-actor.ts
+  assets/net/base64.ts
+  meta-ui/net-bridge.js
+  game/server/source/index.ts
+  scripts/verify-fixed-step.mjs
   HANDOFF.md
 )
 

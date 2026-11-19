@@ -189,24 +189,37 @@ t=66s   双方「开局 · 2 人 · seed 420082688」—— seed 完全一致
 
 ## 4. 帧同步设计要点
 
-### 4.1 输入链路
+### 4.1 输入链路（P2 实装）
 
 ```
-客户端页面（有 PlatformClient，能开房间 WS）
-  ├─ 采集输入 → 归一成逻辑坐标（1280×720 空间）+ tick 编号
-  ├─ sendBinary(24B/帧) → 房间服务（game/server）→ 广播
-  └─ 收帧 → channel.postMessage → Engine Worker 的模拟
+主窗口（有 PlatformClient，能 sendAction）
+  ├─ 收 Engine Worker 的 netOut（base64 批量帧，3 帧/50ms）
+  ├─ session.sendAction({ t, n, b }) → 房间服务 → 随状态广播回来
+  └─ onGameUpdate(state.inputs) → 挑出别人的包 → netIn → Worker
 Engine Worker（无 DOM、无 PlatformClient）
+  ├─ 每渲染帧采一次输入 → 锁存 → 按逻辑步分发（边沿只给第一步）
+  ├─ 每 tick 一个本地帧，提前 3 tick 进入队列，同时攒进 outbox
   └─ 用同一份 step(state, 1/60, input) 推进
 ```
 
-- **固定步长**：现在 `game.pack.ts` 用 `dt = min(Time.delta, 0.05)`（可变帧长），必须改成
-  `acc += min(delta, 0.25); while (acc >= 1/60) step(...)`。渲染仍每帧。
-- **输入归一**：上传**逻辑坐标**，不是物理像素 —— 否则不同分辨率下同一个点击落点不同。
-- **限时等齐**：tick T 只等到 T+3（50ms）就推进，未到的按「无输入」填充；**迟到帧直接丢弃，不补算**
-  （补算 = 回滚重放 = 半个权威方案）。
-- **本地输入也走同一条延迟队列**：绝不允许「我先动了再发」，否则两端输入序列不同。
-- **同 tick 多人操作**按 `playerId` 排序后依次应用。
+**五条不能动的规则：**
+
+1. **固定步长**：模拟层只吃 `FIXED_DT = 1/60`。墙钟时间进 `stepClock`，由 `addTime()` +
+   `takeStep()` 切成整步；渲染仍每帧。
+2. **等齐才走**：tick T 的全员输入到齐才推进 T。
+   ⚠️ **这里推翻过一版设计**：原来写「未到的按无输入填充、迟到帧丢弃不补算」——
+   那是错的。A 等不到 B 就填空推进 T，B 自己用真实输入推进了 T，两端从这一 tick 起
+   永久分叉。帧同步唯一安全的做法是**整局停在 T 等**（不是某个人跳过）。
+3. **迟到帧直接丢**：`tick < 已推进位置` 的帧不进队列，只计数。补算 = 回滚重放，
+   那是半个权威方案，本期不做。
+4. **本地输入走同一条延迟队列**：本地帧提前 `LOCAL_DELAY = 3` 个 tick 提交，
+   绝不允许「我先动了再发」—— 否则两端输入序列天然不同。
+5. **离场由服务端宣布**：谁不在了不能由某一端自己判断（一端跳过、一端还在等 = 永远卡住）。
+   服务端用「最近收到过的最大 tick + 1」当 `fromTick`，这个值两端能从同一份数据推出来。
+
+**同 tick 多人的应用顺序**：现在房间上限 16、每局 2–4 人，`inputs.remote` 按 Map 插入序
+（= `state.players` 的顺序，服务端同一份）遍历。P5 组队上线后如果要严格排序，
+在 `take()` 里按 `playerId` 排一次即可，不改协议。
 
 ### 4.2 确定性清单
 
@@ -215,9 +228,59 @@ Engine Worker（无 DOM、无 PlatformClient）
 | 播种 RNG（mulberry32） | ✅ 已有 `makeRng(seed)` |
 | 无墙钟依赖（`Date.now`/`performance.now`） | ✅ 模拟层没有 |
 | 视觉随机独立 | ⚠️ `effects.ts:11`、`movement.ts:206` 的 `Math.random` **必须保持独立**，绝不能改成 `s.rng` |
-| 固定 dt | ❌ 待改 |
-| 超越函数 | ⚠️ 98 处 `sin/cos/atan2/hypot`。`hypot` → `sqrt(a*a+b*b)` 零风险先换；其余先实测（两个 Chrome 版本跑 10000 tick 比 hash）再决定 |
-| 状态 hash | ❌ 待加：每 60 tick 一份 FNV-1a（玩家坐标/血量/怪数量/掉落 uid 集合） |
+| 固定 dt | ✅ `assets/net/step-clock.ts`，单机与联机都只吃 `FIXED_DT` |
+| 输入定长帧 | ✅ `assets/net/input-frame.ts`，12 字节/帧（tick + 位掩码 + 世界坐标 ×4 + 技能槽） |
+| 状态 hash | ✅ `assets/net/state-hash.ts`，每 60 tick 一份 FNV-1a，坐标量化到 1/1024 像素 |
+| 超越函数 | ⚠️ 仍未动：98 处 `sin/cos/atan2/hypot`。`hypot → sqrt` 是零风险替换，但要先有「同一份操作两遍跑」的对照才能证明它值得换 —— 留给 P2 收尾的实测 |
+
+### 4.5 P2 实现记录（2026-11-20）
+
+**平台通道的事实（真宿主探针实测，不是翻文档猜的）**
+
+`createOnlineClient()` 返回的会话上**没有** `sendBinary` / `onBinaryMessage` ——
+`scripts/probe-net-channel.mjs` 在 `http://127.0.0.1:56737/__zaohua/preview` 里打印出来的
+原型链只有 `createRoom / joinRoom / sendAction / subscribeEvents / bindExistingRoom / connect …`，
+自有的 `room` 成员在未连接时是空。文档里那套二进制接口属于 `useRoomService` 那一层，
+而 `createPlatformStateSyncRuntime` 没有透传。
+
+**结论：用 `sendAction` 搬运定长二进制帧。** 帧本身仍是 12 字节定长，外面套一层
+`{ t, n, b: base64 }`（`assets/net/base64.ts` 是纯 JS 实现，两端算出的字节只由这段代码决定）。
+服务器**不解析帧内容**，只按 tick 归档转发 —— 「只转发」这条线没破。
+
+**新文件**
+
+| 文件 | 作用 |
+|:--|:--|
+| `assets/net/step-clock.ts` | 固定步长。`addTime` + `takeStep` 分离，联机才能做到「没推进就不扣时间」 |
+| `assets/net/input-frame.ts` | 12 字节定长帧 + 批量包编解码 |
+| `assets/net/input-latch.ts` | 一帧渲染的输入 → N 个逻辑步，边沿只给第一步（不然一帧跑 3 步 = 三连击） |
+| `assets/net/lockstep.ts` | 等齐队列：本地帧、远端帧、掉线、迟到、等待计时 |
+| `assets/net/state-hash.ts` | FNV-1a + 1/1024 量化（不量化会被 1e-13 的浮点差误判分叉） |
+| `assets/net/remote-actor.ts` | 远端影子角色（P2 的「看得见对方」） |
+| `assets/net/base64.ts` | 纯 JS base64，避免 `btoa` 的 0xFF 限制 |
+| `meta-ui/net-bridge.js` | 主窗口 relay 桥：不碰帧格式，只搬运 |
+| `game/server/source/index.ts` | relay：按 tick 归档输入、记录 hash 分叉、宣布离场 |
+
+**验证**：`assets/net/__tests__/` 48 断言；`scripts/verify-fixed-step.mjs` 6 条（单机回归）；
+`scripts/probe-net-channel.mjs`（宿主通道探针）。
+
+**当前的可视范围（诚实记录）**：P2 能看到对方在自己屏幕上走动、头顶有金色名字；
+但**打不到对方、看不到对方血量**，怪也不共享（各打各的）。这些是 P3：
+玩家实体进 `GameState` + `hurts()` 扩 `fromPlayerId`/`teamId`。
+
+**影子角色故意偷的懒**（P3 一并还）：不寻路、不碰撞（会穿墙）、不吃速度加成、
+不画武器、没有血量。它的位置只用 `+ - * /` 和 `sqrt`（IEEE 精确），所以两端算出同一个坐标；
+朝向平滑用了 `atan2`，只影响绘制，且**不进 hash**。
+
+### 4.6 P2 已知限制（P4 再补）
+
+| 限制 | 后果 | 为什么先接受 |
+|:--|:--|:--|
+| 卡顿期间不追帧 | 缺帧时整局停在 T；若某一端因此丢了时间，tick 会永久落后 | 正常链路（可靠 WS + 3 tick 缓冲）不会触发；真触发时要 checkpoint 重放，那是 P4 |
+| 卡住超过 0.25s 截断 | 极长停顿会丢时间，两端 tick 错开 | 同上；`stalls` / `droppedSeconds` 已进诊断 |
+| base64 开销 | 每帧 12B → 16 字符，2 人局约 3KB/s | 16 人满房才会变成问题，P4 换二进制通道 |
+| `onCheckJoin` 还是空的 | 开局后理论上有人能挤进房间 | 房间号只发给本局成员；真锁门要等 P4 |
+
 
 ### 4.3 反作弊分层
 
@@ -238,7 +301,7 @@ Engine Worker（无 DOM、无 PlatformClient）
 |:--|:--|:--|
 | **P0** | 撮合服务 + 队列规则 + 房间回报 + 测试 | **已完成**（`match.mjs` + `test/match.mjs`，56 断言） |
 | **P1** | 局外大厅「快速匹配」按钮 + 排队 UI + 建房/join 接线 | **已完成并在真宿主验收**：`multiplayer_integration.stage=verified`，两人同房同 seed 开局（§3.10） |
-| **P2** | 固定步长 + 输入流 + relay server + hash 对账 | 待做 |
+| **P2** | 固定步长 + 输入流 + relay server + hash 对账 | **代码完成**：48 条 `net/` 单测 + 单机回归 6 条通过；**双人真机待验**（要两个真账号） |
 | **P3** | 同屏互砍：玩家实体进 `GameState`、`hurts()` 扩 `fromPlayerId`/`teamId`（互打 / 友伤关闭）、撤离判定、结算（只给自己看带出价值） | 待做 |
 | **P4** | relay 的 `onCheckJoin`（挡插队）+ 服务端视野裁剪 + 输入限幅 | 待做 |
 | **P5** | 组队 PVPVE（`teamId`） | 远期 |
@@ -249,5 +312,10 @@ Engine Worker（无 DOM、无 PlatformClient）
 - 客户端（本地，能自证的部分）：`node scripts/verify-quick-match.mjs`（16 条）——
   按钮存在、游客被明确挡住、登录态在无宿主时被明确挡住、**全程没往 `api/v1/match` 发过请求**、
   页面无 error 级报错。这条脚本故意不假装能验联机。
+- 固定步长单机回归：`node scripts/verify-fixed-step.mjs`（6 条）—— 出征后能走、
+  第二次指令也生效、单机下 `host.net.status().active === false`、一条 `sendAction` 都没发出去。
+- 帧同步单元：`node_modules/.bin/vitest run assets/net`（48 条）——
+  时钟切分、帧编解码往返、等齐/迟到/掉线、hash 量化与抗误报。
 - 联机链路：平台上 `multiplayer_integration.stage` 到 `verified`（两个玩家 seated + 对局进入 `playing`）才算接通，**当前已到 verified**（§3.10），
   `wired` 只代表能上传。**这一条只能你配合开两个窗口验**，本地任何脚本都替代不了。
+  验 P2 时要看的是另外两样：双方 `host.net.status().sends > 0`、`state.remotes` 里出现对方且坐标会动。
