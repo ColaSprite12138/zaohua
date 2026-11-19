@@ -1,0 +1,15 @@
+{
+  "name": "colasprite-trade-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "托管账本式交易后端（零依赖：node:http + node:sqlite + node:crypto）",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node test/e2e.mjs",
+    "smoke": "node test/smoke-live.mjs"
+  }
+}

@@ -1,0 +1,31 @@
+[Unit]
+Description=Colasprite trade API (托管账本后端)
+Documentation=https://api.colasprite.net/api/v1/health
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/colasprite-api
+ExecStart=/opt/node/bin/node server.mjs
+Restart=always
+RestartSec=3
+
+# 只监听回环，对外唯一入口是 Caddy 的 443
+Environment=PORT=8790
+Environment=HOST=127.0.0.1
+Environment=DB_PATH=/opt/colasprite-api/data/app.db
+Environment=NODE_ENV=production
+# node:sqlite 在 22.x 是 experimental，屏蔽这一条提示（保留其他警告）
+Environment=NODE_OPTIONS=--disable-warning=ExperimentalWarning
+
+# 收紧权限：不拿新权限、无独立 tmp、/home 不可见
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/opt/colasprite-api/data
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

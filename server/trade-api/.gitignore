@@ -1,0 +1,6 @@
+# 运行时数据（SQLite 库 + WAL），绝不要进仓库
+data/
+*.db
+*.db-wal
+*.db-shm
+node_modules/

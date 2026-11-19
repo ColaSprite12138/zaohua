@@ -1,0 +1,32 @@
+{
+	email 447635902@qq.com
+	# 你的 v2ray-caddy-fallback 容器（host 网络）占用了 127.0.0.1:2019 管理端口，
+	# 两个实例同时开 admin 会抢端口 → 这里必须关掉。
+	admin off
+	# 独立的证书存储目录，不和 v2ray 那套共用账号/锁文件
+	storage file_system /data
+}
+
+api.colasprite.net {
+	encode gzip
+
+	# 交易后端（零依赖 node:http，监听 127.0.0.1:8790）
+	# Caddy 的 handle 按路径特异性排序，/api/* 会优先于下面的兜底
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8790
+	}
+
+	# 阶段 0 探针（临时）：其余路径仍走 8787
+	# 交易后端稳定后，把这段删掉，改成 reverse_proxy 127.0.0.1:8790
+	handle {
+		reverse_proxy 127.0.0.1:8787
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 5MiB
+			roll_keep 3
+		}
+		format console
+	}
+}
