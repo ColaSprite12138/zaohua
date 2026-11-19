@@ -226,6 +226,10 @@
    存盘 / 账号隔离 / 跨设备恢复**只在发布到造化平台后可验**（`assets/meta/CONTEXT.md`「平台身份」）。
 4. **`game.state` 必须保持唯一 read projection**；**壳层注入必须是全流程最后一步**
    （`build` / `play` / `package` 都会重建 `dist/`）。理由见「已知陷阱速查」。
+5. **PVP 只对搜打撤，撮合自建 + 帧同步**：主线 / 副本永远本地单机（`currentKind !== 'pvpve'` 时不碰房间 API）；
+   平台没有撮合 API 也不许服务端代客建房，所以「谁建房、谁加入、何时开」由 `api.colasprite.net/api/v1/match/*` 当导演；
+   一局的 `seed` 只能由撮合服务在配对瞬间下发（`match.seed` → `host.netSeed` → `deploy.seed`），
+   客户端自己抽 seed 会让两端第一帧就分叉。契约正本 `docs/pvp-matchmaking.md`。
 
 ## 保护清单（改之前先说清改什么、为什么）
 
@@ -360,7 +364,7 @@
    单测会因为重复而红）。⑤ **指针必须是视图坐标**（`game.pack.ts` 传 `screenX/screenY`，
    0..1280×0..720），不是物理像素 —— 传错了 2× 渲染下悬停会整体偏移。
 
-`scripts/check-drift.sh` 会把上面 1–24 涉及的文件单独列出来，接手时先看它。
+`scripts/check-drift.sh` 会把上面 1–25 涉及的文件单独列出来，接手时先看它。
 24. **地图布局红线（2026-11-18，用户三条反馈后重做）**：① **分区归属只有一个真相** ——
    逐格 `zoneGrid`（`import_map.py` 导出，与 .ldtk 可走性对账）。`ZONES` 的矩形是**包围盒**，
    不要再拿它当"这个格属于哪个区"的判据（老代码那么干，所以四块只能是规整矩形）。
@@ -373,6 +377,27 @@
    读 `arena.ldtk` → BFS → 按 `BODY_RADIUS=10` 拉直 → 点"这一段往前 380px"那一点。**禁止**"朝目标点屏幕边缘"（固定相对偏移会每次
    吸附到同一处墙后死角 → A* 退回直线 → 原地绕圈，实测 160 轮 39.5k px 仍在出生点旁）。
    ⑥ **出生点 36 格内不放怪**（`SAFE_SPAWN_CELLS`）：这不只是给验收留活路，是开局体验。
+
+25. **搜打撤 PVP 红线（2026-11-20，用户逐条拍板，改之前先读 `docs/pvp-matchmaking.md`）**：
+    ① **联机只对搜打撤**；主线 / 副本走本地单机，不许 import 房间 API。
+    ② **开局阈值是「满 4 支队伍」，不是 4 人**（现在 1 票 = 1 队 = 1 人，所以恰好等价）。
+       组队上线后要改成「数队伍」而不是「数票」，`server/trade-api/src/match.mjs::limits.formAt` 的注释钉着这件事。
+    ③ **结算只显示自己的带出价值**：不做排名、不做对比、不下发他人数据。
+    ④ **友伤默认关闭**（等组队上线看反馈）。「自己打不到自己」——含自己铺的火墙 / 毒池等地形伤害——
+       由 `assets/combat/source.ts::hurts()` 保证，是**既有事实不是开关**。
+       **P3 必须给 `DamageSource` 加 `fromPlayerId` / `teamId`**：现在 `playerSource()` 的 owner 恒为 `'player'`，
+       `hurts(playerSource(..), 'player')` 恒为 `false` —— 不扩这一层，PVP 伤害一条都进不去。
+       判定只许留在 `hurts()` 一处，**不要在技能 / 弹道里各写一份 `if`**（`source.ts` 文件头立的就是这条规矩）。
+    ⑤ **怪量不随人数缩放**：`map.monsters` 是数量唯一权威（`state.ts:1165` 明写），4 人与 16 人是同一份怪表。
+    ⑥ **掉落不做归属**：`Drop` 结构里根本没有 `droppedBy` / `killerId`，地上的东西所有人可捡。
+       加归属反而是新增字段 + 新增规则，别顺手加。
+    ⑦ **配对状态机只有一份**：`assets/meta/match-client.ts::decideNext()`。轮询回调里别再写一套
+       「formed 该建房 / ready 该进房」的 if —— 两套分支必然漂移，而这条链路的 bug 只在真实联机时暴露。
+    ⑧ **改了数值表 / 技能 / 怪物表就要递增 `RULESET_EXTRACT`**（`extract-v1` → `extract-v2`）：
+       `ruleset` 不同的人进不同队列，否则新旧客户端被配到一起、帧同步第一帧就分叉。
+    ⑨ **房间走 `PlatformClient.stateSync.createOnlineClient()`**，不要手搓 `rooms.create/connect/join`：
+       占座冲突（`ROOM_ALREADY_EXISTS`）、座位恢复、JWT 时序都由平台那层处理，顺序错一步的表现是
+       「房间建好了但人没坐下」。
 
 ## 改完必跑（任何一项不绿 = 不许交付）
 

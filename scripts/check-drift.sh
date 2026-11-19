@@ -48,6 +48,12 @@ PROTECTED=(
   scripts/playthrough-resize.mjs
   scripts/playthrough-monster-skill.mjs
   scripts/playthrough-worldmap.mjs
+  # 搜打撤 PVP（2026-11-20）：撮合撮合契约、配对状态机、房间接线。改这些 = 改联机行为。
+  docs/pvp-matchmaking.md
+  server/trade-api/src/match.mjs
+  assets/meta/match-client.ts
+  meta-ui/match-flow.js
+  assets/combat/source.ts
   scripts/playthrough-fog.mjs
   scripts/lib/map-route.mjs
   scripts/verify-all.sh

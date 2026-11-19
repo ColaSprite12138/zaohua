@@ -83,14 +83,67 @@ queued ──满 4 队 / 等满 60s──▶ formed（host 建房，15s 截止�
 - `idx_ticket_active` 偏索引兜住「一人一票」，不靠应用层「先查再插」（那是竞态）。
 - 建方 = 最久等待者，并列时按 `rowid`（插入顺序），不按随机 id —— 否则同毫秒入队时建方随机，问题无法复现。
 - `ruleset`（构建 hash）不同的人进不同队列，否则帧同步第一帧就分叉。
-- `roomId` 只下发给本局成员；房间在平台目录里是公开的，所以建房时**还要设房间密码**（双层保险）。
+- `roomId` 只下发给本局成员。房间在平台目录里是公开的，所以「只发 roomId」不是保险，**真正挡插队的是 P2 的
+  `onCheckJoin`**：relay 进程（`game/server`）拿到平台的 `{ userId, isRejoin }` 后去撮合服务核对「这个 userId
+  是不是本局成员」，不是就 `ROOM_JOIN_DENIED`。平台给的这个 `userId` 来自已通过的 admission，不是客户端输入，
+  可信；**不用房间密码**——密码字段名在平台文档里没有正式契约，而 `onCheckJoin` 是官方支持的入口。
+  P1 阶段还没有 relay，等于没有这道门：内测可接受，**上线 PVP 前必须补上**。
 
 ### 未做（明确记录）
 
-- 排队用 **1s 短轮询**，不是 WS：排队阶段的延迟预算是秒。等真机联调出现请求量问题再换长轮询/WS，接口形状不变。
+- 排队用 **1s 短轮询**，不是 WS：排队阶段的延迟预算就是秒级。等真机联调出现请求量问题再换长轮询/WS，接口形状不变。
 - 没有「队伍」（`teamId`）字段：组队 PVPVE 时再加，现在加了没人填。
   **注意开局阈值按"队"计**（满 4 队即开），组队上线后要改成"数队伍"而不是"数票"——
   现在 1 票 = 1 队，两者恰好等价。`match.mjs::limits.formAt` 的注释已写明这一点。
+- **部署**：线上 `https://api.colasprite.net`（CVM `/opt/colasprite-api`，systemd `trade-api`）已跑这一版，
+  `GET /api/v1/match/stats` 返回 `{queued, playing, limits}`。改后端代码后跑
+  `bash server/trade-api/deploy/push.sh`（备份 db → scp → restart → 自检），线上**不是 git 仓库**。
+- 线上冒烟（2026-11-20 02:22 实测）：注册 → 入队 → `queued:1` → 查票 → 取消 → `queued:0`，全通。
+
+### 3.9 客户端接线（P1 已落地）
+
+| 文件 | 职责 | 不许做的事 |
+|:--|:--|:--|
+| `assets/meta/match-client.ts` → `meta-ui/match-client.js` | 撮合 API 客户端（零 import、`fetch` 注入，可单测）+ `decideNext()` 纯函数 | 不许自己抽 seed、不许自己判「该不该开局」 |
+| `meta-ui/match-flow.js`（手写，classic script） | 轮询循环、把票上的指令翻译成造化的建房 / 进房 / 报座、排队 UI | 不许手搓 `rooms.create/connect/join`（见下） |
+| `meta-ui/shell-bridge.js` | `deploy.seed` 优先取 `host.netSeed` | 不许在非 `pvpve` 关卡读 `netSeed` |
+
+**为什么房间走 `PlatformClient.stateSync.createOnlineClient()`**：它是平台自带的房间生命周期封装，
+占座冲突（`ROOM_ALREADY_EXISTS` / `ROOM_CREATING`）、座位恢复、JWT 时序都由它处理。
+手搓 `rooms.create` → `connect` → `join` 三条调用，顺序错一步的表现是「房间建好了但人没坐下」，
+而且只在真机上暴露。我们只借它的房间能力：`sendAction` / `startGame` 一次都不调 ——
+同步走帧同步的二进制 relay，不是它的 state sync。
+
+**配对状态机**（`decideNext(view, local)`，纯函数、15 条单测钉着）：
+
+```
+queued            → wait（显示已等秒数；等满 60s 且没人 → 给「继续等 / 取消」）
+formed  + host    → create_room（建房后立刻 reportRoom）
+formed  + guest   → wait（等 host 把 roomId 回报给服务端）
+ready  + 未进房   → join_room（host 与 guest 都一样）
+ready  + 已进房   → report_seated
+seated + playing  → start（此时才起局）
+left / done       → 停
+```
+
+两条容易写错、所以单独抽出来的规矩：**`formed` 阶段只有 host 能建房**；**报座必须在连接之后**
+（先报座会让服务端以为人到了、而房间里其实没这个人）。
+
+**seed 链路**（帧同步的唯一前提）：
+
+```
+POST /match/queue → 配对瞬间 tx 里生成 matches.seed
+GET  /match/tickets/:id → view.match.seed
+match-flow.startMatch(seed) → host.netSeed = seed
+shell-bridge deploy → deployment.seed = host.netSeed（仅 pvpve）
+Worker reset(seed) → 两端同一张图、同一个掉落序列
+```
+
+**`ruleset` 版本闸**：`RULESET_EXTRACT = 'extract-v1'`（常量）。改了数值表 / 技能 / 怪物表就递增，
+否则新旧客户端会被配进同一局、第一帧就分叉。将来有正式的构建 hash 再换掉它。
+
+**P1 的边界（诚实记录）**：两人进同一房间、拿同一 seed、各自起局，**但还看不见对方** ——
+输入 relay 是 P2。P1 验的是「撮合 → 建房 → 入座 → 同时开局」这条链路。
 
 ## 4. 帧同步设计要点
 
@@ -142,14 +195,17 @@ Engine Worker（无 DOM、无 PlatformClient）
 | 阶段 | 内容 | 状态 |
 |:--|:--|:--|
 | **P0** | 撮合服务 + 队列规则 + 房间回报 + 测试 | **已完成**（`match.mjs` + `test/match.mjs`，56 断言） |
-| **P1** | 局外大厅「快速匹配」按钮 + 排队 UI + 建房/join 接线 | 待做 |
+| **P1** | 局外大厅「快速匹配」按钮 + 排队 UI + 建房/join 接线 | **已完成**（`match-client.ts` / `match-flow.js`，16 条浏览器断言） |
 | **P2** | 固定步长 + 输入流 + relay server + hash 对账 | 待做 |
 | **P3** | 同屏互砍：玩家实体进 `GameState`、`hurts()` 扩 `fromPlayerId`/`teamId`（互打 / 友伤关闭）、撤离判定、结算（只给自己看带出价值） | 待做 |
-| **P4** | 服务端视野裁剪 + 输入限幅 | 待做 |
+| **P4** | relay 的 `onCheckJoin`（挡插队）+ 服务端视野裁剪 + 输入限幅 | 待做 |
 | **P5** | 组队 PVPVE（`teamId`） | 远期 |
 
 ## 6. 验收
 
 - 后端：`cd server/trade-api && npm run test:match`（56 断言，含 4 队（当前 4 人）即开 / 60s 兜底 / 独狼不开 / 版本闸 / 回队一次）。
+- 客户端（本地，能自证的部分）：`node artifacts/verify-quick-match.mjs`（16 条）——
+  按钮存在、游客被明确挡住、登录态在无宿主时被明确挡住、**全程没往 `api/v1/match` 发过请求**、
+  页面无 error 级报错。这条脚本故意不假装能验联机。
 - 联机链路：平台上 `multiplayer_integration.stage` 到 `verified`（两个玩家 seated + 对局进入 `playing`）才算接通，
-  `wired` 只代表能上传。
+  `wired` 只代表能上传。**这一条只能你配合开两个窗口验**，本地任何脚本都替代不了。
