@@ -159,6 +159,9 @@
     $('fx-deploy').disabled = on;
     $('fx-back').disabled = !on;
     $('fx-bag').disabled = !on;
+    // 快速匹配按钮由 match-flow.js 插入，可能还没到（脚本顺序），所以可选。
+    var matchBtn = $('fx-match');
+    if (matchBtn) matchBtn.disabled = on;
     // 关卡类型只能在出征前选：局内换类型等于中途改死亡规则。
     $('fx-kind').disabled = on;
     $('fx-phase').textContent = on ? '阶段：战斗' : '阶段：局外配装';
@@ -289,8 +292,11 @@
     inRun = true;
     host.enterRun(loadout);
     showBattle(true);
+    // 联机（搜打撤 PVP）的 seed 由撮合服务在配对瞬间生成并随票下发，两端必须同一个值
+    // —— 帧同步的第一前提。单机仍用固定 SEED，保证同一台机器上重进本的掉落序列可复现。
+    var seed = currentKind === 'pvpve' && Number.isFinite(host.netSeed) ? host.netSeed : SEED;
     var deployment = {
-      seed: SEED, loadout: loadout, kind: currentKind, stars: starDeployment(),
+      seed: seed, loadout: loadout, kind: currentKind, stars: starDeployment(),
     };
     // 副本遗物（设计 4）：只有「副本」把上一局掉落的东西摆回地图。
     // 只有一张地图，所以不按 stage 过滤；多了分区之后这里要加 stage gate。

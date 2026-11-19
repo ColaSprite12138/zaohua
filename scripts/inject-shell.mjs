@@ -191,9 +191,11 @@ ${markup}
 <script>${read('meta-ui/workshop.js')}</script>
 <script>${read('meta-ui/auth-client.js')}</script>
 <script>${read('meta-ui/save-client.js')}</script>
+<script>${read('meta-ui/match-client.js')}</script>
 <script>${script}</script>
 <script>${read('meta-ui/platform-store.js')}</script>
 <script>${read('meta-ui/shell-bridge.js')}</script>
+<script>${read('meta-ui/match-flow.js')}</script>
 ${END}`;
 }
 

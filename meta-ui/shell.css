@@ -65,6 +65,18 @@
 }
 #fx-shell .fx-log.bad { color: #ff7b7b; }
 
+/* 快速匹配（搜打撤 PVP）：按钮 + 状态条 + 独狼的「继续等 / 取消」。
+   状态条 `:empty` 时隐藏，避免没匹配时顶栏多一截空白。 */
+#fx-shell .fx-controls #fx-match { border-color: #67e8f9; color: #67e8f9; }
+#fx-shell .fx-controls #fx-match:disabled { border-color: #294055; color: #dbe9f5; }
+#fx-shell .fx-match-status { color: #8fa9bb; font-size: 12px; }
+#fx-shell .fx-match-status:empty { display: none; }
+#fx-shell .fx-match-status.bad { color: #ff7b7b; }
+#fx-shell .fx-match-keep { display: inline-flex; gap: 6px; align-items: center; }
+/* `display:inline-flex` 会盖掉 hidden 属性 —— 必须显式写回来（这个坑踩过两次）。 */
+#fx-shell .fx-match-keep[hidden] { display: none !important; }
+#fx-shell .fx-match-keep button { padding: 5px 10px; font-size: 12px; }
+
 /* Battle mode: meta panels disappear, the layer lets pointer events through.
    #fx-bag-content is the ONE exception: B / I opens it as an in-run overlay. */
 #fx-shell.fx-in-battle {

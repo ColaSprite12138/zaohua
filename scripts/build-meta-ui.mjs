@@ -87,6 +87,14 @@ const targets = [
     global: 'MetaWorkshop',
   },
   {
+    // 撮合客户端（搜打撤 PVP）。零 import，单测用假 fetch 跑全流程；
+    // `decideNext()` 是纯函数 —— 轮询循环里最容易写错的「host 建房 / guest 等房」
+    // 那条分支，就是靠它单测覆盖的。
+    source: 'assets/meta/match-client.ts',
+    output: 'meta-ui/match-client.js',
+    global: 'MetaMatch',
+  },
+  {
     // The voxel model library is import-free by design, so the standalone page
     // can draw the very same item models the game draws -- one art authority,
     // no duplicated shapes and no bitmaps to keep in sync.
