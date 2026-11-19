@@ -1,0 +1,115 @@
+import { describe, expect, it } from 'vitest';
+import {
+  AUX_BIG_MAP, INPUT_FRAME_BYTES, NO_SKILL, NO_SWITCH, PACKET_BATCH,
+  decodeInputFrame, decodePacket, emptyInputFrame, encodeBatch, encodeInputFrame,
+  toStepInput, type InputFrame,
+} from '../input-frame.ts';
+
+function frame(overrides: Partial<InputFrame> = {}): InputFrame {
+  return { ...emptyInputFrame(7), ...overrides };
+}
+
+describe('输入帧编解码', () => {
+  it('帧长固定 12 字节', () => {
+    expect(INPUT_FRAME_BYTES).toBe(12);
+    expect(encodeInputFrame(frame()).byteLength).toBe(12);
+  });
+
+  it('往返之后每个字段都对得上', () => {
+    const original = frame({
+      pointerDown: true,
+      pointerHeld: true,
+      pointerUp: false,
+      dodge: true,
+      potion: true,
+      healPotion: false,
+      extractChannel: true,
+      restart: true,
+      skill: 3,
+      switchWeapon: 1,
+      mouse: { x: 321.25, y: 118.75 },
+      pointerOnHud: true,
+      bigMap: true,
+    });
+    const back = decodeInputFrame(new Uint8Array(encodeInputFrame(original).buffer));
+    expect(back).toEqual(original);
+  });
+
+  it('没有指针时 mouse 回 null，而不是 (0,0)', () => {
+    const back = decodeInputFrame(new Uint8Array(encodeInputFrame(frame()).buffer));
+    expect(back.mouse).toBeNull();
+  });
+
+  it('技能/切枪的「没按」是 255，不会和槽位 0 混淆', () => {
+    const back = decodeInputFrame(new Uint8Array(encodeInputFrame(frame()).buffer));
+    expect(back.skill).toBe(NO_SKILL);
+    expect(back.switchWeapon).toBe(NO_SWITCH);
+    // 槽位 0 是合法技能位，必须与 NO_SKILL 区分
+    const zero = decodeInputFrame(new Uint8Array(encodeInputFrame(frame({ skill: 0 })).buffer));
+    expect(zero.skill).toBe(0);
+  });
+
+  it('坐标保留 1/4 像素精度', () => {
+    const back = decodeInputFrame(new Uint8Array(
+      encodeInputFrame(frame({ mouse: { x: 100.25, y: 0.75 } })).buffer,
+    ));
+    expect(back.mouse).toEqual({ x: 100.25, y: 0.75 });
+  });
+
+  it('越界坐标被夹住，不会回绕成负数', () => {
+    const back = decodeInputFrame(new Uint8Array(
+      encodeInputFrame(frame({ mouse: { x: 1e9, y: -1e9 } })).buffer,
+    ));
+    expect(back.mouse!.x).toBeCloseTo(32767 / 4, 5);
+    expect(back.mouse!.y).toBeCloseTo(-32768 / 4, 5);
+  });
+
+  it('奇偶位互不串：只开 bigMap 不会顺带点亮别的标志', () => {
+    const back = decodeInputFrame(new Uint8Array(encodeInputFrame(frame({ bigMap: true })).buffer));
+    expect(back.bigMap).toBe(true);
+    expect(back.pointerDown).toBe(false);
+    expect(back.dodge).toBe(false);
+    expect(back.pointerOnHud).toBe(false);
+  });
+
+  it('批量包能装多帧且顺序不变', () => {
+    const frames = [frame({ tick: 1 }), frame({ tick: 2, pointerDown: true }), frame({ tick: 3 })];
+    const bytes = encodeBatch(frames);
+    expect(bytes[0]).toBe(PACKET_BATCH);
+    const decoded = decodePacket(bytes);
+    expect(decoded.kind).toBe('batch');
+    if (decoded.kind !== 'batch') return;
+    expect(decoded.frames.map((f) => f.tick)).toEqual([1, 2, 3]);
+    expect(decoded.frames[1]!.pointerDown).toBe(true);
+  });
+
+  it('声明帧数大于实际字节数时按实际解，不越界读', () => {
+    const bytes = encodeBatch([frame({ tick: 1 })]);
+    // 把 count 改成 99，模拟截断/畸形包
+    new DataView(bytes.buffer).setUint16(1, 99, true);
+    const decoded = decodePacket(bytes);
+    expect(decoded.kind).toBe('batch');
+    if (decoded.kind !== 'batch') return;
+    expect(decoded.frames).toHaveLength(1);
+  });
+
+  it('空包和未知标签返回 unknown 而不是抛异常', () => {
+    expect(decodePacket(new Uint8Array(0)).kind).toBe('unknown');
+    expect(decodePacket(new Uint8Array([0x7f])).kind).toBe('unknown');
+  });
+
+  it('toStepInput 把 255 还原成 null，坐标原样透传', () => {
+    const input = toStepInput(frame({ mouse: { x: 5, y: 6 }, skill: 2, switchWeapon: 0 }));
+    expect(input.skill).toBe(2);
+    expect(input.switchWeapon).toBe(0);
+    expect(input.mouse).toEqual({ x: 5, y: 6 });
+    const idle = toStepInput(frame());
+    expect(idle.skill).toBeNull();
+    expect(idle.switchWeapon).toBeNull();
+    expect(idle.mouse).toBeUndefined();
+  });
+
+  it('AUX 位掩码值与协议表一致', () => {
+    expect(AUX_BIG_MAP).toBe(4);
+  });
+});
