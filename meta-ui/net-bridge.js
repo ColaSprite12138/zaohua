@@ -113,12 +113,17 @@
     var el = ensureDiag();
     if (!el) return;
     var wait = typeof stat.waiting === 'number' ? stat.waiting : 0;
+    // 同伴 = 座位名单里的其他人；影子 = 真正建出来的远端角色。
+    // 两者不等就说明卡在 syncRemotes（名单有、影子没建）。
+    var mateCount = (stat.peers && stat.peers.length) || 0;
+    var shadowCount = typeof stat.remotes === 'number' ? stat.remotes : '?';
     el.textContent = 'tick ' + stat.tick
       + '  ' + rateText
       + '  等 ' + (wait >= 1 ? Math.round(wait) + 'ms' : '0')
       + '  丢 ' + (stat.melted || 0)
       + '  迟 ' + (stat.lateFrames || 0)
-      + '  人 ' + ((stat.peers && stat.peers.length) || 1);
+      + '  同伴 ' + mateCount
+      + ' · 影子 ' + shadowCount;
     // 60 是满速；低于 56 节奏已经不匀，低于 45 是明显卡。
     if (rate !== null) {
       el.style.color = rate < 45 ? '#f09595' : (rate < 56 ? '#f0b429' : '#9fe1cb');

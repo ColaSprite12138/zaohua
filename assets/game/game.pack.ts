@@ -378,6 +378,8 @@ export const game: Plugin = {
           peers: [...lockstep.peers],
           lateFrames: lockstep.lateFrames,
           longestWaitMs: lockstep.longestWaitMs,
+          /** 已经建出来的影子数量。与 peers 数量对照能区分「名单没到」和「影子没建」。 */
+          remotes: state.remotes.length,
           /** 诊断：卡在 0 时用来一眼分辨「名单没到 / 主循环被锁 / 帧没发出去」。 */
           settled: netSeatSettled,
           outbox: netOutbox.length,
