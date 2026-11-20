@@ -60,7 +60,7 @@ export function portalInReach(s: GameState): Portal | null {
   let bestD = Infinity;
   for (const portal of s.portals) {
     if (portal.state !== 'armed') continue;
-    const d = Math.hypot(portal.x - s.player.x, portal.y - s.player.y);
+    const d = Math.sqrt((portal.x - s.player.x) * (portal.x - s.player.x) + (portal.y - s.player.y) * (portal.y - s.player.y));
     if (d > PORTAL_RADIUS || d >= bestD) continue;
     best = portal;
     bestD = d;
@@ -142,7 +142,7 @@ export function updateExtraction(s: GameState, dt: number, channelPressed: boole
     breakChannel(s, portal, '闪避打断了引导 · 进度清空');
     return;
   }
-  if (Math.hypot(portal.x - s.player.x, portal.y - s.player.y) > PORTAL_RADIUS) {
+  if (Math.sqrt((portal.x - s.player.x) * (portal.x - s.player.x) + (portal.y - s.player.y) * (portal.y - s.player.y)) > PORTAL_RADIUS) {
     breakChannel(s, portal, '离开传送门 · 进度清空');
     return;
   }

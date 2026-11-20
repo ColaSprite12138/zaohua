@@ -409,7 +409,7 @@ function sweep(s: GameState, def: SkillDef, damage: number): void {
   for (let i = 0; i < s.skeletons.length; i += 1) {
     const sk = s.skeletons[i];
     if (sk === undefined || !sk.alive) continue;
-    if (Math.hypot(sk.x - p.x, sk.y - p.y) > def.reach + 20) continue;
+    if (Math.sqrt((sk.x - p.x) * (sk.x - p.x) + (sk.y - p.y) * (sk.y - p.y)) > def.reach + 20) continue;
     hit(s, i, def, damage, { color: '#ffd166', knockback: 1.4 });
     spawnFx(s, 'impact', sk.x, sk.y, p.face, 26, 0.45);
     hits += 1;
@@ -442,7 +442,7 @@ function startDash(
   const p = s.player;
   const dx = aim.x - p.x;
   const dy = aim.y - p.y;
-  const d = Math.hypot(dx, dy) || 1;
+  const d = Math.sqrt((dx) * (dx) + (dy) * (dy)) || 1;
   p.face = Math.atan2(dy, dx);
   p.dash = {
     travelled: 0,
@@ -493,7 +493,7 @@ export function updateDash(s: GameState, dt: number, _mods: CombatModifiers): vo
   for (let i = 0; i < s.skeletons.length; i += 1) {
     const sk = s.skeletons[i];
     if (sk === undefined || !sk.alive || dash.hit.includes(i)) continue;
-    if (Math.hypot(sk.x - p.x, sk.y - p.y) > 44) continue;
+    if (Math.sqrt((sk.x - p.x) * (sk.x - p.x) + (sk.y - p.y) * (sk.y - p.y)) > 44) continue;
     dash.hit.push(i);
     const def = skillDef(dash.skillId);
     if (def !== null) {
@@ -522,7 +522,7 @@ function bolt(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
   const p = s.player;
   let ux = aim.x - p.x;
   let uy = aim.y - p.y;
-  const d = Math.hypot(ux, uy) || 1;
+  const d = Math.sqrt((ux) * (ux) + (uy) * (uy)) || 1;
   ux /= d;
   uy /= d;
   let hits = 0;
@@ -573,7 +573,7 @@ function cone(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
     if (sk === undefined || !sk.alive) continue;
     const rx = sk.x - p.x;
     const ry = sk.y - p.y;
-    const along = Math.hypot(rx, ry);
+    const along = Math.sqrt((rx) * (rx) + (ry) * (ry));
     if (along > def.reach + 20) continue;
     // 角度差取短弧：左后方和右后方的目标不能都被算进正面扇形。
     let diff = Math.atan2(ry, rx) - angle;
@@ -599,7 +599,7 @@ function zone(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
   if (def.zone === undefined) return;
   let dx = aim.x - p.x;
   let dy = aim.y - p.y;
-  const d = Math.hypot(dx, dy) || 1;
+  const d = Math.sqrt((dx) * (dx) + (dy) * (dy)) || 1;
   if (d > def.reach) {
     dx = (dx / d) * def.reach;
     dy = (dy / d) * def.reach;
@@ -611,7 +611,7 @@ function zone(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
   for (let i = 0; i < s.skeletons.length; i += 1) {
     const sk = s.skeletons[i];
     if (sk === undefined || !sk.alive) continue;
-    if (Math.hypot(sk.x - x, sk.y - y) > radius + 16) continue;
+    if (Math.sqrt((sk.x - x) * (sk.x - x) + (sk.y - y) * (sk.y - y)) > radius + 16) continue;
     // 落地这一下给少量伤害 + 轻推，真正的输出交给区域里的 DOT。
     hit(s, i, def, damage, { knockback: 0.4, color: def.zone.element === 'fire' ? '#fb923c' : '#4ade80' });
     spawnFx(s, 'impact', sk.x, sk.y, p.face, 22, 0.45);
@@ -640,7 +640,7 @@ function missile(
   // 落点钳到 reach 内：和火墙 / 落雷同一条「不能隔半张图丢」的规矩。
   let dx = aim.x - p.x;
   let dy = aim.y - p.y;
-  const d = Math.hypot(dx, dy) || 1;
+  const d = Math.sqrt((dx) * (dx) + (dy) * (dy)) || 1;
   if (d > def.reach) {
     dx = (dx / d) * def.reach;
     dy = (dy / d) * def.reach;
@@ -657,7 +657,7 @@ function missile(
     aim: spot,
     angle,
     // 「点哪炸哪」：飞行距离取到落点为止，而不是飞到原型射程尽头。
-    aimRange: Math.hypot(dx, dy),
+    aimRange: Math.sqrt((dx) * (dx) + (dy) * (dy)),
     sourceId: def.id,
   });
   spawnFx(s, 'fire', p.x, p.y, angle, 26, 0.35);
@@ -668,7 +668,7 @@ function strike(s: GameState, def: SkillDef, aim: { x: number; y: number }, dama
   const p = s.player;
   let dx = aim.x - p.x;
   let dy = aim.y - p.y;
-  const d = Math.hypot(dx, dy) || 1;
+  const d = Math.sqrt((dx) * (dx) + (dy) * (dy)) || 1;
   if (d > def.reach) {
     dx = (dx / d) * def.reach;
     dy = (dy / d) * def.reach;
@@ -679,7 +679,7 @@ function strike(s: GameState, def: SkillDef, aim: { x: number; y: number }, dama
   for (let i = 0; i < s.skeletons.length; i += 1) {
     const sk = s.skeletons[i];
     if (sk === undefined || !sk.alive) continue;
-    if (Math.hypot(sk.x - x, sk.y - y) > def.width) continue;
+    if (Math.sqrt((sk.x - x) * (sk.x - x) + (sk.y - y) * (sk.y - y)) > def.width) continue;
     hit(s, i, def, damage, { color: '#c084fc', knockback: 1.1 });
     spawnFx(s, 'impact', sk.x, sk.y, Math.atan2(sk.y - y, sk.x - x), 30, 0.45);
     burst(s, sk.x, sk.y - 26, '#c084fc', 16, 220);

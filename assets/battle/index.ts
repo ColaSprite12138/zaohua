@@ -72,7 +72,7 @@ export function evaluateTriggers(stage: BattleStage, position: Vec2): StageEvent
   const fired: StageEvent[] = [];
   for (const trigger of stage.triggers) {
     if (trigger.once && stage.fired.includes(trigger.id)) continue;
-    if (Math.hypot(position.x - trigger.at.x, position.y - trigger.at.y) > trigger.radius) continue;
+    if (Math.sqrt((position.x - trigger.at.x) * (position.x - trigger.at.x) + (position.y - trigger.at.y) * (position.y - trigger.at.y)) > trigger.radius) continue;
     const event = resolveEvent(stage, trigger.eventId);
     if (!event) continue;
     if (trigger.once) stage.fired.push(trigger.id);

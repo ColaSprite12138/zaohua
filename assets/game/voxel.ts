@@ -1495,7 +1495,7 @@ export function drawPixelGlow(
   const cy = Math.round(y);
   for (let j = -Math.ceil(ry / cell) * cell; j <= ry; j += cell) {
     for (let i = -Math.ceil(rx / cell) * cell; i <= rx; i += cell) {
-      const d = Math.hypot(i / rx, j / ry);
+      const d = Math.sqrt((i / rx) * (i / rx) + (j / ry) * (j / ry));
       if (d > 1) continue;
       g.fillStyle = `rgba(${r},${gg},${b},${(alpha * (1 - d * 0.75)).toFixed(3)})`;
       g.fillRect(cx + i, cy + j, cell, cell);

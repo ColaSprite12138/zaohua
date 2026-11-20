@@ -454,7 +454,7 @@ export function createPortals(w: World, count = PORTAL_COUNT): Portal[] {
     for (const spot of fromMap) {
       const at = nearestWalkable(w, spot.x, spot.y);
       // 只去重「吸附后落在同一点」的门；摆得近是地图作者的意图，不替人挪。
-      if (spots.some((q) => Math.hypot(q.x - at.x, q.y - at.y) < 1)) continue;
+      if (spots.some((q) => Math.sqrt((q.x - at.x) * (q.x - at.x) + (q.y - at.y) * (q.y - at.y)) < 1)) continue;
       spots.push(at);
     }
   }
@@ -469,7 +469,7 @@ export function createPortals(w: World, count = PORTAL_COUNT): Portal[] {
       for (let attempt = 0; attempt < 8 && picked === null; attempt += 1) {
         const a = -Math.PI / 2 + (Math.PI * 2 * (i + attempt * 0.19)) / count;
         const spot = nearestWalkable(w, cx + Math.cos(a) * rx, cy + Math.sin(a) * ry);
-        const clear = spots.every((q) => Math.hypot(q.x - spot.x, q.y - spot.y) >= w.grid * 2);
+        const clear = spots.every((q) => Math.sqrt((q.x - spot.x) * (q.x - spot.x) + (q.y - spot.y) * (q.y - spot.y)) >= w.grid * 2);
         if (clear) picked = spot;
       }
       // 八次都挤在一起也要留一扇门：宁可重叠，也不能让本局没有出口。

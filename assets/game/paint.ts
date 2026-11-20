@@ -246,7 +246,7 @@ function drawZones(g: Painter, s: GameState): void {
     g.save();
     for (let dy = -zone.radius; dy <= zone.radius; dy += step) {
       for (let dx = -zone.radius; dx <= zone.radius; dx += step) {
-        const d = Math.hypot(dx, dy);
+        const d = Math.sqrt((dx) * (dx) + (dy) * (dy));
         if (d > zone.radius) continue;
         // 边缘用位置哈希挖孔：每个区域长得不一样，但每次重绘完全一致。
         const h = Math.abs(Math.sin(dx * 12.9898 + dy * 78.233)) % 1;
@@ -926,7 +926,7 @@ function drawPlayer(g: Painter, s: GameState): void {
   // bare hands (short grey sword). Any weapon in the active slot is armed.
   const weaponId = activeWeapon(s);
   const armed = weaponId !== null;
-  const moving = Math.hypot(p.vx, p.vy) > 20;
+  const moving = Math.sqrt((p.vx) * (p.vx) + (p.vy) * (p.vy)) > 20;
   // Walk pose and pixel bob both come from the DISTANCE walked, so the feet
   // never slide and a standing body never treads in place.
   const frame = Math.floor(p.stride);
@@ -1515,7 +1515,7 @@ function drawMoveTarget(g: Painter, s: GameState): void {
   g.fillStyle = color;
   const dx = x - s.player.x;
   const dy = y - s.player.y;
-  const dist = Math.hypot(dx, dy);
+  const dist = Math.sqrt((dx) * (dx) + (dy) * (dy));
   const steps = Math.max(1, Math.floor(dist / 14));
   for (let i = 0; i < steps; i += 2) {
     const t = i / steps;

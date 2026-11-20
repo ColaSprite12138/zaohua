@@ -79,7 +79,7 @@ export function wakeNoise(s: GameState, x: number, y: number, radius: number): n
   let woke = 0;
   for (const sk of s.skeletons) {
     if (!sk.alive || sk.awake) continue;
-    if (Math.hypot(sk.x - x, sk.y - y) > radius) continue;
+    if (Math.sqrt((sk.x - x) * (sk.x - x) + (sk.y - y) * (sk.y - y)) > radius) continue;
     sk.awake = true;
     woke += 1;
   }
@@ -116,7 +116,7 @@ export function updateSkeletons(s: GameState, dt: number): void {
     }
     const sdx = p.x - sk.x;
     const sdy = p.y - sk.y;
-    const sd = Math.hypot(sdx, sdy);
+    const sd = Math.sqrt((sdx) * (sdx) + (sdy) * (sdy));
     // A skeleton always looks at its prey, even while standing still: that is
     // what makes it read as a creature instead of a sliding billboard.
     if (sd > 0.001) sk.face = Math.atan2(sdy, sdx);
@@ -187,7 +187,7 @@ export function updateSkeletons(s: GameState, dt: number): void {
       // 但仍要维持「面朝玩家」的姿势，否则画面上一只会被冻成背对。
       sk.path = [];
       sk.moving = false;
-    } else if (goal === 'player' ? sd > engage : Math.hypot(gx - sk.x, gy - sk.y) > 24) {
+    } else if (goal === 'player' ? sd > engage : Math.sqrt((gx - sk.x) * (gx - sk.x) + (gy - sk.y) * (gy - sk.y)) > 24) {
       if (sk.repath <= 0 || sk.path.length === 0) {
         sk.path = findPath(s.world, { x: sk.x, y: sk.y }, { x: gx, y: gy }, BODY_RADIUS);
         sk.repath = REPATH_SECONDS;
@@ -195,7 +195,7 @@ export function updateSkeletons(s: GameState, dt: number): void {
       const waypoint = sk.path[0] ?? { x: gx, y: gy };
       const gdx = waypoint.x - sk.x;
       const gdy = waypoint.y - sk.y;
-      const gd = Math.hypot(gdx, gdy) || 1;
+      const gd = Math.sqrt((gdx) * (gdx) + (gdy) * (gdy)) || 1;
       // 减速状态直接压在步长上：追不上就是追不上，不去动 A* 或目标点。
       const stepLength = Math.min(stats.walkSpeed * moveMultiplier(sk) * dt, gd);
       const fromX = sk.x;
@@ -204,10 +204,10 @@ export function updateSkeletons(s: GameState, dt: number): void {
       sk.x = next.x;
       sk.y = next.y;
       // Distance-driven foot cycle: a pinned monster does not tread in place.
-      const covered = Math.hypot(sk.x - fromX, sk.y - fromY);
+      const covered = Math.sqrt((sk.x - fromX) * (sk.x - fromX) + (sk.y - fromY) * (sk.y - fromY));
       sk.stride += covered / STRIDE_PIXELS;
       sk.moving = covered > 0.05;
-      if (sk.path.length > 0 && Math.hypot(waypoint.x - sk.x, waypoint.y - sk.y) < 12) {
+      if (sk.path.length > 0 && Math.sqrt((waypoint.x - sk.x) * (waypoint.x - sk.x) + (waypoint.y - sk.y) * (waypoint.y - sk.y)) < 12) {
         sk.path.shift();
       }
     } else {
@@ -249,7 +249,7 @@ function nearestPortal(s: GameState, x: number, y: number): { x: number; y: numb
   let bestD = Infinity;
   for (const portal of s.portals) {
     if (portal.state !== 'armed') continue;
-    const d = Math.hypot(portal.x - x, portal.y - y);
+    const d = Math.sqrt((portal.x - x) * (portal.x - x) + (portal.y - y) * (portal.y - y));
     if (d < bestD) {
       bestD = d;
       best = portal;

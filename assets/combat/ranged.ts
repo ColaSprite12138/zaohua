@@ -62,7 +62,7 @@ export function resolveAttackOrder(s: GameState, mods: CombatModifiers): void {
   const range = spec.kind === 'melee'
     ? spec.range + mods.meleeRangeBonus() + gearRange
     : spec.range + gearRange;
-  const d = Math.hypot(sk.x - s.player.x, sk.y - s.player.y);
+  const d = Math.sqrt((sk.x - s.player.x) * (sk.x - s.player.x) + (sk.y - s.player.y) * (sk.y - s.player.y));
   if (d > range - RANGE_SLACK) {
     setTarget(s, sk.x, sk.y);
     s.moveMode = 'point';

@@ -166,7 +166,7 @@ function runReaction(
         if (i === index) continue;
         const other = s.skeletons[i];
         if (other === undefined || !other.alive) continue;
-        if (Math.hypot(other.x - sk.x, other.y - sk.y) > REACTION_CHAIN_RADIUS) continue;
+        if (Math.sqrt((other.x - sk.x) * (other.x - sk.x) + (other.y - sk.y) * (other.y - sk.y)) > REACTION_CHAIN_RADIUS) continue;
         applyStatus(other, 'paralyze', { duration: STATUS.paralyze.duration * 0.5, source });
         burst(s, other.x, other.y - 20, '#c084fc', 8, 140);
       }
@@ -228,7 +228,7 @@ export function growZones(s: GameState, x: number, y: number, elements: readonly
   let grown = 0;
   for (const zone of s.zones) {
     if (!elements.includes(zone.element)) continue;
-    if (Math.hypot(zone.x - x, zone.y - y) > zone.radius + REACTION_CHAIN_RADIUS) continue;
+    if (Math.sqrt((zone.x - x) * (zone.x - x) + (zone.y - y) * (zone.y - y)) > zone.radius + REACTION_CHAIN_RADIUS) continue;
     zone.radius = Math.min(ZONE_RADIUS_MAX, zone.radius * 1.5);
     zone.life = Math.min(zone.max * 2, zone.life + 1.2);
     grown += 1;
@@ -259,7 +259,7 @@ export function updateZones(s: GameState, dt: number): void {
       const sk = s.skeletons[i];
       if (sk === undefined || !sk.alive) continue;
       if (!hurts(zone.source, 'monster')) continue;
-      if (Math.hypot(sk.x - zone.x, sk.y - zone.y) > zone.radius) continue;
+      if (Math.sqrt((sk.x - zone.x) * (sk.x - zone.x) + (sk.y - zone.y) * (sk.y - zone.y)) > zone.radius) continue;
       // 区域续状态是「附着」，也会触发反应（火区里踩进毒池 = 引爆）。
       // 来源一路带下去：反应伤害也算这片地的主人打的。
       applyElement(s, i, zone.element, { duration, source: zone.source });
@@ -268,7 +268,7 @@ export function updateZones(s: GameState, dt: number): void {
     // 玩家这一侧同样按阵营过滤：自己铺的火墙 / 毒池 / 冰面**完全不碰自己**。
     // （旧规则是「对所有人生效」，用户 2026-11-16 明确要求改掉。）
     if (hurts(zone.source, 'player')
-      && Math.hypot(p.x - zone.x, p.y - zone.y) <= zone.radius) {
+      && Math.sqrt((p.x - zone.x) * (p.x - zone.x) + (p.y - zone.y) * (p.y - zone.y)) <= zone.radius) {
       applyStatus(p, zone.status, { duration, source: zone.source });
     }
   }

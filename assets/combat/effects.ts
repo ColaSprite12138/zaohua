@@ -8,15 +8,19 @@ export function burst(
   s: GameState, x: number, y: number, color: string, count: number, power: number,
 ): void {
   for (let i = 0; i < count; i += 1) {
+    // determinism-ok: 粒子散布纯表现，不进状态、不进 hash、不参与判定
     const a = (Math.PI * 2 * i) / count + Math.random() * 0.5;
+    // determinism-ok: 同上（粒子速度）
     const speed = power * (0.55 + Math.random() * 0.7);
     s.particles.push({
       x,
       y,
       vx: Math.cos(a) * speed,
       vy: Math.sin(a) * speed - 30,
+      // determinism-ok: 粒子寿命，纯表现
       life: 0.45 + Math.random() * 0.35,
       max: 0.8,
+      // determinism-ok: 粒子大小，纯表现
       size: 2 + Math.random() * 3,
       color,
     });
@@ -38,7 +42,7 @@ export function setTarget(s: GameState, x: number, y: number): void {
   const px = clamp(x, margin, s.map.pxWid - margin);
   const py = clamp(y, margin, s.map.pxHei - margin);
   const spot = nearestWalkable(s.world, px, py);
-  const moved = Math.hypot(spot.x - s.target.x, spot.y - s.target.y) >= 12;
+  const moved = Math.sqrt((spot.x - s.target.x) * (spot.x - s.target.x) + (spot.y - s.target.y) * (spot.y - s.target.y)) >= 12;
   s.target.x = spot.x;
   s.target.y = spot.y;
   if (moved || s.path.length === 0) {

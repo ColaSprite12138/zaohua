@@ -23,7 +23,7 @@ function find(s: GameState, uid: string): DestructibleObj | null {
 }
 
 function distTo(actor: RemoteActor, obj: DestructibleObj): number {
-  return Math.hypot(obj.x - actor.x, obj.y - actor.y);
+  return Math.sqrt((obj.x - actor.x) * (obj.x - actor.x) + (obj.y - actor.y) * (obj.y - actor.y));
 }
 
 /**

@@ -199,7 +199,7 @@ export function canStandAt(w: World, x: number, y: number, radius: number): bool
  * 每半格采一次：薄墙钻不过去，也不会因为采样太密把路径拉直算成天价。
  */
 export function clearWalk(w: World, from: Vec, to: Vec, radius: number): boolean {
-  const d = Math.hypot(to.x - from.x, to.y - from.y);
+  const d = Math.sqrt((to.x - from.x) * (to.x - from.x) + (to.y - from.y) * (to.y - from.y));
   const steps = Math.max(1, Math.ceil(d / (w.grid / 2)));
   for (let i = 1; i <= steps; i += 1) {
     const t = i / steps;
@@ -458,7 +458,7 @@ export function findPath(w: World, from: Vec, to: Vec, radius = 10): Vec[] {
  * wall and void; samples every half tile so a thin wall cannot be tunnelled.
  */
 export function lineOfSight(w: World, from: Vec, to: Vec): boolean {
-  const d = Math.hypot(to.x - from.x, to.y - from.y);
+  const d = Math.sqrt((to.x - from.x) * (to.x - from.x) + (to.y - from.y) * (to.y - from.y));
   const steps = Math.max(1, Math.ceil(d / (w.grid / 2)));
   for (let i = 1; i < steps; i += 1) {
     const t = i / steps;

@@ -143,7 +143,7 @@ function hostileKind(owner: AttackOwner): HitTarget['kind'] {
 function steer(
   p: Projectile, towardX: number, towardY: number, maxTurn: number,
 ): { vx: number; vy: number } {
-  const speed = Math.hypot(p.vx, p.vy) || 1;
+  const speed = Math.sqrt((p.vx) * (p.vx) + (p.vy) * (p.vy)) || 1;
   const current = Math.atan2(p.vy, p.vx);
   const wanted = Math.atan2(towardY - p.y, towardX - p.x);
   let delta = wanted - current;
@@ -178,7 +178,7 @@ export function advanceProjectiles(
     if (!source.alive) continue;
     const p: Projectile = { ...source, struck: [...source.struck] };
     const hostileTargets = targets.filter((t) => t.kind === hostileKind(p.owner));
-    const speed = Math.hypot(p.vx, p.vy);
+    const speed = Math.sqrt((p.vx) * (p.vx) + (p.vy) * (p.vy));
     const steps = Math.max(1, Math.ceil((speed * dt) / SUB_STEP));
     const stepDt = dt / steps;
 
@@ -196,7 +196,7 @@ export function advanceProjectiles(
       const moveY = p.vy * stepDt;
       p.x += moveX;
       p.y += moveY;
-      p.travelled += Math.hypot(moveX, moveY);
+      p.travelled += Math.sqrt((moveX) * (moveX) + (moveY) * (moveY));
 
       if (!query.inBounds(p.x, p.y)) {
         p.alive = false;
@@ -212,7 +212,7 @@ export function advanceProjectiles(
       }
       const hit = hostileTargets.find(
         (t) => !p.struck.includes(t.id)
-          && Math.hypot(t.x - p.x, t.y - p.y) <= t.radius + p.hitRadius,
+          && Math.sqrt((t.x - p.x) * (t.x - p.x) + (t.y - p.y) * (t.y - p.y)) <= t.radius + p.hitRadius,
       );
       if (hit !== undefined) {
         hits.push({ projectile: p, target: hit, x: p.x, y: p.y });

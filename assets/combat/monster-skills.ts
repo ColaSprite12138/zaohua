@@ -200,7 +200,7 @@ export function castMonsterSkill(s: GameState, sk: Skeleton, def: MonsterSkillDe
   // burst：以怪为圆心的范围伤害。距离在这里再判一次 —— AI 判过，但 `range`
   // 是这张表唯一的作用范围定义，函数自己也得守住（别让"调用方忘了判"变成
   // 隔着半张图缴械）。
-  const dist = Math.hypot(s.player.x - sk.x, s.player.y - sk.y);
+  const dist = Math.sqrt((s.player.x - sk.x) * (s.player.x - sk.x) + (s.player.y - sk.y) * (s.player.y - sk.y));
   if (dist > def.range) return false;
   const source = monsterSource(def.id, def.name);
   const hpBefore = s.hp;

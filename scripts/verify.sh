@@ -168,6 +168,13 @@ log "[RUN ] typecheck（全局，秒级）"
 [ ! -s "$OUT/incremental-tsc.out" ] || die "tsc 有诊断输出"
 log "[ OK ] typecheck :: 0 error"
 
+# 确定性守卫：判定层混进 Math.hypot / Math.random / 墙钟就会让两端慢慢分叉，
+# 而分叉不会当场报错（只能在 hash 对账里看见）。规矩写进脚本才算立住。
+log "[RUN ] determinism :: 禁用函数与超越函数预算"
+node scripts/check-determinism.mjs > "$OUT/determinism.out" 2>&1 \
+  || { cat "$OUT/determinism.out"; die "确定性守卫未通过（见 docs/net-sync-design.md §6）"; }
+log "[ OK ] determinism :: $(tail -n 1 "$OUT/determinism.out")"
+
 for m in $modules; do
   path="assets/$m/__tests__"
   [ -d "$path" ] || die "$m：找不到独立验收目录 $path"

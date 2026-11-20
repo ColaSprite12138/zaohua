@@ -294,7 +294,7 @@ function damageMonster(
 ): void {
   const sk = s.skeletons[index];
   if (sk === undefined || !sk.alive) return;
-  const speed = Math.hypot(source.vx, source.vy) || 1;
+  const speed = Math.sqrt((source.vx) * (source.vx) + (source.vy) * (source.vy)) || 1;
   const aliveBefore = sk.alive;
   const src = sourceOf(source, profile);
   damageSkeleton(s, index, damage, {
@@ -331,7 +331,7 @@ function explode(
       if (i === skipIndex) continue;
       const sk = s.skeletons[i];
       if (sk === undefined || !sk.alive) continue;
-      if (Math.hypot(sk.x - x, (sk.y - BODY_LIFT) - y) > profile.splashRadius) continue;
+      if (Math.sqrt((sk.x - x) * (sk.x - x) + ((sk.y - BODY_LIFT) - y) * ((sk.y - BODY_LIFT) - y)) > profile.splashRadius) continue;
       damageMonster(s, i, source.damage, source, profile, 1.4);
     }
     s.projectileStats.splashes += 1;

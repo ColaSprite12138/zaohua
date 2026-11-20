@@ -48,7 +48,7 @@ export function classifyPointer(s: GameState, input: StepInput): void {
       // Distance in VIEW space, never world space: a walking player scrolls the
       // camera, which moved a stationary cursor's world point far enough to be
       // misread as a drag (and every such click became a move order).
-      const drag = Math.hypot(view.x - s.press.vx, view.y - s.press.vy);
+      const drag = Math.sqrt((view.x - s.press.vx) * (view.x - s.press.vx) + (view.y - s.press.vy) * (view.y - s.press.vy));
       // Only an actual drag promotes a press to "follow"; staying still keeps
       // it a click so the release can attack the enemy under the cursor.
       if (drag > CLICK_DRAG_PIXELS) s.press.hold = true;
@@ -120,7 +120,7 @@ export function applyDodge(s: GameState, dodge: boolean): void {
   p.invuln = 0.36;
   // 闪避冷却词条（设计 7.1 `dodge_cd_pct`）：只减自己的 CD，不改无敌帧与距离。
   p.dodgeCd = PLAYER_DODGE_CD * Math.max(0.2, 1 - gearAffixTotal(s.runInventory, 'dodge_cd_pct'));
-  const dir = Math.hypot(p.vx, p.vy) > 4 ? Math.atan2(p.vy, p.vx) : p.face;
+  const dir = Math.sqrt((p.vx) * (p.vx) + (p.vy) * (p.vy)) > 4 ? Math.atan2(p.vy, p.vx) : p.face;
   setTarget(s, p.x + Math.cos(dir) * 185, p.y + Math.sin(dir) * 130);
   s.moveMode = 'point';
   p.trail.push({ x: p.x, y: p.y, life: 0.42 });
@@ -171,7 +171,7 @@ export function walk(s: GameState, dt: number): void {
   const goal = s.path.length > 0 ? s.path[0]! : s.target;
   const dx = goal.x - p.x;
   const dy = goal.y - p.y;
-  const dist = Math.hypot(dx, dy);
+  const dist = Math.sqrt((dx) * (dx) + (dy) * (dy));
   // 减速状态压在走速上（闪避的爆发不受影响：闪避是固定位移，不吃移速加成）。
   const speed = (p.dodge > 0 ? 560 : 205 * moveMultiplier(p));
   if (s.moveMode !== 'idle' && dist > 6) {
@@ -191,8 +191,8 @@ export function walk(s: GameState, dt: number): void {
     // The walk cycle is driven by the ground actually covered (not by time and
     // not by the intended velocity): pushing into a wall must not tread in
     // place, and a dodge must step twice as fast as a walk.
-    p.stride += Math.hypot(p.x - fromX, p.y - fromY) / STRIDE_PIXELS;
-    if (s.path.length > 0 && Math.hypot(goal.x - p.x, goal.y - p.y) < 12) {
+    p.stride += Math.sqrt((p.x - fromX) * (p.x - fromX) + (p.y - fromY) * (p.y - fromY)) / STRIDE_PIXELS;
+    if (s.path.length > 0 && Math.sqrt((goal.x - p.x) * (goal.x - p.x) + (goal.y - p.y) * (goal.y - p.y)) < 12) {
       s.path.shift();
     }
   } else {
@@ -203,6 +203,7 @@ export function walk(s: GameState, dt: number): void {
   }
   for (const mark of p.trail) mark.life -= dt;
   p.trail = p.trail.filter((mark) => mark.life > 0);
+  // determinism-ok: 冲刺残影是纯表现，不落帧状态、不进 hash
   if (p.dodge > 0 && Math.random() < 0.5) p.trail.push({ x: p.x, y: p.y, life: 0.32 });
 }
 
@@ -235,7 +236,7 @@ function nudge(s: GameState, body: Body, dx: number, dy: number): boolean {
 function separate(s: GameState, a: Body, b: Body, minDist: number): void {
   let dx = b.x - a.x;
   let dy = b.y - a.y;
-  let d = Math.hypot(dx, dy);
+  let d = Math.sqrt((dx) * (dx) + (dy) * (dy));
   if (d >= minDist) return;
   if (d < 1e-4) {
     // Exactly fused: pick a stable axis so the two do not oscillate forever.

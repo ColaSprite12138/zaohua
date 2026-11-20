@@ -90,7 +90,7 @@ export function destructibleAtPoint(
     if (obj.broken) continue;
     if (Math.abs(x - obj.x) > DESTRUCTIBLE_HALF_WIDTH) continue;
     if (y < obj.y + DESTRUCTIBLE_TOP || y > obj.y + DESTRUCTIBLE_BOTTOM) continue;
-    const d = Math.hypot(x - obj.x, y - (obj.y + DESTRUCTIBLE_TOP / 2));
+    const d = Math.sqrt((x - obj.x) * (x - obj.x) + (y - (obj.y + DESTRUCTIBLE_TOP / 2)) * (y - (obj.y + DESTRUCTIBLE_TOP / 2)));
     if (d < best) {
       best = d;
       hit = obj;
@@ -106,7 +106,7 @@ export function guardsAround(s: GameState, obj: DestructibleObj): number {
   let n = 0;
   for (const sk of s.skeletons) {
     if (!sk.alive) continue;
-    if (Math.hypot(sk.x - obj.x, sk.y - obj.y) <= def.guardRadius) n += 1;
+    if (Math.sqrt((sk.x - obj.x) * (sk.x - obj.x) + (sk.y - obj.y) * (sk.y - obj.y)) <= def.guardRadius) n += 1;
   }
   return n;
 }
@@ -121,7 +121,7 @@ function find(s: GameState, uid: string): DestructibleObj | null {
  */
 export function orderSmash(s: GameState, obj: DestructibleObj): void {
   const def = destructibleDef(obj.kind);
-  const dist = Math.hypot(obj.x - s.player.x, obj.y - s.player.y);
+  const dist = Math.sqrt((obj.x - s.player.x) * (obj.x - s.player.x) + (obj.y - s.player.y) * (obj.y - s.player.y));
   s.smashTarget = obj.uid;
   s.attackOrder = false;
   s.targetEnemy = null;
@@ -145,7 +145,7 @@ export function beginSmash(s: GameState, obj: DestructibleObj): 'ok' | 'guarded'
     return 'gone';
   }
   if (s.smash !== null) return 'busy';
-  if (Math.hypot(obj.x - s.player.x, obj.y - s.player.y) > SMASH_RANGE) return 'busy';
+  if (Math.sqrt((obj.x - s.player.x) * (obj.x - s.player.x) + (obj.y - s.player.y) * (obj.y - s.player.y)) > SMASH_RANGE) return 'busy';
   const def = destructibleDef(obj.kind);
   const guards = guardsAround(s, obj);
   if (guards > 0) {
@@ -260,7 +260,7 @@ export function updateDestructibles(s: GameState, dt: number): void {
     const target = find(s, s.smashTarget);
     if (target === null || target.broken) {
       s.smashTarget = null;
-    } else if (Math.hypot(target.x - s.player.x, target.y - s.player.y) <= SMASH_RANGE) {
+    } else if (Math.sqrt((target.x - s.player.x) * (target.x - s.player.x) + (target.y - s.player.y) * (target.y - s.player.y)) <= SMASH_RANGE) {
       beginSmash(s, target);
     }
   }
@@ -281,7 +281,7 @@ export function updateDestructibles(s: GameState, dt: number): void {
     cancelSmash(s, '闪避打断了破坏 · 进度清空');
     return;
   }
-  if (Math.hypot(obj.x - s.player.x, obj.y - s.player.y) > SMASH_RANGE * 1.5) {
+  if (Math.sqrt((obj.x - s.player.x) * (obj.x - s.player.x) + (obj.y - s.player.y) * (obj.y - s.player.y)) > SMASH_RANGE * 1.5) {
     cancelSmash(s, '离开了可破坏物 · 进度清空');
     return;
   }

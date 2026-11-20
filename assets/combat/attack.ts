@@ -51,7 +51,7 @@ export function hitTestEnemy(s: GameState, x: number, y: number): number | null 
     const sk = s.skeletons[i];
     if (sk === undefined || !sk.alive) continue;
     const dx = x - sk.x;
-    const d = Math.hypot(dx, y - (sk.y + ENEMY_TORSO_Y));
+    const d = Math.sqrt((dx) * (dx) + (y - (sk.y + ENEMY_TORSO_Y)) * (y - (sk.y + ENEMY_TORSO_Y)));
     if (Math.abs(dx) <= ENEMY_BODY_HALF_WIDTH
       && y >= sk.y + ENEMY_BODY_TOP
       && y <= sk.y + ENEMY_BODY_BOTTOM) {
@@ -92,7 +92,7 @@ export function dropAtPoint(s: GameState, x: number, y: number): Drop | null {
       && x >= rect.x && x <= rect.x + rect.w
       && y >= rect.y && y <= rect.y + rect.h) {
       // Overlapping plates: the one whose centre is nearest wins.
-      const d = Math.hypot(x - drop.x, y - (rect.y + rect.h / 2));
+      const d = Math.sqrt((x - drop.x) * (x - drop.x) + (y - (rect.y + rect.h / 2)) * (y - (rect.y + rect.h / 2)));
       if (d < plateBest) {
         plateBest = d;
         plateHit = drop;
@@ -101,7 +101,7 @@ export function dropAtPoint(s: GameState, x: number, y: number): Drop | null {
     }
     // No plate (hidden by the fan-out cap) still leaves the tiny model itself
     // clickable, so a capped drop is never unreachable.
-    const d = Math.hypot(x - drop.x, y - drop.y);
+    const d = Math.sqrt((x - drop.x) * (x - drop.x) + (y - drop.y) * (y - drop.y));
     if (d <= DROP_MODEL_RADIUS && d < modelBest) {
       modelBest = d;
       modelHit = drop;
@@ -184,7 +184,7 @@ export function damageSkeleton(
   const p = s.player;
   let dx = options.dirX ?? sk.x - p.x;
   let dy = options.dirY ?? sk.y - p.y;
-  const d = Math.hypot(dx, dy) || 1;
+  const d = Math.sqrt((dx) * (dx) + (dy) * (dy)) || 1;
   dx /= d;
   dy /= d;
   const push = options.knockback ?? 1;
@@ -282,7 +282,7 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   const p = s.player;
   const ddx = sk.x - p.x;
   const ddy = sk.y - p.y;
-  const d = Math.hypot(ddx, ddy) || 1;
+  const d = Math.sqrt((ddx) * (ddx) + (ddy) * (ddy)) || 1;
   const weaponId = activeWeapon(s);
   // 损坏的武器按空手算（设计 5.2：耐久归零 = 这件装备没了），所以 `armed` 也要看它。
   const broken = activeWeaponBroken(s);

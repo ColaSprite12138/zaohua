@@ -50,7 +50,7 @@ export function updateDrops(s: GameState, dt: number): void {
   // 还在空中：**等它落地**。点不到（没有名牌）就不会下单，这里是兜底：
   // 手快 / 旧指令 / 传送门回程都可能在人已经站上落点时东西还在飞。
   if (!dropLanded(drop)) return;
-  if (Math.hypot(drop.x - s.player.x, drop.y - s.player.y) >= 50) return;
+  if (Math.sqrt((drop.x - s.player.x) * (drop.x - s.player.x) + (drop.y - s.player.y) * (drop.y - s.player.y)) >= 50) return;
 
   const label = drop.name ? `「${drop.name}」` : '长剑';
   const itemId = drop.itemId ?? 'longsword';
