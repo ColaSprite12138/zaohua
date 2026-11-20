@@ -320,15 +320,64 @@
     return rs;
   }
 
-  function leaveRoom() {
+  /**
+   * 退房：先让平台把**座位**退掉，再断 websocket。
+   *
+   * 2026-11-20 正式环境实测：只调 `disconnect()` 不够 —— 那只是断开连接，
+   * 平台侧的成员关系还在，下一次 `createRoom` 必然抛 `ROOM_ALREADY_EXISTS`，
+   * 而且重试多少次都撞同一个码（表现就是「建房失败，重试中（1/3）」→
+   * 「建房失败：ROOM_ALREADY_EXISTS」）。官方 LobbyFlow 的 vacateSeat 走的是
+   * `PlatformClient.rooms.leave(roomId)`，这里对齐。
+   */
+  async function leaveRoom(preferredRoomId) {
     var rs = S.roomSession;
+    var target = preferredRoomId || S.roomId || (rs && rs.roomId) || '';
     S.roomSession = null;
     S.roomId = null;
     S.reportedSeated = false;
     // 先断 relay：离开房间之后还往会话里 sendAction 只会攒一堆失败计数。
     if (host.net && typeof host.net.detach === 'function') host.net.detach();
-    if (!rs || typeof rs.disconnect !== 'function') return;
-    try { rs.disconnect(); } catch (err) { console.warn('[match] 离开房间失败', err); }
+    var p = platform();
+    if (target && p && p.rooms && typeof p.rooms.leave === 'function') {
+      try {
+        await p.rooms.leave(target);
+      } catch (err) {
+        // 空置 60s 已被回收、或本来就不是成员：都不影响下一步建房。
+        console.warn('[match] rooms.leave 未成功（房间可能已回收）', err);
+      }
+    }
+    if (rs && typeof rs.disconnect === 'function') {
+      try { rs.disconnect(); } catch (err) { console.warn('[match] 离开房间失败', err); }
+    }
+    if (rs) { try { rs.roomId = ''; } catch (err) { /* 只读实现，忽略 */ } }
+  }
+
+  /**
+   * 只重试「把 roomId 报给撮合服务」这一步。
+   *
+   * 房间已经建好之后报座失败时，**绝不能回头重建房间** —— 那必然撞
+   * `ROOM_ALREADY_EXISTS`，把真正的原因（报座这一步的错误）盖成一句
+   * 「建房失败」。这也正是本轮回合最开始那个报错的另一半成因。
+   */
+  async function reportRoomWithRetry(matchId, roomId, attempts) {
+    var left = typeof attempts === 'number' ? attempts : 3;
+    var lastErr = null;
+    for (var i = 0; i < left; i += 1) {
+      try {
+        await S.client.reportRoom(matchId, { roomId: roomId });
+        return;
+      } catch (err) {
+        lastErr = err;
+        // 4xx 是「这张票不接受这个房间」这类确定性错误，重试不会变好，
+        // 立刻把原因抛出去，别用三次重试把时间耗光。
+        if (err && typeof err.status === 'number' && err.status >= 400 && err.status < 500) break;
+        if (i + 1 < left) {
+          setStatus('上报房间失败，重试中（' + (i + 1) + '/' + left + '）', 'bad');
+          await new Promise(function (resolve) { setTimeout(resolve, 600); });
+        }
+      }
+    }
+    throw new Error('报座失败：' + errText(lastErr));
   }
 
   async function createRoom(matchId) {
@@ -341,6 +390,14 @@
     setBusy(true);
     setStatus('正在建房…');
     try {
+      // 刷新页面、上一次没退干净、或平台还没回收空置房时，这个身份在平台侧
+      // 仍然有座位。此时 createRoom 直接 ROOM_ALREADY_EXISTS，重试毫无意义 ——
+      // 必须先把座位真正退掉（见 leaveRoom）。
+      if (rs.roomId) {
+        setStatus('清理上一次的房间…');
+        await leaveRoom(rs.roomId);
+        rs = roomSession();
+      }
       var name = '搜打撤 · ' + displayName();
       var out;
       try {
@@ -350,13 +407,11 @@
           playerName: displayName(),
         });
       } catch (err) {
-        // 上一个座位还占着（刷新、上次没退干净）：平台不允许一个身份同时两房。
-        // 先把自己那一间退掉再建一次，仍失败才算真失败。
-        var seat = recoverSeat(err);
-        if (!seat) throw err;
-        setStatus('检测到残留房间，正在退出后重建…');
-        leaveRoom();
-        S.roomSession = null;
+        // 预清理之后还撞占用：说明占用的座位不是手上这个 roomId 里的。
+        // 用错误自带的 roomId 再退一次，然后重建一次；仍失败才算真失败。
+        if (!isSeatOccupied(err)) throw err;
+        setStatus('检测到残留座位，正在释放后重建…');
+        await leaveRoom((err && err.roomId) || '');
         rs = roomSession();
         out = await rs.createRoom({ name: name, maxPlayers: 16, playerName: displayName() });
       }
@@ -364,7 +419,7 @@
       if (!S.roomId) throw new Error('建房成功但没拿到房间号');
       // 建连之后重设一次：平台在 createRoom 里可能重建了连接与 handlers。
       bindRoomEvents(rs);
-      await S.client.reportRoom(matchId, { roomId: S.roomId });
+      await reportRoomWithRetry(matchId, S.roomId, 3);
       setStatus('房间已建好 · 等对方加入');
     } catch (err) {
       S.tries += 1;
@@ -388,14 +443,20 @@
     setBusy(true);
     setStatus('正在加入房间…');
     try {
-      if (rs.roomId && rs.roomId !== roomId) leaveRoom();
+      if (rs.roomId && rs.roomId !== roomId) {
+        await leaveRoom();
+        rs = roomSession();
+      }
       await rs.joinRoom(roomId, { playerName: displayName() });
       S.roomId = roomId;
       bindRoomEvents(rs);
       setStatus('已进房 · 正在报座');
     } catch (err) {
-      var seat = recoverSeat(err);
-      if (seat) leaveRoom();
+      // 进房撞占用：手上那个座位必须先退，否则下一次还是同一个错。
+      if (isSeatOccupied(err)) {
+        setStatus('检测到残留座位，正在释放…');
+        await leaveRoom((err && err.roomId) || '');
+      }
       S.tries += 1;
       if (S.tries >= MAX_TRIES) {
         await fail('加入房间失败：' + errText(err), matchId);
@@ -453,19 +514,25 @@
     return String(err);
   }
 
-  /** 占座类错误里能取到旧房间号 → 说明是"座位没退干净"，不是真失败。 */
-  function recoverSeat(err) {
+  /**
+   * 「这个身份已经占着一个座位」类错误。
+   *
+   * 不能只信 `stateSync.isOccupancyError`：hostless 构建里它恒为 false，宿主版本
+   * 之间实现也不一致，直接依赖它会让兜底分支永远走不到（这正是第一次修没生效的原因）。
+   * 先看错误码 —— `ROOM_ALREADY_EXISTS` / `ROOM_CREATING` 就是 contracts.ts 里的
+   * `ROOM_OCCUPANCY_CODES` —— 再退回宿主判定，最后才用文案兜底。
+   */
+  function isSeatOccupied(err) {
+    if (!err) return false;
+    var code = err.code || (err.cause && err.cause.code) || '';
+    if (code === 'ROOM_ALREADY_EXISTS' || code === 'ROOM_CREATING') return true;
+    if (err.name === 'OccupiedSeatError') return true;
     var p = platform();
-    if (!p || !p.stateSync) return null;
     try {
-      if (typeof p.stateSync.isOccupancyError === 'function' && !p.stateSync.isOccupancyError(err)) return null;
-      if (typeof p.stateSync.occupiedSeatFromError === 'function') {
-        return p.stateSync.occupiedSeatFromError(err);
-      }
-    } catch (e) {
-      return null;
-    }
-    return null;
+      if (p && p.stateSync && typeof p.stateSync.isOccupancyError === 'function'
+        && p.stateSync.isOccupancyError(err) === true) return true;
+    } catch (e) { /* 宿主没实现，走下面的文本兜底 */ }
+    return /ROOM_ALREADY_EXISTS|ROOM_CREATING/.test(errText(err));
   }
 
   /* ------------------------------ 开局 -------------------------------- */
