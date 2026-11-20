@@ -134,7 +134,27 @@ export function enqueue ({ userId, mode, ruleset, now = Date.now() }) {
   const r = checkRuleset(ruleset)
 
   const existing = activeTicketOf(userId)
-  if (existing) return view(existing, now)
+  if (existing) {
+    const tv = view(existing, now)
+    const matchState = tv.match ? tv.match.state : null
+    if (matchState === 'playing') {
+      // 已经在一局里。原来这里直接 `return view(existing)`，等于把**旧局**塞回给
+      // 客户端 —— 客户端看到 match.state=playing 就会直接开局，表现就是
+      // 「点匹配却进了上一局」。现在明确拒绝，让客户端决定是收掉还是放弃。
+      throw new HttpError(409, 'already_in_match', '你还有一局没结束，关掉对局后再匹配')
+    }
+    // 注意：**排队中的票本来就没有 match_id**，不能把 `!tv.match` 当作僵尸信号，
+    // 否则每次重复入队都会把正在排队的票作废掉（单测「重复入队返回同一张票」抓到的就是这个）。
+    if (existing.state === 'seated' || matchState === 'closed') {
+      // 票还挂在座位上、但那局早就不在跑了（已关闭 / 票没回收）：作废它，允许重新排队。
+      // 这是「打完一局永久排不进新队」的自愈点。
+      get().prepare("UPDATE match_tickets SET state = 'left', updated_at = ? WHERE id = ?")
+        .run(now, existing.id)
+    } else {
+      // 仍在排队 / 已配对：幂等返回同一张票，避免重复入队。
+      return tv
+    }
+  }
 
   const id = newId('mt')
   get().prepare(
