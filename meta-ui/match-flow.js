@@ -46,6 +46,8 @@
     tries: 0,
     started: false,
     keepWaitOffered: false,
+    /** 连续多少次没从服务器拿到票状态。≥3 就不再显示「排队中」，改为失联提示。 */
+    pollFails: 0,
   };
 
   /* ------------------------------- DOM -------------------------------- */
@@ -180,13 +182,21 @@
     var view;
     try {
       view = await S.client.get(S.ticket.ticketId);
+      S.pollFails = 0;
     } catch (err) {
       // 票没了（服务端清理 / 被踢）→ 直接收摊，别继续轮询打空请求。
       if (err && (err.code === 'ticket_not_found' || err.code === 'no_token')) {
         finish(err.code === 'no_token' ? '登录已过期，请重新登录后再匹配' : '匹配已失效', true);
         return;
       }
-      setStatus('查询匹配状态失败：' + (err && err.message ? err.message : err), 'bad');
+      // 拿不到状态时**绝不能**继续显示「排队中 N 秒」—— 那是在骗人：
+      // 玩家会以为自己在正常排队，实际上一个请求都没通。
+      S.pollFails += 1;
+      if (S.pollFails >= 3) {
+        setStatus('与服务器失联（连续 ' + S.pollFails + ' 次没同步），请检查网络后重新匹配', 'bad');
+      } else {
+        setStatus('同步匹配状态失败，重试中（' + S.pollFails + '/3）', 'bad');
+      }
       return;
     }
 
@@ -609,7 +619,9 @@
     }
 
     setBusy(true);
-    setStatus('正在加入队列…');
+    // 这里只说「申请」——**不能**先写「排队中」。排队中意味着服务器已经收下这张票，
+    // 必须等 `queue()` 真的返回票之后再显示（否则就是假状态，见 poll 里的失联分支）。
+    setStatus('正在向服务器申请匹配…');
     S.client = MM.createMatchClient({ token: s.token, baseUrl: API_BASE });
     S.tries = 0;
     S.started = false;
@@ -634,7 +646,10 @@
       }
       if (!view) view = await S.client.queue({ ruleset: MM.RULESET_EXTRACT });
       S.ticket = view;
+      // 拿到服务器回包才算真的进了队列，这时候才允许出现「排队中」。
+      S.pollFails = 0;
       keepWrap.hidden = true;
+      setStatus('已在队列中 · 正在同步等待时间…');
       startPolling();
     } catch (err) {
       S.phase = 'idle';
