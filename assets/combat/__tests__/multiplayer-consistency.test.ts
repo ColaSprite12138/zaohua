@@ -13,6 +13,7 @@ import { updateDrops } from '../weapons.ts';
 import { monsterSource } from '../source.ts';
 import { hashGameState } from '../../net/state-hash.ts';
 import { step } from '../simulation.ts';
+import { createRemotePlayer, spawnOffset, type PeerSnapshot } from '../players.ts';
 
 /** 造一个「我 + 一个远端」的双人状态，两者都在出生点附近。 */
 function twoPlayers(s: GameState): { me: Player; other: Player } {
@@ -221,5 +222,60 @@ describe('联机 PVP 当场爆装（PVE 链路完全隔离）', () => {
     step(s, 1 / 60, input, undefined,
       new Map([[other.id, { ...input, pointerDown: false }]]));
     expect(other.x).toBe(x);
+  });
+});
+
+
+describe('开局：两端看到的是同一份世界', () => {
+  /** 造一台客户端的完整世界：本机 + 一个远端，身份都用真实座位 id。 */
+  function clientView(selfId: string, peerId: string): GameState {
+    const s = createState();
+    s.player.id = selfId;
+    s.me = selfId;
+    const off = spawnOffset(selfId);
+    s.player.x = s.map.spawn.x + off.dx;
+    s.player.y = s.map.spawn.y + off.dy;
+    const peer = createRemotePlayer(peerId, peerId, s.map.spawn, {
+      loadout: null, hpMax: 100, manaMax: 100, starSkills: [],
+    });
+    s.players = [s.player, peer];
+    return s;
+  }
+
+  it('A / B 两台机器的玩家 id 集合相同，逐人坐标/血量一致，hash 相同', () => {
+    const a = clientView('seatA', 'seatB');
+    const b = clientView('seatB', 'seatA');
+    expect(a.players.map((p) => p.id).sort()).toEqual(b.players.map((p) => p.id).sort());
+    for (const id of ['seatA', 'seatB']) {
+      const pa = a.players.find((p) => p.id === id)!;
+      const pb = b.players.find((p) => p.id === id)!;
+      expect([pa.x, pa.y, pa.hp]).toEqual([pb.x, pb.y, pb.hp]);
+    }
+    expect(hashGameState(a, 60)).toBe(hashGameState(b, 60));
+  });
+
+  it('远端玩家带真实装备快照进场，属性按对方的算', () => {
+    const s = createState();
+    const snap: PeerSnapshot = {
+      loadout: {
+        bag: [{ uid: 'b1', defId: '10001', container: 'bag', col: 0, row: 0 } as never],
+        equipped: [
+          { uid: 'w1', defId: '10002', durability: 30 } as never,
+          null, null, null, null, null, null, null, null, null,
+        ],
+        activeWeaponSlot: 0,
+      },
+      hpMax: 150,
+      manaMax: 120,
+      starSkills: [],
+    };
+    const peer = createRemotePlayer('seatB', 'B', s.map.spawn, snap);
+    expect(peer.maxHp).toBe(150);
+    expect(peer.hp).toBe(150);
+    expect(peer.maxMana).toBe(120);
+    expect(peer.runInventory.bag.length).toBe(1);
+    expect(peer.weaponSlots[0]).toBe('10002');
+    // 背包是独立对象：不能和本机玩家共享引用（死亡爆装会清空它）。
+    expect(peer.runInventory).not.toBe(s.player.runInventory);
   });
 });

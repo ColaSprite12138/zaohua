@@ -59,7 +59,7 @@ type HashReport = {
   readonly hash: number
 }
 
-type RelayPlayer = { id: string; name: string }
+type RelayPlayer = { id: string; name: string; snapshot?: unknown }
 
 type RelayState = {
   readonly ruleset: string
@@ -112,6 +112,14 @@ function pruneInputs(state: RelayState): void {
     if (oldest === undefined) break
     delete state.inputs[String(oldest)]
   }
+}
+
+/** 开局装备快照上行：客户端在 deploy 时发 `{ snapshot: {...} }`，relay 只转发。 */
+function readPeerSnapshot(input: unknown): unknown | null {
+  if (!input || typeof input !== 'object') return null
+  const snap = (input as Record<string, unknown>).snapshot
+  if (!snap || typeof snap !== 'object') return null
+  return snap
 }
 
 function readInput(input: unknown): InputPacket | null {
@@ -245,6 +253,13 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
             }
           }
         }
+        return
+      }
+
+      const snap = readPeerSnapshot(input)
+      if (snap !== null) {
+        const entry = state.players.find((p) => p.id === playerId)
+        if (entry) entry.snapshot = snap
         return
       }
 

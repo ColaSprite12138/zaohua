@@ -13,7 +13,7 @@
 import type { RunLoadout } from '../meta/inventory.ts';
 import { makeRunInventory } from './run-inventory.ts';
 import {
-  PLAYER_MANA_MAX, PRE_EQUIPPED_SKILLS, createSkillBar,
+  PLAYER_HP_MAX, PLAYER_MANA_MAX, PRE_EQUIPPED_SKILLS, createSkillBar,
   type GameState, type Player,
 } from './state.ts';
 
@@ -47,7 +47,7 @@ export function playerById(s: GameState, id: string): Player | null {
 }
 
 /** 出生点微偏移：同一张图的 spawn 是同一个点，两个人会完全重叠。 */
-function spawnOffset(id: string): { dx: number; dy: number } {
+export function spawnOffset(id: string): { dx: number; dy: number } {
   let acc = 0;
   for (let i = 0; i < id.length; i += 1) acc = (acc * 31 + id.charCodeAt(i)) % 100000;
   // 四个轴向量都是整数，不引入三角函数（见确定性纪律）。
@@ -73,16 +73,33 @@ const EMPTY_REMOTE_LOADOUT: RunLoadout = {
   activeWeaponSlot: 0,
 };
 
+/**
+ * 开局装备快照。由对方在 deploy 时上报、relay 原样转发。
+ *
+ * 带上「算好的 hpMax/manaMax/星图」而不只是 loadout：装备加成与星图乘区
+ * 只在本机 `deployRun()` 里算过，远端没法重算一份一模一样的。少带一项，
+ * 两端对同一个玩家的血量上限认知就不同，而玩家 hp 是进 hash 的。
+ */
+export interface PeerSnapshot {
+  /** null = 对方没带东西下场（或旧客户端没上报）。 */
+  loadout: RunLoadout | null;
+  hpMax: number;
+  manaMax: number;
+  starSkills: readonly string[];
+}
+
 export function createRemotePlayer(
   id: string,
   name: string,
   spawn: { x: number; y: number },
-  hpMax: number,
   /** 开局装备快照。两端必须用同一份，否则「背包满」的判定会分叉。 */
-  loadout: RunLoadout = EMPTY_REMOTE_LOADOUT,
+  snapshot?: PeerSnapshot,
 ): Player {
   const { dx, dy } = spawnOffset(id);
-  const runInventory = makeRunInventory(loadout);
+  const hpMax = snapshot?.hpMax ?? PLAYER_HP_MAX;
+  const manaMax = snapshot?.manaMax ?? PLAYER_MANA_MAX;
+  const starSkills = snapshot?.starSkills ?? PRE_EQUIPPED_SKILLS;
+  const runInventory = makeRunInventory(snapshot?.loadout ?? EMPTY_REMOTE_LOADOUT);
   return {
     id,
     name,
@@ -113,10 +130,10 @@ export function createRemotePlayer(
     ],
     activeWeaponSlot: runInventory.activeWeaponSlot,
     carriedItems: [],
-    mana: PLAYER_MANA_MAX,
-    maxMana: PLAYER_MANA_MAX,
-    skillBar: createSkillBar(),
-    starSkills: PRE_EQUIPPED_SKILLS,
+    mana: manaMax,
+    maxMana: manaMax,
+    skillBar: createSkillBar(starSkills),
+    starSkills,
     cast: null,
     manaSurge: 0,
     channel: null,

@@ -29,6 +29,10 @@
     playerId: '',
     active: false,
     peers: [],
+    /** 上一次发给 Worker 的座位签名（含装备快照，快照变了也要重发）。 */
+    seatSig: '',
+    /** 还没被服务端确认收下的开局装备快照（会重发，直到 game_update 里看到自己）。 */
+    pendingSnapshot: null,
     /** peerId -> 已经交付给 Worker 的最后一个包起始 tick（去重用）。 */
     seen: {},
     /** peerId -> 已经转发过的离场 tick。 */
@@ -172,6 +176,18 @@
         }
         return;
       }
+      if (msg.type === 'netLoadout') {
+        // 开局装备快照上行。relay 只转发、不解析，随下一次 game_update 广播给所有人。
+        if (!S.active || !S.session) return;
+        S.pendingSnapshot = msg.snapshot;
+        try {
+          S.session.sendAction({ snapshot: msg.snapshot });
+          S.stats.sends += 1;
+        } catch (err) {
+          S.stats.errors += 1;
+        }
+        return;
+      }
       if (msg.type === 'netResync') {
         // 引擎重建了时间轴（新一局 / 重开局）：那边清空了锁步队列，这边也必须把
         // 「已交付水位」清掉，让服务端窗口里还留着的旧包重新投递一次。
@@ -235,9 +251,27 @@
     for (i = 0; i < players.length; i += 1) {
       var entry = players[i];
       if (!entry || !entry.id || entry.id === S.playerId) continue;
-      peers.push({ id: entry.id, name: entry.name || '' });
+      peers.push({ id: entry.id, name: entry.name || '', snapshot: entry.snapshot || null });
     }
-    if (peers.map(function (p) { return p.id; }).join(',') !== S.peers.map(function (p) { return p.id; }).join(',')) {
+    // 签名必须包含 snapshot：名单没变但对方装备到齐了，也要重发一次 netSeat，
+    // 否则 Worker 永远等不到「装备齐」这个信号，会一直停在门禁上。
+    // 开局快照上行可能在 game 实例创建之前发出而被静默丢掉：只要服务端
+    // 名单里还没看到自己的 snapshot，就每轮重发一次，直到落地为止。
+    if (S.pendingSnapshot) {
+      var mine = null;
+      for (i = 0; i < players.length; i += 1) {
+        if (players[i] && players[i].id === S.playerId) { mine = players[i]; break; }
+      }
+      if (mine && mine.snapshot) {
+        S.pendingSnapshot = null;
+      } else {
+        try { S.session.sendAction({ snapshot: S.pendingSnapshot }); } catch (err) { /* 下一轮再试 */ }
+      }
+    }
+
+    var seatSig = JSON.stringify(peers);
+    if (seatSig !== S.seatSig) {
+      S.seatSig = seatSig;
       S.peers = peers;
       S.stats.seats += 1;
       post({ type: 'netSeat', active: true, playerId: S.playerId, peers: peers });
@@ -494,6 +528,9 @@
       clearTimeout(S.startTimer);
       S.startTimer = null;
     }
+    S.seatSig = '';
+    S.peers = [];
+    S.pendingSnapshot = null;
     post({ type: 'netSeat', active: false, playerId: '', peers: [] });
   }
 

@@ -54,7 +54,7 @@ import {
   pushLocal, pushRemote, retirePeer, runnableTick, take as takeLockstep,
 } from '../net/lockstep.ts';
 import { HASH_INTERVAL_TICKS, hashGameState } from '../net/state-hash.ts';
-import { createRemotePlayer } from '../combat/players.ts';
+import { createRemotePlayer, spawnOffset, type PeerSnapshot } from '../combat/players.ts';
 import { decodeBase64, encodeBase64 } from '../net/base64.ts';
 
 const PACKAGE_ID = definePackageId('019fb7ce-3d00-7000-8000-000000000001');
@@ -209,6 +209,11 @@ export const game: Plugin = {
      * 两端帧号永远对不上。名单一旦见过一次就算 settled，之后有人离场仍继续。
      */
     let netSeatSettled = false;
+    /** 对端上报的开局装备快照（id -> 快照）。收齐之前不许开时间轴。 */
+    const netPeerSnapshots = new Map<string, PeerSnapshot>();
+    /** deploy 已执行、正在等全员快照；这段时间冻结锁步推进。 */
+    let awaitingLoadouts = false;
+    let loadoutWaitFrames = 0;
     /** 联机诊断：主窗口的 `host.net.status()` 只读这些数，不重复计数。 */
     const netStat = {
       ticks: 0, framesOut: 0, framesIn: 0, lateIn: 0, droppedOut: 0,
@@ -252,7 +257,7 @@ export const game: Plugin = {
           keep.push(existing);
           continue;
         }
-        keep.push(createRemotePlayer(id, netPeerNames.get(id) || id.slice(0, 6), spawn, state.maxHp));
+        keep.push(createRemotePlayer(id, netPeerNames.get(id) || id.slice(0, 6), spawn, netPeerSnapshots.get(id)));
       }
       state.players = keep;
     }
@@ -262,15 +267,21 @@ export const game: Plugin = {
      * 联机局的 tick 必须从 0 起，两端才对得上 —— 一局一清。
      */
     function applySeat(msg: {
-      active?: boolean; playerId?: string; peers?: ({ id: string; name?: string } | string)[];
+      active?: boolean; playerId?: string;
+      peers?: ({ id: string; name?: string; snapshot?: PeerSnapshot } | string)[];
     }): void {
       if (msg.active !== true) {
         netActive = false;
         state.online = false;
         netSeatSettled = false;
         netPlayerId = '';
+        // 回到单机：身份也还原成 'p0'，别把上一局的座位 id 带进本地局。
+        state.player.id = 'p0';
+        state.me = 'p0';
         netPeers.clear();
         netPeerNames.clear();
+        netPeerSnapshots.clear();
+        awaitingLoadouts = false;
         netRetired.clear();
         netOutbox = [];
         lockstep = createLockstep({ localId: '', localDelay: 0 });
@@ -281,6 +292,13 @@ export const game: Plugin = {
       netActive = true;
       state.online = true;
       netPlayerId = msg.playerId || netPlayerId;
+      // **本机玩家也必须用座位 id**。以前本机恒为 'p0'、远端用真实座位 id，
+      // 于是 A 的 players 是 {p0, B_id}、B 的是 {p0, A_id} —— 按 id 排序的
+      // `hashGameState` 必然报分叉（玩家进 hash 之前看不出来）。
+      if (netPlayerId && state.player.id !== netPlayerId) {
+        state.player.id = netPlayerId;
+        state.me = netPlayerId;
+      }
       const list = Array.isArray(msg.peers) ? msg.peers : [];
       netPeers = new Set<string>();
       netPeerNames.clear();
@@ -288,7 +306,10 @@ export const game: Plugin = {
         const id = typeof entry === 'string' ? entry : entry?.id;
         if (!id) continue;
         netPeers.add(id);
-        if (typeof entry !== 'string' && entry.name) netPeerNames.set(id, entry.name);
+        if (typeof entry !== 'string') {
+          if (entry.name) netPeerNames.set(id, entry.name);
+          if (entry.snapshot) netPeerSnapshots.set(id, entry.snapshot);
+        }
       }
       if (list.length > 0) netSeatSettled = true;
       if (starting) armTimeline();
@@ -296,6 +317,8 @@ export const game: Plugin = {
       // 预热帧必须立刻发，不能等主循环推进：推进本身在等对方的帧，而对方也在
       // 等我的 tick 0。等 advanceLockstep 跑起来再 flush 就是典型的鸡生蛋死锁。
       flushOutbox();
+      // 名单没变、但这一轮带回了装备快照，也要试着放行门禁。
+      tryArmAfterLoadouts();
     }
 
     /**
@@ -310,6 +333,45 @@ export const game: Plugin = {
      *
      * 重复调用是安全的：每次都会重建一条从 0 开始的时间轴并重发同样的预热帧。
      */
+    /**
+     * 开局门禁：**收齐所有人的装备快照才 armTimeline**。
+     *
+     * 装备加成会改 maxHp / maxMana / 伤害 / 射程，而玩家 hp 与怪的血量都进
+     * hash —— 若 A 在 tick 0 就带着 B 的真实装备、B 却要晚几帧才拿到 A 的，
+     * 这几帧算出来的状态两端必然不同，之后永远追不回来。
+     */
+    function loadoutsReady(): boolean {
+      // 没有对手也算「齐」：单人房间不该卡在门禁上。名单还没到由
+      // `netSeatSettled` 冻结主循环，这里不用重复管。
+      for (const id of netPeers) {
+        if (id === netPlayerId) continue;
+        if (!netPeerSnapshots.has(id)) return false;
+      }
+      return true;
+    }
+
+    function tryArmAfterLoadouts(): void {
+      if (!netActive || !awaitingLoadouts || !loadoutsReady()) return;
+      awaitingLoadouts = false;
+      // armTimeline 末尾 rebuildPeers() → syncRemotes()，那时快照已齐，
+      // 远端玩家会带着**真实装备**被创建（而不是空背包占位）。
+      armTimeline();
+    }
+
+    /** 兜底：对方没上报（旧客户端 / 消息丢了）也不能永久冻结，用空快照开局。 */
+    function forceStartWithoutLoadouts(): void {
+      for (const id of netPeers) {
+        if (id === netPlayerId || netPeerSnapshots.has(id)) continue;
+        netPeerSnapshots.set(id, {
+          loadout: null,
+          hpMax: state.maxHp,
+          manaMax: state.maxMana,
+          starSkills: [...state.starSkills],
+        });
+      }
+      tryArmAfterLoadouts();
+    }
+
     function armTimeline(): void {
       if (!netActive || !netPlayerId) return;
       seekClock(stepClock, 0);
@@ -572,18 +634,41 @@ export const game: Plugin = {
           setArena(state, arena);
           modifiers = createModifiers(msg.deployment?.stars?.nodes ?? []);
           deployRun(state, msg.deployment ?? {});
-          // 新的一局 = 新的时间轴（tick 从 0 起，hash 的「每 60 tick」才有一致的锚点）。
-          //
-          // 联机时必须走 armTimeline：它会归零、重建锁步、并把前 delay 帧预热进
-          // 发送队列。原来这里只是 `netOutbox = []`，依赖「netSeat 一定比 deploy
-          // 先到且已预热」—— 实测这个假设不成立：netSeat 先到但 `starting` 为 false
-          // 时并不预热，deploy 又把队列清空，于是双方都在等对方的 tick 0。
-          if (netActive) armTimeline();
-          else seekClock(stepClock, 0);
+          // 出生点偏移必须**对所有玩家**用同一套规则：`createRemotePlayer` 按 id
+          // 给远端算了，本机如果还杵在裸 spawn 上，两端对同一个人的坐标认知就
+          // 不同（A 看 A 在中心、B 看 A 在旁边），而坐标进 hash。
+          if (netActive && netPlayerId) {
+            const off = spawnOffset(netPlayerId);
+            const sx = state.map.spawn.x + off.dx;
+            const sy = state.map.spawn.y + off.dy;
+            state.player.x = sx;
+            state.player.y = sy;
+            state.player.intent.target = { x: sx, y: sy };
+          }
           lastResult = null;
           resultSent = false;
           publishRunState(true);
           channel?.postMessage({ type: 'deployed', loadout: snapshotRun(state.runInventory) });
+
+          if (netActive) {
+            // 上报自己的开局快照：装备 + **算好的**属性 + 星图技能。
+            // 属性必须等 deployRun() 跑完才有（装备/星图乘区在那里结算）。
+            awaitingLoadouts = true;
+            loadoutWaitFrames = 0;
+            channel?.postMessage({
+              type: 'netLoadout',
+              snapshot: {
+                loadout: msg.deployment?.loadout ?? null,
+                hpMax: state.maxHp,
+                manaMax: state.maxMana,
+                starSkills: [...state.starSkills],
+              },
+            });
+            // 收齐之后由 applySeat 触发 tryArmAfterLoadouts() → armTimeline()。
+            tryArmAfterLoadouts();
+          } else {
+            seekClock(stepClock, 0);
+          }
         } else if (msg.type === 'runCommand') {
           // The in-run character panel is a read-only view. Every drag / equip
           // is validated and applied HERE, then the new snapshot goes back.
@@ -839,9 +924,13 @@ export const game: Plugin = {
 
             if (!locked && !paused) {
               if (netActive) {
-                // 名单没到就冻结：既不推进、也不攒时间。攒了的话名单到达那一刻
-                // 会一次吐出几百步，两端 tick 直接错开。
-                if (netSeatSettled) advanceLockstep(raw);
+                // 装备快照没收齐就冻结：既不推进、也不攒时间（理由同上，
+                // 名单/快照到达那一刻一次吐出几百步会让两端 tick 错开）。
+                if (awaitingLoadouts) {
+                  loadoutWaitFrames += 1;
+                  if (loadoutWaitFrames > 300) forceStartWithoutLoadouts();
+                }
+                if (netSeatSettled && !awaitingLoadouts) advanceLockstep(raw);
               } else advanceSolo(raw);
               // Pickups / weapon switches happen INSIDE this Worker now. Only
               // a changed snapshot is sent to the read-only character panel.
