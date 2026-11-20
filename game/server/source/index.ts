@@ -138,6 +138,28 @@ function readHash(input: unknown): HashReport | null {
 
 function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void }) {
   const state = emptyState(players)
+  /**
+   * 服务器 tick 的真实周期（毫秒）。只在这里记，不进 `state`：
+   * 240 个数字每个快照都带一遍是浪费，对外只给分位数。
+   *
+   * 为什么需要它：客户端看到的「广播间隔」里混了投递延迟，回答不了
+   * 「42ms 配出来为什么是 46.7ms」这种问题 —— 那是服务器侧的周期问题。
+   */
+  let tickAt = 0
+  const tickGaps: number[] = []
+
+  function tickQuantiles() {
+    if (tickGaps.length === 0) return { n: 0, p50: 0, p90: 0, p99: 0, max: 0 };
+    const sorted = tickGaps.slice().sort((a, b) => a - b);
+    const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.round((sorted.length - 1) * q))]!;
+    return {
+      n: sorted.length,
+      p50: at(0.5),
+      p90: at(0.9),
+      p99: at(0.99),
+      max: sorted[sorted.length - 1]!,
+    };
+  }
 
   /**
    * 每次都给一份**新对象**。返回同一个可变 `state` 引用时，runtime 若按
@@ -153,7 +175,7 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
       inputs: { ...state.inputs },
       hashes: { ...state.hashes },
       departed: { ...state.departed },
-      stats: { ...state.stats },
+      stats: { ...state.stats, tickMs: tickQuantiles() },
     };
   }
 
@@ -173,6 +195,12 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
      * 与这里的返回值无关。
      */
     tick() {
+      const now = Date.now()
+      if (tickAt > 0) {
+        tickGaps.push(now - tickAt)
+        if (tickGaps.length > 240) tickGaps.shift()
+      }
+      tickAt = now
       state.serverTick += 1
       return false
     },
