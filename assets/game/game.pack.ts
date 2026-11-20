@@ -202,6 +202,8 @@ export const game: Plugin = {
     const netRetired = new Map<string, number>();
     /** 还没打包发走的本地帧。攒 3 帧（50ms）发一次，与平台 20Hz 广播同频。 */
     let netOutbox: InputFrame[] = [];
+    /** 上一次「卡住重发」的时刻；0 = 当前没在等。 */
+    let netRetxAt = 0;
     /**
      * 参战名单是否已经确定。联机局在名单到达**之前不能推进**：否则会把它当
      * 单机跑（runnableTick 永远非空），等对方入座时我这边已经跑出几百 tick，
@@ -214,6 +216,8 @@ export const game: Plugin = {
       hashes: 0, flushes: 0, localEdges: 0, localMouse: 0,
       /** 因为触到单帧步数上限而被丢掉的时间（次）。持续增长 = 一直在追帧。 */
       melted: 0,
+      /** 卡住重发的次数（次）。持续增长说明这条链一直在丢包，得查平台侧。 */
+      retx: 0,
     };
 
     function rebuildPeers(): void {
@@ -329,9 +333,16 @@ export const game: Plugin = {
       netStat.localEdges = 0;
       netStat.localMouse = 0;
       netStat.melted = 0;
+      netStat.retx = 0;
       flushOutbox();
       // 必须放在最后：用（已经填好的）netPeers 把名单和新影子补回来。
       rebuildPeers();
+      // 时间轴重建 = 队列被清空。必须让主窗口把「已交付水位」也清掉，否则
+      // 在 armTimeline 之前投递过的对方帧（tick 0..delay-1）就永远补不回来了：
+      // 新队列里没有它们，主窗口却认为已经交付。2026-11-21 实测的死锁
+      // （A 卡 tick 5、B 卡 tick 0、互相 pending）根因就是这一条。
+      netRetxAt = 0;
+      channel?.postMessage({ type: 'netResync' });
     }
 
     /** 收到远端输入包：base64 → 批量帧 → 锁步队列。迟到/重复由队列自己记账。 */
@@ -437,6 +448,9 @@ export const game: Plugin = {
      */
     const MAX_STEPS_PER_FRAME = 4;
 
+    /** 等这么久还没有可推进的 tick，就认为「对方没收到我的帧」，重发一次。 */
+    const RETX_AFTER_MS = 600;
+
     function advanceLockstep(delta: number): void {
       addTime(stepClock, delta);
       let stepsThisFrame = 0;
@@ -481,16 +495,43 @@ export const game: Plugin = {
           break;
         }
       }
+      // ---- 卡住自愈：重发对方还没消费掉的本地帧 ----
+      // 锁步是「等齐才走」，但帧发出去**没有任何 ack**：只要某一批没送到（平台节流、
+      // 页面切后台、服务端 24 tick 的窗口滚过去），双方就永久停在同一个 tick 上。
+      // 实测就是这样卡死的：`pending` 各自指着对方、`等` 一路涨到 17s 不动。
+      // 等够 RETX_AFTER_MS 就不再干等：把 [tick, submitTick) 的本地帧重塞回 outbox
+      // 并强制发出，同时让主窗口清掉去重水位（否则它会把同一批当重复丢回）。
+      const nowMs = Date.now();
+      if (runnableTick(lockstep) === null) {
+        if (netRetxAt === 0) netRetxAt = nowMs;
+        else if (nowMs - netRetxAt > RETX_AFTER_MS) {
+          netRetxAt = nowMs;
+          const resend: InputFrame[] = [];
+          for (const t of lockstep.localFrames.keys()) {
+            if (t >= lockstep.tick && t < lockstep.submitTick) resend.push(lockstep.localFrames.get(t)!);
+          }
+          resend.sort((a, b) => a.tick - b.tick);
+          if (resend.length > 0) {
+            channel?.postMessage({ type: 'netResync' });
+            netOutbox = resend;
+            flushOutbox(true);
+            netStat.retx += 1;
+          }
+        }
+      } else {
+        netRetxAt = 0;
+      }
       flushOutbox();
     }
 
     /** 攒够 3 帧（50ms）发一次：与平台 20Hz 的状态广播同频，多发只是浪费。 */
-    function flushOutbox(): void {
+    function flushOutbox(force = false): void {
       if (!netActive) {
         netOutbox.length = 0;
         return;
       }
-      if (netOutbox.length < 3) return;
+      if (!force && netOutbox.length < 3) return;
+      if (netOutbox.length === 0) return;
       const frames = netOutbox.splice(0, 16);
       netStat.framesOut += frames.length;
       netStat.flushes += 1;

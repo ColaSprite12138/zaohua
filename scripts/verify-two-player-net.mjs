@@ -66,7 +66,17 @@ async function enter (browser, session) {
   return { ctx, page, frame }
 }
 
-const readShell = (frame) => frame.evaluate(() => {
+/** 旧 Frame 句柄可能在 iframe 重导航后失效；失效就重新找一帧，别直接判失败。 */
+async function heal (entry) {
+  try {
+    const alive = await entry.frame.evaluate(() => Boolean(document.getElementById('fx-match')))
+    if (alive) return entry.frame
+  } catch { /* 句柄已失效 */ }
+  entry.frame = await shellFrame(entry.page)
+  return entry.frame
+}
+
+const readShell = async (entry) => (await heal(entry)).evaluate(() => {
   const net = window.MetaShell && window.MetaShell.net
   return {
     label: document.getElementById('fx-match')?.textContent || '',
@@ -106,6 +116,15 @@ const probe = (frame) => frame.evaluate((channelName) => new Promise((resolve) =
  * 实测：CDP 点 (1010,478) 有效，紧接着派合成事件后玩家原地不动。
  */
 async function clickWorld (entry, lx, ly) {
+  // 首选：让 Playwright 自己算「元素 → 屏幕」的映射（它会处理 iframe 偏移与缩放）。
+  // 手算的那条（box.x + canvas.x + lx*w/1280）在宿主把 iframe 缩放/居中时会落空，
+  // 2026-11-21 实测：手算点击后 `localMouse` 一直是 0 —— 事件根本没进引擎。
+  try {
+    await entry.frame.click('canvas', { position: { x: lx, y: ly }, timeout: 4000 })
+    return { lx, ly, via: 'frame.click' }
+  } catch (err) {
+    /* 落回手算坐标 */
+  }
   const canvas = await entry.frame.evaluate(() => {
     const c = document.querySelector('canvas')
     if (!c) return null
@@ -130,9 +149,33 @@ const sa = await login(A)
 const sb = await login(B)
 console.log(`[准备] 账号就绪：${sa.display} / ${sb.display}`)
 
+/**
+ * 重新定位「真正带壳层的那一帧」。
+ *
+ * 不能一直拿着 `enter()` 里抓到的 Frame：第二个客户端进来时宿主会**重新导航**
+ * 第一个客户端的 iframe，旧 Frame 句柄指向的文档已经不是当前文档 —— 表现是
+ * `getElementById('fx-match')` 返回 null（页面看起来一切正常）。2026-11-21 实测。
+ */
+async function shellFrame (page, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    for (const f of page.frames()) {
+      try {
+        const ok = await f.evaluate(() => Boolean(document.getElementById('fx-match')))
+        if (ok) return f
+      } catch { /* 正在导航，换下一帧再试 */ }
+    }
+    await page.waitForTimeout(500)
+  }
+  throw new Error('找不到带 #fx-match 的帧：' + page.frames().map((f) => f.url().slice(0, 70)).join(' | '))
+}
+
 const browser = await chromium.launch({ headless: true, channel: 'chrome' })
 const pa = await enter(browser, sa)
 const pb = await enter(browser, sb)
+
+pa.frame = await shellFrame(pa.page)
+pb.frame = await shellFrame(pb.page)
 
 await pa.frame.evaluate(() => document.getElementById('fx-match').click())
 await pa.page.waitForTimeout(300)
@@ -144,8 +187,8 @@ const deadline = Date.now() + 110000
 while (Date.now() < deadline) {
   await pa.page.waitForTimeout(3000)
   try {
-    const a = await readShell(pa.frame)
-    const b = await readShell(pb.frame)
+    const a = await readShell(pa)
+    const b = await readShell(pb)
     if (a.inBattle && b.inBattle) { seated = true; break }
   } catch { /* iframe 可能在 reload */ }
 }
@@ -161,10 +204,10 @@ if (!seated) {
 // 开局之后给锁步几秒：本地帧要提前 3 tick 提交，服务端按 50ms 打包广播。
 await pa.page.waitForTimeout(6000)
 
-const shellA = await readShell(pa.frame)
-const shellB = await readShell(pb.frame)
-const probeA = await probe(pa.frame)
-const probeB = await probe(pb.frame)
+const shellA = await readShell(pa)
+const shellB = await readShell(pb)
+const probeA = await probe(await heal(pa))
+const probeB = await probe(await heal(pb))
 
 const remotesOnB = probeB?.state?.remotes ?? []
 result.before = {
@@ -175,16 +218,16 @@ result.before = {
 // A 走两步（同一个已验证的空地落点，方向一致，净位移不会被抵消）。
 // B 那边应该看到 A 的影子跟着动。
 result.clickInfo = [
-  await clickWorld(pa, 1010, 430),
+  await clickWorld(pa, 1010, 478),
 ]
 await pa.page.waitForTimeout(1500)
-result.clickInfo.push(await clickWorld(pa, 1010, 430))
+result.clickInfo.push(await clickWorld(pa, 1010, 478))
 await pa.page.waitForTimeout(2500)
 
-const probeAAfter = await probe(pa.frame)
-const probeBAfter = await probe(pb.frame)
-const shellAAfter = await readShell(pa.frame)
-const shellBAfter = await readShell(pb.frame)
+const probeAAfter = await probe(await heal(pa))
+const probeBAfter = await probe(await heal(pb))
+const shellAAfter = await readShell(pa)
+const shellBAfter = await readShell(pb)
 result.after = {
   A: { net: shellAAfter.net, world: probeAAfter?.state?.playerWorld, remotes: probeAAfter?.state?.remotes },
   B: { net: shellBAfter.net, world: probeBAfter?.state?.playerWorld, remotes: probeBAfter?.state?.remotes },

@@ -164,6 +164,17 @@
         }
         return;
       }
+      if (msg.type === 'netResync') {
+        // 引擎重建了时间轴（新一局 / 重开局）：那边清空了锁步队列，这边也必须把
+        // 「已交付水位」清掉，让服务端窗口里还留着的旧包重新投递一次。
+        //
+        // 不清就是**永久死锁**：包在 armTimeline 之前已投递 → 被新队列丢掉 →
+        // 水位却记着「已交付」→ 对方永远等不到它的 tick 0，而它自己又等对方的
+        // tick N。2026-11-21 实测：A 卡 tick 5、B 卡 tick 0，`pending` 互相指着对方。
+        S.seen = {};
+        S.stats.resyncs = (S.stats.resyncs || 0) + 1;
+        return;
+      }
       if (msg.type !== 'netOut') return;
       if (!S.active || !S.session) return;
       if (typeof msg.b !== 'string' || !msg.b) return;
