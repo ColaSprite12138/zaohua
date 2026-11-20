@@ -303,6 +303,11 @@ export const game: Plugin = {
       if (!netActive || !netPlayerId) return;
       seekClock(stepClock, 0);
       lockstep = createLockstep({ localId: netPlayerId, localDelay: DEFAULT_LOCAL_DELAY });
+      // 新 lockstep 的 peers 是空的，旧影子还停在上一局的位置 —— 两个都要重置。
+      // 不恢复名单的后果不是「卡住」，而是**更隐蔽的错**：peers 空 → 锁步不等任何人
+      // → tick 满速推进、看起来一切正常，但双方各跑各的、谁都不出现在对方画面里。
+      // 2026-11-20 实测角标就是 `tick 611 60.1/s 等 0 丢 0 同伴 0 · 影子 1`。
+      state.remotes = [];
       // 预热：本地帧提前 delay 个 tick 提交，所以开局这几格先用「无输入」占位，
       // 否则第一个 tick 永远等不到自己的帧，整局卡死在 0。
       // **这几帧也必须发出去**：对方在等 tick 0，而它们是唯一会带上 tick 0
@@ -324,6 +329,8 @@ export const game: Plugin = {
       netStat.localMouse = 0;
       netStat.melted = 0;
       flushOutbox();
+      // 必须放在最后：用（已经填好的）netPeers 把名单和新影子补回来。
+      rebuildPeers();
     }
 
     /** 收到远端输入包：base64 → 批量帧 → 锁步队列。迟到/重复由队列自己记账。 */
