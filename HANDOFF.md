@@ -626,6 +626,8 @@ talent 22（talent 15 + starmap-data 7）、resource 17（tables 9 + map 8）、
 | 「建房失败，重试中（1/3）」→「建房失败：ROOM_ALREADY_EXISTS」，重试三次同一个码 | `leaveRoom()` 只 `disconnect()`，平台侧**座位**没退，下次 `createRoom` 必然占用。正解是先 `PlatformClient.rooms.leave(roomId)`（官方 `assets/lobby-reference/source/LobbyFlow.ts::vacateSeat` 就这么写），再断开。判定也要按错误码（`ROOM_ALREADY_EXISTS` / `ROOM_CREATING`）而不是 `stateSync.isOccupancyError` —— hostless 构建里它恒 `false`，兜底分支永远进不去 |
 | 房间明明建好了，却报「建房失败」 | 建房后 `reportRoom` 失败也会掉进同一个 catch 并重试 `createRoom`，此时房间已存在 → 用 `ALREADY_EXISTS` 把真因盖掉。报座必须**单独重试**（4xx 立即抛），文案要写成「报座失败：…」 |
 | 造化发布报 `publish_confirmation_stale`（产物在确认后变化） | `build_and_upload` 走了全量 build 就会触发。要让它 `skip build`（日志出现 `Reusing the validated client/server output`）。可靠顺序：`inject-shell` → `preview_start(validate:true)`（必须**真执行**、有 job_id）→ `inject-shell`（幂等）→ `display_publish_check` → 取 `displayed_revision` → `build_and_upload{revision}`。另外 `display_publish_check` 读 dist 的壳层，dist 被 build 抹成 45KB 时会报「10 个问题」而不给明细 |
+| 两人同局「非常卡」，一人退出就都流畅 | 不是发包风暴也不是死锁：本地双人验收 `waiting=0`、满 60Hz。真因是正式环境链路更长（服务端 tick 50ms + 客户端轮询），超过本地输入提前量就停下来等，`acc` 持续累积，放行时一口气补十几步 → 尖峰。已改：`MAX_FRAME_DELTA` 0.25→0.1、`MAX_STEPS_PER_FRAME=4`（超出丢时间，计 `melted`）、`DEFAULT_LOCAL_DELAY` 3→5、轮询 120→60ms。还卡就看 `MetaShell.net.status().engine` 的 `waiting` / `melted` |
+| A 打掉的怪 / 破坏的可破坏物，B 那边还在 | **P2 的边界，不是 bug**：`GameState.destructibles` 虽有稳定 id，但 `advanceLockstep` 只 `step(state, FIXED_DT, toStepInput(inputs.local))`，远端帧仅 `stepRemoteActor` 推影子位置 —— 世界在两端各算各的。要共享必须 P3：多玩家实体进 `GameState` + 远端输入也进 `step` |
 
 ## 可回滚基线（两层）
 
