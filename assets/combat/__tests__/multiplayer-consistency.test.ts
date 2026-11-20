@@ -279,3 +279,51 @@ describe('开局：两端看到的是同一份世界', () => {
     expect(peer.runInventory).not.toBe(s.player.runInventory);
   });
 });
+
+/**
+ * 真机 3 分钟长跑（2026-11-21）跑出 divergedTick=720 / mismatches=181：
+ * 短局 14/14 全绿，分叉是在走位开始之后才出现的。
+ * 这条护栏把「同一个玩家在 A 端是本端、在 B 端是远端」的两种视角摆在一起，
+ * 并强制两端相机不同，跑同一串输入逐帧对 hash —— 任何依赖「本机视角」状态
+ * 的判定都会在这里炸出来。目前是绿的：至少可以排除「相机直接决定点击结果」。
+ */
+describe('点击判定不能依赖「本机视角」的相机', () => {
+  it('A 端是本机 / B 端是远端，两端相机不同，跑同一串点击仍逐帧同 hash', () => {
+    // 只放一个玩家，就能把「视角差异」和「玩家集合差异」彻底分开：
+    // B 上 seatA 是远端（me 故意设成不在名单里的 seatB）。
+    const a = createState();
+    a.player.id = 'seatA';
+    a.me = 'seatA';
+    a.players = [a.player];
+    const b = createState();
+    b.player.id = 'seatA';
+    b.me = 'seatB';
+    b.players = [b.player];
+
+    const startX = a.player.x;
+    const startY = a.player.y;
+    const mouse = { x: startX + 200, y: startY + 90 };
+    const idle = {
+      pointerDown: false, pointerHeld: false, pointerUp: false,
+      dodge: false, restart: false,
+    };
+    const clickOf = (i: number) => ({
+      ...idle,
+      pointerDown: i === 0,
+      pointerHeld: i > 0 && i < 10,
+      pointerUp: i === 10,
+      mouse,
+    });
+
+    for (let i = 0; i < 40; i += 1) {
+      const inputA = clickOf(i);
+      // 真机上 A 端相机跟随 A 滚动；B 端给远端重算的是 cameraFor(A)。
+      // 一屏夹具里后者恒 (0,0)，正好把「两端相机不同」这件事放大到可复现。
+      a.camera = { x: a.player.x - startX, y: a.player.y - startY };
+      b.camera = { x: 0, y: 0 };
+      step(a, 1 / 60, inputA);
+      step(b, 1 / 60, idle, undefined, new Map([['seatA', inputA]]));
+      expect(hashGameState(a, i)).toBe(hashGameState(b, i));
+    }
+  });
+});

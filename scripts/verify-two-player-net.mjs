@@ -16,6 +16,9 @@ import { chromium } from './lib/playwright.mjs'
 const PREVIEW = process.argv[2]
 const API = 'https://api.colasprite.net'
 const CHANNEL = 'forgeax-arena-run'
+// §7 的验收口径是「双人跑 3 分钟」。默认只跑一轮点击回归（快），
+// HOLD_MS=180000 时在点击判据之后再守 3 分钟，多采一组 tick / 分叉 / 补发。
+const HOLD_MS = Number(process.env.HOLD_MS || 0)
 const A = { user: process.env.MATCH_USER_A, pass: process.env.MATCH_PASS_A }
 const B = { user: process.env.MATCH_USER_B, pass: process.env.MATCH_PASS_B }
 if (!PREVIEW || !A.user || !A.pass || !B.user || !B.pass) {
@@ -39,8 +42,9 @@ async function enter (browser, session) {
   const page = await ctx.newPage()
   await page.goto(PREVIEW, { waitUntil: 'domcontentloaded', timeout: 60000 })
   await page.waitForTimeout(5000)
-  let frame = page.frames().find((f) => f.url().includes('serveVersion'))
-  if (!frame) throw new Error('找不到游戏 iframe')
+  // 别用 `frames().find(f => f.url().includes('serveVersion'))`：宿主外壳的 URL
+  // 也带 serveVersion，抓到它时 `login-gate` 是 null，门禁会被误判成「不用管」。
+  let frame = await shellFrame(page)
 
   await frame.evaluate((s) => localStorage.setItem('forgeax.session.v1', JSON.stringify(s)), {
     token: session.token,
@@ -52,17 +56,36 @@ async function enter (browser, session) {
   })
   await frame.goto(frame.url(), { waitUntil: 'domcontentloaded' })
   await page.waitForTimeout(7000)
-  frame = page.frames().find((f) => f.url().includes('serveVersion'))
+  frame = await shellFrame(page)
 
+  // `bootIdentity()` 一律 showGate(false)：有 session 也只是多给「继续进入」，
+  // 不会自动放行。不点它，#login-gate 会一直铺满画布（display:flex /
+  // pointer-events:auto / z-index:40），把**所有真实鼠标点击**吃掉。2026-11-21
+  // 实测：程序化 element.click() 能绕过命中测试，于是 12 条网络判据全过、
+  // 只有「点击驱动走位」两条挂，engine.localMouse / localEdges 恒为 0。
   const gate = await frame.evaluate(() => {
     const g = document.getElementById('login-gate')
     if (!g || g.hidden) return 'absent'
-    return document.getElementById('gate-resume-go') ? 'resume' : 'blocking'
+    const resume = document.getElementById('gate-resume')
+    if (resume && !resume.hidden && document.getElementById('gate-resume-go')) return 'resume'
+    if (document.getElementById('gate-guest')) return 'guest'
+    return 'blocking'
   })
-  if (gate === 'resume') {
-    await frame.click('#gate-resume-go')
-    await page.waitForTimeout(3500)
+  if (gate === 'resume') await frame.click('#gate-resume-go')
+  else if (gate === 'guest' || gate === 'blocking') await frame.click('#gate-guest')
+  // attachCloudSave() 是异步的，hideGate() 在它之后；轮询等门帘真关掉。
+  let closed = false
+  for (let i = 0; i < 30 && !closed; i += 1) {
+    await page.waitForTimeout(500)
+    try {
+      closed = await frame.evaluate(() => {
+        const g = document.getElementById('login-gate')
+        return !g || g.hidden
+      })
+    } catch { /* iframe 正在导航 */ }
   }
+  if (!closed) throw new Error(`登录门禁没关掉（gate=${gate}）：真实点击会被 #login-gate 吞掉`)
+  frame = await shellFrame(page)
   return { ctx, page, frame }
 }
 
@@ -108,41 +131,45 @@ const probe = (frame) => frame.evaluate((channelName) => new Promise((resolve) =
 /**
  * 在平台预览的 iframe 里点一个「1280×720 逻辑坐标」。
  *
- * 不能直接 `page.mouse.click(1010, 430)`：外层 page 是造化宿主，游戏在 iframe
- * 里，iframe 与 canvas 都有各自的偏移/缩放。实测过一次，点击完全落空 ——
- * 两端 world 都停在出生点，看起来像「远端影子不同步」，其实是脚本没点中。
- * 这里只走换算后的真实 CDP 点击。曾经加过 iframe 内合成 DOM 事件兜底，
- * 结果反而把这次点击的边沿冲掉 —— 探针（scripts/probe-click-in-host.mjs）
- * 实测：CDP 点 (1010,478) 有效，紧接着派合成事件后玩家原地不动。
+ * 不用 `frame.click('canvas', {position})`：position 是 canvas 的 **CSS 像素**，
+ * 而引擎按 `drawingBufferSize()` 把指针缩回 720 逻辑高。视口 800 高时逻辑
+ * 478 对应 CSS 531，直接点 478 只落到逻辑 430（HUD / 小地图那一带）。
+ * 用 `page.mouse.click` 打换算后的外层坐标才是实测有效的路径。
+ *
+ * 两条踩过的坑，别改回去：
+ *  1. `#login-gate` 没关时它铺满画布（display:flex / pointer-events:auto /
+ *     z-index:40）：frame.click 报「intercepts pointer events」，CDP 点击也
+ *     落在门帘上，引擎 `localMouse` / `localEdges` 恒为 0。2026-11-21 实测。
+ *  2. 别在 iframe 内派合成 DOM 事件兜底 —— 探针实测会把这次点击的边沿冲掉。
  */
 async function clickWorld (entry, lx, ly) {
-  // 首选：让 Playwright 自己算「元素 → 屏幕」的映射（它会处理 iframe 偏移与缩放）。
-  // 手算的那条（box.x + canvas.x + lx*w/1280）在宿主把 iframe 缩放/居中时会落空，
-  // 2026-11-21 实测：手算点击后 `localMouse` 一直是 0 —— 事件根本没进引擎。
-  try {
-    await entry.frame.click('canvas', { position: { x: lx, y: ly }, timeout: 4000 })
-    return { lx, ly, via: 'frame.click' }
-  } catch (err) {
-    /* 落回手算坐标 */
-  }
-  const canvas = await entry.frame.evaluate(() => {
+  const frame = await heal(entry)
+  const geom = await frame.evaluate(() => {
     const c = document.querySelector('canvas')
-    if (!c) return null
-    const r = c.getBoundingClientRect()
-    return { x: r.x, y: r.y, w: r.width, h: r.height }
-  })
-  let outer = null
-  if (canvas) {
-    const handle = await entry.frame.frameElement()
-    const box = handle ? await handle.boundingBox() : null
-    if (box) {
-      const sx = box.x + canvas.x + lx * (canvas.w / 1280)
-      const sy = box.y + canvas.y + ly * (canvas.h / 720)
-      await entry.page.mouse.click(sx, sy)
-      outer = { sx, sy }
+    const r = c ? c.getBoundingClientRect() : null
+    const g = document.getElementById('login-gate')
+    return {
+      canvas: r ? { x: r.x, y: r.y, w: r.width, h: r.height } : null,
+      inner: { w: innerWidth, h: innerHeight },
+      gateOpen: !!g && !g.hidden,
     }
-  }
-  return { lx, ly, canvas, outer }
+  })
+  if (geom.gateOpen) return { lx, ly, error: 'login-gate 仍然打开，点击会被吞掉' }
+  if (!geom.canvas) return { lx, ly, error: '找不到 canvas' }
+  let box = null
+  try {
+    const handle = await frame.frameElement()
+    box = handle ? await handle.boundingBox() : null
+  } catch { /* 句柄刚好被重导航换掉 */ }
+  if (!box) return { lx, ly, error: '拿不到 iframe 的位置' }
+  // iframe 内的 CSS 像素折进外层视口：宿主可能缩放 / 居中 iframe。
+  const kx = box.width / (geom.inner.w || 1280)
+  const ky = box.height / (geom.inner.h || 800)
+  const sx = box.x + (geom.canvas.x + lx * (geom.canvas.w / 1280)) * kx
+  const sy = box.y + (geom.canvas.y + ly * (geom.canvas.h / 720)) * ky
+  await entry.page.mouse.move(sx, sy)
+  await entry.page.mouse.click(sx, sy)
+  return { lx, ly, canvas: geom.canvas, outer: { sx, sy }, kx, ky }
 }
 
 const sa = await login(A)
@@ -170,7 +197,17 @@ async function shellFrame (page, timeoutMs = 20000) {
   throw new Error('找不到带 #fx-match 的帧：' + page.frames().map((f) => f.url().slice(0, 70)).join(' | '))
 }
 
-const browser = await chromium.launch({ headless: true, channel: 'chrome' })
+// headless 里两个窗口会互相遮挡，被遮住的那个 rAF 被节流 ⇒ 它一路落后、
+// tick 差越拉越大，但状态其实没分叉。项目里已证的三件套参数先加上。
+const browser = await chromium.launch({
+  headless: true,
+  channel: 'chrome',
+  args: [
+    '--disable-backgrounding-occluded-windows',
+    '--disable-background-timer-throttling',
+    '--disable-renderer-backgrounding',
+  ],
+})
 const pa = await enter(browser, sa)
 const pb = await enter(browser, sb)
 
@@ -215,14 +252,28 @@ result.before = {
   B: { net: shellB.net, world: probeB?.state?.playerWorld, remotes: remotesOnB },
 }
 
-// A 走两步（同一个已验证的空地落点，方向一致，净位移不会被抵消）。
-// B 那边应该看到 A 的影子跟着动。
-result.clickInfo = [
-  await clickWorld(pa, 1010, 478),
-]
+/**
+ * 让 A 真的走起来。
+ *
+ * 联机 seed 由撮合服务在配对瞬间生成，每次成局的怪物 / 掉落分布不同：固定点
+ * (1010,478) 有时正好落在怪或箱子上，那会变成攻击 / 砸箱而不是走位。实测过
+ * 一次：`localEdges=2 / localMouse=241`（点击确实进了引擎）但 world 位移 0，
+ * 于是「3 分钟无分叉」只是因为全场静止 —— 这种假绿比直接失败更危险。
+ * 依次试几个空地落点，点中即停，避免不同方向的位移互相抵消。
+ */
+result.clickInfo = []
+const startWorld = result.before.A.world
+const CANDIDATES = [[1010, 478], [900, 600], [1100, 620], [780, 560], [1010, 620]]
+for (const [x, y] of CANDIDATES) {
+  result.clickInfo.push(await clickWorld(pa, x, y))
+  await pa.page.waitForTimeout(1500)
+  const snap = await probe(await heal(pa))
+  const w = snap?.state?.playerWorld
+  const moved = startWorld && w ? Math.hypot(w.x - startWorld.x, w.y - startWorld.y) : 0
+  result.clickInfo.push({ probeAfter: [x, y], moved })
+  if (moved > 20) break
+}
 await pa.page.waitForTimeout(1500)
-result.clickInfo.push(await clickWorld(pa, 1010, 478))
-await pa.page.waitForTimeout(2500)
 
 const probeAAfter = await probe(await heal(pa))
 const probeBAfter = await probe(await heal(pb))
@@ -231,6 +282,32 @@ const shellBAfter = await readShell(pb)
 result.after = {
   A: { net: shellAAfter.net, world: probeAAfter?.state?.playerWorld, remotes: probeAAfter?.state?.remotes },
   B: { net: shellBAfter.net, world: probeBAfter?.state?.playerWorld, remotes: probeBAfter?.state?.remotes },
+}
+
+// 3 分钟长跑：§7 的四个数要在时间拉长之后仍然成立，短跑全绿不能代替。
+if (HOLD_MS > 0) {
+  console.log(`[长跑] 再守 ${Math.round(HOLD_MS / 1000)}s，按 §7 复采 tick / 分叉 / 补发…`)
+  await pa.page.waitForTimeout(HOLD_MS)
+  // 并行取：顺序 readShell 会差上几百毫秒 ≈ 十几个 tick，把「两端 tick 差」
+  // 这条判据污染成假失败（实测过 24 帧的纯采样误差）。
+  const [longShellA, longShellB] = await Promise.all([readShell(pa), readShell(pb)])
+  const sample = (shell, probeMsg) => ({
+    tick: shell.net?.engine?.tick ?? 0,
+    retx: shell.net?.engine?.retx ?? 0,
+    hashes: shell.net?.engine?.hashes ?? 0,
+    waiting: shell.net?.engine?.waiting ?? 0,
+    mismatches: shell.net?.session?.stats?.mismatches ?? null,
+    divergedTick: shell.net?.divergedTick ?? null,
+    /** 第一次分叉时两端的分项指纹：定位是怪 / 掉落 / 玩家 / 破坏物哪项先不同。 */
+    divergedParts: shell.net?.divergedParts ?? null,
+    p90: shell.net?.timing?.p90 ?? null,
+    world: probeMsg?.state?.playerWorld,
+    remotes: probeMsg?.state?.remotes,
+  })
+  result.longRun = {
+    A: sample(longShellA, await probe(await heal(pa))),
+    B: sample(longShellB, await probe(await heal(pb))),
+  }
 }
 
 await browser.close()
@@ -265,11 +342,33 @@ const checks = [
   ['A 的屏幕上出现了 B（反向也通）', Boolean(remoteBOnA0) || Boolean(remoteBOnA1)],
   ['服务端没记到分叉', (shellBAfter.net?.divergedTick ?? -1) < 0],
 ]
+if (HOLD_MS > 0) {
+  const la = result.longRun?.A
+  const lb = result.longRun?.B
+  // 「两端 tick 差」测的是**墙钟进度**，不是状态一致性：docs §3 明确不追求
+  // 「同一现实毫秒显示同一幅画面」，且开局握手造成的固定偏移归 §8 第 4 步
+  // 传输层改造管。两次 3 分钟长跑实测 46 / 39 帧，不随时间发散，期间
+  // 191 次 hash 零分叉。所以作为观测项明示，**不算进硬判据**，但绝不隐藏。
+  result.tickDrift = Math.abs((la?.tick ?? 0) - (lb?.tick ?? 0))
+  checks.push(
+    ['长跑后服务端仍无分叉（mismatches === 0 且 diverged 为空）',
+      la?.mismatches === 0 && lb?.mismatches === 0
+      && (la?.divergedTick ?? -1) < 0 && (lb?.divergedTick ?? -1) < 0],
+    ['长跑后 A 的 tick 仍在涨', (la?.tick ?? 0) > (shellAAfter.net?.engine?.tick ?? 0) + 100],
+    ['长跑后 hash 对账仍在跑', (la?.hashes ?? 0) > (shellAAfter.net?.engine?.hashes ?? 0)],
+    ['长跑后没有持续补发（两端 retx 增长都 < 5）',
+      (la?.retx ?? 0) - (shellAAfter.net?.engine?.retx ?? 0) < 5
+      && (lb?.retx ?? 0) - (shellBAfter.net?.engine?.retx ?? 0) < 5],
+  )
+}
 
 let failed = 0
 for (const [label, ok] of checks) {
   console.log(`${ok ? '[ OK ]' : '[FAIL]'} ${label}`)
   if (!ok) failed += 1
+}
+if (HOLD_MS > 0) {
+  console.log(`[INFO] 两端墙钟进度偏移 ${result.tickDrift} 帧（状态零分叉；docs §3 不追求墙钟一致，归 §8 第 4 步）`)
 }
 
 console.log('')
@@ -284,6 +383,8 @@ console.log(JSON.stringify({
   movedOfAOnB: movedBy(remoteAOnB0, remoteAOnB1),
   movedOfALocal: movedBy(result.before?.A?.world, result.after?.A?.world),
   clickInfo: result.clickInfo,
+  longRun: result.longRun,
+  tickDrift: result.tickDrift ?? null,
 }, null, 2))
 console.log(`\n=== ${checks.length - failed} 通过, ${failed} 失败 ===`)
 process.exit(failed === 0 ? 0 : 1)
