@@ -68,6 +68,70 @@
     }
   }
 
+  /* ---------------------------- 诊断角标 ------------------------------ */
+
+  // 为什么挂在 DOM 而不是画进 canvas：netStat 本来就每秒只推一次，改个文本
+  // 几乎零成本；画进 canvas 则要每帧排一次文字。
+  //
+  // 为什么要有它：排查「两人同局卡顿」时，判断依据是 tick 增速 / 等待时长 /
+  // 丢帧次数，这些只有引擎知道。以前只能在 DevTools 里切 frame 敲命令，
+  // 这不该让用户承担。
+  var diagEl = null;
+  var diagLast = { tick: 0, at: 0 };
+
+  function ensureDiag() {
+    if (diagEl) return diagEl;
+    try {
+      var el = document.createElement('div');
+      el.id = 'fx-net-diag';
+      el.style.cssText = [
+        'position:fixed', 'right:8px', 'bottom:8px', 'z-index:2147483000',
+        'font:11px/1.45 ui-monospace,Consolas,monospace',
+        'color:#9fe1cb', 'background:rgba(6,10,18,.74)',
+        'padding:3px 7px', 'border-radius:6px',
+        'pointer-events:none', 'white-space:nowrap',
+      ].join(';');
+      (document.body || document.documentElement).appendChild(el);
+      diagEl = el;
+      return el;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function renderDiag(stat) {
+    if (!stat || !S.active) return;
+    var now = Date.now();
+    var rateText = '--';
+    var rate = null;
+    if (diagLast.at > 0 && now > diagLast.at) {
+      rate = (stat.tick - diagLast.tick) * 1000 / (now - diagLast.at);
+      rateText = rate.toFixed(1) + '/s';
+    }
+    diagLast.tick = stat.tick;
+    diagLast.at = now;
+    var el = ensureDiag();
+    if (!el) return;
+    var wait = typeof stat.waiting === 'number' ? stat.waiting : 0;
+    el.textContent = 'tick ' + stat.tick
+      + '  ' + rateText
+      + '  等 ' + (wait >= 1 ? Math.round(wait) + 'ms' : '0')
+      + '  丢 ' + (stat.melted || 0)
+      + '  迟 ' + (stat.lateFrames || 0)
+      + '  人 ' + ((stat.peers && stat.peers.length) || 1);
+    // 60 是满速；低于 56 节奏已经不匀，低于 45 是明显卡。
+    if (rate !== null) {
+      el.style.color = rate < 45 ? '#f09595' : (rate < 56 ? '#f0b429' : '#9fe1cb');
+    }
+  }
+
+  function hideDiag() {
+    if (diagEl && diagEl.parentNode) diagEl.parentNode.removeChild(diagEl);
+    diagEl = null;
+    diagLast.tick = 0;
+    diagLast.at = 0;
+  }
+
   /* --------------------------- Worker → 平台 --------------------------- */
 
   if (S.channel) {
@@ -76,6 +140,7 @@
       if (!msg || typeof msg !== 'object') return;
       if (msg.type === 'netStat') {
         S.lastStat = msg.stat || null;
+        renderDiag(S.lastStat);
         return;
       }
       if (msg.type === 'ready') {
@@ -381,6 +446,7 @@
     S.retired = {};
     S.lastSignature = '';
     S.sessionStateKeys = [];
+    hideDiag();
     for (var u = 0; u < S.rawUnsubs.length; u += 1) {
       try { S.rawUnsubs[u](); } catch (err) { /* 已失效 */ }
     }
