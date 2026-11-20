@@ -280,33 +280,49 @@ export const game: Plugin = {
         if (typeof entry !== 'string' && entry.name) netPeerNames.set(id, entry.name);
       }
       if (list.length > 0) netSeatSettled = true;
-      if (starting) {
-        seekClock(stepClock, 0);
-        lockstep = createLockstep({ localId: netPlayerId, localDelay: DEFAULT_LOCAL_DELAY });
-        // 预热：本地帧提前 delay 个 tick 提交，所以开局这几格先用「无输入」占位，
-        // 否则第一个 tick 永远等不到自己的帧，整局卡死在 0。
-        // **这几帧也必须发出去**：对方在等 tick 0，而它们是唯一会带上 tick 0
-        // 的本地帧。只 pushLocal 不进 outbox 的话，双方都会永远等对方的第一帧。
-        netOutbox = [];
-        for (let i = 0; i < DEFAULT_LOCAL_DELAY; i += 1) {
-          const warm = emptyInputFrame(lockstep.tick + i);
-          pushLocal(lockstep, warm);
-          netOutbox.push(warm);
-        }
-        netStat.ticks = 0;
-        netStat.framesOut = 0;
-        netStat.framesIn = 0;
-        netStat.lateIn = 0;
-        netStat.droppedOut = 0;
-        netStat.hashes = 0;
-        netStat.flushes = 0;
-        netStat.localEdges = 0;
-        netStat.localMouse = 0;
-        netStat.melted = 0;
-      }
+      if (starting) armTimeline();
       rebuildPeers();
       // 预热帧必须立刻发，不能等主循环推进：推进本身在等对方的帧，而对方也在
       // 等我的 tick 0。等 advanceLockstep 跑起来再 flush 就是典型的鸡生蛋死锁。
+      flushOutbox();
+    }
+
+    /**
+     * 为「这一局」把时间轴归零，并预发前 delay 帧。
+     *
+     * **两个入口都必须调用它**：第一条带名单的 `netSeat`，以及 `deploy`（新局开始）。
+     *
+     * 只挂在 `netSeat` 上会死锁 —— 如果上一局结束时 `netActive` 还是 true，
+     * 新局到来时 `starting` 为 false，预热就再也不会执行；同时 `deploy` 分支
+     * 又把 `netOutbox` 清空，结果双方都在等对方的 tick 0，而谁都没有 tick 0
+     * 的帧可发。2026-11-20 实测：角标停在 `tick 0 等 41612ms`，画面完全冻住。
+     *
+     * 重复调用是安全的：每次都会重建一条从 0 开始的时间轴并重发同样的预热帧。
+     */
+    function armTimeline(): void {
+      if (!netActive || !netPlayerId) return;
+      seekClock(stepClock, 0);
+      lockstep = createLockstep({ localId: netPlayerId, localDelay: DEFAULT_LOCAL_DELAY });
+      // 预热：本地帧提前 delay 个 tick 提交，所以开局这几格先用「无输入」占位，
+      // 否则第一个 tick 永远等不到自己的帧，整局卡死在 0。
+      // **这几帧也必须发出去**：对方在等 tick 0，而它们是唯一会带上 tick 0
+      // 的本地帧。只 pushLocal 不进 outbox 的话，双方都会永远等对方的第一帧。
+      netOutbox = [];
+      for (let i = 0; i < DEFAULT_LOCAL_DELAY; i += 1) {
+        const warm = emptyInputFrame(lockstep.tick + i);
+        pushLocal(lockstep, warm);
+        netOutbox.push(warm);
+      }
+      netStat.ticks = 0;
+      netStat.framesOut = 0;
+      netStat.framesIn = 0;
+      netStat.lateIn = 0;
+      netStat.droppedOut = 0;
+      netStat.hashes = 0;
+      netStat.flushes = 0;
+      netStat.localEdges = 0;
+      netStat.localMouse = 0;
+      netStat.melted = 0;
       flushOutbox();
     }
 
@@ -500,11 +516,12 @@ export const game: Plugin = {
           deployRun(state, msg.deployment ?? {});
           // 新的一局 = 新的时间轴（tick 从 0 起，hash 的「每 60 tick」才有一致的锚点）。
           //
-          // 联机时**不**在这里归零：`netSeat` 已经归零并预热过队列，而且它一定
-          // 比 deploy 先到（同一个 BroadcastChannel 保序）。这里再归零会只清掉
-          // 墙钟时间、不清 lockstep.tick，两条时间轴当场错开。
-          if (!netActive) seekClock(stepClock, 0);
-          netOutbox = [];
+          // 联机时必须走 armTimeline：它会归零、重建锁步、并把前 delay 帧预热进
+          // 发送队列。原来这里只是 `netOutbox = []`，依赖「netSeat 一定比 deploy
+          // 先到且已预热」—— 实测这个假设不成立：netSeat 先到但 `starting` 为 false
+          // 时并不预热，deploy 又把队列清空，于是双方都在等对方的 tick 0。
+          if (netActive) armTimeline();
+          else seekClock(stepClock, 0);
           lastResult = null;
           resultSent = false;
           publishRunState(true);
