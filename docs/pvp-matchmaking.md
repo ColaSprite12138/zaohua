@@ -345,6 +345,31 @@ MATCH_USER_A=.. MATCH_PASS_A=.. MATCH_USER_B=.. MATCH_PASS_B=.. \
 - 中途加入要 checkpoint 重放（每 5–10s 一份，重连追 ≤600 tick）—— 本期不做，因为开局即锁门。
 - 掉线 = 角色站着不动。
 
+### 4.9 2026-11-20 真机联调修掉的问题（P2 → P3a）
+
+这一轮从「能匹配但进不了房」一路调到「两人同屏、能看见对方、能砸同一个箱子」，
+踩到的都是一次性看完就懂、不看就必再踩的东西：
+
+| 现象 | 根因 | 修法 |
+|:--|:--|:--|
+| 成局后 15 秒「有玩家没按时到，本局解散」 | `roomDeadlineMs` 15s 太紧。玩家只有一块屏，切窗口时另一侧就在后台，浏览器会把它的定时器节流，`reportRoom` 发不出来（服务端日志里 host 账号一次请求都没有） | 建房 15→45s、入座 20→45s（`match.mjs` limits） |
+| 点「快速匹配」却进了上一局 | `enqueue` 查到活跃票就 `return view(existing)`，而那张 `seated` 票挂在还没结束的局上 | 分三种：playing → 409 `already_in_match`；seated 但局已关 → 作废重排；仍在排队 → 幂等返回 |
+| 点按钮完全没反应，界面停在上一次的「排队中 65 秒」 | `beginMatch` 第一行 `if (phase !== 'idle' && phase !== 'stopped') return;` —— **静默**。对局结束不会回调到 match-flow，phase 一直停在 `playing` | phase 为 playing 时视为上一局结束、允许重开；其余状态给明确提示 |
+| 「匹配中」其实一个请求都没发 | 状态条文案由本地先写死 | 三段式：申请 → 服务端返回票才显示「排队中 · 已等 N 秒」→ 连续 3 次轮询失败改说「与服务器失联」 |
+| **能正常玩、tick 满速，但互相看不见** | `armTimeline()` 里 `createLockstep` 把 `peers` 清空，`deploy` 分支调完它没有 `rebuildPeers()`。peers=0 意味着锁步谁都不等 → 满速、零丢帧、零等待，但双方各跑各的；影子还是上一局残留的那个 | `armTimeline` 清 `state.remotes`，末尾 `rebuildPeers()`。角标同时显示「同伴 N · 影子 M」，一眼可辨 |
+| 开局画面冻在 `tick 0`、等 41 秒 | 让对方能起步的预热帧（tick 0..delay-1）只在 `netSeat` 的 `starting` 分支发；`deploy` 又清空了发送队列 | 抽 `armTimeline()`（归零+重建+预发+flush），`starting` 与 `deploy` 都调用 |
+| 页面里没有局外系统、直接是裸游戏 | 拼版/预览宿主服务的**不是** `dist/`：可能是 `.game-builder/artifacts/forgeax-player/`，也可能是 `.forgeax/player/<hash>/`（45KB、零壳层） | `scripts/patch-preview-shell.mjs` 三处全覆盖；每次 `preview_start`/`preview_reload` 之后都要重跑 |
+| 刷新页面后排队票消失、报「本局已结束」 | `pagehide` 里用 `sendBeacon` 撤销排队票（防占位，设计如此） | 这是预期行为。**联调期间谁都不许刷新** |
+| 改了前端但页面还是旧的 | 静态服务没有 `Cache-Control`，浏览器按 `Last-Modified` 做启发式缓存 | 链接带 `&v=<随机数>`，或 `Ctrl+Shift+R` |
+
+**判据优先级（下次别再用肉眼猜）**：局内右下角角标
+`tick N  X/s  等 W  丢 M  迟 L  同伴 P · 影子 S`。
+
+- `X/s` 接近 60 且绿色 → 模拟正常（黄色 <56、红色 <45）；
+- `等` 长期几百 ms → 对方帧到不了，链路慢；
+- `丢` 每秒涨好几次 → 一直在追帧；
+- **`同伴 P · 影子 S` 不等** → 卡在 `syncRemotes`；两者都为 0 → 服务端名单里没有对方。
+
 ## 5. 分阶段
 
 | 阶段 | 内容 | 状态 |
@@ -352,7 +377,8 @@ MATCH_USER_A=.. MATCH_PASS_A=.. MATCH_USER_B=.. MATCH_PASS_B=.. \
 | **P0** | 撮合服务 + 队列规则 + 房间回报 + 测试 | **已完成**（`match.mjs` + `test/match.mjs`，56 断言） |
 | **P1** | 局外大厅「快速匹配」按钮 + 排队 UI + 建房/join 接线 | **已完成并在真宿主验收**：`multiplayer_integration.stage=verified`，两人同房同 seed 开局（§3.10） |
 | **P2** | 固定步长 + 输入流 + relay server + hash 对账 | **已完成并在双人真机验收（14/14）**：输入双向互通、锁步稳定推进、A 走位后 B 的影子同步移动、18 次 hash 对账零分叉（§4.7） |
-| **P3** | 同屏互砍：玩家实体进 `GameState`、`hurts()` 扩 `fromPlayerId`/`teamId`（互打 / 友伤关闭）、撤离判定、结算（只给自己看带出价值） | 待做 |
+| **P3a** | 远端输入也作用于世界（**可破坏物**） | **已完成（2026-11-20）**：`assets/net/remote-world.ts`。远端玩家砸重的箱子在两端同时碎、掉落用同一个 `s.rng` 所以是同一批；「已砸开的 uid 集合」已进 hash，可自动对账（§4.9） |
+| **P3b** | 玩家实体进 `GameState`：**怪的血量/掉落归属/互砍**、`hurts()` 扩 `fromPlayerId`/`teamId`（友伤关闭）、撤离判定、结算（只给自己看带出价值） | **待做（下一块）**。难点在 `GameState.player` 是单数、`s.smash` 等状态也是单份，要改成按 `playerId` 分槽；会波及渲染、输入、技能、HUD |
 | **P4** | relay 的 `onCheckJoin`（挡插队）+ 服务端视野裁剪 + 输入限幅 | 待做 |
 | **P5** | 组队 PVPVE（`teamId`） | 远期 |
 
@@ -374,3 +400,25 @@ MATCH_USER_A=.. MATCH_PASS_A=.. MATCH_USER_B=.. MATCH_PASS_B=.. \
   裸 `1010,430` 落在 HUD 上，换算后的 `1010,478` 才点中地面）。
 - 联机链路：平台上 `multiplayer_integration.stage` 到 `verified`（§3.10）代表 P1 接通；
   P2 的输入链路看上面那 14 条，**本地静态页（58080）永远验不了联机**（没有 PlatformClient）。
+
+### 6.1 本轮新加的诊断工具（下次直接从这些开始，别再靠猜）
+
+| 脚本 | 什么时候用 |
+|:--|:--|
+| `scripts/probe-preview-ui.mjs "<previewUrl>"` | 页面「没登录 / 地图不对 / 技能不对」时：检查游戏 iframe 里到底有没有 `MetaShell`、`login-gate`、`fx-match`。**只看截图会被裸游戏骗过去** |
+| `scripts/probe-match-click.mjs "<url>" <user> <pass>` | 点「快速匹配」有没有真的发请求。它用**真实表单登录**（注入 localStorage 的方式在门禁那一步不可靠），输出 `phase` / 状态条原文 / 点击后的全部请求与状态码 |
+| `scripts/probe-guest-identity.mjs "<publish_url>"` | 正式环境未登录到底给不给平台身份（结论：登录墙，游戏 iframe 不加载） |
+| `scripts/probe-two-identities.mjs "<previewUrl>"` | 本地宿主用 `?identity=` 开两个伪座位是否互串（结论：不串，但自建账号 token 在 localStorage，同 profile 两标签会共用账号） |
+| `scripts/patch-preview-shell.mjs` | **每次 `preview_start` / `preview_reload` 之后必须跑**：把壳层注入 dist / artifacts / `.forgeax/player/<hash>` 三处 |
+| 局内右下角角标 | 联机时才有：`tick N  X/s  等 W  丢 M  迟 L  同伴 P · 影子 S` |
+
+### 6.2 环境（联调必备，别每次重新摸）
+
+- 本地造化宿主：`game_builder_preview_start`（`validate: true`）→ 拿 `previewUrl`（端口随机），
+  然后**立刻** `node scripts/patch-preview-shell.mjs`，否则页面是裸游戏。
+- 双人：两个**独立存储空间** —— 推荐一个 Chrome 普通窗口 + 一个 Edge（或独立 `--user-data-dir` 的 Chrome）。
+  同 profile 两个标签会共用自建账号 token，被「一人一票」挡住。
+- 测试账号：`fx1795186959a` / `fx1795186959b`（密码 `Fx1795186959a!` 同形），全新无残留票。
+- 平台侧：`game_id = 01a1f934-ac12-7a72-8c53-3d66c4cebc50`，发布链接见 `HANDOFF`。
+- 队列/对局实时状态：`curl https://api.colasprite.net/api/v1/match/stats`
+  （`queued` 是**票数**，两人都进队应为 2）。

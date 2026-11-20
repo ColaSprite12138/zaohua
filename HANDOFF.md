@@ -197,6 +197,29 @@
 `reactions.ts`（元素附着 / 5 条反应 / DOT / 地面区域，会伤害所以 import `attack.ts`）。
 依赖方向 `reactions → attack → status`，**不许反向**（否则伤害入口与反应结算成环）。
 
+**联机（PVPVE）进度 —— 2026-11-20 收尾，正本在 [`docs/pvp-matchmaking.md`](docs/pvp-matchmaking.md) 的 §4.7–§5**：
+
+| 阶段 | 状态 |
+|:--|:--|
+| P0 撮合服务 | 完成（63 断言，线上 `api.colasprite.net/api/v1/match/*`） |
+| P1 快速匹配入口 | 完成（两人同房同 seed 开局，`stage=verified`） |
+| **P2 帧同步** | **完成**（固定步长 / 输入帧 / relay / 等齐 / hash 对账；双人真机 14/14） |
+| **P3a 远端输入作用于世界** | **完成（可破坏物）**：远端砸开的箱子两端一致、掉落同一批、进 hash 对账 |
+| **P3b 怪 / 掉落 / 互砍** | **待做**：要把 `GameState.player`（单数）改成按 `playerId` 分槽，波及渲染 / 输入 / 技能 / HUD |
+| P4 反作弊（`onCheckJoin`、视野裁剪、输入限幅） | 待做 |
+
+**联调铁律（今晚血泪换的，别省）**：
+
+1. `preview_start` / `preview_reload` 之后**必须** `node scripts/patch-preview-shell.mjs` ——
+   宿主可能服务 `dist/`、`.game-builder/artifacts/forgeax-player/` 或 `.forgeax/player/<hash>/`，
+   后两者是 45KB 的**裸游戏**（没有登录门禁、没有快速匹配）。跑了它才三处全覆盖。
+2. 改了前端但页面没变 → 链接加 `&v=<随机数>`（静态服务没有 `Cache-Control`，会被启发式缓存）。
+3. 联机判据只看局内右下角角标：`tick N  X/s  等 W  丢 M  迟 L  同伴 P · 影子 S`。
+   **`同伴 0 · 影子 1` 这种组合 = 名单被清空、双方各跑各的**（tick 却满速，极具迷惑性）。
+4. 双人必须用**两个独立存储空间**（Chrome 普通窗口 + Edge，或独立 `--user-data-dir`）。
+   同 profile 两标签会共用自建账号 token，被「一人一票」挡住。
+5. 联调期间**谁都不许刷新页面** —— `pagehide` 会撤销排队票。
+
 ## 模块契约在哪（本文件只管跨模块红线与验收）
 
 **2026-11-14 文档拆分（方案 A）**：原「当前功能契约」的模块细节已**迁入各模块 `CONTEXT.md`**，
