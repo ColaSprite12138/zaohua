@@ -162,7 +162,7 @@ L ≈ RTT + (D+1) · F
 | # | 内容 | 验收 | 进度 |
 |---|---|---|---|
 | 1 | 确定性收口：hypot 替换 + 守卫脚本 | 全量单测绿；守卫对现状 0 报错 | ✅ 2026-11-21 |
-| 2 | 实体化 `state.players`（含每局装备快照） | 单机行为逐位不变（667 单测）；双人 tick 稳定 | 🚧 容器/索敌/意图/血量/实体化/伤害落点/共享系统已落（`f94a6c9`，667 单测绿）；**远端攻击 + 装备快照待做** |
+| 2 | 实体化 `state.players`（含每局装备快照） | 单机行为逐位不变（673 单测）；双人 tick 稳定 | ✅ 代码全落（`7deb5a2` + `f9bf459`，673 单测绿）；**真机双人验收未跑** |
 | 3 | 服务器跑同一份 `step()`（只为 checkpoint/对账，不广播状态） | 与客户端 hash 对齐 | ⬜ |
 | 4 | 传输层改造：服务器帧号推进、输入盖帧、按序执行、动态 D、补帧、重连静默期 | §7 四项 | ⬜ |
 
@@ -172,9 +172,13 @@ L ≈ RTT + (D+1) · F
 2. ✅ 每个玩家的**意图**搬进 `Player.intent`，`GameState` 同名字段改代理 getter。
    `updatePlayer()` 临时把 `s.player` 指向当前玩家，于是 `classifyPointer` /
    `walk` / `updateDestructibles` 复用同一套规则按玩家各跑一遍（按 `id` 排序）。
-3. 🚧 每个玩家的**资源与结算**：`hp / maxHp` 已按玩家存（`GameState` 代理）；
-   `mana / skillBar / cast / runInventory / weaponSlots` 仍是全局 —— 要两端
-   一致需要**开局装备快照**把这些信息同步给所有客户端（见 §10）。
+3. ✅ 每个玩家的**资源与结算**：`runInventory / weaponSlots / activeWeaponSlot /
+   carriedItems / mana / maxMana / skillBar / starSkills / cast / manaSurge /
+   channel` 全部搬进 `Player`，`GameState` 同名字段改代理 getter 指向
+   `this.player`。`updatePlayer()` 临时切换 `s.player`，既有规则函数自动
+   作用于当前玩家（`7deb5a2`）。
+   **开局装备快照**走 relay 的 `{ snapshot }` 载荷：每台机器都持有全体玩家
+   背包的完整实时副本，不需要临时去对方机器上读背包（`f9bf459`）。
 4. ✅ 伤害落在**被瞄准的那个玩家**：`damagePlayer(..., target)`；怪物近战、
    范围技能、弹道命中、DOT 全部传入目标（`f94a6c9`）。
 5. ✅ 远端玩家进 `players`，`remotes` 改为只读派生视图；删除
@@ -182,9 +186,17 @@ L ≈ RTT + (D+1) · F
 6. ✅ 共享系统遍历 `sortedPlayers(s)`：`updateZones` / `tickStatuses` /
    `resolveBodyOverlap` / `updateDrops`；`hashGameState` 增加按 id 排序的
    玩家 `x/y/hp` 对账，补上原来「玩家血量分叉抓不到」的盲点（`f94a6c9`）。
-7. ⬜ **远端玩家的普攻 / 技能**：`updatePlayer` 里仍是 `if (isMe && ...)`，
-   远端不攻击 ⇒ 怪的血量在两端分叉。这是「画面完全一致」的最后一块硬缺口，
-   接入会牵扯第 3 条里那批私有资源。
+7. ✅ **远端玩家的普攻 / 技能**：去掉 `if (isMe)`，普攻 / 技能起手 / 药水 /
+   切武器 / 砸箱 / 走位 / 读条 / 撤离全部按 `sortedPlayers(s)` 各跑一遍，
+   死者跳过（`7deb5a2`）。
+8. ✅ **联机 PVP 当场爆装**：`GameState.online` + `runKind === 'pvpve'` 时，
+   `damagePlayer` 调 `burstEquipmentOnDeath()`，按 `splitOnDeath()` 分割
+   （保保险格）把装备爆成共享 `drops`，谁捡到归谁。**PVE / dungeon 一行未动**，
+   仍走局末结算写存档、下一局摆回地图（`7deb5a2`）。
+9. ✅ **身份与出生点**：本机玩家改用真实座位 id、出生点偏移对所有玩家
+   一致 —— 玩家进 hash 后，这两处原本会必然报分叉（`f9bf459`）。
+10. ✅ **开局门禁**：收齐所有人装备快照才 `armTimeline`，300 帧兜底防死锁
+   （`f9bf459`）。
 
 ## 9. 明确不做的
 
@@ -200,12 +212,15 @@ L ≈ RTT + (D+1) · F
 3. **判定层 `sin/cos` 分类**：守卫预算 47、当前 44 处（`f94a6c9` 实测）。要逐个
    判定“表现 or 判定”，判定用的换成查表；预算只许降。
 4. **补帧窗口**：服务端现在只留 24 个 tick 的输入。新设计需要更长（至少覆盖 D+重连静默期），具体值待定。
-5. **远端玩家不攻击**：见 §8 拆解 7。B 砍怪在 A 的机器上不发生，怪的血量 / 死亡 /
-   掉落两端不同。只要这一条没做，就不能宣称「两个客户端画面完全一致」。
-6. **「背包满」分支**：`updateDrops` 对**本机**玩家检查私有 `runInventory`（满了
-   就留在地上），对远端玩家只按共享事实移除 drop。若本机背包满，两端对
-   「东西还在不在地上」判定不同 ⇒ 分叉。根治要靠开局装备快照把
-   `runInventory` 也变成两端共同模拟的状态，见 §8 拆解 3。
+5. **真机双人验收未跑**：`f9bf459` 动了 relay 的 `applyAction`、net-bridge 的
+   `onGameUpdate` 与开局门禁，必须按 §7 用 `scripts/verify-two-player-net.mjs`
+   （两个真账号 + 造化宿主）实测，确认没有引入锁步死锁、且
+   `stats.mismatches === 0`。**673 个单测绿不等于双人可用。**
+6. **超时兜底的一致性**：门禁等 300 帧后用空快照开局。若只有一端超时（例如
+   一端被遮挡、rAF 被节流），两端初始装备不同 ⇒ 分叉。正常网络下不会触发，
+   但这是兜底路径的已知洞；排障看角标的等待帧数。
+7. **联机按 R 重开**：`reset()` 只重置 `s.player`（本机），远端玩家的资源不会
+   一起重置。两端各自按 R 的行为尚未对齐，属于下一轮。
 
 ## 11. 代码映射
 
@@ -215,7 +230,9 @@ L ≈ RTT + (D+1) · F
 | 固定步长 | `assets/net/step-clock.ts` |
 | 输入帧编码（世界坐标 ×4 的定点整数） | `assets/net/input-frame.ts` |
 | 状态指纹 | `assets/net/state-hash.ts` |
-| 房间进程（relay） | `game/server/source/index.ts` |
+| 房间进程（relay，含装备快照转发） | `game/server/source/index.ts` |
+| 开局快照门禁 / 座位身份 | `assets/game/game.pack.ts::applySeat` / `deploy` |
+| 快照上行重发 / 名单带快照 | `meta-ui/net-bridge.js` |
 | 主窗口桥（BroadcastChannel ↔ 平台） | `meta-ui/net-bridge.js` |
 | 玩家实体容器 / 按 id 选择目标 | `assets/combat/players.ts`（`remote-actor.ts`、`remote-world.ts` **已删除**） |
 | 多玩家一致性护栏 | `assets/combat/__tests__/multiplayer-consistency.test.ts` |
