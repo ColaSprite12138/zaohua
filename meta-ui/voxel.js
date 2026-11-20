@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/game/voxel.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 904192c2022c9e9c3f2cbb0e8a915c8c3a762882bd9b6774b3dee5af8f0d5e29
+ * Source SHA-256: 64ef855b52a83e083f8d44a6e05fd9afccc1d9e479a839bc7286620b9d052655
  */
 (function (root) {
 "use strict";
@@ -1274,7 +1274,7 @@ function drawPixelGlow(g, x, y, rx, ry, color, alpha = 0.3) {
     const cy = Math.round(y);
     for (let j = -Math.ceil(ry / cell) * cell; j <= ry; j += cell) {
         for (let i = -Math.ceil(rx / cell) * cell; i <= rx; i += cell) {
-            const d = Math.hypot(i / rx, j / ry);
+            const d = Math.sqrt((i / rx) * (i / rx) + (j / ry) * (j / ry));
             if (d > 1)
                 continue;
             g.fillStyle = `rgba(${r},${gg},${b},${(alpha * (1 - d * 0.75)).toFixed(3)})`;
