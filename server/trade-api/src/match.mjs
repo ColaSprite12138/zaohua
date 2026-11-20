@@ -33,8 +33,14 @@ export const limits = {
   formAt: 4,
   // 一局上限（平台房间上限），按**人**计：4 队 × 最多 4 人 = 16。
   maxPlayers: 16,
-  roomDeadlineMs: 15_000,  // formed → host 必须在这个时间内回报 roomId
-  seatDeadlineMs: 20_000,  // ready → 全员必须在这个时间内入座
+  // formed → host 必须在这个时间内回报 roomId。
+  // 原来 15 秒，实测不够：浏览器对后台标签的定时器会节流，而玩家只有一个屏幕，
+  // 切到另一个窗口时这个窗口就在后台。2026-11-20 实测那一局，host 端在成局后
+  // 一次轮询都没发出来（服务端日志里完全没有它的请求），15 秒一到就 timeout 解散。
+  // 放宽到 45 秒，给「切窗口 / 后台节流 / 建房慢」留出余量。
+  roomDeadlineMs: 45_000,
+  // ready → 全员必须在这个时间内入座。入座要开房间连接，同样怕后台节流。
+  seatDeadlineMs: 45_000,
   maxRequeue: 1,           // 被连累的人最多回队几次
   maxKeepWaiting: 10,      // 「继续等」最多按几次，防止无限占位
   // playing 的空转上限。P1 没有"对局结束"上报，玩家关掉页面/进程挂了之后

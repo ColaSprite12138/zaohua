@@ -253,14 +253,14 @@ console.log('\n[T9] 取消与超时')
   const n1 = newUser(); const n2 = newUser(); const n3 = newUser(); const n4 = newUser()
   for (const u of [n1, n2, n3, n4]) match.enqueue({ userId: u, mode: MODE, ruleset: RULES, now: T0 })
   const m = match.currentTicket({ userId: n1, now: T0 + 10 }).match
-  const aborted = match.tick(T0 + 20_000) // formed 15s 已过
+  const aborted = match.tick(T0 + 50_000) // 超过 roomDeadlineMs（现为 45s）
   ok(aborted.aborted.length >= 1, 'formed 超时被解散', aborted.aborted.length)
   const closed = D().prepare('SELECT * FROM matches WHERE id = ?').get(m.id)
   ok(closed.state === 'closed', '局已关闭', closed.state)
   ok(closed.close_reason === 'timeout', '原因是 timeout', closed.close_reason)
   for (const u of [n1, n2, n3, n4]) {
-    const cur = match.currentTicket({ userId: u, now: T0 + 20_100 })
-    if (cur) match.cancel({ userId: u, ticketId: cur.ticketId, now: T0 + 20_200 })
+    const cur = match.currentTicket({ userId: u, now: T0 + 50_100 })
+    if (cur) match.cancel({ userId: u, ticketId: cur.ticketId, now: T0 + 50_200 })
   }
 
   // 参数边界
