@@ -3,6 +3,7 @@
 import { burst, say } from './effects.ts';
 import { itemDef } from '../meta/inventory.ts';
 import { collectDrop, ensureItemCatalog } from './run-inventory.ts';
+import { sortedPlayers } from './players.ts';
 import {
   activeWeapon, dropLabelAnchor, dropLanded, dropQualityRank, syncWeaponSlots,
   DROP_LABEL_MAX, DROP_LABEL_STEP, DROP_PILE_GAP, type Drop, type GameState,
@@ -43,36 +44,46 @@ export function updateDrops(s: GameState, dt: number): void {
     drop.flight.t += dt;
     if (drop.flight.t >= drop.flight.delay + drop.flight.duration) drop.flight = undefined;
   }
-  if (s.pickupTarget === null) return;
-  const index = s.drops.findIndex((d) => d.uid === s.pickupTarget);
-  if (index < 0) { s.pickupTarget = null; return; }
-  const drop = s.drops[index]!;
-  // 还在空中：**等它落地**。点不到（没有名牌）就不会下单，这里是兜底：
-  // 手快 / 旧指令 / 传送门回程都可能在人已经站上落点时东西还在飞。
-  if (!dropLanded(drop)) return;
-  if (Math.sqrt((drop.x - s.player.x) * (drop.x - s.player.x) + (drop.y - s.player.y) * (drop.y - s.player.y)) >= 50) return;
+  // 拾取按玩家 id 排序结算：同一帧两个人点同一件东西，谁先拿到在两端一致。
+  // 只处理 `s.pickupTarget`（本机）会让「B 捡走的东西」在 A 的地上永远还在。
+  for (const p of sortedPlayers(s)) {
+    const uid = p.intent.pickupTarget;
+    if (uid === null) continue;
+    const index = s.drops.findIndex((d) => d.uid === uid);
+    if (index < 0) { p.intent.pickupTarget = null; continue; }
+    const drop = s.drops[index]!;
+    // 还在空中：**等它落地**。点不到（没有名牌）就不会下单，这里是兜底：
+    // 手快 / 旧指令 / 传送门回程都可能在人已经站上落点时东西还在飞。
+    if (!dropLanded(drop)) continue;
+    if (Math.sqrt((drop.x - p.x) * (drop.x - p.x) + (drop.y - p.y) * (drop.y - p.y)) >= 50) continue;
 
-  const label = drop.name ? `「${drop.name}」` : '长剑';
-  const itemId = drop.itemId ?? 'longsword';
-  const picked = collectDrop(
-    s.runInventory, drop.uid, itemId, drop.durability, drop.affixes, drop.damage,
-  );
-  // Clear the order even on failure so the toast is not re-emitted every frame.
-  s.pickupTarget = null;
-  if (picked.where === 'full') {
-    say(s, `背包已满 · ${label} 留在地上`);
-    return;
-  }
+    const mine = p.id === s.me;
+    const label = drop.name ? `「${drop.name}」` : '长剑';
+    const itemId = drop.itemId ?? 'longsword';
+    // 背包是「我」的私有资源：远端玩家拿走的东西我只看得到它从地上消失，
+    // 不写我的 runInventory（他的背包在他那台机器上）。
+    const picked = mine
+      ? collectDrop(s.runInventory, drop.uid, itemId, drop.durability, drop.affixes, drop.damage)
+      : null;
+    // Clear the order even on failure so the toast is not re-emitted every frame.
+    p.intent.pickupTarget = null;
+    if (picked !== null && picked.where === 'full') {
+      say(s, `背包已满 · ${label} 留在地上`);
+      continue;
+    }
 
-  s.drops.splice(index, 1);
-  s.carriedItems.push(itemId);
-  syncWeaponSlots(s);
-  if (picked.where === 'weapon') {
-    say(s, `已拾取 ${label} · 装备到武器槽 ${(picked.slot ?? 0) + 1} · 按 1 / 2 切换`);
-  } else {
-    say(s, `已拾取 ${label} · 放入背包（占用 2×3 格）`);
+    s.drops.splice(index, 1);
+    if (picked !== null) {
+      s.carriedItems.push(itemId);
+      syncWeaponSlots(s);
+      if (picked.where === 'weapon') {
+        say(s, `已拾取 ${label} · 装备到武器槽 ${(picked.slot ?? 0) + 1} · 按 1 / 2 切换`);
+      } else {
+        say(s, `已拾取 ${label} · 放入背包（占用 2×3 格）`);
+      }
+    }
+    burst(s, p.x, p.y - 30, '#ffd166', 20, 175);
   }
-  burst(s, s.player.x, s.player.y - 30, '#ffd166', 20, 175);
 }
 
 /**

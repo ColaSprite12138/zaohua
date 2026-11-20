@@ -30,6 +30,7 @@ import {
 import { applyElement, spawnZone } from './reactions.ts';
 import { monsterSource, playerSource, type DamageSource } from './source.ts';
 import { applyStatus, ELEMENT_STATUS, STATUS } from './status.ts';
+import { playerById, sortedPlayers } from './players.ts';
 import { blocks, inBounds } from './world.ts';
 import type { ElementId, GameState, StatusId } from './state.ts';
 
@@ -205,12 +206,21 @@ function terrainQuery(s: GameState): CollisionQuery {
   };
 }
 
-/** 本帧可被命中的身体：玩家 + 全部活着的怪（都在躯干高度）。 */
+/**
+ * 本帧可被命中的身体：**所有玩家** + 全部活着的怪（都在躯干高度）。
+ *
+ * 只收本机玩家是错的：同一支箭在 A 的机器上打中 A、在 B 的机器上打中 B，
+ * 两端的血就不是一个故事了。命中集合必须来自共享状态。
+ */
 function collectTargets(s: GameState): HitTarget[] {
-  const targets: HitTarget[] = [{
-    kind: 'player', id: 'player',
-    x: s.player.x, y: s.player.y - BODY_LIFT, radius: PLAYER_BODY_RADIUS,
-  }];
+  const targets: HitTarget[] = [];
+  for (const p of sortedPlayers(s)) {
+    if (p.hp <= 0) continue;
+    targets.push({
+      kind: 'player', id: p.id,
+      x: p.x, y: p.y - BODY_LIFT, radius: PLAYER_BODY_RADIUS,
+    });
+  }
   for (let i = 0; i < s.skeletons.length; i += 1) {
     const sk = s.skeletons[i];
     if (sk === undefined || !sk.alive) continue;
@@ -244,14 +254,15 @@ function resolveHit(s: GameState, hit: ProjectileHit): void {
   } else {
     // 无敌帧（闪避 / 受击硬直）在这里生效：翻滚躲开一支箭是设计允许的答案。
     const src = sourceOf(hit.projectile, profile);
-    const hpBefore = s.hp;
-    damagePlayer(s, damage, { color: '#ff6b6b', source: src });
+    const target = playerById(s, hit.target.id) ?? s.player;
+    const hpBefore = target.hp;
+    damagePlayer(s, damage, { color: '#ff6b6b', source: src }, target);
     s.projectileStats.playerHits += 1;
     // 弹道自带的状态（`projectile.xlsx::status`，例如禁魔弹 / 石化凝视）：
     // 扣到血才挂，翻滚躲开的那一发不该留下 debuff。玩家侧没有元素反应链，
     // 所以这里**只上状态**，不调 `applyElement`（那是给怪挂附着用的）。
-    if (profile.status !== null && s.hp < hpBefore && !s.gameOver) {
-      applyStatus(s.player, profile.status, { source: src });
+    if (profile.status !== null && target.hp < hpBefore && target.hp > 0) {
+      applyStatus(target, profile.status, { source: src });
     }
   }
   explode(s, profile, hit.projectile, hit.x, hit.y, hit.target.kind === 'monster' ? monsterIndexOf(hit.target.id) : null);

@@ -54,8 +54,7 @@ import {
   pushLocal, pushRemote, retirePeer, runnableTick, take as takeLockstep,
 } from '../net/lockstep.ts';
 import { HASH_INTERVAL_TICKS, hashGameState } from '../net/state-hash.ts';
-import { createRemoteActor, findRemote, stepRemoteActor } from '../net/remote-actor.ts';
-import { stepRemoteWorld } from '../net/remote-world.ts';
+import { createRemotePlayer } from '../combat/players.ts';
 import { decodeBase64, encodeBase64 } from '../net/base64.ts';
 
 const PACKAGE_ID = definePackageId('019fb7ce-3d00-7000-8000-000000000001');
@@ -234,23 +233,28 @@ export const game: Plugin = {
      * 两端算出来是同一个起点，所以不会出现「A 眼里 B 在左、B 眼里自己在右」。
      */
     function syncRemotes(): void {
+      // 远端玩家现在是 `state.players` 里的**真玩家**，不再是独立的影子数组。
+      // 这里只负责「名单 → 实体」：缺的补上，走了的删掉，位置一个都不动
+      // （位置只能由 step() 算出来，谁都不许在这里写坐标）。
       if (!netActive) {
-        if (state.remotes.length > 0) state.remotes = [];
+        if (state.players.length > 1) {
+          state.players = state.players.filter((p) => p.id === state.me);
+        }
         return;
       }
       const spawn = state.map.spawn;
-      const next: typeof state.remotes = [];
-      for (const id of lockstep.peers) {
-        if (lockstep.retired.has(id)) continue;
-        const existing = findRemote(state.remotes, id);
+      const keep: typeof state.players = [state.player];
+      for (const id of [...lockstep.peers].sort()) {
+        if (lockstep.retired.has(id) || id === state.me) continue;
+        const existing = state.players.find((p) => p.id === id);
         if (existing) {
           existing.name = netPeerNames.get(id) || existing.name;
-          next.push(existing);
+          keep.push(existing);
           continue;
         }
-        next.push(createRemoteActor(id, netPeerNames.get(id) || id.slice(0, 6), spawn, lockstep.tick));
+        keep.push(createRemotePlayer(id, netPeerNames.get(id) || id.slice(0, 6), spawn, state.maxHp));
       }
-      state.remotes = next;
+      state.players = keep;
     }
 
     /**
@@ -269,7 +273,7 @@ export const game: Plugin = {
         netRetired.clear();
         netOutbox = [];
         lockstep = createLockstep({ localId: '', localDelay: 0 });
-        state.remotes = [];
+        state.players = state.players.filter((p) => p.id === state.me);
         return;
       }
       const starting = !netActive;
@@ -312,7 +316,7 @@ export const game: Plugin = {
       // 不恢复名单的后果不是「卡住」，而是**更隐蔽的错**：peers 空 → 锁步不等任何人
       // → tick 满速推进、看起来一切正常，但双方各跑各的、谁都不出现在对方画面里。
       // 2026-11-20 实测角标就是 `tick 611 60.1/s 等 0 丢 0 同伴 0 · 影子 1`。
-      state.remotes = [];
+      state.players = state.players.filter((p) => p.id === state.me);
       // 预热：本地帧提前 delay 个 tick 提交，所以开局这几格先用「无输入」占位，
       // 否则第一个 tick 永远等不到自己的帧，整局卡死在 0。
       // **这几帧也必须发出去**：对方在等 tick 0，而它们是唯一会带上 tick 0
@@ -398,7 +402,7 @@ export const game: Plugin = {
           lateFrames: lockstep.lateFrames,
           longestWaitMs: lockstep.longestWaitMs,
           /** 已经建出来的影子数量。与 peers 数量对照能区分「名单没到」和「影子没建」。 */
-          remotes: state.remotes.length,
+          remotes: Math.max(0, state.players.length - 1),
           /** 诊断：卡在 0 时用来一眼分辨「名单没到 / 主循环被锁 / 帧没发出去」。 */
           settled: netSeatSettled,
           outbox: netOutbox.length,
@@ -460,22 +464,18 @@ export const game: Plugin = {
         const inputs = takeLockstep(lockstep);
         if (!inputs) break;
         takeStep(stepClock);
-        step(state, FIXED_DT, toStepInput(inputs.local), modifiers);
+        const remoteInputs = new Map<string, ReturnType<typeof toStepInput>>();
+        for (const [peerId, frame] of inputs.remote) {
+          remoteInputs.set(peerId, toStepInput(frame));
+        }
+        step(state, FIXED_DT, toStepInput(inputs.local), modifiers, remoteInputs);
         if (inputs.local.restart) {
           lastResult = null;
           resultSent = false;
         }
-        // 远端影子：用对方的输入在**我这边**推一遍。两边算的是同一个公式，
-        // 所以 A 屏幕上 B 的走位 = B 自己屏幕上的走位（这也是 P3 的前置验证）。
-        for (const [peerId, frame] of inputs.remote) {
-          const actor = findRemote(state.remotes, peerId);
-          if (actor) {
-            stepRemoteActor(actor, frame, FIXED_DT);
-            // P3 第一块：对方的输入也作用于世界（目前是可破坏物）。
-            // 顺序必须在 stepRemoteActor 之后 —— 起手判定要用这一 tick 的新位置。
-            stepRemoteWorld(state, actor, frame, FIXED_DT);
-          }
-        }
+        // 远端玩家不再有「影子规则」：他们就是 `state.players` 里的真玩家，
+        // 和本机玩家跑同一份 `step()`（先按 id 排序，两端顺序一致）。
+        // 这里只需要把这一 tick 所有人的输入交上去。
         reportHash(inputs.tick);
         netStat.ticks += 1;
         stepsThisFrame += 1;

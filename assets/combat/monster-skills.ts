@@ -31,7 +31,7 @@ import { fireProjectile, projectileProfile } from './projectile-runtime.ts';
 import { monsterSource } from './source.ts';
 import { applyStatus, STATUS } from './status.ts';
 import { lineOfSight } from './world.ts';
-import { MONSTER_SWING_TIME, type GameState, type Skeleton, type StatusId } from './state.ts';
+import { MONSTER_SWING_TIME, type GameState, type Player, type Skeleton, type StatusId } from './state.ts';
 
 /**
  * 出手形态。两者都是「已经有的东西」，没有新机制：
@@ -177,8 +177,8 @@ export function pickMonsterSkill(
  *
  * 视线是硬条件：隔墙砸人和隔墙射箭一样，只会读成「莫名掉血」。
  */
-export function castMonsterSkill(s: GameState, sk: Skeleton, def: MonsterSkillDef): boolean {
-  const p = s.player;
+export function castMonsterSkill(s: GameState, sk: Skeleton, def: MonsterSkillDef, target: Player): boolean {
+  const p = target;
   if (!lineOfSight(s.world, { x: sk.x, y: sk.y }, { x: p.x, y: p.y })) return false;
 
   if (def.kind === 'projectile') {
@@ -200,20 +200,20 @@ export function castMonsterSkill(s: GameState, sk: Skeleton, def: MonsterSkillDe
   // burst：以怪为圆心的范围伤害。距离在这里再判一次 —— AI 判过，但 `range`
   // 是这张表唯一的作用范围定义，函数自己也得守住（别让"调用方忘了判"变成
   // 隔着半张图缴械）。
-  const dist = Math.sqrt((s.player.x - sk.x) * (s.player.x - sk.x) + (s.player.y - sk.y) * (s.player.y - sk.y));
+  const dist = Math.sqrt((p.x - sk.x) * (p.x - sk.x) + (p.y - sk.y) * (p.y - sk.y));
   if (dist > def.range) return false;
   const source = monsterSource(def.id, def.name);
-  const hpBefore = s.hp;
-  damagePlayer(s, def.damage, { source });
+  const hpBefore = p.hp;
+  damagePlayer(s, def.damage, { source }, p);
   // 无敌帧（翻滚 / 受击硬直）里砸空：这一招整个落空，不占 CD、不上状态。
-  if (s.hp >= hpBefore) return false;
+  if (p.hp >= hpBefore) return false;
   sk.swing = MONSTER_SWING_TIME;
   burst(s, sk.x, sk.y - 18, '#e8eef5', 10, 110);
   // 打死了就到此为止：给尸体的最后一下挂「缴械」毫无意义，还会在结算画面上
   // 多出一个读不懂的状态图标。
-  if (s.gameOver) return true;
+  if (p.hp <= 0) return true;
   if (def.status !== undefined) {
-    applyStatus(s.player, def.status, {
+    applyStatus(p, def.status, {
       ...(def.statusDuration > 0 ? { duration: def.statusDuration } : {}),
       source,
     });

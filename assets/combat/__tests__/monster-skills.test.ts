@@ -124,7 +124,7 @@ describe('castMonsterSkill', () => {
     s.skeletons = [sk];
     s.player.invuln = 0;
 
-    const launched = castMonsterSkill(s, sk, MONSTER_SKILLS.mage_silence!);
+    const launched = castMonsterSkill(s, sk, MONSTER_SKILLS.mage_silence!, s.player);
     expect(launched).toBe(true);
     expect(s.projectiles.length).toBe(1);
     expect(s.projectiles[0]!.owner).toBe('monster');
@@ -144,12 +144,12 @@ describe('castMonsterSkill', () => {
     const far = dummy('100001', { x: p.x + def.range + 60, y: p.y });
     s.skeletons = [far];
     s.player.invuln = 0;
-    expect(castMonsterSkill(s, far, def)).toBe(false);
+    expect(castMonsterSkill(s, far, def, s.player)).toBe(false);
     expect(s.hp).toBe(s.maxHp);
 
     const near = dummy('100001', { x: p.x + 20, y: p.y });
     s.skeletons = [near];
-    expect(castMonsterSkill(s, near, def)).toBe(true);
+    expect(castMonsterSkill(s, near, def, s.player)).toBe(true);
     expect(s.hp).toBeLessThan(s.maxHp);
     expect(s.player.statuses.some((st) => st.id === 'disarm')).toBe(true);
   });
@@ -160,7 +160,7 @@ describe('castMonsterSkill', () => {
     const sk = dummy('100001', { x: p.x + 20, y: p.y });
     s.skeletons = [sk];
     s.player.invuln = 0.5;                        // 翻滚 / 受击硬直
-    expect(castMonsterSkill(s, sk, MONSTER_SKILLS.sunder!)).toBe(false);
+    expect(castMonsterSkill(s, sk, MONSTER_SKILLS.sunder!, s.player)).toBe(false);
     expect(s.hp).toBe(s.maxHp);
     expect(s.player.statuses).toHaveLength(0);
   });
@@ -173,7 +173,7 @@ describe('castMonsterSkill', () => {
     const p = s.map.spawn;
     const sk = dummy('100002', { x: p.x + 30, y: p.y });
     s.skeletons = [sk];
-    expect(castMonsterSkill(s, sk, MONSTER_SKILLS.mage_fireball!)).toBe(true);
+    expect(castMonsterSkill(s, sk, MONSTER_SKILLS.mage_fireball!, s.player)).toBe(true);
   });
 });
 

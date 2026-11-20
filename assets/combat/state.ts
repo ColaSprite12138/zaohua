@@ -25,9 +25,6 @@ import type { CombatModifiers } from './modifiers.ts';
 import type { Projectile } from './projectiles.ts';
 // 来源类型（`source.ts` 零依赖）：区域与持续性状态都必须记住「谁造成的」。
 import type { DamageSource } from './source.ts';
-// 联机的远端影子角色（P2）。`remote-actor.ts` 只依赖 `net/` 内部两个纯模块，
-// 不反向 import 这里，所以不会形成循环。
-import type { RemoteActor } from '../net/remote-actor.ts';
 import {
   cameraFor, makeWorld, nearestWalkable, type ArenaMap, type Vec, type World,
 } from './world.ts';
@@ -266,6 +263,33 @@ export interface StatusInstance {
 /** 任何可以挂状态的宿主（玩家与怪物共用一套规则）。 */
 export interface StatusHost {
   statuses: StatusInstance[];
+}
+
+/** 一个玩家的意图（世界坐标 + 命令）。全部按玩家隔离。 */
+export interface PlayerIntent {
+  /** 走位目标（世界像素）。 */
+  target: { x: number; y: number };
+  moveMode: MoveMode;
+  /** 点中的怪（`skeletons` 下标）；null = 没锁定。 */
+  targetEnemy: number | null;
+  /** 正在执行的普攻指令。 */
+  attackOrder: boolean;
+  /** 按住不放的那次点击（用来区分单击与拖拽），视角空间 + 世界空间各存一份。 */
+  press: {
+    vx: number;
+    vy: number;
+    wx: number;
+    wy: number;
+    hold: boolean;
+  } | null;
+  /** A* 路点到世界像素。 */
+  path: Vec[];
+  /** 点中的掉落物 uid；null = 没有拾取指令。 */
+  pickupTarget: string | null;
+  /** 正在砸的可破坏物（读条中）。 */
+  smash: SmashState | null;
+  /** 点击锁定、正在走过去的可破坏物 uid。 */
+  smashTarget: string | null;
 }
 
 /** 一次反应的发生记录（只做观测与表现，不参与判定）。 */
@@ -878,6 +902,8 @@ export interface Player {
    * 等于网络到达顺序，两端不同。
    */
   id: string;
+  /** 头顶显示名（联机时来自座位名单）。单机为空。 */
+  name?: string;
   x: number;
   y: number;
   vx: number;
@@ -888,6 +914,9 @@ export interface Player {
    * the step rate always matches the speed the body is actually moving.
    */
   stride: number;
+  /** 当前血量。远端玩家同样有 —— 怪物打谁，谁掉血。 */
+  hp: number;
+  maxHp: number;
   invuln: number;
   dodge: number;
   dodgeCd: number;
@@ -904,6 +933,17 @@ export interface Player {
    * 当前没有怪物技能会施加状态 —— 支撑逻辑与单测已就位，等怪物技能批次接来源。
    */
   statuses: StatusInstance[];
+  /**
+   * 这个玩家的**操作意图**（点哪里、想打谁、走到哪、在砸什么）。
+   *
+   * 为什么挂在玩家身上而不是 `GameState` 上：规则函数要按玩家各跑一遍
+   * （`classifyPointer` / `walk` / `updateDestructibles` / 拾取），两个人共用
+   * 一份意图就等于「远端玩家用我的意图行动」——这正是两端画面不一致的来源。
+   *
+   * `GameState` 上的同名字段保留为**代理 getter**，指向 `players[me].intent`：
+   * 渲染、HUD、相机这些第一人称视角的代码继续写 `s.target` 就行。
+   */
+  intent: PlayerIntent;
 }
 
 /**
@@ -1011,13 +1051,13 @@ export interface GameState {
   skeletons: Skeleton[];
   drops: Drop[];
   /**
-   * 联机对局里的**远端玩家影子**（P2）。单机时是空数组。
+   * 「别人」的视图（只读派生）：`players` 里除我之外的人。
    *
-   * P2 只让它「看得见、走得动」：位置由对方的输入帧算出，纯派生量，
-   * 不进 `hashGameState()`。血量、攻击、互相伤害与结算都是 P3 的事 ——
-   * 那时它会变成 `GameState.players` 里的真实体。
+   * 以前这是一份独立的 `RemoteActor[]` 影子数组 —— 位置由手写的镜像规则算，
+   * 血量/状态/攻击一概没有，于是「同一个怪追两个人」「A 捡了 B 还看得见」。
+   * 现在远端就是 `players` 里的真玩家，这里只是给绘制和投影用的筛选视图。
    */
-  remotes: RemoteActor[];
+  readonly remotes: Player[];
   /**
    * The COMPLETE in-run inventory lives in this Worker's heap: bag + all ten
    * equipment slots, `stash` always empty. The main window holds a separate
@@ -1128,29 +1168,65 @@ export function createState(config: RunConfig = {}): GameState {
   const state: GameState = {
     t: 0,
     attacks: 0,
-    hp: PLAYER_HP_MAX,
-    maxHp: PLAYER_HP_MAX,
+    get hp() { return this.player.hp; },
+    set hp(v) { this.player.hp = v; },
+    get maxHp() { return this.player.maxHp; },
+    set maxHp(v) { this.player.maxHp = v; },
     kills: 0,
     xp: 0,
     player: {
       id: 'p0',
       x, y, vx: 0, vy: 0, face: 0, stride: 0,
+      hp: PLAYER_HP_MAX, maxHp: PLAYER_HP_MAX,
       invuln: 0, dodge: 0, dodgeCd: 0, attackCd: 0,
       attackFx: 0, hurt: 0, trail: [], dash: null, castPose: 0, statuses: [],
+      intent: {
+        target: { x, y },
+        moveMode: 'idle',
+        targetEnemy: null,
+        attackOrder: false,
+        press: null,
+        path: [],
+        pickupTarget: null,
+        smash: null,
+        smashTarget: null,
+      },
     },
     players: [],
     me: 'p0',
-    target: { x, y },
-    moveMode: 'idle',
-    targetEnemy: null,
+    /* ---------------------------------------------------------------
+     * 「我」的意图：全部代理到 `players[me].intent`。
+     *
+     * 保留这层代理是为了让 455 处 `s.player.xxx` / `s.target` 不必改一次——
+     * 视角、HUD、相机本来就只关心「我」。**规则函数不许读这些代理**，必须读
+     * 传进来的那个玩家的 `p.intent`，否则远端玩家会用我的意图行动。
+     * --------------------------------------------------------------- */
+    get target() { return this.player.intent.target; },
+    set target(v) { this.player.intent.target = v; },
+    get moveMode() { return this.player.intent.moveMode; },
+    set moveMode(v) { this.player.intent.moveMode = v; },
+    get targetEnemy() { return this.player.intent.targetEnemy; },
+    set targetEnemy(v) { this.player.intent.targetEnemy = v; },
+    get attackOrder() { return this.player.intent.attackOrder; },
+    set attackOrder(v) { this.player.intent.attackOrder = v; },
+    get press() { return this.player.intent.press; },
+    set press(v) { this.player.intent.press = v; },
+    get path() { return this.player.intent.path; },
+    set path(v) { this.player.intent.path = v; },
+    get pickupTarget() { return this.player.intent.pickupTarget; },
+    set pickupTarget(v) { this.player.intent.pickupTarget = v; },
+    get smash() { return this.player.intent.smash; },
+    set smash(v) { this.player.intent.smash = v; },
+    get smashTarget() { return this.player.intent.smashTarget; },
+    set smashTarget(v) { this.player.intent.smashTarget = v; },
     hoverEnemy: null,
     hoverDrop: null,
     hoverDestructible: null,
-    attackOrder: false,
-    press: null,
     skeletons: [],
     drops: [],
-    remotes: [],
+    get remotes() {
+      return this.players.filter((p) => p.id !== this.me);
+    },
     // No run has been deployed yet: the acceptance fixture starts with a couple
     // of potions in the bag (real deploys replace this with the lobby's loadout).
     runInventory: seedFixturePotions(createInventoryState(0), POTION_COUNT, FIXTURE_HP_POTIONS),
@@ -1163,12 +1239,10 @@ export function createState(config: RunConfig = {}): GameState {
     map,
     world,
     camera: cameraFor(world, x, y),
-    path: [],
     runSeed: config.seed ?? DEFAULT_RUN_SEED,
     rng: makeRng(config.seed ?? DEFAULT_RUN_SEED),
     lootLog: [],
     carriedItems: [],
-    pickupTarget: null,
     mana: PLAYER_MANA_MAX,
     maxMana: PLAYER_MANA_MAX,
     skillBar: createSkillBar(),
@@ -1191,8 +1265,6 @@ export function createState(config: RunConfig = {}): GameState {
     extracted: false,
     timedOut: false,
     destructibles: [],
-    smash: null,
-    smashTarget: null,
     events: [],
     firedEvents: [],
   };

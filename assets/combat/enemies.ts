@@ -178,7 +178,7 @@ export function updateSkeletons(s: GameState, dt: number): void {
       const at = pickMonsterSkill(sk, skills, sd);
       if (at >= 0) {
         const def = skills[at]!;
-        if (castMonsterSkill(s, sk, def)) {
+        if (castMonsterSkill(s, sk, def, p)) {
           const cds = sk.skillCd ?? (sk.skillCd = []);
           cds[at] = def.cooldown;
           sk.path = [];
@@ -242,7 +242,7 @@ export function updateSkeletons(s: GameState, dt: number): void {
         } else if (p.invuln <= 0) {
           // 近战：易伤（软控）同样作用于玩家，伤害入口只有一个。
           // 来源是「这一只怪」，阵营判定据此区分敌我（自己的怪不会误伤自己）。
-          damagePlayer(s, stats.attackDamage, { source: monsterSource(sk.monsterId) });
+          damagePlayer(s, stats.attackDamage, { source: monsterSource(sk.monsterId) }, p);
         }
       }
     }

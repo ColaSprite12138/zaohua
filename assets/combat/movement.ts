@@ -21,6 +21,7 @@ import {
 import { destructibleAtPoint, orderSmash } from './destructibles.ts';
 import { CLICK_DRAG_PIXELS, PLAYER_DODGE_CD, STRIDE_PIXELS, type GameState, type StepInput } from './state.ts';
 import { lockedFlags, moveMultiplier } from './status.ts';
+import { sortedPlayers } from './players.ts';
 import { BODY_RADIUS, canStandAt, walkable, type World } from './world.ts';
 
 export function classifyPointer(s: GameState, input: StepInput): void {
@@ -267,8 +268,12 @@ function separate(s: GameState, a: Body, b: Body, minDist: number): void {
 export function resolveBodyOverlap(s: GameState): void {
   for (let pass = 0; pass < SEPARATION_PASSES; pass += 1) {
     const live = s.skeletons.filter((sk) => sk.alive);
-    for (const sk of live) {
-      separate(s, s.player, sk, PLAYER_FOOT_RADIUS + MONSTER_FOOT_RADIUS);
+    // 每个玩家都要被推开：只推本机玩家会让远端玩家的坐标在两端不同，
+    // 而坐标进 hash，下一帧就是一次确定的分叉。
+    for (const p of sortedPlayers(s)) {
+      for (const sk of live) {
+        separate(s, p, sk, PLAYER_FOOT_RADIUS + MONSTER_FOOT_RADIUS);
+      }
     }
     for (let i = 0; i < live.length; i += 1) {
       for (let j = i + 1; j < live.length; j += 1) {

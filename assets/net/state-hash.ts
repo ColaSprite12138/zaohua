@@ -72,6 +72,16 @@ export type HashableState = {
   }[];
   readonly drops: readonly { readonly uid: string }[];
   /**
+   * 全体玩家（P3 实体化之后）。按 `id` 排序参与 hash —— 数组顺序等于
+   * 远端名单的到达顺序，两端天然不同，直接按下标 hash 会报假分叉。
+   */
+  readonly players?: readonly {
+    readonly id: string;
+    readonly x: number;
+    readonly y: number;
+    readonly hp: number;
+  }[];
+  /**
    * 可破坏物。只关心「碎没碎」——`progress` 是连续量，同一 tick 两端累加的
    * 浮点可能差半个 ulp，且破坏瞬间会归 1，拿它做对账只会误报。
    * 这一项是 P3 第一块（远端输入作用于世界）的验收手段。
@@ -126,6 +136,17 @@ export function hashGameState(state: HashableState, tick: number): number {
   const uids = state.drops.map((drop) => drop.uid).sort();
   hasher.add(uids.length);
   for (const uid of uids) hasher.add(hashString(uid));
+
+  // 玩家：按 id 排序后对账坐标 + 血量。P3 之后每个玩家都是共享状态，
+  // 「同一个怪追两个人」「一边掉血一边没掉」都在这里暴露。
+  const players = [...(state.players ?? [])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  hasher.add(players.length);
+  for (const p of players) {
+    hasher.add(hashString(p.id));
+    hasher.add(quantize(p.x));
+    hasher.add(quantize(p.y));
+    hasher.add(quantize(p.hp));
+  }
 
   // 已砸开的可破坏物：按 uid 排序，与砸开顺序无关。
   // 「A 砸开的箱子，B 那边是否也碎了」就靠这一项对账。

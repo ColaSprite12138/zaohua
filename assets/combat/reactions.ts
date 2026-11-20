@@ -15,6 +15,8 @@
 
 import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { damagePlayer, damageSkeleton } from './attack.ts';
+import { sortedPlayers } from './players.ts';
+import type { Player } from './state.ts';
 import { burst, say } from './effects.ts';
 import {
   DOT_TICK_SECONDS, REACTION_CHAIN_RADIUS, ZONE_RADIUS_MAX, ZONE_TICK_SECONDS,
@@ -264,11 +266,12 @@ export function updateZones(s: GameState, dt: number): void {
       // 来源一路带下去：反应伤害也算这片地的主人打的。
       applyElement(s, i, zone.element, { duration, source: zone.source });
     }
-    const p = s.player;
-    // 玩家这一侧同样按阵营过滤：自己铺的火墙 / 毒池 / 冰面**完全不碰自己**。
-    // （旧规则是「对所有人生效」，用户 2026-11-16 明确要求改掉。）
-    if (hurts(zone.source, 'player')
-      && Math.sqrt((p.x - zone.x) * (p.x - zone.x) + (p.y - zone.y) * (p.y - zone.y)) <= zone.radius) {
+    // 阵营过滤与「谁」无关，先判一次；圈内**每个玩家**都要续状态。
+    // 只判 `s.player` 会让「B 站在火里」在 A 的机器上完全不发生 —— 同一个
+    // zone 一边续了状态一边没续，是典型的两端分叉。
+    if (!hurts(zone.source, 'player')) continue;
+    for (const p of sortedPlayers(s)) {
+      if (Math.sqrt((p.x - zone.x) * (p.x - zone.x) + (p.y - zone.y) * (p.y - zone.y)) > zone.radius) continue;
       applyStatus(p, zone.status, { duration, source: zone.source });
     }
   }
@@ -291,9 +294,13 @@ export function tickStatuses(s: GameState, dt: number): void {
       damageSkeleton(s, i, amount, { knockback: 0, color, source });
     });
   }
-  tickHost(s.player, dt, (amount, color, source) => {
-    hurtPlayer(s, amount, color, source);
-  });
+  // DOT 挂在**每个玩家自己的 statuses** 上，谁挂着谁掉血。
+  // 只 tick `s.player` 会让「怪给 B 上的点燃」在 A 的机器上永远不结算。
+  for (const p of sortedPlayers(s)) {
+    tickHost(p, dt, (amount, color, source) => {
+      hurtPlayer(s, amount, color, source, p);
+    });
+  }
 }
 
 /** 单个宿主的计时 + DOT。`hit` 由调用方注入（怪走 damageSkeleton，玩家走 hurtPlayer）。 */
@@ -321,11 +328,12 @@ function tickHost(
 /** 玩家掉血：走 `attack.ts::damagePlayer()`，和怪物出刀 / 弹道共用同一条路。 */
 function hurtPlayer(
   s: GameState, amount: number, color: string, source: DamageSource | undefined,
+  target: Player,
 ): void {
   damagePlayer(s, amount, {
     color,
     source,
     invuln: false,     // DOT 不吃无敌帧：站在火里翻滚不该免疫灼烧
     deathText: '你被持续伤害击倒了 · 按 R 重新开始',
-  });
+  }, target);
 }

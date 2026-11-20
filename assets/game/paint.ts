@@ -54,11 +54,12 @@ import {
   type DestructibleObj,
   type Drop,
   type GameState,
+  type Player,
   type Portal,
   type Skeleton,
 } from './simulation.ts';
 import { SKILL_KEYS, keyLabel } from '../shared/constants.ts';
-import type { RemoteActor } from '../net/remote-actor.ts';
+
 import { itemArtKey, itemDef } from '../meta/inventory.ts';
 import {
   atlasReady,
@@ -871,16 +872,17 @@ function drawWeaponArm(
  * 没有闪避残影。P2 只要玩家能看见「对面真的在动」，多画一样就多一处
  * 需要跟 P3 的实体化对齐的地方。头顶名字用金色，一眼能和怪的白色名板分开。
  */
-function drawRemoteActor(g: Painter, actor: RemoteActor): void {
+function drawRemoteActor(g: Painter, actor: Player): void {
   const frame = Math.floor(actor.stride);
-  const bob = actor.moving && frame % 2 === 1 ? 1 : 0;
+  const moving = Math.abs(actor.vx) + Math.abs(actor.vy) > 12;
+  const bob = moving && frame % 2 === 1 ? 1 : 0;
   shadow(g, actor.x, actor.y + 2, 24, 9, 0.45);
   // 挥砍：远端也在砸箱子时必须读得出来（否则 B 只看到进度条在涨、人一动不动）。
   // 只在挥的那一下给刀 —— 平时不凭空给远端配一把武器，那是存档里才有的东西。
   const swing = actor.attackFx > 0 ? 1 - actor.attackFx / PLAYER_SWING_TIME : 0;
   const paintBody = (): void => {
     drawBody(g, KNIGHT, actor.x, actor.y - bob, {
-      frame: actor.moving ? frame : 0,
+      frame: moving ? frame : 0,
       face: actor.face,
     });
   };
@@ -913,9 +915,9 @@ function drawRemoteActor(g: Painter, actor: RemoteActor): void {
   g.textBaseline = 'alphabetic';
   g.lineWidth = 3;
   g.strokeStyle = 'rgba(6, 10, 18, 0.88)';
-  g.strokeText(actor.name, actor.x, top);
+  g.strokeText(actor.name ?? '', actor.x, top);
   g.fillStyle = '#f0b429';
-  g.fillText(actor.name, actor.x, top);
+  g.fillText(actor.name ?? '', actor.x, top);
   g.restore();
 }
 

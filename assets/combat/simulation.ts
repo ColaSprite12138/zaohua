@@ -38,8 +38,9 @@ import type { RunLoadout } from '../meta/inventory.ts';
 import {
   activeWeapon, applyStarMods, createState, dropLabelName, dropLabelRect,
   PRE_EQUIPPED_SKILLS, reset, setArena,
-  syncWeaponSlots, type GameState, type RunKind, type StepInput,
+  syncWeaponSlots, type GameState, type Player, type RunKind, type StepInput,
 } from './state.ts';
+import { sortedPlayers } from './players.ts';
 import { checkCleared, layoutDrops, switchWeaponSlot, updateDrops } from './weapons.ts';
 import { cameraFor, worldToScreen, type ArenaMap } from './world.ts';
 
@@ -67,11 +68,79 @@ function tickTimers(s: GameState, dt: number): void {
 }
 
 /** Advance one frame. `dt` is seconds, already clamped by the caller. */
+/**
+ * 单个玩家的一帧。
+ *
+ * `isMe = false` 时只跑「世界看得见的部分」（走位 / 闪避 / 砸箱），
+ * 技能、药水、普攻结算仍然只属于本机 —— 因为那些还挂在 `GameState` 上
+ * （`cast` / `mana` / `runInventory`），按玩家隔离是下一步。
+ *
+ * 远端玩家没有真实相机：用他自己的位置当视口中心。相机只影响
+ * 「按下点 vs 松开点」的拖拽判定，不影响世界坐标（输入帧里带的是世界坐标）。
+ */
+function updatePlayer(
+  s: GameState,
+  p: Player,
+  input: StepInput,
+  dt: number,
+  modifiers: CombatModifiers,
+  isMe: boolean,
+): void {
+  const mine = s.player;
+  const cam = s.camera;
+  if (!isMe) {
+    s.player = p;
+    s.camera = cameraFor(s.world, p.x, p.y);
+  }
+  try {
+    if (isMe) {
+      // 技能起手排在最前面：瞬发技能这一帧就结算，读条技能这一帧就把玩家钉住，
+      // 所以下面的移动 / 攻击分支必须看到最新的 `s.cast`。
+      if (input.potion === true) drinkPotion(s);
+      if (input.healPotion === true) healPotion(s);
+      if (input.skill !== undefined && input.skill !== null) {
+        beginSkill(s, input.skill, input.mouse ?? null, modifiers);
+      }
+      // 1 / 2 only changes which slot is in use; it never moves items or attacks.
+      if (input.switchWeapon !== undefined && input.switchWeapon !== null) {
+        switchWeaponSlot(s, input.switchWeapon);
+      }
+    }
+    // 站桩：砸箱子（每个玩家各一份）；引导传送门与读条技能目前只属于本机。
+    const pinned = p.intent.smash !== null
+      || (isMe && (s.channel !== null || s.cast !== null));
+    // 冲锋进行中：位移由 `updateDash()` 接管，普通走位与普攻让位。
+    const dashing = p.dash !== null;
+    if (!pinned && !dashing) classifyPointer(s, input);
+    applyDodge(s, input.dodge);
+    if (!pinned && !dashing) walk(s, dt);
+    if (dashing) updateDash(s, dt, modifiers);
+    // 可破坏物：走到就起手、站桩进度、挨打 / 闪避 / 走开就断。
+    updateDestructibles(s, dt);
+    if (isMe && !pinned && !dashing) resolveAttackOrder(s, modifiers);
+  } finally {
+    if (!isMe) {
+      s.player = mine;
+      s.camera = cam;
+    }
+  }
+}
+
+/**
+ * 一个玩家的这一帧输入。
+ *
+ * `remoteInputs` 里没有的玩家这一帧**不动**——不是「按空输入推进」。
+ * 填空输入会让两端各算一份不同的过去（见 docs/net-sync-design.md §6 与
+ * `.forgeax/diag/idle-fill.test.ts` 的实测：一次填充 = 永久分叉）。
+ */
+export type PlayerInputs = ReadonlyMap<string, StepInput>;
+
 export function step(
   s: GameState,
   dt: number,
   input: StepInput,
   modifiers: CombatModifiers = NO_MODIFIERS,
+  remoteInputs?: PlayerInputs,
 ): void {
   if (input.restart) {
     reset(s);
@@ -96,32 +165,17 @@ export function step(
   // 单局事件：第 7 分钟的高价值物刷新（读的是刚更新的 `runSeconds`）。
   updateEvents(s, dt);
 
-  // 技能起手排在最前面：瞬发技能这一帧就结算，读条技能这一帧就把玩家钉住，
-  // 所以下面的移动 / 攻击分支必须看到最新的 `s.cast`。
-  if (input.potion === true) drinkPotion(s);
-  if (input.healPotion === true) healPotion(s);
-  if (input.skill !== undefined && input.skill !== null) {
-    beginSkill(s, input.skill, input.mouse ?? null, modifiers);
+  // 每个玩家各跑一遍自己的这一帧，**按 id 排序**。
+  // 顺序必须在两端一致：同一帧两个人砸同一个箱子 / 抢同一件掉落时，
+  // 谁先结算决定结果，而 `players` 的数组顺序来自网络到达顺序。
+  for (const p of sortedPlayers(s)) {
+    const isMe = p.id === s.me;
+    const pi = isMe ? input : remoteInputs?.get(p.id);
+    // 没有他的输入 = 他这一帧还没到，**不许替他决定**（空输入填充会永久分叉）。
+    if (pi === undefined) continue;
+    updatePlayer(s, p, pi, dt, modifiers, isMe);
   }
 
-  // 引导传送门 / 砸可破坏物 / 读条技能：三种「站桩」共用同一条判定 ——
-  // 点击移动与攻击指令都不生效（各自负责开始、打断与结算；这里只负责「这一帧能不能动」）。
-  const pinned = s.channel !== null || s.cast !== null || s.smash !== null;
-  // 冲锋进行中：位移由 `updateDash()` 接管，普通走位与普攻让位（不能一边冲一边砍）。
-  const dashing = s.player.dash !== null;
-
-  // 1 / 2 only changes which slot is in use; it never moves items or attacks.
-  if (input.switchWeapon !== undefined && input.switchWeapon !== null) {
-    switchWeaponSlot(s, input.switchWeapon);
-  }
-  if (!pinned && !dashing) classifyPointer(s, input);
-  applyDodge(s, input.dodge);
-  if (!pinned && !dashing) walk(s, dt);
-  if (dashing) updateDash(s, dt, modifiers);
-  // 可破坏物：走到就起手、站桩进度、挨打 / 闪避 / 走开就断。排在怪之前，
-  // 所以「这一帧被砍」与「这一帧继续砸」不会同时成立。
-  updateDestructibles(s, dt);
-  if (!pinned && !dashing) resolveAttackOrder(s, modifiers);
   updateSkeletons(s, dt);
   // 弹道：怪与玩家在这一帧都可能刚出手，所以推进排在两边都动完之后。
   // 命中会在 `damageSkeleton` / `damagePlayer` 里结算（含击杀、掉落、阵亡）。
@@ -387,12 +441,14 @@ export function projection(s: GameState) {
      * 世界坐标：验收脚本要断言「A 屏幕上 B 的位置 = B 自己的位置」，
      * 而屏幕上量不出来（相机跟着自己走）。
      */
-    remotes: s.remotes.map((actor) => ({
-      id: actor.id,
-      x: actor.x,
-      y: actor.y,
-      lastTick: actor.lastTick,
-      moving: actor.moving,
+    remotes: s.remotes.map((p) => ({
+      id: p.id,
+      name: p.name ?? '',
+      x: p.x,
+      y: p.y,
+      moving: Math.abs(p.vx) + Math.abs(p.vy) > 12,
+      hp: p.hp,
+      maxHp: p.maxHp,
     })),
     moveMode: s.moveMode,
     followingPointer: s.moveMode === 'follow',

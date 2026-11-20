@@ -64,7 +64,6 @@ PROTECTED=(
   assets/net/input-latch.ts
   assets/net/lockstep.ts
   assets/net/state-hash.ts
-  assets/net/remote-actor.ts
   assets/net/base64.ts
   meta-ui/net-bridge.js
   game/server/source/index.ts

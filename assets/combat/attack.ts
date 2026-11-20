@@ -11,6 +11,7 @@ import { affix } from '../resource/generated/affix.ts';
 import { affix_slot } from '../resource/generated/affix_slot.ts';
 import { rollAffixes, type AffixEquipKind } from '../meta/affix.ts';
 import { activeWeaponBroken, weaponUsable, wearWeapon } from './durability.ts';
+import type { Player } from './state.ts';
 import { burst, say } from './effects.ts';
 import { authoredItem, monsterXp, rollLoot, rollWeaponDamage } from './loot.ts';
 import { weaponDamage } from './run-inventory.ts';
@@ -336,23 +337,35 @@ export function damagePlayer(
   s: GameState,
   amount: number,
   options: PlayerDamageOptions = {},
+  /**
+   * 打的是谁。缺省 = 我。
+   *
+   * 多玩家之后这条不能省：怪物按 `nearestPlayer` 选目标，伤害若仍落在
+   * `s.player`，就会出现「怪在打 B、掉血的是 A」—— 两端都会看到这件错事，
+   * 而且和谁挨打无关。
+   */
+  target?: Player,
 ): boolean {
   if (s.gameOver || s.extracted || s.timedOut || s.cleared) return false;
   if (amount <= 0) return false;
   // **自己的东西打不到自己**：在无敌帧、耐久、闪红之前就返回，
   // 所以自伤连"看起来挨了一下"的效果都不会有（用户 2026-11-16 报的问题）。
   if (!hurts(options.source, 'player')) return false;
-  const p = s.player;
+  const p = target ?? s.player;
+  if (p.hp <= 0) return false;
   if ((options.invuln ?? true) && p.invuln > 0) return false;
   // 易伤（软控）对**所有**打向玩家的伤害生效：和怪物打怪走同一条倍率表。
   const taken = amount * damageTakenMultiplier(p);
-  s.hp = Math.max(0, s.hp - taken);
+  p.hp = Math.max(0, p.hp - taken);
   if (options.wear ?? true) wearWeapon(s, 0, taken);
   p.hurt = Math.max(p.hurt, options.invuln === false ? 0.18 : 0.35);
   if (options.invuln ?? true) p.invuln = 0.7;
   burst(s, p.x, p.y - 26, options.color ?? '#ff6b6b', 8, 120);
-  if (s.hp > 0) return false;
-  s.gameOver = true;
-  say(s, options.deathText ?? '你被击倒了 · 按 R 重新开始');
+  if (p.hp > 0) return false;
+  if (p.id === s.me) {
+    s.gameOver = true;
+    say(s, options.deathText ?? '你被击倒了 · 按 R 重新开始');
+  }
+  // 远端玩家倒下：不结束本局（本局是我的），尸体留在原地由绘制层表现。
   return true;
 }

@@ -40,3 +40,65 @@ export function nearestPlayer(s: GameState, x: number, y: number): Player | null
 export function playerById(s: GameState, id: string): Player | null {
   return s.players.find((p) => p.id === id) ?? null;
 }
+
+/** 出生点微偏移：同一张图的 spawn 是同一个点，两个人会完全重叠。 */
+function spawnOffset(id: string): { dx: number; dy: number } {
+  let acc = 0;
+  for (let i = 0; i < id.length; i += 1) acc = (acc * 31 + id.charCodeAt(i)) % 100000;
+  // 四个轴向量都是整数，不引入三角函数（见确定性纪律）。
+  const dirs = [
+    { dx: 52, dy: 0 },
+    { dx: 0, dy: 52 },
+    { dx: -52, dy: 0 },
+    { dx: 0, dy: -52 },
+  ];
+  return dirs[acc % 4]!;
+}
+
+/**
+ * 造一个远端玩家实体。
+ *
+ * 它和本机玩家是**同一种类型**（`Player`），所以怪物索敌、拾取、砸箱、
+ * 走位规则全都自动适用于它 —— 不再有「影子角色」这一层特例。
+ */
+export function createRemotePlayer(
+  id: string,
+  name: string,
+  spawn: { x: number; y: number },
+  hpMax: number,
+): Player {
+  const { dx, dy } = spawnOffset(id);
+  return {
+    id,
+    name,
+    x: spawn.x + dx,
+    y: spawn.y + dy,
+    vx: 0,
+    vy: 0,
+    face: Math.PI / 2,
+    stride: 0,
+    hp: hpMax,
+    maxHp: hpMax,
+    invuln: 0,
+    dodge: 0,
+    dodgeCd: 0,
+    attackCd: 0,
+    attackFx: 0,
+    hurt: 0,
+    trail: [],
+    dash: null,
+    castPose: 0,
+    statuses: [],
+    intent: {
+      target: { x: spawn.x + dx, y: spawn.y + dy },
+      moveMode: 'idle',
+      targetEnemy: null,
+      attackOrder: false,
+      press: null,
+      path: [],
+      pickupTarget: null,
+      smash: null,
+      smashTarget: null,
+    },
+  };
+}
