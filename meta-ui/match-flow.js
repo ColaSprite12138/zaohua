@@ -578,7 +578,21 @@
   /* ------------------------------ 入口 -------------------------------- */
 
   async function beginMatch() {
-    if (S.phase !== 'idle' && S.phase !== 'stopped') return;
+    // 上一局打完、阶段还停在 `playing` 是常态：对局结束（阵亡/撤离/返回局外）
+    // 没有任何回调通知到这里，而局外的「快速匹配」按钮又是可点的。
+    //
+    // 原来这里是一句 `if (S.phase !== 'idle' && S.phase !== 'stopped') return;`
+    // —— **静默**返回。用户点了没反应、界面停在上一次的「排队中」文案，实际上
+    // 一个请求都没发出去。2026-11-20 实测被这个坑了很久：服务端日志里那个账号
+    // `/me`、`/save` 都有，`/api/v1/match/*` 是 0 次。
+    if (S.phase === 'playing') {
+      S.phase = 'stopped';
+      S.started = false;
+    }
+    if (S.phase !== 'idle' && S.phase !== 'stopped') {
+      setStatus('已经在匹配中，先点「取消」再重新匹配', 'bad');
+      return;
+    }
     var kind = $('fx-kind');
     if (kind && kind.value !== 'pvpve') {
       setStatus('只有搜打撤能联机；主线与副本是本地单机', 'bad');
