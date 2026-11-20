@@ -162,3 +162,58 @@ export function hashGameState(state: HashableState, tick: number): number {
 
 /** 每 60 tick 一次对账。1 秒一次足够抓分歧，又不至于把带宽吃掉。 */
 export const HASH_INTERVAL_TICKS = 60;
+
+export type HashParts = {
+  skeletons: number;
+  drops: number;
+  players: number;
+  destructibles: number;
+};
+
+/**
+ * 分项指纹：总分叉只告诉我们「不一致」，这一份告诉我们**哪一项**不一致。
+ * 不含 tick —— 服务端只在同 tick 的两份上报之间比，tick 由它自己钉死。
+ * 分叉定位完了别删：真实网络上「怪先分叉」和「玩家先分叉」是两类完全不同的 bug。
+ */
+export function hashGameParts(state: HashableState): HashParts {
+  const sk = createHasher();
+  let aliveCount = 0;
+  for (const skeleton of state.skeletons) {
+    if (!skeleton.alive) continue;
+    aliveCount += 1;
+    sk.add(quantize(skeleton.x));
+    sk.add(quantize(skeleton.y));
+    sk.add(quantize(skeleton.hp));
+  }
+  sk.add(aliveCount);
+
+  const dr = createHasher();
+  const uids = state.drops.map((drop) => drop.uid).sort();
+  dr.add(uids.length);
+  for (const uid of uids) dr.add(hashString(uid));
+
+  const pl = createHasher();
+  const players = [...(state.players ?? [])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  pl.add(players.length);
+  for (const p of players) {
+    pl.add(hashString(p.id));
+    pl.add(quantize(p.x));
+    pl.add(quantize(p.y));
+    pl.add(quantize(p.hp));
+  }
+
+  const de = createHasher();
+  const broken = (state.destructibles ?? [])
+    .filter((obj) => obj.broken)
+    .map((obj) => obj.uid)
+    .sort();
+  de.add(broken.length);
+  for (const uid of broken) de.add(hashString(uid));
+
+  return {
+    skeletons: sk.digest(),
+    drops: dr.digest(),
+    players: pl.digest(),
+    destructibles: de.digest(),
+  };
+}

@@ -54,9 +54,18 @@ type InputPacket = {
   readonly b: string
 }
 
+/** 分项状态指纹，用来定位第一次分叉出在哪项共享状态上。 */
+export type HashParts = {
+  readonly skeletons: number
+  readonly drops: number
+  readonly players: number
+  readonly destructibles: number
+}
+
 type HashReport = {
   readonly tick: number
   readonly hash: number
+  readonly parts?: HashParts
 }
 
 type RelayPlayer = { id: string; name: string; snapshot?: unknown }
@@ -69,7 +78,10 @@ type RelayState = {
   /** playerId -> 最近一次 hash 上报。 */
   hashes: Record<string, HashReport>
   /** 服务端观察到的第一处分叉（后续只计数）。 */
-  diverged: { tick: number; a: string; b: string; hashA: number; hashB: number } | null
+  diverged: {
+    tick: number; a: string; b: string; hashA: number; hashB: number;
+    partsA: HashParts | null; partsB: HashParts | null
+  } | null
   /** 服务端自己宣布的离场：playerId -> 从哪个 tick 起不在场。 */
   departed: Record<string, number>
   /** 服务端 tick 计数（50ms 一格，只用于给离场打时间戳）。 */
@@ -134,6 +146,20 @@ function readInput(input: unknown): InputPacket | null {
   return { t, n, b: packet.b }
 }
 
+function readParts(value: unknown): HashParts | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const p = value as Partial<Record<keyof HashParts, unknown>>
+  const s = Number(p.skeletons)
+  const d = Number(p.drops)
+  const pl = Number(p.players)
+  const de = Number(p.destructibles)
+  if (![s, d, pl, de].every((n) => Number.isFinite(n))) return undefined
+  return {
+    skeletons: s >>> 0, drops: d >>> 0,
+    players: pl >>> 0, destructibles: de >>> 0,
+  }
+}
+
 function readHash(input: unknown): HashReport | null {
   if (!input || typeof input !== 'object') return null
   const report = input as Partial<HashReport>
@@ -141,7 +167,7 @@ function readHash(input: unknown): HashReport | null {
   const hash = Number(report.hash)
   if (!Number.isInteger(tick) || tick < 0) return null
   if (!Number.isFinite(hash)) return null
-  return { tick, hash: hash >>> 0 }
+  return { tick, hash: hash >>> 0, parts: readParts(report.parts) }
 }
 
 function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void }) {
@@ -250,6 +276,8 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
               b: playerId,
               hashA: other.hash,
               hashB: hash.hash,
+              partsA: other.parts ?? null,
+              partsB: hash.parts ?? null,
             }
           }
         }

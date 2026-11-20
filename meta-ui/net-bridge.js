@@ -170,7 +170,7 @@
         // 状态指纹：服务端只做比对，不裁决。分叉时它会把两边都记下来。
         if (!S.active || !S.session) return;
         try {
-          S.session.sendAction({ tick: msg.tick, hash: msg.hash });
+          S.session.sendAction({ tick: msg.tick, hash: msg.hash, parts: msg.parts });
         } catch (err) {
           S.stats.errors += 1;
         }
@@ -321,6 +321,11 @@
     var diverged = state.diverged;
     if (diverged && typeof diverged.tick === 'number' && diverged.tick !== S.divergedTick) {
       S.divergedTick = diverged.tick;
+      // 服务端第一次分叉时留下的分项指纹：定位「哪一项先不同」的唯一硬证据。
+      S.divergedParts = {
+        a: diverged.partsA || null,
+        b: diverged.partsB || null,
+      };
       post({
         type: 'netDiverged',
         tick: diverged.tick,
@@ -329,7 +334,8 @@
         hashA: diverged.hashA,
         hashB: diverged.hashB,
       });
-      console.error('[net] 两端状态分叉 @tick', diverged.tick, diverged.hashA, diverged.hashB);
+      console.error('[net] 两端状态分叉 @tick', diverged.tick,
+        diverged.hashA, diverged.hashB, JSON.stringify(S.divergedParts));
     }
   }
 
@@ -575,6 +581,8 @@
       updates: S.stats.updates,
       seats: S.stats.seats,
       divergedTick: S.divergedTick,
+      /** 第一次分叉时两端的分项 hash（怪 / 掉落 / 玩家 / 破坏物）。 */
+      divergedParts: S.divergedParts || null,
       engine: S.lastStat,
       /** 状态广播的到达节奏：D 公式里的抖动量在这里。 */
       timing: timingSnapshot(),

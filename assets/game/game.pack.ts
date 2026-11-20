@@ -53,7 +53,7 @@ import {
   DEFAULT_LOCAL_DELAY, createLockstep, noteWait, pendingPeers,
   pushLocal, pushRemote, retirePeer, runnableTick, take as takeLockstep,
 } from '../net/lockstep.ts';
-import { HASH_INTERVAL_TICKS, hashGameState } from '../net/state-hash.ts';
+import { HASH_INTERVAL_TICKS, hashGameParts, hashGameState } from '../net/state-hash.ts';
 import { createRemotePlayer, spawnOffset, type PeerSnapshot } from '../combat/players.ts';
 import { decodeBase64, encodeBase64 } from '../net/base64.ts';
 
@@ -447,7 +447,11 @@ export const game: Plugin = {
       if (tick <= 0 || tick % HASH_INTERVAL_TICKS !== 0) return;
       const hash = hashGameState(state, tick);
       netStat.hashes += 1;
-      channel?.postMessage({ type: 'netHash', tick, hash, active: netActive });
+      // 分项指纹随总 hash 一起上报：服务端第一次记到分叉时就能回答
+      // 「是怪 / 掉落 / 玩家 / 破坏物哪一项先不同」，不用靠猜。
+      channel?.postMessage({
+        type: 'netHash', tick, hash, parts: hashGameParts(state), active: netActive,
+      });
     }
 
     let netDiagAt = 0;
