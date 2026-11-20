@@ -150,6 +150,7 @@ L ≈ RTT + (D+1) · F
 | 不变量 | 检查手段 |
 |---|---|
 | 同帧状态一致 | `hashGameState` 每 60 帧上报，服务端 `stats.mismatches === 0` |
+| 玩家状态一致 | hash 按 `id` 排序覆盖**全体**玩家 `x/y/hp`（`f94a6c9` 起）；数组顺序无关 |
 | 没有两个世界 | 两端 tick 差 < 5（新设计下应接近 D） |
 | 网络健康 | 角标 `等` 长期为 0，`retx` 不持续增长 |
 | 帧流完整 | 服务端 `stats.tickMs` 稳定，客户端 `timing.p90` 不突增 |
@@ -161,20 +162,29 @@ L ≈ RTT + (D+1) · F
 | # | 内容 | 验收 | 进度 |
 |---|---|---|---|
 | 1 | 确定性收口：hypot 替换 + 守卫脚本 | 全量单测绿；守卫对现状 0 报错 | ✅ 2026-11-21 |
-| 2 | 实体化 `state.players`（含每局装备快照） | 单机行为逐位不变（657 单测）；双人 tick 稳定 | 🚧 容器 + 索敌已落（662 单测绿）；意图/血量/背包待迁 |
+| 2 | 实体化 `state.players`（含每局装备快照） | 单机行为逐位不变（667 单测）；双人 tick 稳定 | 🚧 容器/索敌/意图/血量/实体化/伤害落点/共享系统已落（`f94a6c9`，667 单测绿）；**远端攻击 + 装备快照待做** |
 | 3 | 服务器跑同一份 `step()`（只为 checkpoint/对账，不广播状态） | 与客户端 hash 对齐 | ⬜ |
 | 4 | 传输层改造：服务器帧号推进、输入盖帧、按序执行、动态 D、补帧、重连静默期 | §7 四项 | ⬜ |
 
 ### 第 2 步的拆解（按依赖顺序）
 
 1. ✅ `players` 容器 + `Player.id` + `nearestPlayer`；怪物索敌改「最近的玩家」。
-2. ⬜ 每个玩家的**意图**从 GameState 搬到 Player：`press / target / moveMode / path /
-   attackOrder / targetEnemy / pickupTarget / smash / smashTarget`。搬完之后
-   `classifyPointer` / `walk` / `updateDestructibles` 才能按玩家各跑一遍。
-3. ⬜ 每个玩家的**资源与结算**：`hp / maxHp / mana / skillBar / cast / runInventory /
-   weaponSlots`（装备快照开局提交一次）。
-4. ⬜ 伤害落在**被瞄准的那个玩家**（`damagePlayer(s, target, ...)`），不是 `s.player`。
-5. ⬜ 远端玩家进 `players`，删除 `remote-actor.ts` / `remote-world.ts` 及其单测。
+2. ✅ 每个玩家的**意图**搬进 `Player.intent`，`GameState` 同名字段改代理 getter。
+   `updatePlayer()` 临时把 `s.player` 指向当前玩家，于是 `classifyPointer` /
+   `walk` / `updateDestructibles` 复用同一套规则按玩家各跑一遍（按 `id` 排序）。
+3. 🚧 每个玩家的**资源与结算**：`hp / maxHp` 已按玩家存（`GameState` 代理）；
+   `mana / skillBar / cast / runInventory / weaponSlots` 仍是全局 —— 要两端
+   一致需要**开局装备快照**把这些信息同步给所有客户端（见 §10）。
+4. ✅ 伤害落在**被瞄准的那个玩家**：`damagePlayer(..., target)`；怪物近战、
+   范围技能、弹道命中、DOT 全部传入目标（`f94a6c9`）。
+5. ✅ 远端玩家进 `players`，`remotes` 改为只读派生视图；删除
+   `remote-actor.ts` / `remote-world.ts` 及其单测。
+6. ✅ 共享系统遍历 `sortedPlayers(s)`：`updateZones` / `tickStatuses` /
+   `resolveBodyOverlap` / `updateDrops`；`hashGameState` 增加按 id 排序的
+   玩家 `x/y/hp` 对账，补上原来「玩家血量分叉抓不到」的盲点（`f94a6c9`）。
+7. ⬜ **远端玩家的普攻 / 技能**：`updatePlayer` 里仍是 `if (isMe && ...)`，
+   远端不攻击 ⇒ 怪的血量在两端分叉。这是「画面完全一致」的最后一块硬缺口，
+   接入会牵扯第 3 条里那批私有资源。
 
 ## 9. 明确不做的
 
@@ -187,8 +197,15 @@ L ≈ RTT + (D+1) · F
 
 1. **服务器 step 的退化口子**：造化平台能给多少 CPU 未知。设计上必须允许“服务端完全不模拟”也能跑（那就没有 checkpoint，重连只能靠输入日志重放）。这决定了重连实现选哪条。
 2. **真实网络抖动**：目前只有本机回环数据（J=1.5–4.1ms）。D 公式的参数必须在真实网络上校准。
-3. **判定层 `sin/cos` 分类**：53 处要逐个判定“表现 or 判定”，判定用的换成查表。
+3. **判定层 `sin/cos` 分类**：守卫预算 47、当前 44 处（`f94a6c9` 实测）。要逐个
+   判定“表现 or 判定”，判定用的换成查表；预算只许降。
 4. **补帧窗口**：服务端现在只留 24 个 tick 的输入。新设计需要更长（至少覆盖 D+重连静默期），具体值待定。
+5. **远端玩家不攻击**：见 §8 拆解 7。B 砍怪在 A 的机器上不发生，怪的血量 / 死亡 /
+   掉落两端不同。只要这一条没做，就不能宣称「两个客户端画面完全一致」。
+6. **「背包满」分支**：`updateDrops` 对**本机**玩家检查私有 `runInventory`（满了
+   就留在地上），对远端玩家只按共享事实移除 drop。若本机背包满，两端对
+   「东西还在不在地上」判定不同 ⇒ 分叉。根治要靠开局装备快照把
+   `runInventory` 也变成两端共同模拟的状态，见 §8 拆解 3。
 
 ## 11. 代码映射
 
@@ -200,5 +217,6 @@ L ≈ RTT + (D+1) · F
 | 状态指纹 | `assets/net/state-hash.ts` |
 | 房间进程（relay） | `game/server/source/index.ts` |
 | 主窗口桥（BroadcastChannel ↔ 平台） | `meta-ui/net-bridge.js` |
-| 远端影子（**将被实体化取代**） | `assets/net/remote-actor.ts`、`remote-world.ts` |
+| 玩家实体容器 / 按 id 选择目标 | `assets/combat/players.ts`（`remote-actor.ts`、`remote-world.ts` **已删除**） |
+| 多玩家一致性护栏 | `assets/combat/__tests__/multiplayer-consistency.test.ts` |
 | 观感/诊断 | 局内右下角标 + `net.status()` |
