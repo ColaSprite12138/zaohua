@@ -623,6 +623,9 @@ talent 22（talent 15 + starmap-data 7）、resource 17（tables 9 + map 8）、
 | 「单机点一下就走，联机怎么点都不动」 | `input-latch` 旧版每渲染帧用 `capture()` 覆盖 pending；等齐那一帧不跑逻辑步、不调 `take()`，点击边沿被下一帧冲掉。现在边沿**跨渲染帧累积**，`take()` 取走即清（`assets/net/__tests__/input-latch.test.ts` 有回归） |
 | 输入明明双向通、影子也在动，服务端却报 diverged | `hashGameState` 旧版算了本地玩家 `x/y/face/hp/kills`。P2 的 `GameState` 只有「我这端的玩家」，两端视角本就不同 → 假分叉。现在只比**共享世界**（活怪 + 掉落 uid）；完整对账等 P3 玩家实体统一 |
 | 造化宿主里自动化脚本点击没反应 | 游戏在 iframe，canvas 是 1280×800，而逻辑布局是 1280×720。裸 `page.mouse.click(1010,430)` 落在 HUD；要按 `canvas.getBoundingClientRect()` 换算（`ly × h/720` → 478）才点中地面。别在 CDP 点击后再派合成 DOM 事件，会把边沿冲掉。见 `scripts/probe-click-in-host.mjs` |
+| 「建房失败，重试中（1/3）」→「建房失败：ROOM_ALREADY_EXISTS」，重试三次同一个码 | `leaveRoom()` 只 `disconnect()`，平台侧**座位**没退，下次 `createRoom` 必然占用。正解是先 `PlatformClient.rooms.leave(roomId)`（官方 `assets/lobby-reference/source/LobbyFlow.ts::vacateSeat` 就这么写），再断开。判定也要按错误码（`ROOM_ALREADY_EXISTS` / `ROOM_CREATING`）而不是 `stateSync.isOccupancyError` —— hostless 构建里它恒 `false`，兜底分支永远进不去 |
+| 房间明明建好了，却报「建房失败」 | 建房后 `reportRoom` 失败也会掉进同一个 catch 并重试 `createRoom`，此时房间已存在 → 用 `ALREADY_EXISTS` 把真因盖掉。报座必须**单独重试**（4xx 立即抛），文案要写成「报座失败：…」 |
+| 造化发布报 `publish_confirmation_stale`（产物在确认后变化） | `build_and_upload` 走了全量 build 就会触发。要让它 `skip build`（日志出现 `Reusing the validated client/server output`）。可靠顺序：`inject-shell` → `preview_start(validate:true)`（必须**真执行**、有 job_id）→ `inject-shell`（幂等）→ `display_publish_check` → 取 `displayed_revision` → `build_and_upload{revision}`。另外 `display_publish_check` 读 dist 的壳层，dist 被 build 抹成 45KB 时会报「10 个问题」而不给明细 |
 
 ## 可回滚基线（两层）
 

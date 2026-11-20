@@ -313,6 +313,23 @@ MATCH_USER_A=.. MATCH_PASS_A=.. MATCH_USER_B=.. MATCH_PASS_B=.. \
 ③ `input-latch` 的边沿要跨渲染帧累积（等齐那一帧没有逻辑步，点击会被下一帧覆盖冲掉 —— 表现为「单机点一下就走、联机怎么点都不动」）；
 ④ `hashGameState` 不能含本地玩家坐标/血量（正确的帧同步里两端视角本就不同，会报假分叉）。
 
+### 4.8 房间座位与报座（2026-11-20 正式环境实测修复）
+
+正式环境第一次点「快速匹配」时出现「建房失败，重试中（1/3）」→
+「建房失败：`ROOM_ALREADY_EXISTS`」，三次重试撞同一个码。三处因果都在同一条链上：
+
+| 层 | 错在哪 | 修法 |
+|:--|:--|:--|
+| 座位没退 | `leaveRoom()` 只 `session.disconnect()` —— 只断 websocket，平台侧**成员关系**还在，下次 `createRoom` 必然占用 | 先 `PlatformClient.rooms.leave(roomId)` 再断开（对齐官方 `assets/lobby-reference/source/LobbyFlow.ts::vacateSeat`）；房间已被回收时吞掉异常 |
+| 兜底进不去 | 旧 `recoverSeat()` 用 `stateSync.isOccupancyError` 判定，hostless 构建里它**恒为 `false`**，所以「残留房间→退出重建」从来没执行过 | `isSeatOccupied()` 先认错误码 `ROOM_ALREADY_EXISTS` / `ROOM_CREATING`（`contracts.ts` 的 `ROOM_OCCUPANCY_CODES`）与 `OccupiedSeatError`，再退回宿主方法，最后文案兜底 |
+| 真因被盖掉 | 建房成功后 `reportRoom` 失败也掉进同一个 catch，重试 `createRoom` 时房间已存在 → 报成「建房失败」 | `reportRoomWithRetry()` 只重试报座（4xx 立即抛），文案写成「报座失败：…」 |
+
+配套：`createRoom` 开头若 `rs.roomId` 非空先清座位；`joinRoom` 开头与 catch 同样先退座；
+`pagehide` 保持 fire-and-forget（卸载时异步退房发不完，残留由「建房前预清理」兜住）。
+
+**平台身份的一个约束**：造化 `playerId` 来自造化账号，同一浏览器 profile 开两个标签页
+是同一个玩家，服务端「一人一票」必然挡掉第二张 —— 双人实测要换 profile / 隐身窗 / 另一台设备。
+
 ### 4.3 反作弊分层
 
 1. **服务端裁剪视野**：服务端只转发「谁看得见谁」。挡透视 —— 这是帧同步唯一的致命洞，
