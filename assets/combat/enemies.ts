@@ -15,6 +15,7 @@ import { damagePlayer } from './attack.ts';
 import { burst } from './effects.ts';
 import { monsterRow } from './loot.ts';
 import { castMonsterSkill, monsterSkillsOf, pickMonsterSkill } from './monster-skills.ts';
+import { nearestPlayer } from './players.ts';
 import { fireProjectile } from './projectile-runtime.ts';
 import { monsterSource } from './source.ts';
 import {
@@ -102,9 +103,14 @@ function advance(w: World, x: number, y: number, dx: number, dy: number): { x: n
 }
 
 export function updateSkeletons(s: GameState, dt: number): void {
-  const p = s.player;
   for (const sk of s.skeletons) {
     if (!sk.alive) continue;
+    // 索敌：**离它最近的玩家**，不是「本机玩家」。
+    //
+    // 曾经这里写的是 `const p = s.player`，于是两端各自把怪拉向自己 ——
+    // 同一个怪在 A 屏幕上追 A、在 B 屏幕上追 B，两张画面永远是两个世界。
+    // `nearestPlayer` 用「距离平方 + id 破平」，两端算出同一个人。
+    const p = nearestPlayer(s, sk.x, sk.y) ?? s.player;
     sk.attackCd = Math.max(0, sk.attackCd - dt);
     sk.hit = Math.max(0, sk.hit - dt);
     sk.swing = Math.max(0, sk.swing - dt);

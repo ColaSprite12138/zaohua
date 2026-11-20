@@ -870,6 +870,14 @@ export function nextZoneUid(): number {
 }
 
 export interface Player {
+  /**
+   * 稳定身份。单机恒为 `'p0'`；联机时用座位 id。
+   *
+   * 它是「谁是最近的玩家」这类判定的破平键：两端算 argmin 时距离可能完全相同，
+   * 只有按 id 破平才能保证选出同一个。**不要用数组下标**——远端玩家的插入顺序
+   * 等于网络到达顺序，两端不同。
+   */
+  id: string;
   x: number;
   y: number;
   vx: number;
@@ -946,7 +954,24 @@ export interface GameState {
    * Worker 不认识「等级」，也不持有跨局进度。
    */
   xp: number;
+  /**
+   * 「我」这个玩家的快捷引用（= `players.find(p => p.id === me)`）。
+   *
+   * 渲染、HUD、相机、输入分类全部读它 —— 那些是**第一人称视角**的东西，
+   * 只关心自己。世界规则（怪物索敌、物品拾取、伤害结算）必须读 `players`，
+   * 否则就是「怪物只追本机」那个 bug 的根源（见 docs/net-sync-design.md §1）。
+   */
   player: Player;
+  /**
+   * 所有在场玩家（实体化的容器）。单机时只有一个，就是上面那个对象本身。
+   *
+   * 任何「对某个玩家」的判定都要遍历它：索敌取最近、拾取看谁先到、
+   * 伤害记 `fromPlayerId`。遍历顺序必须按 `id` 排序或用距离+id 破平，
+   * 不许依赖数组下标（远端插入顺序 = 网络到达顺序）。
+   */
+  players: Player[];
+  /** 我在 `players` 里的 `id`。单机恒为 `'p0'`。 */
+  me: string;
   target: { x: number; y: number };
   moveMode: MoveMode;
   targetEnemy: number | null;
@@ -1108,10 +1133,13 @@ export function createState(config: RunConfig = {}): GameState {
     kills: 0,
     xp: 0,
     player: {
+      id: 'p0',
       x, y, vx: 0, vy: 0, face: 0, stride: 0,
       invuln: 0, dodge: 0, dodgeCd: 0, attackCd: 0,
       attackFx: 0, hurt: 0, trail: [], dash: null, castPose: 0, statuses: [],
     },
+    players: [],
+    me: 'p0',
     target: { x, y },
     moveMode: 'idle',
     targetEnemy: null,
@@ -1168,6 +1196,9 @@ export function createState(config: RunConfig = {}): GameState {
     events: [],
     firedEvents: [],
   };
+  // 单机 = 一个玩家。`player` 与 `players[0]` 是**同一个对象**，
+  // 所以现有的 `s.player.xxx` 写法全部继续有效，行为逐位不变。
+  state.players = [state.player];
   reset(state);
   return state;
 }
