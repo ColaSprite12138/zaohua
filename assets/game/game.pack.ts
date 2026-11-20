@@ -55,6 +55,7 @@ import {
 } from '../net/lockstep.ts';
 import { HASH_INTERVAL_TICKS, hashGameState } from '../net/state-hash.ts';
 import { createRemoteActor, findRemote, stepRemoteActor } from '../net/remote-actor.ts';
+import { stepRemoteWorld } from '../net/remote-world.ts';
 import { decodeBase64, encodeBase64 } from '../net/base64.ts';
 
 const PACKAGE_ID = definePackageId('019fb7ce-3d00-7000-8000-000000000001');
@@ -454,7 +455,12 @@ export const game: Plugin = {
         // 所以 A 屏幕上 B 的走位 = B 自己屏幕上的走位（这也是 P3 的前置验证）。
         for (const [peerId, frame] of inputs.remote) {
           const actor = findRemote(state.remotes, peerId);
-          if (actor) stepRemoteActor(actor, frame, FIXED_DT);
+          if (actor) {
+            stepRemoteActor(actor, frame, FIXED_DT);
+            // P3 第一块：对方的输入也作用于世界（目前是可破坏物）。
+            // 顺序必须在 stepRemoteActor 之后 —— 起手判定要用这一 tick 的新位置。
+            stepRemoteWorld(state, actor, frame, FIXED_DT);
+          }
         }
         reportHash(inputs.tick);
         netStat.ticks += 1;

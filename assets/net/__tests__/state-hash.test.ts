@@ -94,6 +94,29 @@ describe('状态 hash', () => {
     expect(h.digest()).not.toBe(a);
   });
 
+  it('可破坏物碎没碎进 hash：A 砸开了、B 那边还完好，必须报出来', () => {
+    const intact = state({ destructibles: [{ uid: 'dest_1', broken: false }] });
+    const broken = state({ destructibles: [{ uid: 'dest_1', broken: true }] });
+    expect(hashGameState(intact, 60)).not.toBe(hashGameState(broken, 60));
+  });
+
+  it('砸开顺序不影响 hash（按 uid 排序，不按时间）', () => {
+    const a = state({
+      destructibles: [{ uid: 'dest_a', broken: true }, { uid: 'dest_b', broken: true }],
+    });
+    const b = state({
+      destructibles: [{ uid: 'dest_b', broken: true }, { uid: 'dest_a', broken: true }],
+    });
+    expect(hashGameState(a, 60)).toBe(hashGameState(b, 60));
+  });
+
+  it('没传 destructibles 时按空集合处理，不崩也不误报', () => {
+    expect(() => hashGameState(state(), 60)).not.toThrow();
+    expect(hashGameState(state(), 60)).toBe(
+      hashGameState(state({ destructibles: [] }), 60),
+    );
+  });
+
   it('对账间隔是 60 tick（1 秒）', () => {
     expect(HASH_INTERVAL_TICKS).toBe(60);
   });

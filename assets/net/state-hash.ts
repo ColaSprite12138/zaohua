@@ -71,6 +71,12 @@ export type HashableState = {
     readonly alive: boolean;
   }[];
   readonly drops: readonly { readonly uid: string }[];
+  /**
+   * 可破坏物。只关心「碎没碎」——`progress` 是连续量，同一 tick 两端累加的
+   * 浮点可能差半个 ulp，且破坏瞬间会归 1，拿它做对账只会误报。
+   * 这一项是 P3 第一块（远端输入作用于世界）的验收手段。
+   */
+  readonly destructibles?: readonly { readonly uid: string; readonly broken: boolean }[];
 };
 
 /** 字符串 → 32 位（djb2 变体）。只用于掉落 uid 这种短 id。 */
@@ -120,6 +126,15 @@ export function hashGameState(state: HashableState, tick: number): number {
   const uids = state.drops.map((drop) => drop.uid).sort();
   hasher.add(uids.length);
   for (const uid of uids) hasher.add(hashString(uid));
+
+  // 已砸开的可破坏物：按 uid 排序，与砸开顺序无关。
+  // 「A 砸开的箱子，B 那边是否也碎了」就靠这一项对账。
+  const broken = (state.destructibles ?? [])
+    .filter((obj) => obj.broken)
+    .map((obj) => obj.uid)
+    .sort();
+  hasher.add(broken.length);
+  for (const uid of broken) hasher.add(hashString(uid));
 
   return hasher.digest();
 }

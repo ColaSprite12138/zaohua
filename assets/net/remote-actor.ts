@@ -31,6 +31,14 @@ export type RemoteActor = {
   targetY: number;
   /** 最近一次收到该玩家输入的 tick，用来在 HUD 上显示「对面还在动吗」。 */
   lastTick: number;
+  /**
+   * 正在砸的可破坏物。P3 第一块：让远端玩家的输入也能影响世界。
+   *
+   * 进度只在这里累加，`broken` 落在共享的 `state.destructibles` 上 —— 所以
+   * 「A 砸开的箱子，B 那边也是碎的」靠的是两边用同一份输入各算一遍，而不是
+   * 谁去通知谁。两人同时砸同一个箱子时取进度较大值，不会互相覆盖归零。
+   */
+  smash: { uid: string; t: number; total: number } | null;
 };
 
 /** 与本地玩家的走速一致。不同步的话两边看到的速度不一样。 */
@@ -73,6 +81,7 @@ export function createRemoteActor(
     targetX: spawn.x + dx,
     targetY: spawn.y + dy,
     lastTick: tick,
+    smash: null,
   };
 }
 

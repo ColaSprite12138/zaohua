@@ -185,15 +185,25 @@ export function cancelSmash(s: GameState, reason?: string): void {
  * 掉落物走同一份 `Drop` 结构（名字牌 / 品质色 / 显式拾取都复用），所以砸出来
  * 的东西和打怪掉的东西在拾取规则上没有任何区别。
  */
-function breakOpen(s: GameState, obj: DestructibleObj): void {
+/**
+ * 砸开结算：标 `broken`、撒掉落、惊动周围的怪。
+ *
+ * `fromRemote = true` 表示「这是远端玩家砸的」，此时**不能**清本地玩家的
+ * `s.smash` / `s.smashTarget` —— 那是我自己那条读条，跟对方没关系。
+ * 除此之外两边走的是同一条路径：掉落用 `s.rng`（确定性），所以两端敲开同一个
+ * 箱子会撒出**同一批**东西。
+ */
+export function breakOpen(s: GameState, obj: DestructibleObj, fromRemote = false): void {
   const def = destructibleDef(obj.kind);
   obj.progress = 1;
   // 状态先落定（`broken` 是唯一判据），残骸只是表现还剩几秒。
   obj.broken = true;
   obj.rubble = RUBBLE_SECONDS;
   obj.smashing = false;
-  s.smash = null;
-  s.smashTarget = null;
+  if (!fromRemote) {
+    s.smash = null;
+    s.smashTarget = null;
+  }
   const names: string[] = [];
   for (let i = 0; i < def.drops; i += 1) {
     const loot = rollPool(def.lootPoolId, s.rng);
