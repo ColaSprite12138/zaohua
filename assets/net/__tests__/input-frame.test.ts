@@ -15,6 +15,20 @@ describe('输入帧编解码', () => {
     expect(encodeInputFrame(frame()).byteLength).toBe(12);
   });
 
+  /**
+   * 帧同步里「我」的本机帧不经过网络编解码，远端帧经过。若 `toStepInput`
+   * 不把两者统一到同一精度，A 用原始浮点落点走位、B 用 1/4 像素落点模拟 A，
+   * 同一个玩家的轨迹就会差出 1e-5 量级。真机分项指纹只报 `players` 分叉、
+   * 怪 / 掉落 / 破坏物全一致，根因正是这条。
+   */
+  it('本机直用与网络往返后的帧，交给 step 的 mouse 必须逐位相同', () => {
+    const original = frame({ pointerDown: true, mouse: { x: 1234.567, y: 890.123 } });
+    const direct = toStepInput(original);
+    const viaNet = toStepInput(decodeInputFrame(new Uint8Array(encodeInputFrame(original).buffer)));
+    expect(direct.mouse).toEqual(viaNet.mouse);
+    expect(direct.pointerDown).toBe(viaNet.pointerDown);
+  });
+
   it('往返之后每个字段都对得上', () => {
     const original = frame({
       pointerDown: true,

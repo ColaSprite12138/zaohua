@@ -223,7 +223,7 @@ export function decodePacket(bytes: Uint8Array): DecodedPacket {
   return { kind: 'unknown', tag };
 }
 
-/** 把输入帧还原成模拟层吃的 `StepInput`（坐标已经是世界空间，直接透传）。 */
+/** 把输入帧还原成模拟层吃的 `StepInput`（坐标已经是世界空间）。 */
 export function toStepInput(frame: InputFrame): {
   mouse: { x: number; y: number } | undefined;
   pointerDown: boolean;
@@ -240,7 +240,21 @@ export function toStepInput(frame: InputFrame): {
   bigMap: boolean;
 } {
   return {
-    mouse: frame.mouse ? { x: frame.mouse.x, y: frame.mouse.y } : undefined,
+    // **本机帧也必须走网络帧的 1/4 像素量化**：帧同步里「我」的帧留在本地、
+    // 不经过 encode/decode，而对方的帧是解码出来的。直接透传原始浮点会让
+    // A 用 1234.567 的落点走位、B 用 1234.5 去模拟 A —— 同一个玩家的
+    // 轨迹两端差出 1e-5~0.1px，hash 里只有 players 分项分叉（2026-11-21
+    // 真机 divergedTick=600 的分项指纹实测）。统一精度后两端逐位一致。
+    //
+    // 只做量化，**不做 clampCoord 的 int16 截断**：那是编码层的溢出保护，
+    // 而 worldmap 大地图的路点会到 x=8192（> 8191.75 上限）。在转换层截断
+    // 会把它挪到相邻格、直接把寻路打断（verify-all 的 worldmap 实测）。
+    mouse: frame.mouse
+      ? {
+          x: Math.round(frame.mouse.x * MOUSE_SCALE) / MOUSE_SCALE,
+          y: Math.round(frame.mouse.y * MOUSE_SCALE) / MOUSE_SCALE,
+        }
+      : undefined,
     pointerDown: frame.pointerDown,
     pointerHeld: frame.pointerHeld,
     pointerUp: frame.pointerUp,
