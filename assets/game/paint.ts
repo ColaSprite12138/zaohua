@@ -875,10 +875,37 @@ function drawRemoteActor(g: Painter, actor: RemoteActor): void {
   const frame = Math.floor(actor.stride);
   const bob = actor.moving && frame % 2 === 1 ? 1 : 0;
   shadow(g, actor.x, actor.y + 2, 24, 9, 0.45);
-  drawBody(g, KNIGHT, actor.x, actor.y - bob, {
-    frame: actor.moving ? frame : 0,
-    face: actor.face,
-  });
+  // 挥砍：远端也在砸箱子时必须读得出来（否则 B 只看到进度条在涨、人一动不动）。
+  // 只在挥的那一下给刀 —— 平时不凭空给远端配一把武器，那是存档里才有的东西。
+  const swing = actor.attackFx > 0 ? 1 - actor.attackFx / PLAYER_SWING_TIME : 0;
+  const paintBody = (): void => {
+    drawBody(g, KNIGHT, actor.x, actor.y - bob, {
+      frame: actor.moving ? frame : 0,
+      face: actor.face,
+    });
+  };
+  const paintArm = (): void => {
+    drawWeaponArm(
+      g,
+      KNIGHT_ARM,
+      swing > 0 ? itemModel('blade:steel') : null,
+      actor.x,
+      actor.y - bob,
+      actor.face,
+      swing,
+      false,
+      1,
+      true,
+    );
+  };
+  // 与本地玩家同一条遮挡规则：手转到身体背面时（面朝左）先画手臂。
+  if (shoulderBehind(actor.face)) {
+    paintArm();
+    paintBody();
+  } else {
+    paintBody();
+    paintArm();
+  }
   const top = actor.y - bodyHeight(KNIGHT) - 12;
   g.save();
   g.font = '12px "Microsoft YaHei", "PingFang SC", sans-serif';

@@ -39,6 +39,21 @@ export type RemoteActor = {
    * 谁去通知谁。两人同时砸同一个箱子时取进度较大值，不会互相覆盖归零。
    */
   smash: { uid: string; t: number; total: number } | null;
+  /**
+   * 这次点击锁定的可破坏物（**意图**，不是「一直在砸它」）。
+   *
+   * 本地 `s.smashTarget` 的镜像：点击箱子 → 锁定 → 走过去 → 站定后自动起手。
+   * 少了这一格，远端就只认「按下那一帧正好在范围内」，于是 A 从远处点箱子时
+   * 走过去、站定、开砸，B 这边全程什么都没发生 —— 箱子在 B 眼里永远是完好的。
+   */
+  smashTarget: string | null;
+  /**
+   * 挥砍特效剩余时间（秒）。只用于绘制，不进 hash。
+   *
+   * 远端砸箱子时每 `SMASH_SWING_SECONDS` 补一次，和本地 `player.attackFx`
+   * 同一个节奏 —— 否则 B 只能看见血条在涨、人却一动不动。
+   */
+  attackFx: number;
 };
 
 /** 与本地玩家的走速一致。不同步的话两边看到的速度不一样。 */
@@ -82,6 +97,8 @@ export function createRemoteActor(
     targetY: spawn.y + dy,
     lastTick: tick,
     smash: null,
+    smashTarget: null,
+    attackFx: 0,
   };
 }
 
@@ -93,9 +110,18 @@ export function createRemoteActor(
  */
 export function stepRemoteActor(actor: RemoteActor, frame: InputFrame, dt: number): void {
   actor.lastTick = frame.tick;
+  if (actor.attackFx > 0) actor.attackFx = Math.max(0, actor.attackFx - dt);
   if (frame.mouse && (frame.pointerDown || frame.pointerHeld)) {
     actor.targetX = frame.mouse.x;
     actor.targetY = frame.mouse.y;
+  }
+  // 砸箱子期间**钉住**：本地 `beginSmash` 会 `pinPlayer(s)`，同一份输入在两端
+  // 必须算出同一个结果。不钉的话 A 这边站着砸、B 那边 A 已经走到点的地方去了
+  // （而且一走出 1.5 倍范围，B 就把这次破坏判成中断 —— 箱子在 B 眼里永远砸不开）。
+  // 注意：目标点照常更新 —— 本地也是「按住了新目标但人被钉住」，砸完才走。
+  if (actor.smash !== null) {
+    actor.moving = false;
+    return;
   }
   const dx = actor.targetX - actor.x;
   const dy = actor.targetY - actor.y;
