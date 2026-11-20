@@ -158,12 +158,23 @@ L ≈ RTT + (D+1) · F
 
 ## 8. 实施顺序
 
-| # | 内容 | 验收 |
-|---|---|---|
-| 1 | 确定性收口：hypot 替换 + 守卫脚本 | 全量单测绿；守卫对现状 0 报错 |
-| 2 | 实体化 `state.players`（含每局装备快照） | 单机行为逐位不变（657 单测）；双人 tick 稳定 |
-| 3 | 服务器跑同一份 `step()`（只为 checkpoint/对账，不广播状态） | 与客户端 hash 对齐 |
-| 4 | 传输层改造：服务器帧号推进、输入盖帧、按序执行、动态 D、补帧、重连静默期 | §7 四项 |
+| # | 内容 | 验收 | 进度 |
+|---|---|---|---|
+| 1 | 确定性收口：hypot 替换 + 守卫脚本 | 全量单测绿；守卫对现状 0 报错 | ✅ 2026-11-21 |
+| 2 | 实体化 `state.players`（含每局装备快照） | 单机行为逐位不变（657 单测）；双人 tick 稳定 | 🚧 容器 + 索敌已落（662 单测绿）；意图/血量/背包待迁 |
+| 3 | 服务器跑同一份 `step()`（只为 checkpoint/对账，不广播状态） | 与客户端 hash 对齐 | ⬜ |
+| 4 | 传输层改造：服务器帧号推进、输入盖帧、按序执行、动态 D、补帧、重连静默期 | §7 四项 | ⬜ |
+
+### 第 2 步的拆解（按依赖顺序）
+
+1. ✅ `players` 容器 + `Player.id` + `nearestPlayer`；怪物索敌改「最近的玩家」。
+2. ⬜ 每个玩家的**意图**从 GameState 搬到 Player：`press / target / moveMode / path /
+   attackOrder / targetEnemy / pickupTarget / smash / smashTarget`。搬完之后
+   `classifyPointer` / `walk` / `updateDestructibles` 才能按玩家各跑一遍。
+3. ⬜ 每个玩家的**资源与结算**：`hp / maxHp / mana / skillBar / cast / runInventory /
+   weaponSlots`（装备快照开局提交一次）。
+4. ⬜ 伤害落在**被瞄准的那个玩家**（`damagePlayer(s, target, ...)`），不是 `s.player`。
+5. ⬜ 远端玩家进 `players`，删除 `remote-actor.ts` / `remote-world.ts` 及其单测。
 
 ## 9. 明确不做的
 
