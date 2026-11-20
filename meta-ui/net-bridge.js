@@ -363,7 +363,10 @@
       members: view && view.match && view.match.members ? view.match.members.length : 0,
     });
     if (S.pollTimer) clearInterval(S.pollTimer);
-    S.pollTimer = setInterval(pollSession, 120);
+    // 60ms 而不是 120ms：这段轮询是「对方输入从会话里到达引擎」的唯一通道之一，
+    // 它的间隔直接叠加在链路延迟上。锁步的本地提前量只有 5 tick（约 83ms），
+    // 轮询一档 120ms 就把它吃光了 —— 那必然导致每 tick 都在等对方。
+    S.pollTimer = setInterval(pollSession, 60);
     pollSession();
     // 不再重试 startGame：每次调用都会让服务端重跑一次 createGame / game_init，
     // 把刚建立的时间轴打散。房主在双方 seated 之后只调一次就够了。

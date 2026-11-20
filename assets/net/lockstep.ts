@@ -43,7 +43,16 @@ export type LockstepOptions = {
   readonly localDelay?: number;
 };
 
-export const DEFAULT_LOCAL_DELAY = 3;
+/**
+ * 本地输入提前多少 tick 提交（也就是「我这一下操作，多少 tick 之后才生效」）。
+ *
+ * 这个值必须覆盖**一整条回环**：本地帧 → 主窗口 → 平台 WS → 房间服务
+ * → runtime 每 50ms 一次广播 → 客户端收包 → 喂回锁步。实测这条链在正式环境
+ * 明显超过 50ms（服务端 tick 50ms + 客户端轮询一档就 60ms），所以 3 tick
+ * 根本不够 —— 不够就要停下来等，而等待期间累积的时间会在放行时一次性补上，
+ * 表现就是严重卡顿。改成 5 tick（约 83ms），先把回环里最确定的那两段盖住。
+ */
+export const DEFAULT_LOCAL_DELAY = 5;
 
 export type Lockstep = {
   readonly localId: string;

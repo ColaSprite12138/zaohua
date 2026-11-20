@@ -211,6 +211,8 @@ export const game: Plugin = {
     const netStat = {
       ticks: 0, framesOut: 0, framesIn: 0, lateIn: 0, droppedOut: 0,
       hashes: 0, flushes: 0, localEdges: 0, localMouse: 0,
+      /** 因为触到单帧步数上限而被丢掉的时间（次）。持续增长 = 一直在追帧。 */
+      melted: 0,
     };
 
     function rebuildPeers(): void {
@@ -300,6 +302,7 @@ export const game: Plugin = {
         netStat.flushes = 0;
         netStat.localEdges = 0;
         netStat.localMouse = 0;
+        netStat.melted = 0;
       }
       rebuildPeers();
       // 预热帧必须立刻发，不能等主循环推进：推进本身在等对方的帧，而对方也在
@@ -398,8 +401,19 @@ export const game: Plugin = {
      * 3. 每推进一步才采样下一个待提交 tick，保证「每 tick 恰好一个本地帧」，
      *    与渲染帧率无关（144Hz 的机器也不会多发）。
      */
+    /**
+     * 一帧最多推进多少逻辑步。
+     *
+     * 等过对方帧之后，`acc` 里攒着的时间会在放行时一次性补上；不设上限的话一次
+     * 能跑十几步（`step` + 影子 + 渲染都翻十几倍），玩家看到的就是一帧顿一下。
+     * 这里宁可**丢掉**超出部分：帧同步的 tick 是逻辑时间，丢时间只会让整局慢
+     * 一点，不会让两端分叉（双方都是按各自节奏推进同一个 tick 序列）。
+     */
+    const MAX_STEPS_PER_FRAME = 4;
+
     function advanceLockstep(delta: number): void {
       addTime(stepClock, delta);
+      let stepsThisFrame = 0;
       for (;;) {
         if (stepClock.acc + 1e-9 < FIXED_DT) break;
         if (runnableTick(lockstep) === null) break;
@@ -419,6 +433,7 @@ export const game: Plugin = {
         }
         reportHash(inputs.tick);
         netStat.ticks += 1;
+        stepsThisFrame += 1;
         // 采样下一个待提交的 tick：本地帧和远端走同一条 3 tick 延迟队列。
         // `submitTick` 每次只 +1 —— 让它一路领先、始终比 `tick` 大 3 格，
         // 中间不留空洞（留了就会被自己卡死，见 `lockstep.ts::take` 的注释）。
@@ -428,6 +443,12 @@ export const game: Plugin = {
         pushLocal(lockstep, frame);
         lockstep.submitTick += 1;
         netOutbox.push(frame);
+        if (stepsThisFrame >= MAX_STEPS_PER_FRAME && stepClock.acc + 1e-9 >= FIXED_DT) {
+          // 已经补到上限、还剩时间：直接丢掉，避免这一帧变成十几步的尖峰。
+          stepClock.acc = 0;
+          netStat.melted += 1;
+          break;
+        }
       }
       flushOutbox();
     }

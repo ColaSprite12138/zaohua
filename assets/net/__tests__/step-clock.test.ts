@@ -30,20 +30,22 @@ describe('固定步长时钟', () => {
     expect(a.tick).toBe(b.tick);
   });
 
-  it('单帧超长时截断到 0.25s，但把该跑完的步都跑完', () => {
+  it('单帧超长时截断到 MAX_FRAME_DELTA，但把该跑完的步都跑完', () => {
     const clock = createStepClock();
     const steps = advanceClock(clock, 4);
-    // 0.25 / (1/60) = 15 步
-    expect(steps).toBe(15);
-    expect(clock.droppedSeconds).toBeCloseTo(3.75, 6);
+    // 截断窗口由 MAX_FRAME_DELTA 决定（现在是 0.1s = 6 步）。
+    // 它压小的理由写在 step-clock.ts 的注释里：15 步的补帧在联机时会变成卡顿尖峰。
+    const expected = Math.round(MAX_FRAME_DELTA / FIXED_DT);
+    expect(steps).toBe(expected);
+    expect(clock.droppedSeconds).toBeCloseTo(4 - MAX_FRAME_DELTA, 6);
     expect(clock.stalls).toBe(1);
   });
 
   it('截断不丢步：多出来的时间是丢掉，不是少跑步', () => {
     const clock = createStepClock();
     advanceClock(clock, 1);
-    // 1 秒 = 60 步（1 > 0.25 所以只跑 15 步）
-    expect(clock.tick).toBe(15);
+    // 1 秒远超截断窗口，所以只推进截断窗口内的那些步。
+    expect(clock.tick).toBe(Math.round(MAX_FRAME_DELTA / FIXED_DT));
     expect(clock.acc).toBeLessThan(FIXED_DT);
   });
 

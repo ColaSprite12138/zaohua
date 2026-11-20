@@ -25,7 +25,15 @@ export const FIXED_HZ = 60;
 export const FIXED_DT = 1 / FIXED_HZ;
 
 /** 单帧最多吸收多少秒。切后台回来时多出来的时间直接丢弃（不是少跑步）。 */
-export const MAX_FRAME_DELTA = 0.25;
+/**
+ * 单帧最多吃进多少秒。
+ *
+ * 原来是 0.25s —— 那意味着一帧可以补 15 步，`step()` 连跑 15 次、远端影子也推
+ * 15 次，单帧工作量瞬间变成 15 倍。联机时只要等过对方一次帧，放行后就会撞上
+ * 这种尖峰，玩家观感就是「画面一顿一顿地卡」。压到 0.1s（6 步）后，宁可让
+ * 逻辑时间慢一点，也不让某一帧突然做 15 倍的事。
+ */
+export const MAX_FRAME_DELTA = 0.1;
 
 /** 超过这个长度就算「停顿」而不是「掉帧」，只用于诊断。 */
 export const STALL_THRESHOLD = 0.5;
