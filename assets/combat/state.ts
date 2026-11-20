@@ -944,6 +944,29 @@ export interface Player {
    * 渲染、HUD、相机这些第一人称视角的代码继续写 `s.target` 就行。
    */
   intent: PlayerIntent;
+
+  /* ---------------------------------------------------------------
+   * 按玩家隔离的**战斗资源**。
+   *
+   * 为什么必须挂在 Player 上：帧同步里每台机器都跑完整模拟，所以每台机器
+   * 都持有全体玩家的背包 / 法力 / 技能栏 / 读条 —— 不需要「去看对方背包」。
+   * 玩家死亡时直接读 `p.runInventory` 就能把装备爆成掉落物。
+   *
+   * `GameState` 上的同名字段改成了代理 getter 指向 `this.player.xxx`：
+   * `updatePlayer()` 临时把 `s.player` 指向当前玩家，所有既有规则函数
+   * （普攻 / 技能 / 药水 / 耐久 / 拾取）就自动作用于那个人。
+   * --------------------------------------------------------------- */
+  runInventory: InventoryState;
+  weaponSlots: [WeaponId | null, WeaponId | null];
+  activeWeaponSlot: 0 | 1;
+  carriedItems: string[];
+  mana: number;
+  maxMana: number;
+  skillBar: SkillSlot[];
+  starSkills: readonly string[];
+  cast: CastState | null;
+  manaSurge: number;
+  channel: number | null;
 }
 
 /**
@@ -1012,6 +1035,11 @@ export interface GameState {
   players: Player[];
   /** 我在 `players` 里的 `id`。单机恒为 `'p0'`。 */
   me: string;
+  /**
+   * 是否联机对局。`false` = 纯本地（含 PVE 副本），死亡掉落走局末结算写存档；
+   * `true` 且 `runKind === 'pvpve'` 时阵亡当场爆装。由 `applySeat` 设置。
+   */
+  online: boolean;
   target: { x: number; y: number };
   moveMode: MoveMode;
   targetEnemy: number | null;
@@ -1180,6 +1208,17 @@ export function createState(config: RunConfig = {}): GameState {
       hp: PLAYER_HP_MAX, maxHp: PLAYER_HP_MAX,
       invuln: 0, dodge: 0, dodgeCd: 0, attackCd: 0,
       attackFx: 0, hurt: 0, trail: [], dash: null, castPose: 0, statuses: [],
+      runInventory: seedFixturePotions(createInventoryState(0), POTION_COUNT, FIXTURE_HP_POTIONS),
+      weaponSlots: [null, null],
+      activeWeaponSlot: 0,
+      carriedItems: [],
+      mana: PLAYER_MANA_MAX,
+      maxMana: PLAYER_MANA_MAX,
+      skillBar: createSkillBar(),
+      starSkills: PRE_EQUIPPED_SKILLS,
+      cast: null,
+      manaSurge: 0,
+      channel: null,
       intent: {
         target: { x, y },
         moveMode: 'idle',
@@ -1194,6 +1233,7 @@ export function createState(config: RunConfig = {}): GameState {
     },
     players: [],
     me: 'p0',
+    online: false,
     /* ---------------------------------------------------------------
      * 「我」的意图：全部代理到 `players[me].intent`。
      *
@@ -1227,11 +1267,14 @@ export function createState(config: RunConfig = {}): GameState {
     get remotes() {
       return this.players.filter((p) => p.id !== this.me);
     },
-    // No run has been deployed yet: the acceptance fixture starts with a couple
-    // of potions in the bag (real deploys replace this with the lobby's loadout).
-    runInventory: seedFixturePotions(createInventoryState(0), POTION_COUNT, FIXTURE_HP_POTIONS),
-    weaponSlots: [null, null],
-    activeWeaponSlot: 0,
+    // 下面这批「资源」全部代理到 `this.player`：帧同步里每台机器都持有
+    // 全体玩家的背包 / 法力 / 技能栏 / 读条（见 Player 接口注释）。
+    get runInventory() { return this.player.runInventory; },
+    set runInventory(v: InventoryState) { this.player.runInventory = v; },
+    get weaponSlots() { return this.player.weaponSlots; },
+    set weaponSlots(v: [WeaponId | null, WeaponId | null]) { this.player.weaponSlots = v; },
+    get activeWeaponSlot() { return this.player.activeWeaponSlot; },
+    set activeWeaponSlot(v: 0 | 1) { this.player.activeWeaponSlot = v; },
     gameOver: false,
     cleared: false,
     particles: [],
@@ -1242,13 +1285,20 @@ export function createState(config: RunConfig = {}): GameState {
     runSeed: config.seed ?? DEFAULT_RUN_SEED,
     rng: makeRng(config.seed ?? DEFAULT_RUN_SEED),
     lootLog: [],
-    carriedItems: [],
-    mana: PLAYER_MANA_MAX,
-    maxMana: PLAYER_MANA_MAX,
-    skillBar: createSkillBar(),
-    starSkills: PRE_EQUIPPED_SKILLS,
-    cast: null,
-    manaSurge: 0,
+    get carriedItems() { return this.player.carriedItems; },
+    set carriedItems(v: string[]) { this.player.carriedItems = v; },
+    get mana() { return this.player.mana; },
+    set mana(v: number) { this.player.mana = v; },
+    get maxMana() { return this.player.maxMana; },
+    set maxMana(v: number) { this.player.maxMana = v; },
+    get skillBar() { return this.player.skillBar; },
+    set skillBar(v: SkillSlot[]) { this.player.skillBar = v; },
+    get starSkills() { return this.player.starSkills; },
+    set starSkills(v: readonly string[]) { this.player.starSkills = v; },
+    get cast() { return this.player.cast; },
+    set cast(v: CastState | null) { this.player.cast = v; },
+    get manaSurge() { return this.player.manaSurge; },
+    set manaSurge(v: number) { this.player.manaSurge = v; },
     skillFx: [],
     zones: [],
     reactions: [],
@@ -1259,7 +1309,8 @@ export function createState(config: RunConfig = {}): GameState {
     runSeconds: RUN_SECONDS,
     phase: 'explore',
     portals: [],
-    channel: null,
+    get channel() { return this.player.channel; },
+    set channel(v: number | null) { this.player.channel = v; },
     bigMap: false,
     visionRadius: VISION_BASE_CELLS * 32,
     extracted: false,

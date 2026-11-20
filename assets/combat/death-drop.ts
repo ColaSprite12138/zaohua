@@ -23,7 +23,7 @@ import {
   type AffixOnItem, type ItemInstance, type RunLoadout,
 } from '../meta/inventory.ts';
 import { nearestWalkable } from './world.ts';
-import { makeDropFlight, nextDropUid, type GameState } from './state.ts';
+import { makeDropFlight, nextDropUid, type GameState, type Player } from './state.ts';
 import { say } from './effects.ts';
 
 /** 遗物只需要「是什么」和「磨到多少」：位置由摆点规则重新算，不在存档里存坐标。 */
@@ -89,6 +89,8 @@ function nameOf(defId: string): string {
 function placeLeftover(
   s: GameState, defId: string, x: number, y: number, t: number, index: number,
   durability?: number, affixes?: readonly AffixOnItem[], damage?: number,
+  /** PVE 遗物写 `true`（会被写回存档）；联机 PVP 当场爆的写 `false`。 */
+  fromDeathDrop = true,
 ): void {
   const spot = nearestWalkable(s.world, x, y);
   s.drops.push({
@@ -100,7 +102,7 @@ function placeLeftover(
     itemId: defId,
     name: nameOf(defId),
     quality: qualityOf(defId),
-    fromDeathDrop: true,
+    ...(fromDeathDrop ? { fromDeathDrop: true } : {}),
     // 耐久必须跟着遗物走：捡回来的是「磨过的那把」，不是新的（设计 5.2 的出口）。
     ...(durability === undefined ? {} : { durability }),
     ...(affixes === undefined ? {} : { affixes: affixes.map((a) => ({ ...a })) }),
@@ -157,6 +159,42 @@ export function leftoverDeathDrops(s: GameState): LeftoverItem[] {
  * - 主线阵亡：整份带回（设计 4「身上 + 背包全不掉」）。
  * - 副本 / 搜打撤阵亡：只有**保险格容器**里的东西回家，其余 `lost`。
  */
+/**
+ * 联机 PVP 阵亡：当场把身上 / 背包里的东西爆成地上的掉落物，在场的人都能捡。
+ *
+ * **和 PVE 是两条独立链路，绝不能混用**（用户 2026-11-21 明确要求）：
+ * - PVE / 副本：`settleOnDeath()` → 局末写存档的 `deathDrop` 槽 → 下一局
+ *   `spawnDeathDrop()` 摆回地图（设计 4 的「二次机会」）。**纯本地，一行不动。**
+ * - 联机 PVP：当场生成共享 `drops`，谁都能点名字牌捡走。
+ *
+ * 分割规则沿用 `meta/inventory.ts::splitOnDeath()`：保险格 `safe` 跟着回家，
+ * 背包 + 全部穿戴槽都掉。掉落集合进 `hashGameState`，所以两端必须一致 ——
+ * 靠的是「每台机器都持有死者 `runInventory` 的完整副本」（帧同步重放），
+ * 不是临时去对方机器上读背包。
+ */
+export function burstEquipmentOnDeath(s: GameState, player: Player): number {
+  const { kept, lost } = splitOnDeath(player.runInventory);
+  // 立刻从死者身上摘掉：否则局末 `settleOnDeath()` 会把同一批东西再带回
+  // 存档，凭空复制一份。
+  player.runInventory.bag = [];
+  player.runInventory.equipped = kept.equipped.map((i) => (i ? { ...i } : null));
+  player.weaponSlots = [null, null];
+
+  const total = lost.length;
+  const firstRow = Math.min(total, DROP_PER_ROW);
+  lost.forEach((item, i) => {
+    const col = i % DROP_PER_ROW;
+    const row = Math.floor(i / DROP_PER_ROW);
+    const span = row === 0 ? firstRow : DROP_PER_ROW;
+    const ox = (col - (span - 1) / 2) * DROP_COL_STEP;
+    const oy = row * DROP_ROW_STEP;
+    // `false` = 不是 PVE 遗物，不写回任何人存档，谁捡到归谁。
+    placeLeftover(s, item.defId, player.x + ox, player.y + oy, i * 0.17, i,
+      item.durability, item.affixes, item.damage, false);
+  });
+  return total;
+}
+
 export function settleOnDeath(s: GameState, survived: boolean): DeathSettlement {
   const whole: RunLoadout = {
     bag: s.runInventory.bag.map((i) => ({ ...i })),

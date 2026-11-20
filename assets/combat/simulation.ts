@@ -93,22 +93,23 @@ function updatePlayer(
     s.camera = cameraFor(s.world, p.x, p.y);
   }
   try {
-    if (isMe) {
-      // 技能起手排在最前面：瞬发技能这一帧就结算，读条技能这一帧就把玩家钉住，
-      // 所以下面的移动 / 攻击分支必须看到最新的 `s.cast`。
-      if (input.potion === true) drinkPotion(s);
-      if (input.healPotion === true) healPotion(s);
-      if (input.skill !== undefined && input.skill !== null) {
-        beginSkill(s, input.skill, input.mouse ?? null, modifiers);
-      }
-      // 1 / 2 only changes which slot is in use; it never moves items or attacks.
-      if (input.switchWeapon !== undefined && input.switchWeapon !== null) {
-        switchWeaponSlot(s, input.switchWeapon);
-      }
+    // **所有玩家跑同一套规则**。以前这里包着 `if (isMe)`，远端玩家不普攻、
+    // 不放技能、不喝药 —— 于是 B 砍怪在 A 的机器上根本不发生，怪的血量 /
+    // 死亡 / 掉落两端必然不同。`GameState` 上的资源字段已代理到
+    // `this.player`，所以 `s.player = p` 之后这些函数自动作用于当前玩家。
+    // 技能起手排在最前面：瞬发技能这一帧就结算，读条技能这一帧就把玩家钉住，
+    // 所以下面的移动 / 攻击分支必须看到最新的 `s.cast`。
+    if (input.potion === true) drinkPotion(s);
+    if (input.healPotion === true) healPotion(s);
+    if (input.skill !== undefined && input.skill !== null) {
+      beginSkill(s, input.skill, input.mouse ?? null, modifiers);
     }
-    // 站桩：砸箱子（每个玩家各一份）；引导传送门与读条技能目前只属于本机。
-    const pinned = p.intent.smash !== null
-      || (isMe && (s.channel !== null || s.cast !== null));
+    // 1 / 2 only changes which slot is in use; it never moves items or attacks.
+    if (input.switchWeapon !== undefined && input.switchWeapon !== null) {
+      switchWeaponSlot(s, input.switchWeapon);
+    }
+    // 站桩：砸箱子 / 引导传送门 / 读条技能，都按当前玩家各判一份。
+    const pinned = p.intent.smash !== null || p.cast !== null || p.channel !== null;
     // 冲锋进行中：位移由 `updateDash()` 接管，普通走位与普攻让位。
     const dashing = p.dash !== null;
     if (!pinned && !dashing) classifyPointer(s, input);
@@ -117,7 +118,7 @@ function updatePlayer(
     if (dashing) updateDash(s, dt, modifiers);
     // 可破坏物：走到就起手、站桩进度、挨打 / 闪避 / 走开就断。
     updateDestructibles(s, dt);
-    if (isMe && !pinned && !dashing) resolveAttackOrder(s, modifiers);
+    if (!pinned && !dashing) resolveAttackOrder(s, modifiers);
   } finally {
     if (!isMe) {
       s.player = mine;
@@ -169,6 +170,8 @@ export function step(
   // 顺序必须在两端一致：同一帧两个人砸同一个箱子 / 抢同一件掉落时，
   // 谁先结算决定结果，而 `players` 的数组顺序来自网络到达顺序。
   for (const p of sortedPlayers(s)) {
+    // 倒下的人不再行动：远端玩家阵亡后不该继续挥刀 / 走位。
+    if (p.hp <= 0) continue;
     const isMe = p.id === s.me;
     const pi = isMe ? input : remoteInputs?.get(p.id);
     // 没有他的输入 = 他这一帧还没到，**不许替他决定**（空输入填充会永久分叉）。
@@ -194,9 +197,22 @@ export function step(
   checkCleared(s);
   // 撤离放在受击之后：同一帧挨打就立刻打断引导，不能靠「先抽完进度」蒙过去。
   // 读条中按 E 不生效：两套「站桩」不能并行，先把这一发读完再引导。
-  updateExtraction(s, dt, input.extractChannel === true && s.cast === null);
-  // 读条同理，而且必须排在 `updateSkeletons()` 之后：受击是这一帧写进 `hurt` 的。
-  advanceCast(s, dt, modifiers);
+  // 读条与撤离也必须按玩家各跑一遍：只推进「我」的 cast，远端玩家在两端
+  // 都读不完条。顺序仍按 id 排序，且与上面受击的先后顺序无关（受击在
+  // updateSkeletons 里已经写进各自的 `hurt`）。
+  for (const p of sortedPlayers(s)) {
+    if (p.hp <= 0) continue;
+    const pi = p.id === s.me ? input : remoteInputs?.get(p.id);
+    if (pi === undefined) continue;
+    const mine = s.player;
+    if (p.id !== s.me) s.player = p;
+    try {
+      updateExtraction(s, dt, pi.extractChannel === true && p.cast === null);
+      advanceCast(s, dt, modifiers);
+    } finally {
+      if (p.id !== s.me) s.player = mine;
+    }
+  }
   tickParticles(s, dt);
   // Hover feedback LAST: it must describe the frame that is about to be
   // painted, using the very same hit test a click would use. Loot's name plate

@@ -12,6 +12,7 @@ import { affix_slot } from '../resource/generated/affix_slot.ts';
 import { rollAffixes, type AffixEquipKind } from '../meta/affix.ts';
 import { activeWeaponBroken, weaponUsable, wearWeapon } from './durability.ts';
 import type { Player } from './state.ts';
+import { burstEquipmentOnDeath } from './death-drop.ts';
 import { burst, say } from './effects.ts';
 import { authoredItem, monsterXp, rollLoot, rollWeaponDamage } from './loot.ts';
 import { weaponDamage } from './run-inventory.ts';
@@ -362,6 +363,9 @@ export function damagePlayer(
   if (options.invuln ?? true) p.invuln = 0.7;
   burst(s, p.x, p.y - 26, options.color ?? '#ff6b6b', 8, 120);
   if (p.hp > 0) return false;
+  // 联机 PVP 阵亡：当场爆装，别人可以捡。**PVE 一行都不动** —— 那边是局末
+  // settleOnDeath 写存档、下一局摆回地图，两条链路混起来会改坏「二次机会」。
+  if (s.online && s.runKind === 'pvpve') burstEquipmentOnDeath(s, p);
   if (p.id === s.me) {
     s.gameOver = true;
     say(s, options.deathText ?? '你被击倒了 · 按 R 重新开始');

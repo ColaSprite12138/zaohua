@@ -266,6 +266,7 @@ export const game: Plugin = {
     }): void {
       if (msg.active !== true) {
         netActive = false;
+        state.online = false;
         netSeatSettled = false;
         netPlayerId = '';
         netPeers.clear();
@@ -278,6 +279,7 @@ export const game: Plugin = {
       }
       const starting = !netActive;
       netActive = true;
+      state.online = true;
       netPlayerId = msg.playerId || netPlayerId;
       const list = Array.isArray(msg.peers) ? msg.peers : [];
       netPeers = new Set<string>();

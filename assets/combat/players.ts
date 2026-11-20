@@ -10,7 +10,12 @@
  * 而远端玩家的插入顺序 = 网络到达顺序 = 两端天然不同。所以这里的每个选择都
  * 必须**按距离 + id 破平**，不许依赖数组下标。见 `docs/net-sync-design.md` §6。
  */
-import type { GameState, Player } from './state.ts';
+import type { RunLoadout } from '../meta/inventory.ts';
+import { makeRunInventory } from './run-inventory.ts';
+import {
+  PLAYER_MANA_MAX, PRE_EQUIPPED_SKILLS, createSkillBar,
+  type GameState, type Player,
+} from './state.ts';
 
 /** 按 id 排好序的玩家列表。需要遍历时用它，不要直接 for..of `s.players`。 */
 export function sortedPlayers(s: GameState): Player[] {
@@ -61,13 +66,23 @@ function spawnOffset(id: string): { dx: number; dy: number } {
  * 它和本机玩家是**同一种类型**（`Player`），所以怪物索敌、拾取、砸箱、
  * 走位规则全都自动适用于它 —— 不再有「影子角色」这一层特例。
  */
+/** 远端玩家开局没带装备时的兜底（阶段 2 会用真实装备快照替换）。 */
+const EMPTY_REMOTE_LOADOUT: RunLoadout = {
+  bag: [],
+  equipped: [null, null, null, null, null, null, null, null, null, null],
+  activeWeaponSlot: 0,
+};
+
 export function createRemotePlayer(
   id: string,
   name: string,
   spawn: { x: number; y: number },
   hpMax: number,
+  /** 开局装备快照。两端必须用同一份，否则「背包满」的判定会分叉。 */
+  loadout: RunLoadout = EMPTY_REMOTE_LOADOUT,
 ): Player {
   const { dx, dy } = spawnOffset(id);
+  const runInventory = makeRunInventory(loadout);
   return {
     id,
     name,
@@ -89,6 +104,22 @@ export function createRemotePlayer(
     dash: null,
     castPose: 0,
     statuses: [],
+    // 按玩家隔离的战斗资源。帧同步下每台机器都跑完整模拟，所以这里也
+    // 持有对方背包的完整副本 —— 死亡爆装直接读 `p.runInventory` 即可。
+    runInventory,
+    weaponSlots: [
+      runInventory.equipped[0]?.defId ?? null,
+      runInventory.equipped[1]?.defId ?? null,
+    ],
+    activeWeaponSlot: runInventory.activeWeaponSlot,
+    carriedItems: [],
+    mana: PLAYER_MANA_MAX,
+    maxMana: PLAYER_MANA_MAX,
+    skillBar: createSkillBar(),
+    starSkills: PRE_EQUIPPED_SKILLS,
+    cast: null,
+    manaSurge: 0,
+    channel: null,
     intent: {
       target: { x: spawn.x + dx, y: spawn.y + dy },
       moveMode: 'idle',
