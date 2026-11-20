@@ -49,6 +49,14 @@
     roomEvents: [],
     /** 诊断：会话自带 state 的字段名，验收脚本据此判断轮询是不是有效。 */
     sessionStateKeys: [],
+    /**
+     * 状态广播的到达节奏（毫秒）。只按**服务器帧号前进**记一次，重复投递不算。
+     *
+     * 为什么要它：延迟帧 D 必须按抖动定，不能拍脑袋；而抖动的唯一来源是
+     * 「同一份广播，两次到达之间的间隔偏了多少」。这里直接量服务器帧号的变化
+     * 间隔，就是 D 公式里那个 J 的原料。
+     */
+    timing: { lastTick: -1, lastAt: 0, gaps: [] },
     stats: { sends: 0, packetsIn: 0, errors: 0, updates: 0, seats: 0 },
   };
 
@@ -209,6 +217,17 @@
     S.stats.updates += 1;
     S.sessionStateKeys = (wrapped ? ['(wrapped)'] : [])
       .concat(Object.keys(raw)).concat(wrapped ? Object.keys(state) : []).slice(0, 24);
+
+    // 广播节奏：只在服务器帧号真的前进时记一次（同一帧被重复投递不算）。
+    if (typeof state.serverTick === 'number' && state.serverTick !== S.timing.lastTick) {
+      var nowMs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      if (S.timing.lastAt > 0) {
+        S.timing.gaps.push(nowMs - S.timing.lastAt);
+        if (S.timing.gaps.length > 300) S.timing.gaps.shift();
+      }
+      S.timing.lastTick = state.serverTick;
+      S.timing.lastAt = nowMs;
+    }
 
     var players = Array.isArray(state.players) ? state.players : [];
     var peers = [];
@@ -479,6 +498,35 @@
   }
 
   /** 只读诊断。UI 与验收脚本都读这一份，不各自维护计数器。 */
+  /** 分位数：抖动用 p90，延迟帧 D 就是按它算的。 */
+  function quantile(sorted, q) {
+    if (sorted.length === 0) return 0;
+    var i = Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * q)));
+    return sorted[i];
+  }
+
+  function timingSnapshot() {
+    var gaps = S.timing.gaps.slice().sort(function (a, b) { return a - b; });
+    var sum = 0;
+    for (var i = 0; i < gaps.length; i += 1) sum += gaps[i];
+    return {
+      n: gaps.length,
+      mean: gaps.length ? Math.round((sum / gaps.length) * 10) / 10 : 0,
+      p50: Math.round(quantile(gaps, 0.5) * 10) / 10,
+      p90: Math.round(quantile(gaps, 0.9) * 10) / 10,
+      p99: Math.round(quantile(gaps, 0.99) * 10) / 10,
+      max: gaps.length ? Math.round(gaps[gaps.length - 1] * 10) / 10 : 0,
+      /** 偏离均值的绝对值 p90 = 抖动的直接度量（毫秒）。 */
+      jitterP90: (function () {
+        if (gaps.length === 0) return 0;
+        var mean = sum / gaps.length;
+        var dev = gaps.map(function (g) { return Math.abs(g - mean); })
+          .sort(function (a, b) { return a - b; });
+        return Math.round(quantile(dev, 0.9) * 10) / 10;
+      })(),
+    };
+  }
+
   function status() {
     return {
       active: S.active,
@@ -491,6 +539,8 @@
       seats: S.stats.seats,
       divergedTick: S.divergedTick,
       engine: S.lastStat,
+      /** 状态广播的到达节奏：D 公式里的抖动量在这里。 */
+      timing: timingSnapshot(),
       /** 诊断：开局握手补了几次、会话 state 里到底有没有 inputs。 */
       startRetries: S.startRetries,
       sessionStateKeys: S.sessionStateKeys.slice(),

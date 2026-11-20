@@ -271,6 +271,6 @@ createPlatformStateSyncRuntime({
   platform,
   // 只读准入策略：开局之后不再接受新人插队（P4 会在这里加真正的房间锁）。
   // onCheckJoin: ({ userId, isRejoin }) => ({ allowed: true }),
-  roomPolicy: { maxPlayers: 16, minPlayersToStart: 2, tickIntervalMs: 50 },
+  roomPolicy: { maxPlayers: 16, minPlayersToStart: 2, tickIntervalMs: 42 },
   createGame,
 })
