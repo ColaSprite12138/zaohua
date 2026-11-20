@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "local_project_id": "2d28aca8-c97d-47ac-83fa-909c957beecc",
-  "game_id": null,
+  "game_id": "01a1f934-ac12-7a72-8c53-3d66c4cebc50",
   "template": null,
   "build": {
     "package_manager": "pnpm@12.15.0",
