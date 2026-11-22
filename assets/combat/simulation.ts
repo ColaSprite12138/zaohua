@@ -57,9 +57,22 @@ export function activeAmmo(s: GameState): { id: string; count: number } | null {
 }
 
 /**
- * 「这一帧什么都没按」。服务器贴定的帧里缺席者就是这一份 —— 见 `collectInputs`。
+ * 「这一帧什么都没按」：缺席者在 `I_all` 里那一格的值。
+ *
+ * **这是内存里的一个共享常量，不是一帧、也不是一个网络包**：没操作就不发包
+ * （上行 `intent-filter.ts` 的定稿），这里只是把「没有新指令」表达成一个值，
+ * 不分配、不进带宽、不改 tick、不进 history。
+ *
+ * 为什么必须有这个值：玩法进度不是输入直接产生的，而是挂在 `S` 上的持久意图
+ * 靠每帧 `dt` 演化（`walk` / `smash.t` / `attackOrder` / `advanceCast` /
+ * `updateExtraction`）。点击那一帧只写意图，之后几十个安静帧仍要模拟这个人；
+ * 少了这一格 = 他整帧不演化 = 两端一致地砸不开箱子、走不到位、补刀不出手。
+ *
+ * v1「填空 = 永久分叉」只对帧**迟到**成立：那一版填空等于替对方编了一段没
+ * 发生过的过去。v2 帧号与贴帧权收归服务器，迟到由 `sync-driver` 挡在 `F` 之外，
+ * 缺席只剩「这一帧没操作」一种含义。
  */
-const EMPTY_STEP_INPUT: StepInput = {
+export const EMPTY_STEP_INPUT: StepInput = {
   mouse: undefined,
   pointerDown: false,
   pointerHeld: false,
@@ -74,54 +87,14 @@ const EMPTY_STEP_INPUT: StepInput = {
 };
 
 /**
- * 本机帧与远端帧合进**同一张** `Map<id, StepInput>`。
+ * 一台客户端这一帧的完整输入表 `I_all(t)`：按玩家 id 索引，**全体玩家都在表里**。
  *
- * 规则代码只按 id 取输入，不再有 `isMe ? input : remoteInputs.get(...)` 这种
- * 分支。联机宿主直接传整张 Map（`game.pack.ts::advanceNet`）；PVE 与
- * 单测传单个 `input`，在这里按本机玩家实体的 id 装进 Map。key 用实体 id
- * 而不是 `s.me`，判定层就不必知道自己是谁。
- *
- * ## 缺席 = 空输入，且**对所有人一样**（2026-11-22 修的分叉根因）
- *
- * v2 的 `I_all(t)` 由服务器贴定（`frame-log.ts::advanceFrame`：从每人 FIFO 取
- * 一条，取不到就不写进那一帧），客户端只执行已经收到的连续帧。所以
- * 「这一帧某人不在表里」是一个**已定稿的事实**：他这一帧没操作，
- * 不是「他的帧还在路上」。
- *
- * 旧实现只给本机玩家垫了空帧（`advanceNet` 里 `localFrame ? ... : empty`），
- * 远端玩家却整帧 `continue`。于是同一段源码在两端算出两份不同的过去：
- *
- * - A 站着不动砸箱子 / 等普攻冷却 / 追一个刚进射程的怪：这些帧 A 一个意图都
- *   不发（`intent-filter.ts`：没有操作就不发），
- * - A 端：A 的空输入 → `updateDestructibles` 推进 `smash.t` → 箱子砸开；
- * - B 端：A 整帧被跳过 → 进度永远停在点击那一帧，箱子永远砸不开，
- *   普攻冷却好了也不出手、骷髅不掉血（用户 2026-11-22 报的 PVP 不同步）。
- *
- * 所以这里对**全体玩家**兜底：表里没有他就按空输入推进。只要 `step()` 真的
- * 被调用，那一帧的输入集合就是完整且两端一致的。
- *
- * （`.forgeax/diag/idle-fill.test.ts` 当初证明「填充 = 永久分叉」的是 v1 模型：
- * 那一版的帧可能只是**迟到**，填空等于替对方编了一段没发生过的过去。v2 把
- * 帧号与贴帧权收归服务器之后，迟到由 `sync-driver` 挡住、根本不进 `step()`，
- * 这条结论不再适用。）
+ * 表由 `net/assemble-inputs.ts::assembleInputs()` 在 `F` 之外按 `s.players` 展开；
+ * `F` 只按 id 取值，不认识「本机 / 远端」，也不判断谁在表里。模拟集合锚定在
+ * `S`（两端一致、进 hash），而不是「这一帧收到了谁」 —— 后者会被上行过滤、
+ * 丢包、补帧与名单变化改变。
  */
-function collectInputs(
-  s: GameState,
-  input: StepInput,
-  remoteInputs?: PlayerInputs,
-): Map<string, StepInput> {
-  const inputs = new Map<string, StepInput>();
-  inputs.set(s.player.id, input);
-  if (remoteInputs !== undefined) {
-    for (const [id, frame] of remoteInputs) inputs.set(id, frame);
-  }
-  // 名单里没交意图的人按空输入推进。**必须是 `s.players` 而不是「收到过谁」**：
-  // 两端名单相同，兜底出来的输入集合才相同。
-  for (const p of s.players) {
-    if (!inputs.has(p.id)) inputs.set(p.id, EMPTY_STEP_INPUT);
-  }
-  return inputs;
-}
+export type PlayerInputs = ReadonlyMap<string, StepInput>;
 
 /**
  * 随时间衰减的**按玩家**字段：全体玩家按 id 排序各推进一次。
@@ -200,24 +173,22 @@ function updatePlayer(
 }
 
 /**
- * 一个玩家的这一帧输入。
+ * 世界演算的唯一入口 `F`：`S(t+1) = F(S(t), I_all(t))`。
  *
- * 表里没有的玩家 = 这一帧按空输入推进（`collectInputs` 兜底），**不是跳过整帧**。
- * 跳过会让「本机垫空帧、远端被跳过」变成两套规则 —— 2026-11-22 PVP 不同步的
- * 根因就是它（见 `collectInputs` 的注释）。
+ * `inputs` 是**已经展开完整**的一张表，由 `net/assemble-inputs.ts` 在 `F` 之外
+ * 按 `s.players` 展开（缺席 = `EMPTY_STEP_INPUT`）。这里不认识「本机 / 远端」，
+ * 不判断「谁在表里」，只按 `sortedPlayers(s)` 对全体玩家各跑一遍。
+ *
+ * 2026-11-22 的 PVP 分叉根因就是旧签名 `step(s, dt, 本机input, mods, 远端表)`：
+ * 输入装配层知道「我是谁」，两端各自只保证本机座位被模拟。现在整张表由调用方
+ * 原样交给 `F`，本机身份只留在 `updateView()`（V 层）与局外结算里。
  */
-export type PlayerInputs = ReadonlyMap<string, StepInput>;
-
-export function step(
+export function stepAll(
   s: GameState,
   dt: number,
-  input: StepInput,
+  inputs: PlayerInputs,
   modifiers: CombatModifiers = NO_MODIFIERS,
-  remoteInputs?: PlayerInputs,
 ): void {
-  // `input` 在本函数里**只**用来算本机悬停反馈（V 层）。世界演算一律从这张
-  // 按 id 索引的 Map 取输入，本机与远端没有任何区别。
-  const inputs = collectInputs(s, input, remoteInputs);
   // 已结算的一局完全冻结：撤离 / 超时和阵亡一样，不再走时间、不再挨打。
   if (s.gameOver || s.extracted || s.timedOut) {
     // Nothing below can be clicked any more: drop the sword cursor / hover ring.
@@ -246,9 +217,9 @@ export function step(
   for (const p of sortedPlayers(s)) {
     // 倒下的人不再行动：远端玩家阵亡后不该继续挥刀 / 走位。
     if (p.hp <= 0) continue;
-    // `collectInputs` 已保证名单里每个人都有输入（缺席 = 空输入），
-    // 所以这里不需要再判 undefined —— 两端也不会因为「一端垫了空帧、
-    // 另一端跳过」而各算一份不同的过去。
+    // `assembleInputs` 已按 `s.players` 展开完整表（缺席 = 空输入）；
+    // 这里的 `?? EMPTY` 只是防御调用方漏装配，**不是按本机分流**。
+    // 绝不 `undefined → continue`：跳过整帧会冻住砸箱 / 冷却 / 走位。
     const pi = inputs.get(p.id) ?? EMPTY_STEP_INPUT;
     withPlayer(s, p, () => updatePlayer(s, p, pi, dt, modifiers));
   }
@@ -276,7 +247,7 @@ export function step(
   // updateSkeletons 里已经写进各自的 `hurt`）。
   for (const p of sortedPlayers(s)) {
     if (p.hp <= 0) continue;
-    // 同上：缺席 = 空输入，不再整帧跳过（读条 / 撤离也必须对全体玩家对称推进）。
+    // 同上：缺席 = 空输入，读条 / 撤离也必须对全体玩家对称推进。
     const pi = inputs.get(p.id) ?? EMPTY_STEP_INPUT;
     withPlayer(s, p, () => {
       updateExtraction(s, dt, pi.extractChannel === true && p.cast === null);
@@ -284,12 +255,27 @@ export function step(
     });
   }
   tickParticles(s, dt);
+}
+
+/**
+ * V 层：本机鼠标的悬停反馈 + 相机。**不进帧、不进 hash、不参与任何判定**。
+ *
+ * 这里明确允许读「本机」—— 血条、UI 面板、死亡结算提示本来就该各随本机座位。
+ * 关键是它写在 `stepAll()` 之外：`F` 里没有任何本机身份，调用方演算完再单独调。
+ * 联机时 `viewInput` 取服务器贴定帧里本机那一格，单机时就是这一帧的输入。
+ */
+export function updateView(s: GameState, viewInput: StepInput): void {
+  // 与 `stepAll()` 的冻结分支保持一致：一局结束后不再画指针环、不再动相机。
+  if (s.gameOver || s.extracted || s.timedOut) {
+    s.hoverEnemy = null;
+    return;
+  }
   // Hover feedback LAST: it must describe the frame that is about to be
   // painted, using the very same hit test a click would use. Loot's name plate
   // wins the pointer over an enemy standing on the same spot -- that is what
   // turns the sword cursor back into the move cursor and promises a pickup.
-  const noHover = s.cleared || input.pointerOnHud || input.mouse === undefined;
-  const pointer = input.mouse;
+  const noHover = s.cleared || viewInput.pointerOnHud || viewInput.mouse === undefined;
+  const pointer = viewInput.mouse;
   const hoveredDrop = pointer !== undefined && !noHover
     ? dropAtPoint(s, pointer.x, pointer.y)
     : null;
@@ -308,6 +294,22 @@ export function step(
   // view-only: 这里写的是**本机座位的 V 层视角**，只给绘制与只读投影用，
   // 判定层不读它、它不进输入帧、不进全状态 hash。两端各自跟随自己座位。
   s.camera = cameraFor(s.world, s.player.x, s.player.y);
+}
+
+/**
+ * 单机 / PVE / 单测入口：把单条输入装成一张完整表，再走同一个 `F`。
+ *
+ * 纯 PVE 里 `s.players = [p0]`，这张单元素表与联机按 `s.players` 展开的表
+ * 结构完全相同 —— 两条通路共用一份世界演算，差别只是表从哪来。
+ */
+export function step(
+  s: GameState,
+  dt: number,
+  input: StepInput,
+  modifiers: CombatModifiers = NO_MODIFIERS,
+): void {
+  stepAll(s, dt, new Map([[s.player.id, input]]), modifiers);
+  updateView(s, input);
 }
 
 /**

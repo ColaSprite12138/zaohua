@@ -13,7 +13,7 @@ import { updateZones, spawnZone } from '../reactions.ts';
 import { updateDrops } from '../weapons.ts';
 import { monsterSource } from '../source.ts';
 import { hashGameState } from '../../net/state-hash.ts';
-import { step } from '../simulation.ts';
+import { stepAll, updateView } from '../simulation.ts';
 import { createRemotePlayer, playerById, spawnOffset, type PeerSnapshot } from '../players.ts';
 
 /** 造一个「我 + 一个远端」的双人状态，两者都在出生点附近。 */
@@ -220,8 +220,12 @@ describe('联机 PVP 当场爆装（PVE 链路完全隔离）', () => {
       pointerDown: true, pointerHeld: false, pointerUp: false, dodge: false,
       mouse: { x: x + 200, y: other.y },
     };
-    step(s, 1 / 60, input, undefined,
-      new Map([[other.id, { ...input, pointerDown: false }]]));
+    const all = new Map<string, StepInput>([
+      [s.player.id, input],
+      [other.id, { ...input, pointerDown: false }],
+    ]);
+    stepAll(s, 1 / 60, all, NO_MODIFIERS);
+    updateView(s, input);
     expect(other.x).toBe(x);
   });
 });
@@ -326,8 +330,11 @@ describe('点击判定不能依赖「本机视角」的相机', () => {
       // 一屏夹具里后者恒 (0,0)，正好把「两端相机不同」这件事放大到可复现。
       a.camera = { x: a.player.x - startX, y: a.player.y - startY };
       b.camera = { x: 0, y: 0 };
-      step(a, 1 / 60, inputA);
-      step(b, 1 / 60, idle, undefined, new Map([['seatA', inputA]]));
+      const all = new Map<string, StepInput>([['seatA', inputA]]);
+      stepAll(a, 1 / 60, all, NO_MODIFIERS);
+      stepAll(b, 1 / 60, all, NO_MODIFIERS);
+      updateView(a, inputA);
+      updateView(b, idle);
       expect(hashGameState(a, i)).toBe(hashGameState(b, i));
     }
   });
@@ -403,11 +410,13 @@ describe('PVP 局内：点箱子 → 闪避打断 → 再点地面，两端逐�
     let smashStarted = false;
     for (let tick = 0; tick < 140; tick += 1) {
       const frameA = frameForA(tick);
-      // 本机帧与远端帧本来就该是同一张 Map：`collectInputs` 会用座位 id
-      // 再写一次本机输入，两端最终拿到的表完全相同。
+      // 两端共用同一张完整 I_all（生产由 `assembleInputs` 按 s.players 展开），
+      // 世界演算不认识「本机」；只有 updateView 各随本机座位。
       const all = new Map<string, StepInput>([['seatA', frameA], ['seatB', idle]]);
-      step(a, DT, frameA, NO_MODIFIERS, all);
-      step(b, DT, idle, NO_MODIFIERS, all);
+      stepAll(a, DT, all, NO_MODIFIERS);
+      stepAll(b, DT, all, NO_MODIFIERS);
+      updateView(a, frameA);
+      updateView(b, idle);
       expect(hashGameState(a, tick)).toBe(hashGameState(b, tick));
       const pa = playerById(a, 'seatA')!;
       const pb = playerById(b, 'seatA')!;
@@ -452,8 +461,10 @@ describe('PVP 局内：点箱子 → 闪避打断 → 再点地面，两端逐�
     for (let tick = 0; tick < 300; tick += 1) {
       const frameA = frameForA(tick);
       const all = new Map<string, StepInput>([['seatA', frameA], ['seatB', idle]]);
-      step(a, DT, frameA, NO_MODIFIERS, all);
-      step(b, DT, idle, NO_MODIFIERS, all);
+      stepAll(a, DT, all, NO_MODIFIERS);
+      stepAll(b, DT, all, NO_MODIFIERS);
+      updateView(a, frameA);
+      updateView(b, idle);
       expect(hashGameState(a, tick)).toBe(hashGameState(b, tick));
     }
   });
@@ -529,8 +540,10 @@ describe('联机 PVP 阵亡：按玩家独立结算', () => {
     for (let tick = 0; tick < 60 * 6; tick += 1) {
       const fb = frameB(tick);
       const all = new Map<string, StepInput>([['seatA', idle], ['seatB', fb]]);
-      step(a, DT, idle, NO_MODIFIERS, all);
-      step(b, DT, fb, NO_MODIFIERS, all);
+      stepAll(a, DT, all, NO_MODIFIERS);
+      stepAll(b, DT, all, NO_MODIFIERS);
+      updateView(a, idle);
+      updateView(b, fb);
       expect(hashGameState(a, tick + 1)).toBe(hashGameState(b, tick + 1));
       // 倒计时两端每一帧都相同，不能只在最后一帧对上。
       expect(playerById(a, 'seatA')!.deathTimer)

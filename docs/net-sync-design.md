@@ -42,10 +42,10 @@ I_all(t) = { playerId → InputFrame }  // 全体玩家、按 id 排序、由服
 `F` 对每台机器必须逐位相同。由此推出一条**硬约束**：
 
 > **`F` 内不得出现任何「本机」概念。** 判定层禁止读 `s.me` / `s.camera` / `isMe`，
-> 禁止 `isMe ? input : remoteInputs.get(...)` 这类按座位分流。
-> 本机输入与远端输入合进**同一个** `Map<id, StepInput>`；`step()` 里只有
-> `for (const p of sortedPlayers(s)) { const i = inputs.get(p.id); ... }`，
-> 没有 `isMe` 分支——**本机走的必须是远端那套代码**。
+> 禁止 `isMe` / `remoteInputs` / `collectInputs` / 任何按座位分流。
+> `I_all` 是**一张完整** `Map<id, StepInput>`，由 `net/assemble-inputs.ts` 在 `F` 之外
+> 按 `s.players` 展开；`stepAll()` 只收这张表，`for (const p of sortedPlayers(s))`
+> 对全体各跑一遍，没有 `isMe` 分支——**本机走的必须是远端那套代码**。
 >
 > **这条约束同样覆盖 `F` 的入口（输入装配层）**：「本机没输入就垫空帧、远端没输入
 > 就 `continue` 跳过」也是按座位分流，哪怕它写在 `assets/game/game.pack.ts` 而不是
@@ -62,10 +62,11 @@ withPlayer(s, p, () => updatePlayer(s, p, inputs.get(p.id)!, dt, mods));
 
 `withPlayer()`（`combat/players.ts`）对**全体玩家（含本机）**做完全对称的绑定与恢复，
 顺序由 `sortedPlayers()` 钉死；绑定期间读到的永远是同一个 `p`，两端逐字相同。
-切回后的 `s.player` 只允许出现在 V 层（帧末相机、只读投影）与输入装配边界
-`collectInputs()`，任何规则系统都不在循环外读它。静态守卫
-`scripts/check-local-context.mjs` 禁止 `s.me` / `isMe` / `s.camera` / 输入分流，
-并对 `s.player` 的出现次数设**只降不升**的预算（当前 113）。
+切回后的 `s.player` 只允许出现在 V 层（帧末相机、只读投影、结算退出、血条 / UI）
+与单机包装 `step()`，任何规则系统都不在循环外读它。静态守卫
+`scripts/check-local-context.mjs` 扫 `combat` / `net` / `game` 三目录，禁止
+`s.me` / `isMe` / `s.camera` / 输入分流，并对各目录的 `s.player` 出现次数分别设
+**只降不升**的预算（combat 113 / net 0 / game 34）。
 
 > 将来若要彻底删掉代理 getter、让所有规则函数显式接 `Player`，属于**可选深化**，
 > 不影响「两端跑同一份 `F`」这个结论；代价是重跑整套 PVE 基线。是否做由用户定。
@@ -94,8 +95,9 @@ withPlayer(s, p, () => updatePlayer(s, p, inputs.get(p.id)!, dt, mods));
    不推倒重来；推倒会丢掉整套玩法规则与验收基线。
 
 **从机制上防回归**：`scripts/check-local-context.mjs` 已接进 `verify.sh` 与
-`verify-all.sh` —— 判定层出现 `s.me` / `isMe` / `s.camera` / `remoteInputs?.get`
-直接判红，`s.player` 用预算制只许降；CI 拦住，不靠人记得。
+`verify-all.sh` —— 判定层出现 `s.me` / `isMe` / `s.camera` / `remoteInputs` /
+`collectInputs` / 按 `netPlayerId` 拆帧表 / 本机特供输入入口，直接判红；`s.player`
+分目录预算只许降；CI 拦住，不靠人记得。
 `assets/net/state-hash.ts` 用规范化全状态指纹取代手挑字段的 hash：
 按 id 排序的全体玩家全部字段（意图 / 计时器 / 技能栏 / 背包 / 读条 / 动作相位）、
 怪 / 掉落 / 破坏物 / 区域 / 弹道 / 事件 / 局内时钟都进对账，五个分项
@@ -111,7 +113,7 @@ withPlayer(s, p, () => updatePlayer(s, p, inputs.get(p.id)!, dt, mods));
 | 按玩家计时器只推进 `s.player`（本机），远端 `dodge/attackFx/技能CD` 冻结 | `tickTimers` 改为按 `sortedPlayers` 循环 + `withPlayer`；共享的 `tickSkillFx` / `tickToast` 移出循环各跑一次 | `simulation.ts` / `skills.ts` |
 | 共享破坏物推进塞在按玩家循环里，N 个玩家多减 N 次 `rubble`、反复清 `smashing` | 拆出 `tickDestructibles()` 全局一次，`updateDestructibles()` 只做按玩家砸箱 | `destructibles.ts` |
 | `classifyPointer` 读本机 `s.camera` 算拖拽，B 用 B 的视角模拟 A | 改成按当前迭代玩家坐标现算 `cameraFor(world, p.x, p.y)`，判定层零 `s.camera` | `movement.ts` |
-| 本机 / 远端输入按 `isMe` 分流 | `collectInputs()` 合成同一张 `Map<id, StepInput>`，循环只 `inputs.get(p.id)` | `simulation.ts` |
+| 本机 / 远端输入按 `isMe` 分流 | `assembleInputs()` 在 `F` 之外按 `s.players` 展开成完整 `I_all`；`stepAll()` 循环只 `inputs.get(p.id)` | `net/assemble-inputs.ts` / `simulation.ts` |
 | 「背包满」只对本机判，远端拾取直接删共享掉落 | 每台机器持有全体玩家背包副本，`collectDrop(p.runInventory, ...)` 对所有人判 | `weapons.ts` |
 | 挨打 / 弹道命中磨损的是各端本机那把武器 | `wearWeapon(..., target: Player)`；弹道带 `ownerId`，命中按发射者找玩家 | `durability.ts` / `attack.ts` / `projectiles.ts` / `projectile-runtime.ts` |
 | `nearestPlayer` / `playerById` 用 `?? s.player` 兜底 | 找不到就不结算，绝不落回本机 | `enemies.ts` / `projectile-runtime.ts` |
@@ -168,7 +170,7 @@ A / B 两个座位拿同一张输入 Map 跑 ①「点箱子 → 闪避打断 �
 
 | # | 反例 | 症状 | 正确做法 |
 |---|---|---|---|
-| 1 | 只给本机垫空帧、远端缺席 `continue` 跳过整帧 | A 砸开箱 / 砍掉血，B 永远砸不开 / 不掉血（2026-11-22） | `collectInputs` 按 `s.players` **全体**兜底 `EMPTY_STEP_INPUT`；`step()` 不许 `undefined → continue` |
+| 1 | 只给本机垫空帧、远端缺席 `continue` 跳过整帧 | A 砸开箱 / 砍掉血，B 永远砸不开 / 不掉血（2026-11-22） | `assembleInputs` 按 `s.players` **全体**兜底 `EMPTY_STEP_INPUT`；`stepAll()` 不许 `undefined → continue` |
 | 2 | 按玩家衰减字段只写 `s.player` | B 看 A 一直挥刀、闪避后 A 不动（2026-11-21） | 全体走同一个 `sortedPlayers` + `withPlayer` 循环 |
 | 3 | 共享系统塞进 `updatePlayer` | N 个玩家把 rubble / smashing 减 N 次、进度反复清零 | 共享 tick 在循环外全局**各一次** |
 | 4 | 自增 uid 用模块全局计数器 | 两端「之前玩过几局」不同 → 第一件掉落 uid 分叉 | 序号挂 `GameState`、`reset()` 归零、进 `SHARED_KEYS` |
@@ -205,10 +207,11 @@ A / B 两个座位拿同一张输入 Map 跑 ①「点箱子 → 闪避打断 �
 **改完必跑的三件套**：
 
 1. **两座位闭环**：`assets/net/__tests__/two-seat-parity.test.ts` 的写法 —— 两个独立
-   `GameState` + 真帧钟 + **真缺席帧**，各自跑 `step()`，断言
+   `GameState` + 真帧钟 + **真缺席帧**，各自跑 `stepAll()`，断言
    `hashGameState(sa, tick) === hashGameState(sb, tick)` 且 `hashGameParts()` 五项全等。
    凡新增「安静帧才结算」的逻辑，**必须新增一条这样的用例**，不能只测点击那一帧。
-   护栏要能证伪：把旧 `collectInputs` 贴回去，新用例必须变红。
+   护栏要能证伪：删掉 `assembleInputs` 的全体兜底，装配用例必须立刻变红
+   （2026-11-22 实测）。各层护栏的分工见下节。
    **已接进 `scripts/verify.sh`（2026-11-22）**：改 `assets/combat/*.ts` 或显式跑
    `verify.sh combat` 会自动执行这份用例；改 `assets/net/*` 走全量 `verify-all.sh`
    （`forgeax project test` 覆盖全部单测）。**不靠人记得** —— 此前增量验收只有
@@ -222,20 +225,43 @@ A / B 两个座位拿同一张输入 Map 跑 ①「点箱子 → 闪避打断 �
 `HOLD_MS=180000`）的 `mismatches === 0`。三件套全绿**不等于**真机不分叉；跑不了就要在
 交付里明确写「真机双人未验」，不许拿单测当同步证据。
 
-### 已知敞口（2026-11-22 未收，动这几处前先回读本节）
+### 已收口结构（2026-11-22 二次重构，用户拍板「仅限于网络层」）
 
-- `game.pack.ts::advanceNet` 仍按 `netPlayerId` 拆包（本机走 `input` 参数、远端走
-  `remoteInputs`），`collectInputs` 首句 `inputs.set(s.player.id, …)` 仍是本机特供入口。
-  **当前行为对称**：`EMPTY_STEP_INPUT` 与 `toStepInput(emptyInputFrame(tick))` 逐字段相同，
-  全体兜底后两端 `I_all` 一致、两座位闭环实测 hash 相同。但结构上仍是「本机参数 +
-  远端表 + 兜底」拼出来的，不是服务器整表原样进 `F`。彻底收法：`step()` 只接一张
-  完整 `I_all` Map（PVE 由调用方建单元素表）。
-- `scripts/check-local-context.mjs` 的 `DIRS` 只扫 `assets/combat` 与 `assets/net`，
-  **不扫 `assets/game`**（输入装配在那），禁则也没覆盖 `inputs.set(s.player.id, …)`
-  这种形态 —— 2026-11-22 的 bug 正是在守卫全绿时漏过去的。扩守卫时 `s.player`
-  预算要改成分目录计数。
-- 验证通道分工见 `HANDOFF.md`「已知陷阱速查」；58080 静态页没有 PlatformClient，
-  **不是联机验证入口**。
+**输入装配层已经不再知道「我是谁」**：
+
+| 位置 | 现在做什么 |
+|---|---|
+| `game.pack.ts::advanceNet` | 把 `packet.frames` **整张**转成 `StepInput` 交给装配函数，不再按 `netPlayerId` 拆本机 / 远端 |
+| `net/assemble-inputs.ts::assembleInputs()` | 按 `s.players` 全体展开成完整 `I_all`，缺席补 `EMPTY_STEP_INPUT`（一个共享常量，不发包、不分配） |
+| `combat/simulation.ts::stepAll()` | 唯一的世界演算 `F`，只收 `I_all`，对全体玩家各跑一遍；`?? EMPTY` 只是防御调用方漏装配 |
+| `combat/simulation.ts::updateView()` | V 层：hover / 相机，各随本机座位；写在 `stepAll()` 之外 |
+| `combat/simulation.ts::step()` | 单机 / PVE / 单测包装：`s.players = [p0]` → 单元素表 → 同一个 `stepAll`；**纯 PVE 无服务器、逐帧语义不变** |
+
+**边界（用户 2026-11-22 明确）**：只改「输入怎么进 `F`」。**局内外的 V / 会话层
+判断「是不是自己」是合法的，一律保留**：死亡结算退出（`game.pack.ts` 的
+`pvpDead` / `settleOnDeath`）、UI 面板、血条展示、相机、悬停环。它们不进帧、
+不进 hash、不参与 `S` 演化；`attack.ts` 的 PVE 阵亡判定 `p.id === s.player.id`
+与 `state.ts::remotes` 也照旧。守卫对 `assets/game/paint.ts` 整体按 V 层豁免
+`s.camera`，其余禁则在 game 层照常生效。
+
+**护栏分工**（改任一层都要能证伪）：
+
+- `scripts/check-local-context.mjs`：扫 `combat` + `net` + `game`，禁
+  `remoteInputs` / `collectInputs` / 「按 `netPlayerId` 拆帧表」/「本机特供输入入口」；
+  `s.player` 按目录分预算（113 / 0 / 34，只许降）。
+- `two-seat-parity.test.ts` 的**装配用例**：直接断言 `assembleInputs` 输出锚定
+  `s.players`（名单顺序与本机身份都不影响表、缺席项就是同一个 `EMPTY_STEP_INPUT`、
+  空帧来源唯一）。实测删掉兜底循环，这条立刻变红。
+- `two-seat-parity.test.ts` 的**两座位闭环**：真帧钟 + 真缺席帧，两端各跑 `stepAll`，
+  断言全状态 hash 相同 —— 守的是「整条生产链路不分叉」。
+- 终判据仍是 `scripts/verify-two-player-net.mjs` + `HOLD_MS=180000` 的
+  `mismatches === 0`；三件套全绿不等于真机不分叉。
+
+**仍存在的敞口**：`stepAll()` 里的 `?? EMPTY_STEP_INPUT` 是防御性兜底，意味着
+「装配层漏补空」不会让两座位闭环变红 —— 由装配用例与静态守卫负责抓。别把
+`?? EMPTY` 当成可以随便传稀疏表的许可：`F` 的契约仍是「只收完整表」。
+验证通道分工见 `HANDOFF.md`「已知陷阱速查」；58080 静态页没有 PlatformClient，
+**不是联机验证入口**。
 
 ## 2. “一致”的准确定义
 

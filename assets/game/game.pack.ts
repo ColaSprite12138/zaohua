@@ -26,6 +26,7 @@ import { createPrimitiveMesh } from '@forgeax/engine/geometry';
 
 import {
   createModifiers, createState, deployRun, projection, reset, setArena, step,
+  stepAll, updateView, EMPTY_STEP_INPUT,
   MINIMAP, VIEW_H, VIEW_W, screenToWorld, worldToScreen,
   syncWeaponSlots, applyRunCommand, snapshotRun, makeRunInventory,
   type Deployment, type RunLoadout, type RunCommand,
@@ -43,9 +44,10 @@ import {
   addTime, clearDebt, createStepClock, forceStep, seekClock, setRate, takeStep,
 } from '../net/step-clock.ts';
 import {
-  NO_SKILL, NO_SWITCH, decodePacket, emptyInputFrame, encodeBatch,
+  NO_SKILL, NO_SWITCH, decodePacket, encodeBatch,
   toStepInput, type InputFrame,
 } from '../net/input-frame.ts';
+import { assembleInputs } from '../net/assemble-inputs.ts';
 import {
   capture as captureInput, createInputLatch, take as takeLatched,
   type RawInput,
@@ -768,8 +770,9 @@ export const game: Plugin = {
     }
 
     /**
-     * 单机推进：采一格走一格。与改造前的行为等价，唯一的差别是 `dt` 固定成
-     * 1/60 —— 这让同一份操作在任何帧率下跑出同一串位置，验收脚本才有意义。
+     * 单机推进：采一格走一格，**没有服务器**。`dt` 由 `stepClock` 给出
+     * （`SOLO_HZ = NET_HZ = 24`，与联机共用一套行为基线），这让同一份操作在任何
+     * 渲染帧率下跑出同一串位置，验收脚本才有意义。
      */
     function advanceSolo(delta: number): void {
       addTime(stepClock, delta);
@@ -854,23 +857,21 @@ export const game: Plugin = {
         if (!packet) break;
         if (catchUp) forceStep(stepClock);
         else takeStep(stepClock);
-        const remoteInputs = new Map<string, ReturnType<typeof toStepInput>>();
-        for (const [peerId, frame] of packet.frames) {
-          if (peerId === netPlayerId) continue;
-          remoteInputs.set(peerId, toStepInput(frame));
-        }
-        // **本机输入也来自这一帧广播**：没有预表现，玩家按下到生效要等一个回程。
+        // 服务器贴定的这一帧**原样**转成 `StepInput`，再按全体名单展开成完整
+        // `I_all`。这里没有「本机 / 远端」之分：旧实现按 `netPlayerId` 拆成
+        // `input` + `remoteInputs` 两张表，`step()` 里又只给本机垫空帧，两端各自
+        // 只保证本机座位被模拟 —— 2026-11-22 PVP 分叉的根因。
+        // **本机输入也来自这一帧广播**：没有预表现，玩家按下到生效要等一个回程，
         // 这是「不做预表现 + 不拥有自己的帧」的必然代价（`docs/net-sync-v2.md` §4）。
-        const localFrame = packet.frames.get(netPlayerId);
-        if (!localFrame) netStat.localMiss += 1;
+        const stamped = new Map<string, ReturnType<typeof toStepInput>>();
+        for (const [peerId, frame] of packet.frames) stamped.set(peerId, toStepInput(frame));
+        const inputs = assembleInputs(stamped, state.players, EMPTY_STEP_INPUT);
+        if (!packet.frames.has(state.me)) netStat.localMiss += 1;
         capturePrevPositions();
-        step(
-          state,
-          stepClock.dt,
-          localFrame ? toStepInput(localFrame) : toStepInput(emptyInputFrame(packet.tick)),
-          modifiers,
-          remoteInputs,
-        );
+        stepAll(state, stepClock.dt, inputs, modifiers);
+        // view-only: 本机鼠标只用于悬停环 / 相机，与死亡结算、UI 面板、血条一样
+        // 属于 V 层，各随本机座位；不进帧、不进 hash、不参与世界演算。
+        updateView(state, inputs.get(state.me) ?? EMPTY_STEP_INPUT);
         reportHash(packet.tick);
         netStat.ticks += 1;
         steps += 1;

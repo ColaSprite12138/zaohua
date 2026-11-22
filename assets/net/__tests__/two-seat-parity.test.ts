@@ -1,22 +1,25 @@
 /**
- * 两座位闭环回归：一台帧钟服务器 + 两个各自跑 `step()` 的客户端。
+ * 两座位闭环回归：一台帧钟服务器 + 两个各自跑 `stepAll()` 的客户端。
  *
  * 复现的线上故障（2026-11-22 用户报的 PVP 不同步）：
  *   「A 砸箱子，A 砸开了 B 一直砸不开；A 砍骷髅，A 掉血 B 不掉血。」
  *
- * 根因在 `simulation.ts::collectInputs`：v2 的 `I_all(t)` 由服务器贴定，
- * 「这一帧某人不在表里」= 他没操作；本机玩家有兜底空帧，远端玩家却整帧
- * `continue`。于是 A 安静下来之后的那些帧（站着砸箱、等普攻冷却、走最后几步）
- * 只在 A 端推进，B 端完全没算 —— 两端跑同一份源码却得到两份不同的世界。
+ * 根因在旧的**输入装配层**：`advanceNet` 按 `netPlayerId` 把服务器帧表拆成
+ * 「本机 input + 远端表」，`simulation.ts::collectInputs` 又只给本机垫空帧。
+ * v2 里「这一帧某人不在表里」= 他没操作，本该对所有人按空输入推进；旧实现却让
+ * 远端安静帧整帧 `continue`。于是 A 站着砸箱 / 等普攻冷却 / 走最后几步的那些
+ * 帧只在 A 端推进 —— 两端跑同一份源码却得到两份不同的世界。
  *
- * 为什么必须手写这条链路：单进程单玩家永远发现不了这种「本机 / 远端不对等」，
+ * 现在生产与测试共用 `net/assemble-inputs.ts::assembleInputs()`：整张帧表按
+ * `s.players` 展开成完整 `I_all`，`stepAll()` 只认这张表，不认识本机身份。
+ * 为什么必须手写这条链路：单进程单玩家永远发现不了「本机 / 远端不对等」，
  * 也只有真帧钟 + 真缺席帧才能覆盖 `intent-filter.ts`「没有操作就不发包」的形态。
  */
 import { describe, expect, it } from 'vitest';
 import { arena } from '../../resource/maps/arena.generated.ts';
 import {
-  createModifiers, createState, deployRun, setArena, step,
-  type GameState, type StepInput,
+  createModifiers, createState, deployRun, setArena, stepAll, updateView,
+  EMPTY_STEP_INPUT, type GameState, type StepInput,
 } from '../../combat/simulation.ts';
 import { createRemotePlayer } from '../../combat/players.ts';
 import { SMASH_RANGE, nextDropUid, nextZoneUid } from '../../combat/state.ts';
@@ -24,6 +27,7 @@ import { hashGameState } from '../../net/state-hash.ts';
 import { NET_HZ } from '../../net/step-clock.ts';
 import { advanceFrame, createFrameLog, submitIntent } from '../../net/frame-log.ts';
 import { emptyInputFrame, toStepInput, type InputFrame } from '../../net/input-frame.ts';
+import { assembleInputs } from '../../net/assemble-inputs.ts';
 import {
   accept, canStep, createSyncDriver, take, type SyncDriver,
 } from '../../net/sync-driver.ts';
@@ -89,20 +93,14 @@ function runTicks(
       while (canStep(s.driver)) {
         const packet = take(s.driver);
         if (!packet) break;
-        const remote = new Map<string, StepInput>();
-        for (const [pid, frame] of packet.frames) {
-          if (pid === s.id) continue;
-          remote.set(pid, toStepInput(frame));
-        }
-        // 和 `game.pack.ts::advanceNet` 一模一样：本机缺席时垫一条空帧。
-        const local = packet.frames.get(s.id);
-        step(
-          s.state,
-          DT,
-          local ? toStepInput(local) : toStepInput(emptyInputFrame(packet.tick)),
-          createModifiers([]),
-          remote,
-        );
+        // 与 `game.pack.ts::advanceNet` 完全同一条装配路径：整张帧表 →
+        // assembleInputs → stepAll。测试不再自己复刻「本机 / 远端」拆包。
+        const stamped = new Map<string, StepInput>();
+        for (const [pid, frame] of packet.frames) stamped.set(pid, toStepInput(frame));
+        const inputs = assembleInputs(stamped, s.state.players, EMPTY_STEP_INPUT);
+        stepAll(s.state, DT, inputs, createModifiers([]));
+        // view-only: 悬停环 / 相机是 V 层，各随本机座位，不进世界演算。
+        updateView(s.state, inputs.get(s.state.me) ?? EMPTY_STEP_INPUT);
       }
     }
     onTick?.(tick);
@@ -128,6 +126,26 @@ function clicks(at: Spot, ...starts: number[]): (tick: number) => { id: string; 
 function expectSameWorld(a: Seat, b: Seat): void {
   expect(hashGameState(b.state, TICKS)).toBe(hashGameState(a.state, TICKS));
 }
+
+describe('输入装配层：一张完整表，不认识本机', () => {
+  it('本机缺席补的空帧与远端兜底的空帧是同一个值', () => {
+    // 旧结构有两处空帧来源：`emptyInputFrame(tick)` 给本机、`EMPTY_STEP_INPUT`
+    // 给远端。只要两者差一个字段，两端就会算出不同的世界。现在只剩一个常量。
+    expect(EMPTY_STEP_INPUT).toEqual(toStepInput(emptyInputFrame(123)));
+  });
+
+  it('缺席者按 S.players 补空，名单顺序与「谁是本机」都不影响表', () => {
+    const frame = frameAt({ pointerDown: true, mouse: { x: 100, y: 200 } });
+    const stamped = new Map<string, StepInput>([[A, toStepInput(frame)]]);
+    const one = assembleInputs(stamped, [{ id: A }, { id: B }], EMPTY_STEP_INPUT);
+    const two = assembleInputs(stamped, [{ id: B }, { id: A }], EMPTY_STEP_INPUT);
+    expect([...one.keys()].sort()).toEqual([A, B].sort());
+    expect(one.get(A)).toEqual(toStepInput(frame));
+    expect(one.get(B)).toBe(EMPTY_STEP_INPUT);
+    for (const [id, value] of one) expect(two.get(id)).toBe(value);
+    expect(two.size).toBe(one.size);
+  });
+});
 
 describe('两座位：A 的操作必须在 B 的世界里生效', () => {
   it('A 站着砸箱子：两端同一帧砸开，掉落的 uid 也必须一致', () => {
