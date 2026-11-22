@@ -258,7 +258,7 @@ export function damageSkeleton(
       poolId: loot.poolId,
     });
     s.drops.push({
-      uid: nextDropUid(),
+      uid: nextDropUid(s),
       x: sk.x, y: sk.y, kind: 'longsword', t: 0,
       itemId: loot.itemId, name: loot.name, quality: loot.quality,
       monsterId: sk.monsterId,

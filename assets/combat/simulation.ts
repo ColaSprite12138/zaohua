@@ -57,12 +57,53 @@ export function activeAmmo(s: GameState): { id: string; count: number } | null {
 }
 
 /**
+ * 「这一帧什么都没按」。服务器贴定的帧里缺席者就是这一份 —— 见 `collectInputs`。
+ */
+const EMPTY_STEP_INPUT: StepInput = {
+  mouse: undefined,
+  pointerDown: false,
+  pointerHeld: false,
+  pointerUp: false,
+  dodge: false,
+  switchWeapon: null,
+  skill: null,
+  potion: false,
+  healPotion: false,
+  extractChannel: false,
+  pointerOnHud: false,
+};
+
+/**
  * 本机帧与远端帧合进**同一张** `Map<id, StepInput>`。
  *
  * 规则代码只按 id 取输入，不再有 `isMe ? input : remoteInputs.get(...)` 这种
- * 分支。联机宿主直接传整张 Map（`game.pack.ts::advanceLockstep`）；PVE 与
+ * 分支。联机宿主直接传整张 Map（`game.pack.ts::advanceNet`）；PVE 与
  * 单测传单个 `input`，在这里按本机玩家实体的 id 装进 Map。key 用实体 id
  * 而不是 `s.me`，判定层就不必知道自己是谁。
+ *
+ * ## 缺席 = 空输入，且**对所有人一样**（2026-11-22 修的分叉根因）
+ *
+ * v2 的 `I_all(t)` 由服务器贴定（`frame-log.ts::advanceFrame`：从每人 FIFO 取
+ * 一条，取不到就不写进那一帧），客户端只执行已经收到的连续帧。所以
+ * 「这一帧某人不在表里」是一个**已定稿的事实**：他这一帧没操作，
+ * 不是「他的帧还在路上」。
+ *
+ * 旧实现只给本机玩家垫了空帧（`advanceNet` 里 `localFrame ? ... : empty`），
+ * 远端玩家却整帧 `continue`。于是同一段源码在两端算出两份不同的过去：
+ *
+ * - A 站着不动砸箱子 / 等普攻冷却 / 追一个刚进射程的怪：这些帧 A 一个意图都
+ *   不发（`intent-filter.ts`：没有操作就不发），
+ * - A 端：A 的空输入 → `updateDestructibles` 推进 `smash.t` → 箱子砸开；
+ * - B 端：A 整帧被跳过 → 进度永远停在点击那一帧，箱子永远砸不开，
+ *   普攻冷却好了也不出手、骷髅不掉血（用户 2026-11-22 报的 PVP 不同步）。
+ *
+ * 所以这里对**全体玩家**兜底：表里没有他就按空输入推进。只要 `step()` 真的
+ * 被调用，那一帧的输入集合就是完整且两端一致的。
+ *
+ * （`.forgeax/diag/idle-fill.test.ts` 当初证明「填充 = 永久分叉」的是 v1 模型：
+ * 那一版的帧可能只是**迟到**，填空等于替对方编了一段没发生过的过去。v2 把
+ * 帧号与贴帧权收归服务器之后，迟到由 `sync-driver` 挡住、根本不进 `step()`，
+ * 这条结论不再适用。）
  */
 function collectInputs(
   s: GameState,
@@ -73,6 +114,11 @@ function collectInputs(
   inputs.set(s.player.id, input);
   if (remoteInputs !== undefined) {
     for (const [id, frame] of remoteInputs) inputs.set(id, frame);
+  }
+  // 名单里没交意图的人按空输入推进。**必须是 `s.players` 而不是「收到过谁」**：
+  // 两端名单相同，兜底出来的输入集合才相同。
+  for (const p of s.players) {
+    if (!inputs.has(p.id)) inputs.set(p.id, EMPTY_STEP_INPUT);
   }
   return inputs;
 }
@@ -156,9 +202,9 @@ function updatePlayer(
 /**
  * 一个玩家的这一帧输入。
  *
- * `remoteInputs` 里没有的玩家这一帧**不动**——不是「按空输入推进」。
- * 填空输入会让两端各算一份不同的过去（见 docs/net-sync-design.md §6 与
- * `.forgeax/diag/idle-fill.test.ts` 的实测：一次填充 = 永久分叉）。
+ * 表里没有的玩家 = 这一帧按空输入推进（`collectInputs` 兜底），**不是跳过整帧**。
+ * 跳过会让「本机垫空帧、远端被跳过」变成两套规则 —— 2026-11-22 PVP 不同步的
+ * 根因就是它（见 `collectInputs` 的注释）。
  */
 export type PlayerInputs = ReadonlyMap<string, StepInput>;
 
@@ -200,9 +246,10 @@ export function step(
   for (const p of sortedPlayers(s)) {
     // 倒下的人不再行动：远端玩家阵亡后不该继续挥刀 / 走位。
     if (p.hp <= 0) continue;
-    const pi = inputs.get(p.id);
-    // 没有他的输入 = 他这一帧还没到，**不许替他决定**（空输入填充会永久分叉）。
-    if (pi === undefined) continue;
+    // `collectInputs` 已保证名单里每个人都有输入（缺席 = 空输入），
+    // 所以这里不需要再判 undefined —— 两端也不会因为「一端垫了空帧、
+    // 另一端跳过」而各算一份不同的过去。
+    const pi = inputs.get(p.id) ?? EMPTY_STEP_INPUT;
     withPlayer(s, p, () => updatePlayer(s, p, pi, dt, modifiers));
   }
 
@@ -229,8 +276,8 @@ export function step(
   // updateSkeletons 里已经写进各自的 `hurt`）。
   for (const p of sortedPlayers(s)) {
     if (p.hp <= 0) continue;
-    const pi = inputs.get(p.id);
-    if (pi === undefined) continue;
+    // 同上：缺席 = 空输入，不再整帧跳过（读条 / 撤离也必须对全体玩家对称推进）。
+    const pi = inputs.get(p.id) ?? EMPTY_STEP_INPUT;
     withPlayer(s, p, () => {
       updateExtraction(s, dt, pi.extractChannel === true && p.cast === null);
       advanceCast(s, dt, modifiers);
@@ -313,7 +360,9 @@ export function deployRun(s: GameState, config: Deployment = {}): void {
   s.runInventory = makeRunInventory(config.loadout ?? EMPTY_LOADOUT);
   reset(s);
   // 出征是「一张干净的新图」：`reset()` 会保留尸体遗物（R 重开要用），这里才清空。
+  // 清空之后 uid 序号也归零：两端从同一份开局状态出发，第一件掉落必然同名。
   s.drops.length = 0;
+  s.dropSeq = 0;
   spawnDeathDrop(s, config.deathDrop);
   // 乘区在 reset 之后落：reset 会把 hp 拉回 maxHp，而 maxHp 这里才被星图改写。
   applyStarMods(s, createModifiers(config.stars?.nodes ?? []));

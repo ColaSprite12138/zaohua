@@ -892,18 +892,26 @@ export interface LootRecord {
   poolId: number;
 }
 
-let dropUidCounter = 0;
-/** Monotonic across runs so a bag uid never collides with a previous run. */
-export function nextDropUid(): string {
-  dropUidCounter += 1;
-  return `drop-${dropUidCounter}`;
+/**
+ * 掉落 uid 的序号属于 `S`（`GameState.dropSeq`），**不是模块全局**。
+ *
+ * 全局计数器在单机时代只是「跨局不撞号」的便利写法；帧同步里它是个分叉源：
+ * 两台机器开局前玩过的局数不同，计数器就不同，第一件掉落两端会拿到
+ * `drop-1` / `drop-3` —— uid 既进全状态 hash，又是 `pickupTarget` 的匹配键，
+ * 于是「A 点得到的那件东西，B 那端根本不存在」。
+ *
+ * 现在和 `projectileSeq` 一样挂在 state 上，`reset()` 每局归零，两端只要跑
+ * 同一串帧就必然得到同一个 uid。
+ */
+export function nextDropUid(s: GameState): string {
+  s.dropSeq += 1;
+  return `drop-${s.dropSeq}`;
 }
 
-let zoneUidCounter = 0;
-/** 区域的稳定 id：只用于绘制 / 单测定位，不参与规则。 */
-export function nextZoneUid(): number {
-  zoneUidCounter += 1;
-  return zoneUidCounter;
+/** 区域的稳定 id：和掉落 uid 同理，序号属于 `S`，每局归零。 */
+export function nextZoneUid(s: GameState): number {
+  s.zoneSeq += 1;
+  return s.zoneSeq;
 }
 
 export interface Player {
@@ -1170,6 +1178,12 @@ export interface GameState {
   projectiles: Projectile[];
   /** 弹道自增序号：id 稳定且不跨局重复（投影与单测据此定位一支箭）。 */
   projectileSeq: number;
+  /** 掉落 uid 序号：和 projectileSeq 一样属于 S，每局归零（见 `nextDropUid`）。 */
+  dropSeq: number;
+  /** 地面区域 uid 序号（属于 S，每局归零）。 */
+  zoneSeq: number;
+  /** 事件刷出的可破坏物 uid 序号（属于 S，每局归零）。 */
+  eventSeq: number;
   /** 弹道统计：**只做观测**，不参与任何规则（验收脚本靠它断言「撞墙了 / 打空了」）。 */
   projectileStats: ProjectileStats;
   /* ---------------------------------------------------- 单局骨架（搜打撤） */
@@ -1326,6 +1340,9 @@ export function createState(config: RunConfig = {}): GameState {
     reactions: [],
     projectiles: [],
     projectileSeq: 0,
+    dropSeq: 0,
+    zoneSeq: 0,
+    eventSeq: 0,
     projectileStats: zeroProjectileStats(),
     runKind: 'story',
     runSeconds: RUN_SECONDS,
@@ -1420,6 +1437,17 @@ export function reset(s: GameState): void {
   // 在飞的弹道也是「本局」资源：重开一局不该有上一局的箭还在天上飞。
   s.projectiles.length = 0;
   s.projectileSeq = 0;
+  // 掉落 uid 每局重新数：两端只要开局状态一致，就必然拿到同一串 uid。
+  // 但要给「上一局遗留的尸体遗物」留出空间 —— `reset()` 只保留那几件，
+  // uid 不能和新掉落撞号。`deployRun()` 清空全部掉落后会再归零一次。
+  s.dropSeq = 0;
+  for (const drop of s.drops) {
+    const n = Number(drop.uid.slice('drop-'.length));
+    if (Number.isFinite(n) && n > s.dropSeq) s.dropSeq = n;
+  }
+  // 区域 / 事件序号同样是 S：一局一清，两端不靠「之前玩过几局」对齐。
+  s.zoneSeq = 0;
+  s.eventSeq = 0;
   s.projectileStats = zeroProjectileStats();
   // 单局骨架：计时归零、门重建（次数是「本局」资源，重开一局就恢复）。
   s.runSeconds = RUN_SECONDS;

@@ -205,7 +205,7 @@ export function spawnZone(
   const status = ZONE_STATUS[element];
   if (status === undefined) return null;
   const zone: Zone = {
-    uid: nextZoneUid(),
+    uid: nextZoneUid(s),
     element,
     status,
     x,

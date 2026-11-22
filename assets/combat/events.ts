@@ -57,8 +57,6 @@ export function runElapsed(s: GameState): number {
   return RUN_SECONDS - s.runSeconds;
 }
 
-let eventUid = 0;
-
 /**
  * 触发一个事件：在事件点刷 `count` 个高价值可破坏物 + 广播。
  *
@@ -84,9 +82,10 @@ function fire(s: GameState, def: EventDef): void {
       base.x + Math.cos(angle) * 28,
       base.y + Math.sin(angle) * 16,
     );
-    eventUid += 1;
+    // 序号挂在 S 上（`eventSeq`），两端跑同一串帧就得到同一个 uid。
+    s.eventSeq += 1;
     s.destructibles.push({
-      uid: `event_${def.id}_${eventUid}`,
+      uid: `event_${def.id}_${s.eventSeq}`,
       kind: def.kind,
       x: spot.x,
       y: spot.y,

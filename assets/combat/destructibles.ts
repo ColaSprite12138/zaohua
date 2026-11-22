@@ -217,7 +217,7 @@ export function breakOpen(s: GameState, obj: DestructibleObj, fromRemote = false
     );
     const damage = rollWeaponDamage(loot.itemId, s.rng);
     s.drops.push({
-      uid: nextDropUid(),
+      uid: nextDropUid(s),
       x: spot.x,
       y: spot.y,
       kind: 'longsword',

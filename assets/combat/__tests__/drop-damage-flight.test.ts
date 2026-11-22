@@ -14,7 +14,7 @@ import {
   makeRng, rollWeaponDamage, weaponRow,
 } from '../loot.ts';
 import {
-  createState, dropFlightPose, dropLabelRect, dropLanded, makeDropFlight, nextDropUid,
+  createState, dropFlightPose, dropLabelRect, dropLanded, makeDropFlight,
   DROP_FLIGHT_HEIGHT, DROP_FLIGHT_SECONDS, DROP_FLIGHT_STAGGER,
   type Drop,
 } from '../state.ts';
@@ -29,8 +29,10 @@ const emptyLoadout = (): RunLoadout => ({
   activeWeaponSlot: 0,
 });
 
+let testDropSeq = 0;
 const mkDrop = (over: Partial<Drop> = {}): Drop => ({
-  uid: nextDropUid(), x: 100, y: 100, kind: 'longsword', t: 0,
+  // 夹具只要求唯一，不需要走 state 的序号（那属于帧同步的 S）。
+  uid: `test-drop-${++testDropSeq}`, x: 100, y: 100, kind: 'longsword', t: 0,
   itemId: '10001', ...over,
 });
 

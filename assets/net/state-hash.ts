@@ -183,7 +183,7 @@ function emitPlayer(h: Hasher, p: unknown): void {
 const SHARED_KEYS = [
   'runSeed', 'runKind', 'runSeconds', 'phase',
   'gameOver', 'cleared', 'extracted', 'timedOut', 'visionRadius',
-  'projectileSeq', 'projectileStats', 'lootLog', 'skillFx',
+  'projectileSeq', 'dropSeq', 'zoneSeq', 'eventSeq', 'projectileStats', 'lootLog', 'skillFx',
   'zones', 'reactions', 'projectiles', 'portals', 'events', 'firedEvents',
 ] as const;
 

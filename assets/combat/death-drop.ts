@@ -94,7 +94,7 @@ function placeLeftover(
 ): void {
   const spot = nearestWalkable(s.world, x, y);
   s.drops.push({
-    uid: nextDropUid(),
+    uid: nextDropUid(s),
     x: spot.x,
     y: spot.y,
     kind: 'longsword',
