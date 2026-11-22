@@ -24,6 +24,13 @@ export interface Projectile {
   /** 弹道原型的 id（`projectile.xlsx` 的一行），调用方据此结算伤害 / 元素 / 溅射。 */
   readonly specId: string;
   readonly owner: AttackOwner;
+  /**
+   * 发射者的玩家 id（`owner === 'player'` 时）。
+   *
+   * 弹道命中怪要磨**发射者**的武器，而结算发生在按玩家循环之外；只靠
+   * `s.player` 会磨到各端自己本机那把，两端背包当场分叉。怪发的弹为 null。
+   */
+  readonly ownerId: string | null;
   readonly damage: number;
   x: number;
   y: number;
@@ -101,6 +108,8 @@ export interface ProjectileInit {
   readonly id: string;
   readonly specId: string;
   readonly owner: AttackOwner;
+  /** 发射者玩家 id；怪发弹 / 旧夹具省略时为 null。 */
+  readonly ownerId?: string | null;
   readonly x: number;
   readonly y: number;
   /** 起手角度（弧度）。 */
@@ -119,6 +128,7 @@ export function makeProjectile(init: ProjectileInit): Projectile {
     id: init.id,
     specId: init.specId,
     owner: init.owner,
+    ownerId: init.ownerId ?? null,
     damage: init.damage,
     x: init.x,
     y: init.y,

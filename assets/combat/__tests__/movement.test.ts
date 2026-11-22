@@ -21,7 +21,6 @@ const input = (over: Partial<StepInput> = {}): StepInput => ({
   pointerHeld: false,
   pointerUp: false,
   dodge: false,
-  restart: false,
   ...over,
 });
 

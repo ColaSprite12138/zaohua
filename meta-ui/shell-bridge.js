@@ -290,6 +290,10 @@
     var loadout = M.takeIntoRun(lobby);
     host.setState(lobby);
     inRun = true;
+    // 开新局必须收掉上一局可能残留的个人阵亡面板。
+    pendingPvpResult = null;
+    var newRunPanel = $('pvp-defeat');
+    if (newRunPanel) newRunPanel.hidden = true;
     host.enterRun(loadout);
     showBattle(true);
     // 联机（搜打撤 PVP）的 seed 由撮合服务在配对瞬间生成并随票下发，两端必须同一个值
@@ -333,6 +337,9 @@
       }
     }
     if (channel) channel.postMessage({ type: 'abort' });
+    pendingPvpResult = null;
+    var abortPanel = $('pvp-defeat');
+    if (abortPanel) abortPanel.hidden = true;
     host.leaveRun();
     inRun = false;
     showBattle(false);
@@ -376,7 +383,26 @@
   }
 
   /* ----------------------------- settlement ---------------------------- */
+  /**
+   * 联机 PVP 阵亡是**按玩家独立结算**（用户 2026-11-21 拍板）：当场爆装 →
+   * 5 秒 → 提示「撤离失败」→ 死者点「返回大厅」；本局没结束，其他人照常玩。
+   * 所以这类 result 只先弹面板，把存档结算 / 离开房间推迟到按钮点击那一刻。
+   */
+  var pendingPvpResult = null;
+
   function settle(result) {
+    if (!inRun || !result) return;
+    if (result.pvpDeath) {
+      pendingPvpResult = result;
+      var panel = $('pvp-defeat');
+      if (panel) panel.hidden = false;
+      log('撤离失败 · 装备已散落在原地（其他玩家仍在局内）', true);
+      return;
+    }
+    finishSettle(result);
+  }
+
+  function finishSettle(result) {
     if (!inRun || !result) return;
     var lobby = host.getLobbyState();
     var cleared = result.outcome !== 'gameOver';
@@ -452,6 +478,29 @@
     }
     if (lootNames.length) text += ' · 掉落：' + lootNames.join('、');
     log(text + progressNote);
+  }
+
+  // 「返回大厅」：先真正退出房间，再做存档结算。顺序不能反 —— 房间不撒，
+  // 服务端还会等这个座位的输入帧，其余玩家会被锁步卡死（其他玩家正常进行
+  // 游戏这一条就落空了）。`leaveRoom()` 是 async，这里不阻塞 UI。
+  var defeatBack = $('pvp-defeat-back');
+  if (defeatBack) {
+    defeatBack.addEventListener('click', function () {
+      var result = pendingPvpResult;
+      pendingPvpResult = null;
+      var panel = $('pvp-defeat');
+      if (panel) panel.hidden = true;
+      if (host.matchFlow && typeof host.matchFlow.leave === 'function') {
+        try {
+          Promise.resolve(host.matchFlow.leave()).catch(function (err) {
+            console.warn('[pvp] 离开房间失败', err);
+          });
+        } catch (err) {
+          console.warn('[pvp] 离开房间抛错', err);
+        }
+      }
+      if (result) finishSettle(result);
+    });
   }
 
   // 平台存档读完遗物槽之后要刷新顶栏提示（platform-store.js 调用）。

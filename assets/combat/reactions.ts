@@ -334,6 +334,6 @@ function hurtPlayer(
     color,
     source,
     invuln: false,     // DOT 不吃无敌帧：站在火里翻滚不该免疫灼烧
-    deathText: '你被持续伤害击倒了 · 按 R 重新开始',
+    deathText: '你被持续伤害击倒了',
   }, target);
 }

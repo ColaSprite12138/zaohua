@@ -211,21 +211,31 @@ export function skillReady(s: GameState, slot: SkillSlot): boolean {
 }
 
 /**
- * 冷却与药效每帧推进。冷却在 `reset()` 之外**只能**由这里递减。
+ * **按玩家**的冷却 / 药效 / 施法姿态推进。冷却在 `reset()` 之外只能由这里递减。
+ *
+ * 调用方必须用 `withPlayer()` 把迭代上下文钉在当前玩家上：这里读的
+ * `s.skillBar` / `s.mana` / `s.player.castPose` 全是 `s.player` 的代理字段。
+ * 全体玩家按 id 排序各跑一次，两端逐位相同。
+ *
+ * 共享的技能特效寿命**不在这里**（见 `tickSkillFx`）：它若按玩家数递减 N 次，
+ * 两端人数不同时特效消失时刻就会分叉。
  */
 export function tickSkills(s: GameState, dt: number): void {
   for (const slot of s.skillBar) {
     slot.cooldown = Math.max(0, slot.cooldown - dt);
   }
-  // 技能特效与施法姿态走同一条时间轴（绘制层只读，不自己数秒）。
-  for (const fx of s.skillFx) fx.life -= dt;
-  s.skillFx = s.skillFx.filter((fx) => fx.life > 0);
   s.player.castPose = Math.max(0, s.player.castPose - dt);
   if (s.manaSurge <= 0) return;
   const span = Math.min(dt, s.manaSurge);
   s.manaSurge = Math.max(0, s.manaSurge - span);
   s.mana = Math.min(s.maxMana, s.mana + (POTION_MANA / POTION_SECONDS) * span);
   if (s.mana >= s.maxMana) s.manaSurge = 0;
+}
+
+/** 共享的技能特效寿命：每帧全局只递减一次，绘制层只读、不自己数秒。 */
+export function tickSkillFx(s: GameState, dt: number): void {
+  for (const fx of s.skillFx) fx.life -= dt;
+  s.skillFx = s.skillFx.filter((fx) => fx.life > 0);
 }
 
 /**
@@ -377,7 +387,8 @@ function hit(
   const source = playerSource(def.id, def.name);
   damageSkeleton(s, index, damage, { ...options, source });
   // 技能也磨损武器（7.4：三类武器都有耐久，造成为主、速率低）。落空不算。
-  if (aliveBefore) wearWeapon(s, damage);
+  // 技能结算在 `withPlayer()` 上下文里，`s.player` 就是这一发的施法者。
+  if (aliveBefore) wearWeapon(s, damage, 0, s.player);
   const sk = s.skeletons[index];
   if (sk === undefined || !sk.alive) return;
   if (def.status !== undefined) applyStatus(sk, def.status, { source });
@@ -651,6 +662,7 @@ function missile(
   p.castPose = Math.max(p.castPose, 0.24);
   fireProjectile(s, {
     owner: 'player',
+    ownerId: p.id,
     projectileId: def.projectile,
     damage,
     from: { x: p.x, y: p.y },

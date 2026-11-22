@@ -113,6 +113,7 @@ export function fireRangedAt(
   s.attacks += 1;
   fireProjectile(s, {
     owner: 'player',
+    ownerId: p.id,
     projectileId: spec.projectileId ?? ARROW_ID,
     damage,
     from: { x: p.x, y: p.y },

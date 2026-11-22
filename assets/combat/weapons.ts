@@ -3,7 +3,7 @@
 import { burst, say } from './effects.ts';
 import { itemDef } from '../meta/inventory.ts';
 import { collectDrop, ensureItemCatalog } from './run-inventory.ts';
-import { sortedPlayers } from './players.ts';
+import { sortedPlayers, withPlayer } from './players.ts';
 import {
   activeWeapon, dropLabelAnchor, dropLanded, dropQualityRank, syncWeaponSlots,
   DROP_LABEL_MAX, DROP_LABEL_STEP, DROP_PILE_GAP, type Drop, type GameState,
@@ -57,31 +57,36 @@ export function updateDrops(s: GameState, dt: number): void {
     if (!dropLanded(drop)) continue;
     if (Math.sqrt((drop.x - p.x) * (drop.x - p.x) + (drop.y - p.y) * (drop.y - p.y)) >= 50) continue;
 
-    const mine = p.id === s.me;
-    const label = drop.name ? `「${drop.name}」` : '长剑';
-    const itemId = drop.itemId ?? 'longsword';
-    // 背包是「我」的私有资源：远端玩家拿走的东西我只看得到它从地上消失，
-    // 不写我的 runInventory（他的背包在他那台机器上）。
-    const picked = mine
-      ? collectDrop(s.runInventory, drop.uid, itemId, drop.durability, drop.affixes, drop.damage)
-      : null;
-    // Clear the order even on failure so the toast is not re-emitted every frame.
-    p.intent.pickupTarget = null;
-    if (picked !== null && picked.where === 'full') {
-      say(s, `背包已满 · ${label} 留在地上`);
-      continue;
-    }
+    /**
+     * 每台机器都持有**全体玩家**的背包副本（P3 实体化），所以「背包满」必须
+     * 对每个玩家判，不能只对 `p.id === s.me` 判。以前远端拾取直接把东西从
+     * 共享 `drops` 删掉、不检查背包，A 满包留在地上的东西在 B 端却消失了 ——
+     * 这就是「同一个掉落两端在不在地上不一样」的分叉源。
+     * `withPlayer()` 让 `syncWeaponSlots()` / `s.carriedItems` 等代理字段
+     * 落在当前玩家身上，两端逐位相同。
+     */
+    withPlayer(s, p, () => {
+      const label = drop.name ? `「${drop.name}」` : '长剑';
+      const itemId = drop.itemId ?? 'longsword';
+      const picked = collectDrop(
+        p.runInventory, drop.uid, itemId, drop.durability, drop.affixes, drop.damage,
+      );
+      // Clear the order even on failure so the toast is not re-emitted every frame.
+      p.intent.pickupTarget = null;
+      if (picked.where === 'full') {
+        say(s, `背包已满 · ${label} 留在地上`);
+        return;
+      }
 
-    s.drops.splice(index, 1);
-    if (picked !== null) {
-      s.carriedItems.push(itemId);
+      s.drops.splice(index, 1);
+      p.carriedItems.push(itemId);
       syncWeaponSlots(s);
       if (picked.where === 'weapon') {
         say(s, `已拾取 ${label} · 装备到武器槽 ${(picked.slot ?? 0) + 1} · 按 1 / 2 切换`);
       } else {
         say(s, `已拾取 ${label} · 放入背包（占用 2×3 格）`);
       }
-    }
+    });
     burst(s, p.x, p.y - 30, '#ffd166', 20, 175);
   }
 }

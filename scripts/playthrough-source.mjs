@@ -11,6 +11,7 @@
 // 走默认夹具（story + 2 只剑士），没有为测试开旁路。
 
 import assert from 'node:assert/strict';
+import { fixtureReset } from './lib/fixture-reset.mjs';
 
 const VIEW_W = 1280;
 const VIEW_H = 720;
@@ -22,7 +23,7 @@ const LOGICAL = (a, b) => Math.hypot((a.x - b.x) * VIEW_W, (a.y - b.y) * VIEW_H)
 /** @param {import('@forgeax/engine/devkit').PlayContext} play */
 export default async function source(play) {
   await play.step('standing in your own fire wall costs nothing', async () => {
-    await play.keyboard.press('KeyR');
+    await fixtureReset(play);
     await play.wait(150);
     const before = await play.state('game.state');
     const hp0 = before.hp;
@@ -68,7 +69,7 @@ export default async function source(play) {
   await play.step('the same wall still burns a skeleton — the rule is by side', async () => {
     // 重开一局把火墙的冷却与法力清干净（上一步刚放过一次），否则这一发会被
     // `beginSkill` 以 `cooling` / `mana` 免费拒绝 —— 那是设计，不是 bug。
-    await play.keyboard.press('KeyR');
+    await fixtureReset(play);
     await play.wait(150);
 
     // 等一只怪自己走进火墙射程（夹具里的剑士会追过来）。这条证明「敌方地火照常生效」，

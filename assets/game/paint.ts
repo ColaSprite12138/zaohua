@@ -2415,6 +2415,11 @@ export function paint(
   pointer?: { x: number; y: number },
   // 帧时长（秒）：只有迷雾的淡入淡出读它。缺省按 60fps —— 单测 / 截图不传也能动。
   dt = 1 / 60,
+  /**
+   * **纯本地视图状态**（`V` 层，各随本机座位）：不属于 `GameState` / `S`，
+   * 不进帧、不进对账。大地图只是一层模态查看覆盖层，按 M 只影响本机画面。
+   */
+  view?: { readonly bigMap: boolean },
 ): void {
   prepareScene(g);
   loadAtlas();
@@ -2507,9 +2512,9 @@ export function paint(
   // 战争迷雾：视野之外压暗（地形仍可见），实体已在上面的 `sees()` 里剔掉。
   // **大地图打开时不画** —— 看地图就是把"手上的图"摊开，那是唯一能看到全图
   // 地形的时候（设计 11）。
-  if (!s.bigMap) drawFog(g, s, dt);
+  if (!view?.bigMap) drawFog(g, s, dt);
   hud(g, s, pointer);
   drawMinimap(g, s);
   // 大地图**盖在最上层**（包括 HUD 与小地图）：它是模态查看层。
-  if (s.bigMap) drawBigMap(g, s);
+  if (view?.bigMap) drawBigMap(g, s);
 }

@@ -117,6 +117,11 @@ export function projectileProfile(id: string): ProjectileProfile {
 
 export interface FireOptions {
   readonly owner: AttackOwner;
+  /**
+   * 发射者玩家 id。省略时按 `s.player.id` 取 —— 所有发射点都在 `withPlayer()`
+   * 上下文里，两端对同一个玩家算出同一个 id。命中结算要用它找武器主人。
+   */
+  readonly ownerId?: string;
   readonly projectileId: string;
   readonly damage: number;
   /** 出手点（脚底世界坐标；函数内部抬到躯干高度）。 */
@@ -177,6 +182,7 @@ export function fireProjectile(s: GameState, options: FireOptions): Projectile |
     id: `shot-${s.projectileSeq}`,
     specId: profile.id,
     owner: options.owner,
+    ownerId: options.owner === 'player' ? (options.ownerId ?? s.player.id) : null,
     x: from.x,
     y: from.y,
     angle,
@@ -254,15 +260,19 @@ function resolveHit(s: GameState, hit: ProjectileHit): void {
   } else {
     // 无敌帧（闪避 / 受击硬直）在这里生效：翻滚躲开一支箭是设计允许的答案。
     const src = sourceOf(hit.projectile, profile);
-    const target = playerById(s, hit.target.id) ?? s.player;
-    const hpBefore = target.hp;
-    damagePlayer(s, damage, { color: '#ff6b6b', source: src }, target);
-    s.projectileStats.playerHits += 1;
-    // 弹道自带的状态（`projectile.xlsx::status`，例如禁魔弹 / 石化凝视）：
-    // 扣到血才挂，翻滚躲开的那一发不该留下 debuff。玩家侧没有元素反应链，
-    // 所以这里**只上状态**，不调 `applyElement`（那是给怪挂附着用的）。
-    if (profile.status !== null && target.hp < hpBefore && target.hp > 0) {
-      applyStatus(target, profile.status, { source: src });
+    // 目标离场 / 找不到就**不结算**，绝不 `?? s.player` 兜底：那会把伤害
+    // 落到各端自己的本机玩家身上，两端算出的世界状态立刻分叉。
+    const target = playerById(s, hit.target.id);
+    if (target !== null) {
+      const hpBefore = target.hp;
+      damagePlayer(s, damage, { color: '#ff6b6b', source: src }, target);
+      s.projectileStats.playerHits += 1;
+      // 弹道自带的状态（`projectile.xlsx::status`，例如禁魔弹 / 石化凝视）：
+      // 扣到血才挂，翻滚躲开的那一发不该留下 debuff。玩家侧没有元素反应链，
+      // 所以这里**只上状态**，不调 `applyElement`（那是给怪挂附着用的）。
+      if (profile.status !== null && target.hp < hpBefore && target.hp > 0) {
+        applyStatus(target, profile.status, { source: src });
+      }
     }
   }
   explode(s, profile, hit.projectile, hit.x, hit.y, hit.target.kind === 'monster' ? monsterIndexOf(hit.target.id) : null);
@@ -316,7 +326,12 @@ function damageMonster(
     source: src,
   });
   // 造成伤害才磨武器（设计 7.4）：打空只丢一支箭，不额外扣耐久。
-  if (aliveBefore && source.owner === 'player') wearWeapon(s, damage);
+  // 磨的是**发射者**那把：结算发生在按玩家循环之外，读 `s.player` 会磨到
+  // 各端本机玩家的武器，两端背包当场分叉。找不到主人（已离场）就不磨。
+  if (aliveBefore && source.ownerId !== null) {
+    const owner = playerById(s, source.ownerId);
+    if (owner !== null) wearWeapon(s, damage, 0, owner);
+  }
   const after = s.skeletons[index];
   if (after === undefined || !after.alive) return;
   if (profile.status !== null) applyStatus(after, profile.status, { source: src });

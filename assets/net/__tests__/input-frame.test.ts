@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AUX_BIG_MAP, INPUT_FRAME_BYTES, NO_SKILL, NO_SWITCH, PACKET_BATCH,
+  AUX_HAS_MOUSE, AUX_POINTER_ON_HUD, INPUT_FRAME_BYTES,
+  NO_SKILL, NO_SWITCH, PACKET_BATCH,
   decodeInputFrame, decodePacket, emptyInputFrame, encodeBatch, encodeInputFrame,
   toStepInput, type InputFrame,
 } from '../input-frame.ts';
@@ -38,12 +39,10 @@ describe('输入帧编解码', () => {
       potion: true,
       healPotion: false,
       extractChannel: true,
-      restart: true,
       skill: 3,
       switchWeapon: 1,
       mouse: { x: 321.25, y: 118.75 },
       pointerOnHud: true,
-      bigMap: true,
     });
     const back = decodeInputFrame(new Uint8Array(encodeInputFrame(original).buffer));
     expect(back).toEqual(original);
@@ -78,12 +77,16 @@ describe('输入帧编解码', () => {
     expect(back.mouse!.y).toBeCloseTo(-32768 / 4, 5);
   });
 
-  it('奇偶位互不串：只开 bigMap 不会顺带点亮别的标志', () => {
-    const back = decodeInputFrame(new Uint8Array(encodeInputFrame(frame({ bigMap: true })).buffer));
-    expect(back.bigMap).toBe(true);
-    expect(back.pointerDown).toBe(false);
+  it('R 重开 / M 大地图不是帧字段：局外动作与纯本地视图都不进帧', () => {
+    const back = decodeInputFrame(new Uint8Array(
+      encodeInputFrame(frame({ pointerDown: true, pointerOnHud: true })).buffer,
+    ));
+    expect('restart' in back).toBe(false);
+    expect('bigMap' in back).toBe(false);
+    expect(back.pointerDown).toBe(true);
+    expect(back.pointerOnHud).toBe(true);
     expect(back.dodge).toBe(false);
-    expect(back.pointerOnHud).toBe(false);
+    expect(back.extractChannel).toBe(false);
   });
 
   it('批量包能装多帧且顺序不变', () => {
@@ -123,7 +126,8 @@ describe('输入帧编解码', () => {
     expect(idle.mouse).toBeUndefined();
   });
 
-  it('AUX 位掩码值与协议表一致', () => {
-    expect(AUX_BIG_MAP).toBe(4);
+  it('AUX 位掩码值与协议表一致（bit2 预留，不再编码大地图）', () => {
+    expect(AUX_HAS_MOUSE).toBe(1);
+    expect(AUX_POINTER_ON_HUD).toBe(2);
   });
 });

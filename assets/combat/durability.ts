@@ -25,7 +25,7 @@ import { weapon } from '../resource/generated/weapon.ts';
 import type { ItemInstance } from '../meta/inventory.ts';
 import { durabilityCap, durabilityCurrent } from '../meta/inventory.ts';
 import { say } from './effects.ts';
-import type { GameState } from './state.ts';
+import type { GameState, Player } from './state.ts';
 
 const RULE = combat_rule[0];
 const WEAPON_BY_ID = new Map(weapon.map((row) => [String(row.id), row]));
@@ -79,9 +79,19 @@ export function activeWeaponBroken(s: GameState): boolean {
  * 只作用于**当前激活的武器槽**：副手在背包里不磨损（否则玩家要为不用的武器付账）。
  * 没有耐久概念的物品、空手、已经坏了 —— 全部直接返回，不写状态。
  */
-export function wearWeapon(s: GameState, dealt: number, taken = 0): void {
-  const slot = s.activeWeaponSlot;
-  const item = s.runInventory.equipped[slot] ?? null;
+/**
+ * `target` 是**这件武器属于谁**。帧同步下每台机器都持有全体玩家的背包，
+ * 所以「谁挨打」「谁出手」必须显式传那个 `Player`；缺省 `s.player` 只是
+ * PVE 单测的兼容写法（那时 `s.player` 就是唯一玩家）。
+ * 若伤害结算发生在按玩家循环之外（怪物近战 / 弹道 / DOT），不传目标就会
+ * 磨到各端**自己本机**的武器，两端背包当场分叉。
+ */
+export function wearWeapon(
+  s: GameState, dealt: number, taken = 0, target?: Player,
+): void {
+  const p = target ?? s.player;
+  const slot = p.activeWeaponSlot;
+  const item = p.runInventory.equipped[slot] ?? null;
   if (item === null) return;
   const max = durabilityMaxOf(item);
   if (max <= 0) return;
@@ -94,7 +104,7 @@ export function wearWeapon(s: GameState, dealt: number, taken = 0): void {
   const after = Math.max(0, before - loss);
   // 整份实例透传，只覆盖 durability —— 白名单会顺手抹掉词条与生成时掷好的
   // 恒定伤害（damage），那会让「打了一刀以后这把剑突然变回中值伤害」。
-  s.runInventory.equipped[slot] = { ...item, durability: after };
+  p.runInventory.equipped[slot] = { ...item, durability: after };
   if (after <= 0 && before > 0) {
     say(s, '武器损坏 · 伤害回落空手（带回局外可换一把）');
   }

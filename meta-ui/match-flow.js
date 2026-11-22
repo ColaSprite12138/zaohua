@@ -724,6 +724,11 @@
   host.matchFlow = {
     begin: beginMatch,
     cancel: cancelMatch,
+    /**
+     * 联机 PVP 个人阵亡后点「返回大厅」要走这个：只撒自己这个座位，
+     * 不 abort 整局、不撤销别人的票。少调一步服务端就会一直等死者输入帧。
+     */
+    leave: leaveRoom,
     phase: function () { return S.phase; },
     view: function () { return S.ticket; },
     seed: function () { return host.netSeed; },

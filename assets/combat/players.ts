@@ -2,7 +2,8 @@
  * 玩家实体的公共查询（P3 实体化第一块）。
  *
  * 这里只放「对**所有**玩家做的判定」，不放任何第一人称视角的东西 ——
- * 相机、HUD、输入分类读 `s.player`（我就是我），这些读 `s.players`。
+ * 相机、HUD、大地图属于 `V` 层各随本机座位；判定层读的 `s.player` 只是
+ * 「当前按 id 排序迭代的玩家」（见 `withPlayer`），不是「我」。
  *
  * ## 为什么每个函数都强调顺序
  *
@@ -16,6 +17,24 @@ import {
   PLAYER_HP_MAX, PLAYER_MANA_MAX, PRE_EQUIPPED_SKILLS, createSkillBar,
   type GameState, type Player,
 } from './state.ts';
+
+/**
+ * 把 `s.player` 临时绑定成「当前按 id 排序迭代的玩家」。
+ *
+ * 判定层里的 `s.player` **不是「我」**，只是旧 PVE 规则函数共享的迭代上下文：
+ * 所有玩家（含本机）都按 `sortedPlayers()` 的顺序逐字跑同一段代码，绑定与
+ * 恢复完全对称，因此两端演算的是同一份 `F`。本机身份只允许出现在 `V` 层
+ * （相机 / HUD / 大地图 / 输入装配边界）。
+ */
+export function withPlayer(s: GameState, p: Player, fn: () => void): void {
+  const prev = s.player;
+  s.player = p;
+  try {
+    fn();
+  } finally {
+    s.player = prev;
+  }
+}
 
 /** 按 id 排好序的玩家列表。需要遍历时用它，不要直接 for..of `s.players`。 */
 export function sortedPlayers(s: GameState): Player[] {
@@ -137,6 +156,7 @@ export function createRemotePlayer(
     cast: null,
     manaSurge: 0,
     channel: null,
+    deathTimer: -1,
     intent: {
       target: { x: spawn.x + dx, y: spawn.y + dy },
       moveMode: 'idle',

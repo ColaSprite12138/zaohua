@@ -54,7 +54,6 @@ export interface StepInput {
   readonly potion?: boolean;
   /** 按 `Z`：喝红药（回血）。和蓝药同一套「拒绝必须免费」的规则。 */
   readonly healPotion?: boolean;
-  readonly restart: boolean;
   /**
    * E（justPressed）：起手 / 取消传送门引导。按住不算 —— 引导是一次主动决定，
    * 再按一次 E 退出，否则「引导中禁止移动」会把玩家困在门口。
@@ -66,11 +65,6 @@ export interface StepInput {
    * when the pointer is not over the world.
    */
   readonly pointerOnHud?: boolean;
-  /**
-   * M（justPressed）：切换大地图。设计 11「需要大地图查看功能」。
-   * 它是一层**查看**用的覆盖层，不暂停世界 —— 打开时点地面不会走（指针在 HUD 上）。
-   */
-  readonly bigMap?: boolean;
 }
 
 /**
@@ -158,6 +152,15 @@ export const PRE_EQUIPPED_SKILLS: readonly string[] = Object.freeze([
 
 /** 玩家基础生命上限（设计 8.3：只有生命 + 法力两种资源）。星图的 `hp_pct` 乘在这里。 */
 export const PLAYER_HP_MAX = 100;
+
+/**
+ * 联机 PVP 阵亡后的**按玩家**结算倒计时（秒）。
+ *
+ * 用户 2026-11-21 拍板：阵亡当场爆装 → 5 秒 → 提示「撤离失败」→ 死者点
+ * 「返回大厅」；其他人正常进行游戏。这个倒计时要进 `S`（按帧递减、进 hash），
+ * 两端才算得出同一个「可以结算了」的时刻；提示与按钮是死者本机的 `V` 层。
+ */
+export const PVP_DEATH_SECONDS = 5;
 
 /** 法力上限（设计 8.3：只有生命 + 法力两种资源；**法力不自动恢复**）。 */
 export const PLAYER_MANA_MAX = RULE.player_mana_max;
@@ -967,6 +970,16 @@ export interface Player {
   cast: CastState | null;
   manaSurge: number;
   channel: number | null;
+  /**
+   * 联机 PVP 阵亡后的**按玩家**结算时钟（秒）：
+   * `-1` = 未阵亡；`> 0` = 倒计时中；`0` = 可以提示「撤离失败」。
+   *
+   * 属于 `S`：由 `tickTimers()` 对全体玩家按帧递减、进全状态 hash，两端逐位
+   * 一致。它**不是**全局结局 —— 死者 `hp <= 0` 后停止行动、当场爆装，其余
+   * 玩家继续跑同一帧；只有死者本机的 `V` 层会据此弹结算面板。
+   * 单机 / PVE 恒为 -1，那条链路仍由 `s.gameOver` 收口，逐位不变。
+   */
+  deathTimer: number;
 }
 
 /**
@@ -1159,8 +1172,6 @@ export interface GameState {
   portals: Portal[];
   /** 正在引导的传送门 id；null = 没在引导。 */
   channel: number | null;
-  /** 大地图是否打开（纯查看，不暂停世界）。 */
-  bigMap: boolean;
   /**
    * 视野半径（世界像素）。**运行时字段**：天赋 / buff / debuff 直接改它，
    * 渲染层每帧按它算"看得见哪里"（`sight.ts::visionRadiusOf` 负责夹紧）。
@@ -1219,6 +1230,7 @@ export function createState(config: RunConfig = {}): GameState {
       cast: null,
       manaSurge: 0,
       channel: null,
+      deathTimer: -1,
       intent: {
         target: { x, y },
         moveMode: 'idle',
@@ -1311,7 +1323,6 @@ export function createState(config: RunConfig = {}): GameState {
     portals: [],
     get channel() { return this.player.channel; },
     set channel(v: number | null) { this.player.channel = v; },
-    bigMap: false,
     visionRadius: VISION_BASE_CELLS * 32,
     extracted: false,
     timedOut: false,
@@ -1407,8 +1418,6 @@ export function reset(s: GameState): void {
   s.channel = null;
   s.extracted = false;
   s.timedOut = false;
-  // 大地图是「玩家正在看」的临时状态，重开一局 / 出征都从关着的状态开始。
-  s.bigMap = false;
   // 可破坏物是「这张图上的东西」：重开一局全部放回去（砸掉的那一局不算数）。
   // 事件同理 —— `firedEvents` 清空，7 分钟时该刷的还会刷。
   s.destructibles = spawnDestructibles(s.map);
@@ -1440,8 +1449,11 @@ export function reset(s: GameState): void {
   p.dash = null;
   p.castPose = 0;
   p.statuses.length = 0;
+  // 一局重置回「未阵亡」：联机 PVP 的独立结算时钟也是本局资源。
+  p.deathTimer = -1;
   s.target = { x: p.x, y: p.y };
   s.path = [];
+  // view-only: 复位本机座位的 V 层视角；不进帧、不进 S 对账。
   s.camera = cameraFor(s.world, p.x, p.y);
   s.skeletons = spawnFromMap(s.map);
 }

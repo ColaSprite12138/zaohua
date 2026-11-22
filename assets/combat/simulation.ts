@@ -23,12 +23,14 @@ import { updateExtraction, updateRunClock } from './extraction.ts';
 import { spawnDeathDrop, type DeathDropPayload } from './death-drop.ts';
 import { tickStatuses, updateZones } from './reactions.ts';
 import { statusSnapshot } from './status.ts';
-import { updateDestructibles, destructibleDef, destructibleAtPoint } from './destructibles.ts';
+import {
+  tickDestructibles, updateDestructibles, destructibleDef, destructibleAtPoint,
+} from './destructibles.ts';
 import { updateEvents } from './events.ts';
 import { zoneAt, zonesOf } from './zones.ts';
 import { visionRadiusOf } from './sight.ts';
 import {
-  advanceCast, beginSkill, skillDef, skillReady, tickSkills, updateDash,
+  advanceCast, beginSkill, skillDef, skillReady, tickSkillFx, tickSkills, updateDash,
 } from './skills.ts';
 import {
   countConsumable, drinkPotion, healPotion, POTION_HP_ID, POTION_MP_ID,
@@ -40,7 +42,7 @@ import {
   PRE_EQUIPPED_SKILLS, reset, setArena,
   syncWeaponSlots, type GameState, type Player, type RunKind, type StepInput,
 } from './state.ts';
-import { sortedPlayers } from './players.ts';
+import { sortedPlayers, withPlayer } from './players.ts';
 import { checkCleared, layoutDrops, switchWeaponSlot, updateDrops } from './weapons.ts';
 import { cameraFor, worldToScreen, type ArenaMap } from './world.ts';
 
@@ -54,29 +56,68 @@ export function activeAmmo(s: GameState): { id: string; count: number } | null {
   return { id: spec.ammoId, count: ammoCount(s, spec.ammoId) };
 }
 
+/**
+ * 本机帧与远端帧合进**同一张** `Map<id, StepInput>`。
+ *
+ * 规则代码只按 id 取输入，不再有 `isMe ? input : remoteInputs.get(...)` 这种
+ * 分支。联机宿主直接传整张 Map（`game.pack.ts::advanceLockstep`）；PVE 与
+ * 单测传单个 `input`，在这里按本机玩家实体的 id 装进 Map。key 用实体 id
+ * 而不是 `s.me`，判定层就不必知道自己是谁。
+ */
+function collectInputs(
+  s: GameState,
+  input: StepInput,
+  remoteInputs?: PlayerInputs,
+): Map<string, StepInput> {
+  const inputs = new Map<string, StepInput>();
+  inputs.set(s.player.id, input);
+  if (remoteInputs !== undefined) {
+    for (const [id, frame] of remoteInputs) inputs.set(id, frame);
+  }
+  return inputs;
+}
+
+/**
+ * 随时间衰减的**按玩家**字段：全体玩家按 id 排序各推进一次。
+ *
+ * 2026-11-21 真机分叉根因：这里原来只写 `const p = s.player`，只推进本机。
+ * 另一端看到的远端玩家 dodge / dodgeCd / attackFx / hurt / 技能 CD /
+ * castPose / manaSurge 全部冻结 —— B 看到 A 一直挥刀，`classifyPointer` 又
+ * 因为 `dodge > 0` 把 A 后续的点击全吞掉，于是「A 自己能动、B 看不到」。
+ * 两端跑同一份源码却读到不同状态，等价于两套逻辑。
+ *
+ * `tickSkills()` 读的技能栏 / 法力 / 施法姿态是 `s.player` 的代理字段，
+ * 所以必须先 `withPlayer()` 钉住迭代上下文。共享的技能特效与 toast 在循环外
+ * **各跑一次**，不能每玩家各减一遍。
+ */
 function tickTimers(s: GameState, dt: number): void {
-  const p = s.player;
-  p.invuln = Math.max(0, p.invuln - dt);
-  p.dodge = Math.max(0, p.dodge - dt);
-  p.dodgeCd = Math.max(0, p.dodgeCd - dt);
-  p.attackCd = Math.max(0, p.attackCd - dt);
-  p.attackFx = Math.max(0, p.attackFx - dt);
-  p.hurt = Math.max(0, p.hurt - dt);
-  // 技能冷却与蓝药药效：和别的计时器同一条时间轴。
-  tickSkills(s, dt);
+  for (const p of sortedPlayers(s)) {
+    withPlayer(s, p, () => {
+      p.invuln = Math.max(0, p.invuln - dt);
+      p.dodge = Math.max(0, p.dodge - dt);
+      p.dodgeCd = Math.max(0, p.dodgeCd - dt);
+      p.attackCd = Math.max(0, p.attackCd - dt);
+      p.attackFx = Math.max(0, p.attackFx - dt);
+      p.hurt = Math.max(0, p.hurt - dt);
+      // 联机 PVP 阵亡结算时钟：同样按帧递减、对全体玩家各跑一次。
+      // -1（未阵亡）和 0（已就绪）都不再动，所以归零那一刻两端完全一致。
+      if (p.deathTimer > 0) p.deathTimer = Math.max(0, p.deathTimer - dt);
+      // 技能冷却与蓝药药效：和别的计时器同一条时间轴。
+      tickSkills(s, dt);
+    });
+  }
+  tickSkillFx(s, dt);
   tickToast(s, dt);
 }
 
 /** Advance one frame. `dt` is seconds, already clamped by the caller. */
 /**
- * 单个玩家的一帧。
+ * 单个玩家的一帧。`s.player` 已由 `withPlayer()` 绑定成 `p`，全体玩家逐字
+ * 跑同一段代码 —— 没有 `isMe` 分支，没有「本机才普攻 / 才放技能」。
  *
- * `isMe = false` 时只跑「世界看得见的部分」（走位 / 闪避 / 砸箱），
- * 技能、药水、普攻结算仍然只属于本机 —— 因为那些还挂在 `GameState` 上
- * （`cast` / `mana` / `runInventory`），按玩家隔离是下一步。
- *
- * 远端玩家没有真实相机：用他自己的位置当视口中心。相机只影响
- * 「按下点 vs 松开点」的拖拽判定，不影响世界坐标（输入帧里带的是世界坐标）。
+ * 判定层**不读** `s.camera`（那是本机座位的 V 层状态）：需要视图原点时
+ * `classifyPointer()` 按当前迭代玩家的坐标现算，两端一致。帧结束后
+ * `step()` 才把相机写成本机座位的视角，只给绘制与只读投影用。
  */
 function updatePlayer(
   s: GameState,
@@ -84,47 +125,32 @@ function updatePlayer(
   input: StepInput,
   dt: number,
   modifiers: CombatModifiers,
-  isMe: boolean,
 ): void {
-  const mine = s.player;
-  const cam = s.camera;
-  if (!isMe) {
-    s.player = p;
-    s.camera = cameraFor(s.world, p.x, p.y);
+  // **所有玩家跑同一套规则**。技能、药水、普攻、砸箱、读条、撤离都通过
+  // `s.player` 的代理字段作用于当前迭代玩家；两端按 id 排序绑定，逐位相同。
+  // 技能起手排在最前面：瞬发技能这一帧就结算，读条技能这一帧就把玩家钉住，
+  // 所以下面的移动 / 攻击分支必须看到最新的 `s.cast`。
+  if (input.potion === true) drinkPotion(s);
+  if (input.healPotion === true) healPotion(s);
+  if (input.skill !== undefined && input.skill !== null) {
+    beginSkill(s, input.skill, input.mouse ?? null, modifiers);
   }
-  try {
-    // **所有玩家跑同一套规则**。以前这里包着 `if (isMe)`，远端玩家不普攻、
-    // 不放技能、不喝药 —— 于是 B 砍怪在 A 的机器上根本不发生，怪的血量 /
-    // 死亡 / 掉落两端必然不同。`GameState` 上的资源字段已代理到
-    // `this.player`，所以 `s.player = p` 之后这些函数自动作用于当前玩家。
-    // 技能起手排在最前面：瞬发技能这一帧就结算，读条技能这一帧就把玩家钉住，
-    // 所以下面的移动 / 攻击分支必须看到最新的 `s.cast`。
-    if (input.potion === true) drinkPotion(s);
-    if (input.healPotion === true) healPotion(s);
-    if (input.skill !== undefined && input.skill !== null) {
-      beginSkill(s, input.skill, input.mouse ?? null, modifiers);
-    }
-    // 1 / 2 only changes which slot is in use; it never moves items or attacks.
-    if (input.switchWeapon !== undefined && input.switchWeapon !== null) {
-      switchWeaponSlot(s, input.switchWeapon);
-    }
-    // 站桩：砸箱子 / 引导传送门 / 读条技能，都按当前玩家各判一份。
-    const pinned = p.intent.smash !== null || p.cast !== null || p.channel !== null;
-    // 冲锋进行中：位移由 `updateDash()` 接管，普通走位与普攻让位。
-    const dashing = p.dash !== null;
-    if (!pinned && !dashing) classifyPointer(s, input);
-    applyDodge(s, input.dodge);
-    if (!pinned && !dashing) walk(s, dt);
-    if (dashing) updateDash(s, dt, modifiers);
-    // 可破坏物：走到就起手、站桩进度、挨打 / 闪避 / 走开就断。
-    updateDestructibles(s, dt);
-    if (!pinned && !dashing) resolveAttackOrder(s, modifiers);
-  } finally {
-    if (!isMe) {
-      s.player = mine;
-      s.camera = cam;
-    }
+  // 1 / 2 only changes which slot is in use; it never moves items or attacks.
+  if (input.switchWeapon !== undefined && input.switchWeapon !== null) {
+    switchWeaponSlot(s, input.switchWeapon);
   }
+  // 站桩：砸箱子 / 引导传送门 / 读条技能，都按当前玩家各判一份。
+  const pinned = p.intent.smash !== null || p.cast !== null || p.channel !== null;
+  // 冲锋进行中：位移由 `updateDash()` 接管，普通走位与普攻让位。
+  const dashing = p.dash !== null;
+  if (!pinned && !dashing) classifyPointer(s, input);
+  applyDodge(s, input.dodge);
+  if (!pinned && !dashing) walk(s, dt);
+  if (dashing) updateDash(s, dt, modifiers);
+  // 可破坏物：走到就起手、站桩进度、挨打 / 闪避 / 走开就断。
+  // 共享的残骸 / smashing 推进已拆到 `tickDestructibles()`，全局只跑一次。
+  updateDestructibles(s, dt);
+  if (!pinned && !dashing) resolveAttackOrder(s, modifiers);
 }
 
 /**
@@ -143,21 +169,18 @@ export function step(
   modifiers: CombatModifiers = NO_MODIFIERS,
   remoteInputs?: PlayerInputs,
 ): void {
-  if (input.restart) {
-    reset(s);
-    return;
-  }
+  // `input` 在本函数里**只**用来算本机悬停反馈（V 层）。世界演算一律从这张
+  // 按 id 索引的 Map 取输入，本机与远端没有任何区别。
+  const inputs = collectInputs(s, input, remoteInputs);
   // 已结算的一局完全冻结：撤离 / 超时和阵亡一样，不再走时间、不再挨打。
   if (s.gameOver || s.extracted || s.timedOut) {
     // Nothing below can be clicked any more: drop the sword cursor / hover ring.
     s.hoverEnemy = null;
     // 一局结束了就不该再有读条在走（阵亡时可能正读到一半）。
-    s.cast = null;
+    // 全体玩家都清，别只清 `s.player`（那是本机）。
+    for (const p of sortedPlayers(s)) p.cast = null;
     return;
   }
-
-  // M 切换大地图：纯查看层，不暂停世界（时间、怪、DOT 照常走）。
-  if (input.bigMap === true) s.bigMap = !s.bigMap;
 
   s.t += dt;
   tickTimers(s, dt);
@@ -166,17 +189,21 @@ export function step(
   // 单局事件：第 7 分钟的高价值物刷新（读的是刚更新的 `runSeconds`）。
   updateEvents(s, dt);
 
+  // 共享的可破坏物表现（残骸倒计时 / `smashing` 复位）**全局只跑一次**。
+  // 以前它塞在 `updatePlayer()` 里，N 个玩家就多减 N 次 rubble、把
+  // `smashing` 反复清掉；两端人数一变，进度立刻分叉。
+  tickDestructibles(s, dt);
+
   // 每个玩家各跑一遍自己的这一帧，**按 id 排序**。
   // 顺序必须在两端一致：同一帧两个人砸同一个箱子 / 抢同一件掉落时，
   // 谁先结算决定结果，而 `players` 的数组顺序来自网络到达顺序。
   for (const p of sortedPlayers(s)) {
     // 倒下的人不再行动：远端玩家阵亡后不该继续挥刀 / 走位。
     if (p.hp <= 0) continue;
-    const isMe = p.id === s.me;
-    const pi = isMe ? input : remoteInputs?.get(p.id);
+    const pi = inputs.get(p.id);
     // 没有他的输入 = 他这一帧还没到，**不许替他决定**（空输入填充会永久分叉）。
     if (pi === undefined) continue;
-    updatePlayer(s, p, pi, dt, modifiers, isMe);
+    withPlayer(s, p, () => updatePlayer(s, p, pi, dt, modifiers));
   }
 
   updateSkeletons(s, dt);
@@ -202,16 +229,12 @@ export function step(
   // updateSkeletons 里已经写进各自的 `hurt`）。
   for (const p of sortedPlayers(s)) {
     if (p.hp <= 0) continue;
-    const pi = p.id === s.me ? input : remoteInputs?.get(p.id);
+    const pi = inputs.get(p.id);
     if (pi === undefined) continue;
-    const mine = s.player;
-    if (p.id !== s.me) s.player = p;
-    try {
+    withPlayer(s, p, () => {
       updateExtraction(s, dt, pi.extractChannel === true && p.cast === null);
       advanceCast(s, dt, modifiers);
-    } finally {
-      if (p.id !== s.me) s.player = mine;
-    }
+    });
   }
   tickParticles(s, dt);
   // Hover feedback LAST: it must describe the frame that is about to be
@@ -235,6 +258,8 @@ export function step(
   // Camera is the single authority for input and painting. Updating it AFTER
   // movement keeps this frame's screen->world conversion (done by the engine
   // before step) consistent with what paint() will draw.
+  // view-only: 这里写的是**本机座位的 V 层视角**，只给绘制与只读投影用，
+  // 判定层不读它、它不进输入帧、不进全状态 hash。两端各自跟随自己座位。
   s.camera = cameraFor(s.world, s.player.x, s.player.y);
 }
 
@@ -314,6 +339,8 @@ export function deployRun(s: GameState, config: Deployment = {}): void {
  */
 export function projection(s: GameState) {
   const first = s.drops[0];
+  // view-only: 只读观察投影把世界坐标换算成本机屏幕坐标；`camera` 是 V 层，
+  // 各随本机座位，不进帧、不进 S 对账。
   const cam = s.camera;
   const scr = (x: number, y: number) => worldToScreen(cam, x, y);
   const dropScreen = first ? scr(first.x, first.y) : null;
@@ -568,7 +595,6 @@ export function projection(s: GameState) {
     // 所以 playthrough 可以直接点门的屏幕位置走过去。
     runKind: s.runKind,
     /** 大地图开着（M）。 */
-    bigMap: s.bigMap,
     /**
      * 视野半径（世界像素）。场景里的迷雾多边形、小地图窗口都按它算 ——
      * 天赋 / buff / debuff 改 `state.visionRadius`，这里和画面立刻跟着变。

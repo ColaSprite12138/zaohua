@@ -92,12 +92,12 @@ export default async function fog(play) {
     await play.keyboard.press('KeyM');
     await play.advance(0.3);
     const st = await play.state('game.state');
-    if (st.bigMap !== true) throw new Error('按 M 应该打开大地图');
+    if (st.viewBigMap !== true) throw new Error('按 M 应该打开大地图');
     await play.screenshot('bigmap-five-zones');
     await play.keyboard.press('KeyM');
     await play.advance(0.2);
     const closed = await play.state('game.state');
-    if (closed.bigMap !== false) throw new Error('再按一次 M 应该关掉大地图');
+    if (closed.viewBigMap !== false) throw new Error('再按一次 M 应该关掉大地图');
   });
 
   await play.step('walk into the vault through the courtyard branch', async () => {

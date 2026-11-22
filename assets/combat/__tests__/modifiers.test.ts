@@ -14,7 +14,6 @@ const idle: StepInput = {
   pointerHeld: false,
   pointerUp: false,
   dodge: false,
-  restart: false,
 };
 
 function queuedSwing(distance: number) {
@@ -112,10 +111,11 @@ describe('star nodes are interpreted from starmap.xlsx (design 6.3)', () => {
     expect(s.skillBar.every((slot) => slot.id === null)).toBe(true);
   });
 
-  it('restart keeps the deployed star kit instead of the fixture default', () => {
+  it('a fixture reset keeps the deployed star kit instead of the fixture default', () => {
     const s = createState();
     deployRun(s, { stars: { skills: ['ice_shard'] } });
-    step(s, 0.016, { ...idle, restart: true }, NO_MODIFIERS);
+    // R 重开已从帧协议删除；夹具重置是局外动作，不走 step()。
+    reset(s);
     expect(s.skillBar[0]!.id).toBe('ice_shard');
   });
 });

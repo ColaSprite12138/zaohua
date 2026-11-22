@@ -12,6 +12,8 @@
 // 只有 1–2 只在感知圈内 —— 其余沉睡不动，所以**能安全地快进 430 秒**。
 // 这本身也是沉睡/惊醒模型的证据：远处的怪不会千里迢迢来找你。
 
+import { fixtureReset } from './lib/fixture-reset.mjs';
+
 const VIEW_W = 1280;
 const VIEW_H = 720;
 
@@ -145,7 +147,7 @@ export default async function destructibles(play) {
 
   await play.step('an unguarded crate channels a standing smash, then breaks open', async () => {
     // 重开一局，清掉两只怪：站桩砸箱子期间挨打会被打断，这一步只验「砸得开」。
-    await play.keyboard.press('KeyR');
+    await fixtureReset(play);
     await play.wait(120);
     for (let i = 0; i < 24; i += 1) {
       const s = await play.state('game.state');

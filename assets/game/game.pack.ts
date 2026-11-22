@@ -73,6 +73,13 @@ export type RunResult = {
   outcome: 'cleared' | 'extracted' | 'gameOver';
   /** 失败原因：阵亡 or 900 秒没撤离。壳层用它区分文案。 */
   reason?: 'dead' | 'timedOut';
+  /**
+   * 联机 PVP 的**按玩家**阵亡结算：死者当场爆装、5 秒后可以回大厅，但本局
+   * 没结束、其他人照常玩。壳层收到它不能直接 `settle()` 回大厅，要先弹
+   * 「撤离失败」面板，等死者点「返回大厅」才结算并真正离开房间。
+   * （`s.gameOver` 全程没置过，所以这里必须带一个独立的标记。）
+   */
+  pvpDeath?: boolean;
   lootLog: { monsterId: string; itemId: string; name: string; quality: string }[];
   kills: number;
   /**
@@ -153,6 +160,23 @@ export const game: Plugin = {
     // The small flat fixture keeps automated acceptance runs alive; the real
     // playable LDtk arena is selected by `deploy` below.
     const state = createState({ map: testArena });
+
+    /**
+     * **纯本地视图状态 `V`**（不属于 `GameState` / `S`）。
+     *
+     * 大地图只是「本机正在看哪一层」的模态覆盖层：按 M 只切本机画面，
+     * 不写进世界状态、不进输入帧、不进 hash。联机时 A 开着地图、B 没开，
+     * 两端各自渲染，世界状态仍逐位一致。这是 docs/net-sync-design.md §1.1
+     * 的 `S` / `V` 分层，别把它放回 `state`。
+     */
+    const view = { bigMap: false };
+
+    /**
+     * 验收脚本的**只读观察投影**：`S` 的世界状态 + `V` 的本地视图位。
+     * `viewBigMap` 只给自动化断言看，不来自 `GameState`、不进输入帧、不进 hash、
+     * 不参与 `step()`；`projection()` 本身仍然只序列化 `S`。
+     */
+    const readProjection = () => ({ ...projection(state), viewBigMap: view.bigMap });
 
     // Last pointer position seen in the input snapshot. The snapshot carries a
     // position only on frames where the browser delivered a pointer event; a
@@ -447,8 +471,8 @@ export const game: Plugin = {
       if (tick <= 0 || tick % HASH_INTERVAL_TICKS !== 0) return;
       const hash = hashGameState(state, tick);
       netStat.hashes += 1;
-      // 分项指纹随总 hash 一起上报：服务端第一次记到分叉时就能回答
-      // 「是怪 / 掉落 / 玩家 / 破坏物哪一项先不同」，不用靠猜。
+      // 全状态分项指纹随总 hash 一起上报：服务端第一次记到分叉时就能回答
+      // 「是怪 / 掉落 / 玩家 / 破坏物 / 其余共享世界哪一项先不同」，不用靠猜。
       channel?.postMessage({
         type: 'netHash', tick, hash, parts: hashGameParts(state), active: netActive,
       });
@@ -491,10 +515,6 @@ export const game: Plugin = {
         const tick = stepClock.tick - 1;
         const frame = takeLatched(latch, tick);
         step(state, FIXED_DT, toStepInput(frame), modifiers);
-        if (frame.restart) {
-          lastResult = null;
-          resultSent = false;
-        }
         reportHash(tick);
       }
     }
@@ -537,10 +557,6 @@ export const game: Plugin = {
           remoteInputs.set(peerId, toStepInput(frame));
         }
         step(state, FIXED_DT, toStepInput(inputs.local), modifiers, remoteInputs);
-        if (inputs.local.restart) {
-          lastResult = null;
-          resultSent = false;
-        }
         // 远端玩家不再有「影子规则」：他们就是 `state.players` 里的真玩家，
         // 和本机玩家跑同一份 `step()`（先按 id 排序，两端顺序一致）。
         // 这里只需要把这一 tick 所有人的输入交上去。
@@ -681,6 +697,21 @@ export const game: Plugin = {
             syncWeaponSlots(state);
             publishRunState(true);
           }
+        } else if (msg.type === 'fixtureReset') {
+          /**
+           * **仅供自动化验收夹具**：`playthrough*.mjs` 每一步都要从干净状态
+           * 出发（怪回到出生点、计数器归零、技能冷却清空）。
+           *
+           * 这不是玩家功能：玩家按 R 已被彻底删除，`reset` 永远不进输入帧，
+           * 也不出现在 `step()` 里。它只由验收脚本通过 BroadcastChannel
+           * 显式调用，属于**局外管理动作**，与帧同步的 `F` 无关。
+           * 生产宿主不会收到这条消息（只有验收脚本会发）。
+           */
+          reset(state);
+          seekClock(stepClock, 0);
+          lastResult = null;
+          resultSent = false;
+          publishRunState(true);
         } else if (msg.type === 'abort') {
           // Returning to the lobby, refreshing or closing the preview is a
           // LOSS: the whole run state is discarded. The lobby is already empty.
@@ -733,7 +764,7 @@ export const game: Plugin = {
           channel?.postMessage({
             type: 'state',
             requestId: msg.requestId,
-            state: projection(state),
+            state: readProjection(),
             // `projection()` exposes only the first drop (a legacy playthrough
             // field). A real multi-monster run needs every drop location to
             // walk over and pick the loot up.
@@ -763,7 +794,7 @@ export const game: Plugin = {
 
     /**
      * The main-window panel renders a COPY of the Worker's run state. Publish
-     * a fresh snapshot whenever it actually changes (pickup, equip, restart).
+     * a fresh snapshot whenever it actually changes (pickup, equip, fixture reset).
      */
     const publishRunState = (force = false): void => {
       const loadout = snapshotRun(state.runInventory);
@@ -775,16 +806,26 @@ export const game: Plugin = {
 
     const settleIfFinished = (): void => {
       if (resultSent) return;
-      // 三种结束方式：主线清场（cleared）/ 撤离（extracted）/ 阵亡或超时（gameOver）。
-      if (!state.cleared && !state.extracted && !state.timedOut && !state.gameOver) return;
+      // 联机 PVP 阵亡是**按玩家**的：本机实体 hp<=0 且独立结算时钟归零才发
+      // result。不置 `s.gameOver`，所以帧循环照样推进、其他玩家照常行动。
+      // `state.player` 在联机里就是本机实体（`applySeat` 把 id 改成了座位 id，
+      // `syncRemotes()` 永远把它放在 players[0]），读它不算「判定层读本机」——
+      // 这里是 `step()` 之外的只读观察 / V 层结算。
+      const pvpDead = state.online && state.runKind === 'pvpve'
+        && state.player.hp <= 0 && state.player.deathTimer === 0;
+      // 三种结束方式：主线清场（cleared）/ 撤离（extracted）/ 阵亡或超时（gameOver）；
+      // 第四种是联机 PVP 的个人阵亡，只结算死者自己。
+      if (!state.cleared && !state.extracted && !state.timedOut
+        && !state.gameOver && !pvpDead) return;
       resultSent = true;
-      const lost = state.gameOver || state.timedOut;
+      const lost = state.gameOver || state.timedOut || pvpDead;
       // 死亡结算（设计 4）：主线整份带回；副本 / 搜打撤只带回保险格里的东西。
       // 分割规则是 `meta/inventory.ts::splitOnDeath()`，两个堆共用一份。
       const settlement = settleOnDeath(state, !lost);
       lastResult = {
         outcome: lost ? 'gameOver' : state.extracted ? 'extracted' : 'cleared',
         ...(lost ? { reason: state.timedOut ? 'timedOut' as const : 'dead' as const } : {}),
+        ...(pvpDead ? { pvpDeath: true } : {}),
         lootLog: state.lootLog.map((r) => ({
           monsterId: r.monsterId, itemId: r.itemId, name: r.name, quality: r.quality,
         })),
@@ -881,9 +922,13 @@ export const game: Plugin = {
               && screenX <= MINIMAP.x + MINIMAP.w
               && screenY >= MINIMAP.y
               && screenY <= MINIMAP.y + MINIMAP.h;
-            // 大地图（M）铺满整个画布：指针落在它上面就等同于落在 HUD 上，
-            // 点击不能穿透去移动 / 攻击（否则「看地图」会变成一次误操作）。
-            const onHud = onMinimap || state.bigMap;
+            // M 只切**本机**视图状态，不进输入帧（更不进世界状态）。
+            // 打开时大地图铺满画布，指针等同于落在 HUD 上：点击不会穿透
+            // 去移动 / 攻击。这个判定也只影响本机的输入采集。
+            if (snapshot?.keyboard?.justPressedCode('KeyM') ?? false) {
+              view.bigMap = !view.bigMap;
+            }
+            const onHud = onMinimap || view.bigMap;
             const worldMouse = pointer
               ? screenToWorld(state.camera, screenX, screenY)
               : undefined;
@@ -892,7 +937,6 @@ export const game: Plugin = {
             // (the only state with continuous cursor following). Hovering with
             // no button produces no order at all.
             const mouse = snapshot?.mouse;
-            const restart = snapshot?.keyboard?.justPressedCode('KeyR') ?? false;
             // 技能键 / 喝药键只在输入层出现一次映射（SKILL_KEYS 是唯一权威，HUD 读同一份）。
             const skillSlot = SKILL_KEYS.findIndex(
               (code) => snapshot?.keyboard?.justPressedCode(code) ?? false,
@@ -914,7 +958,6 @@ export const game: Plugin = {
               healPotion: snapshot?.keyboard?.justPressedCode(HEAL_KEY) ?? false,
               // E = 起手 / 取消传送门引导（搜打撤的「撤」）。
               extractChannel: snapshot?.keyboard?.justPressedCode('KeyE') ?? false,
-              restart,
               skill: skillSlot >= 0 ? skillSlot : NO_SKILL,
               switchWeapon: snapshot?.keyboard?.justPressedCode('Digit1') ?? false
                 ? 0
@@ -922,8 +965,6 @@ export const game: Plugin = {
               // Hover feedback must not light up while the pointer sits on
               // the read-only minimap / 大地图: those rectangles are not world space.
               pointerOnHud: onHud,
-              // M = 大地图（设计 11）。
-              bigMap: snapshot?.keyboard?.justPressedCode('KeyM') ?? false,
             });
 
             if (!locked && !paused) {
@@ -957,7 +998,7 @@ export const game: Plugin = {
             painter.setTransform(surfaceScale, 0, 0, surfaceScale, 0, 0);
             // 状态图标的悬停提示要指针位置：传视图坐标（不是物理像素），
             // 否则 2x 渲染下会指到左上角去。
-            paint(painter, state, pointer ? { x: screenX, y: screenY } : undefined, renderDt);
+            paint(painter, state, pointer ? { x: screenX, y: screenY } : undefined, renderDt, view);
             texture.update();
             // Pointer feedback: the source realm cannot touch CSS, so tell the
             // main window which enemy (if any) is under the free cursor. Sent
@@ -976,7 +1017,7 @@ export const game: Plugin = {
         title: '2.5D arena state',
         description:
           'Player position, health, kills, living skeletons, drops, equipped main weapon, cooldowns and loot log.',
-        read: () => projection(state),
+        read: () => readProjection(),
       });
       if (unregister !== undefined) yield unregister;
 

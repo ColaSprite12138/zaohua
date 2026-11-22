@@ -3,6 +3,7 @@
 // one named screenshot per requirement. Coordinates are canvas-normalized.
 
 import assert from 'node:assert/strict';
+import { fixtureReset } from './lib/fixture-reset.mjs';
 
 /** Skeleton art centre is ~30 logical px above its ground anchor. */
 const BODY_OFFSET_Y = 30 / 720;
@@ -101,7 +102,7 @@ export default async function playthrough(play) {
     // player's current position, so the four offsets net back to the spawn.
     // Restart first: skeletons chase the player, and on a slow large viewport
     // they can wander onto a ground waypoint and turn it into an enemy click.
-    await play.keyboard.press('KeyR');
+    await fixtureReset(play);
     await play.wait(100);
     const quadrants = [
       { name: 'up-left', dx: -0.08, dy: -0.08, sx: -1, sy: -1 },
@@ -128,7 +129,7 @@ export default async function playthrough(play) {
   await play.step('a click waypoint stops on arrival and ignores later hovering', async () => {
     // Same isolation: start from spawn so no chasing skeleton overlaps the
     // waypoint or the later hover position.
-    await play.keyboard.press('KeyR');
+    await fixtureReset(play);
     await play.wait(100);
     const before = await play.state('game.state');
     await play.mouse.click([0.6, 0.62]);
@@ -223,7 +224,7 @@ export default async function playthrough(play) {
     // Regression guard: classification used to be time-based, so any click
     // slower than 350 ms became a follow (= pure movement) even though the
     // sword cursor promised an attack.
-    await play.keyboard.press('KeyR');
+    await fixtureReset(play);
     await play.wait(120);
     const s0 = await play.state('game.state');
     const index = s0.skeletons.findIndex((sk) => sk.alive);
@@ -255,7 +256,7 @@ export default async function playthrough(play) {
   await play.step('clicking a distant enemy approaches, then swings once in range', async () => {
     // Restart so both skeletons are back at their far spawn positions and all
     // counters are zero -- otherwise the chasing enemies may already be in range.
-    await play.keyboard.press('KeyR');
+    await fixtureReset(play);
     await play.wait(120);
     const s0 = await play.state('game.state');
     assert.equal(s0.attacks, 0, 'restart clears swings');
@@ -427,7 +428,7 @@ export default async function playthrough(play) {
   };
 
   await play.step('a skill spends mana, goes on cooldown and damages what closed in', async () => {
-    await play.keyboard.press('KeyR');
+    await fixtureReset(play);
     await play.wait(120);
     const before = await play.state('game.state');
     assert.equal(before.skills.length, 7, 'the skill bar has seven slots');
@@ -465,7 +466,7 @@ export default async function playthrough(play) {
   await play.step('the ice shard needs a cast and hits the line it aims down', async () => {
     // 重开一局：从出生点让骷髅自己走过来，第一次进入 240px 时两人还隔着一段距离，
     // 读条 0.5 秒内不会被普攻打到（怪的出手距离是 40px），所以这一发一定读得完。
-    await play.keyboard.press('KeyR');
+    await fixtureReset(play);
     await play.wait(120);
     const staged = await waitUntilNear(120, 240);
     assert.ok(staged, 'a skeleton closes to shard range');
@@ -495,7 +496,7 @@ export default async function playthrough(play) {
   });
 
   await play.step('the charge is a dash you can watch, not a teleport', async () => {
-    await play.keyboard.press('KeyR');
+    await fixtureReset(play);
     await play.wait(120);
     await play.advance(2.6); // 让骷髅走进冲锋距离，冲过去才撞得到
     await play.mouse.move([0.72, 0.52]);
@@ -572,7 +573,7 @@ export default async function playthrough(play) {
   await play.step('the flame wall and the poison pool detonate together', async () => {
     // 设计 8.5「火 + 毒 = 引爆毒层」：先铺毒池把毒挂上去，再落火墙引爆。
     // 两个技能都指向骷髅当前位置 —— 它会走过来，所以每次起手前重新取一次坐标。
-    await play.keyboard.press('KeyR');
+    await fixtureReset(play);
     await play.wait(120);
     const staged = await waitUntilNear(70, 160);
     assert.ok(staged, 'a skeleton closes to ground-effect range');
@@ -611,7 +612,7 @@ export default async function playthrough(play) {
     // 设计 8.5「水 + 冰 = 冻结」：水浪挂湿身，冰锥读条后命中即冻结（硬控）。
     // 冻结只有 1.5 秒，而截图从调用到成像有 1~2 秒延迟 —— 所以画面证据以
     // 冰面 / 状态条为准，**硬控本身由投影断言证明**（`statuses` 里出现 freeze）。
-    await play.keyboard.press('KeyR');
+    await fixtureReset(play);
     await play.wait(120);
     const staged = await waitUntilNear(90, 200);
     assert.ok(staged, 'a skeleton closes into the wave cone');

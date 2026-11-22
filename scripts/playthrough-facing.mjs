@@ -14,6 +14,7 @@
 // 夹具地图、无 deploy，和主 playthrough 同一套环境。
 
 import assert from 'node:assert/strict';
+import { fixtureReset } from './lib/fixture-reset.mjs';
 
 const VIEW_W = 1280;
 const VIEW_H = 720;
@@ -55,7 +56,7 @@ export default async function facing(play) {
   for (const dir of DIRECTIONS) {
     await play.step(`walks ${dir.name}: the body turns that way`, async () => {
       // 每一步都从原点出发，免得越走越远撞墙或被怪挡住。
-      await play.keyboard.press('KeyR');
+      await fixtureReset(play);
       await play.wait(140);
       const before = await play.state('game.state');
       const len = Math.hypot(dir.dx, dir.dy) || 1;
@@ -163,7 +164,7 @@ export default async function facing(play) {
     // 八方向移动的根因在 A*：8 邻接 + 格中心点。拉直之后，空旷地面上点 37°
     // 就应该沿 37° 一条直线走过去。这里量的是**世界位移向量**，不是朝向 ——
     // 朝向对、路却是折的，玩家一样会觉得"不灵活"。
-    await play.keyboard.press('KeyR');
+    await fixtureReset(play);
     await play.wait(140);
     const before = await play.state('game.state');
     const angle = (37 * Math.PI) / 180;
@@ -186,7 +187,7 @@ export default async function facing(play) {
   await play.step('"left and a bit down" differs from "down and a bit left"', async () => {
     // 用户的原话：这两个方向看到的人物都是面向我的。差 80°，现在必须分得开。
     const run = async (dx, dy) => {
-      await play.keyboard.press('KeyR');
+      await fixtureReset(play);
       await play.wait(140);
       const before = await play.state('game.state');
       const len = Math.hypot(dx, dy) || 1;

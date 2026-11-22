@@ -31,7 +31,6 @@ const idle: StepInput = {
   pointerHeld: false,
   pointerUp: false,
   dodge: false,
-  restart: false,
 };
 
 /** 一件带耐久的真装备（10001 巨剑，耐久 160）。 */

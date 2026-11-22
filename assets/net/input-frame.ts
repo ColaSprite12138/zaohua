@@ -38,7 +38,6 @@ export type InputFrame = {
   readonly potion: boolean;
   readonly healPotion: boolean;
   readonly extractChannel: boolean;
-  readonly restart: boolean;
   /** 0..6；`NO_SKILL` = 这一帧没按技能键。 */
   readonly skill: number;
   /** 0/1；`NO_SWITCH` = 这一帧没按切换键。 */
@@ -47,8 +46,6 @@ export type InputFrame = {
   readonly mouse: { readonly x: number; readonly y: number } | null;
   /** 指针停在 HUD（小地图 / 大地图）上：不能穿透成移动或攻击。 */
   readonly pointerOnHud: boolean;
-  /** 大地图开关（M）。 */
-  readonly bigMap: boolean;
 };
 
 /** 输入帧的字节数。改布局必须同时改 `RULESET_EXTRACT`。 */
@@ -65,11 +62,11 @@ export const FLAG_DODGE = 1 << 3;
 export const FLAG_POTION = 1 << 4;
 export const FLAG_HEAL_POTION = 1 << 5;
 export const FLAG_EXTRACT = 1 << 6;
-export const FLAG_RESTART = 1 << 7;
+/* bit7 预留：R 重开功能已按产品决定彻底删除，不再有帧字段。 */
 
 export const AUX_HAS_MOUSE = 1 << 0;
 export const AUX_POINTER_ON_HUD = 1 << 1;
-export const AUX_BIG_MAP = 1 << 2;
+/* bit2 预留：M 大地图是纯本地视图状态，不进帧。 */
 
 /** 一帧「什么都没按」的输入。远端掉线、或这一帧没等到帧时用它。 */
 export function emptyInputFrame(tick: number): InputFrame {
@@ -82,12 +79,10 @@ export function emptyInputFrame(tick: number): InputFrame {
     potion: false,
     healPotion: false,
     extractChannel: false,
-    restart: false,
     skill: NO_SKILL,
     switchWeapon: NO_SWITCH,
     mouse: null,
     pointerOnHud: false,
-    bigMap: false,
   };
 }
 
@@ -109,12 +104,10 @@ export function encodeInputFrame(frame: InputFrame, out?: DataView): DataView {
   if (frame.potion) flags |= FLAG_POTION;
   if (frame.healPotion) flags |= FLAG_HEAL_POTION;
   if (frame.extractChannel) flags |= FLAG_EXTRACT;
-  if (frame.restart) flags |= FLAG_RESTART;
 
   let aux = 0;
   if (frame.mouse) aux |= AUX_HAS_MOUSE;
   if (frame.pointerOnHud) aux |= AUX_POINTER_ON_HUD;
-  if (frame.bigMap) aux |= AUX_BIG_MAP;
 
   view.setUint32(0, frame.tick >>> 0, true);
   view.setUint8(4, flags);
@@ -142,14 +135,12 @@ export function decodeInputFrame(bytes: Uint8Array, offset = 0): InputFrame {
     potion: (flags & FLAG_POTION) !== 0,
     healPotion: (flags & FLAG_HEAL_POTION) !== 0,
     extractChannel: (flags & FLAG_EXTRACT) !== 0,
-    restart: (flags & FLAG_RESTART) !== 0,
     skill: skill === NO_SKILL ? NO_SKILL : skill,
     switchWeapon: switchWeapon === NO_SWITCH ? NO_SWITCH : switchWeapon,
     mouse: hasMouse
       ? { x: view.getInt16(8, true) / MOUSE_SCALE, y: view.getInt16(10, true) / MOUSE_SCALE }
       : null,
     pointerOnHud: (aux & AUX_POINTER_ON_HUD) !== 0,
-    bigMap: (aux & AUX_BIG_MAP) !== 0,
   };
 }
 
@@ -184,11 +175,9 @@ function encodeInto(frame: InputFrame, view: DataView, offset: number): void {
   if (frame.potion) flags |= FLAG_POTION;
   if (frame.healPotion) flags |= FLAG_HEAL_POTION;
   if (frame.extractChannel) flags |= FLAG_EXTRACT;
-  if (frame.restart) flags |= FLAG_RESTART;
   let aux = 0;
   if (frame.mouse) aux |= AUX_HAS_MOUSE;
   if (frame.pointerOnHud) aux |= AUX_POINTER_ON_HUD;
-  if (frame.bigMap) aux |= AUX_BIG_MAP;
   view.setUint32(offset, frame.tick >>> 0, true);
   view.setUint8(offset + 4, flags);
   view.setUint8(offset + 5, frame.skill & 0xff);
@@ -234,10 +223,8 @@ export function toStepInput(frame: InputFrame): {
   skill: number | null;
   potion: boolean;
   healPotion: boolean;
-  restart: boolean;
   extractChannel: boolean;
   pointerOnHud: boolean;
-  bigMap: boolean;
 } {
   return {
     // **本机帧也必须走网络帧的 1/4 像素量化**：帧同步里「我」的帧留在本地、
@@ -263,9 +250,7 @@ export function toStepInput(frame: InputFrame): {
     skill: frame.skill === NO_SKILL ? null : frame.skill,
     potion: frame.potion,
     healPotion: frame.healPotion,
-    restart: frame.restart,
     extractChannel: frame.extractChannel,
     pointerOnHud: frame.pointerOnHud,
-    bigMap: frame.bigMap,
   };
 }

@@ -242,19 +242,27 @@ export function breakOpen(s: GameState, obj: DestructibleObj, fromRemote = false
 }
 
 /**
- * 每帧推进：残骸倒计时、到点起手、进度、打断、砸开。
+ * 共享的可破坏物表现复位：**每帧全局只跑一次**。
  *
- * 排序位置在 `walk()` 之后、`updateSkeletons()` 之前（见 `simulation.ts`）：
- * 这一帧先决定「能不能砸」，再让怪打你 —— 同一帧挨打就同一帧断，
- * 和读条技能是一个时序。
+ * 这段原来在 `updateDestructibles()` 里，而后者按玩家各跑一遍 —— N 个玩家
+ * 就把 `rubble` 多减 N 次，还会把上一个玩家刚点亮的 `smashing` 反复清掉。
+ * 残骸只衰减表现；`broken` 不会被它改回去（曾经就是这么"复活"的）。
  */
-export function updateDestructibles(s: GameState, dt: number): void {
+export function tickDestructibles(s: GameState, dt: number): void {
   for (const obj of s.destructibles) {
-    // 残骸只衰减表现；`broken` 不会被它改回去（曾经就是这么"复活"的）。
     if (obj.rubble > 0) obj.rubble = Math.max(0, obj.rubble - dt);
     obj.smashing = false;
   }
+}
 
+/**
+ * **按玩家**的砸箱推进：到点起手、进度、打断、砸开。
+ *
+ * 排序位置在 `walk()` 之后、`updateSkeletons()` 之前（见 `simulation.ts`）：
+ * 这一帧先决定「能不能砸」，再让怪打你 —— 同一帧挨打就同一帧断，
+ * 和读条技能是一个时序。调用方用 `withPlayer()` 钉住当前玩家。
+ */
+export function updateDestructibles(s: GameState, dt: number): void {
   // 还没起手：走过去到了就自动起手（点击已经是明确的意图，不需要再点一次）。
   if (s.smash === null && s.smashTarget !== null) {
     const target = find(s, s.smashTarget);

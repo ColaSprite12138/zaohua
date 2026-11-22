@@ -22,7 +22,7 @@ import { applyStatus, clearStatus, damageTakenMultiplier, lockedFlags, statusOf 
 import { walkable, type World } from './world.ts';
 import {
   activeWeapon, DROP_MODEL_RADIUS, dropLabelRect, dropLanded, makeDropFlight, nextDropUid,
-  PLAYER_ATTACK_CD, PLAYER_SWING_TIME, type Drop, type GameState,
+  PLAYER_ATTACK_CD, PLAYER_SWING_TIME, PVP_DEATH_SECONDS, type Drop, type GameState,
 } from './state.ts';
 
 /** Clickable body box of a living skeleton (art spans about [-21,21] x [-57,0]). */
@@ -304,7 +304,7 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
     color: armed ? '#ffd166' : '#ffb454',
   });
   // 造成伤害扣耐久（5.2 / 7.4）。损坏后的那一下不再磨损（已经到底了）。
-  if (armed) wearWeapon(s, dealt);
+  if (armed) wearWeapon(s, dealt, 0, p);
   burst(s, p.x + Math.cos(aim) * 52, p.y + Math.sin(aim) * 52 - 22, '#cfe8ff', 5, 90);
 }
 
@@ -358,18 +358,30 @@ export function damagePlayer(
   // 易伤（软控）对**所有**打向玩家的伤害生效：和怪物打怪走同一条倍率表。
   const taken = amount * damageTakenMultiplier(p);
   p.hp = Math.max(0, p.hp - taken);
-  if (options.wear ?? true) wearWeapon(s, 0, taken);
+  if (options.wear ?? true) wearWeapon(s, 0, taken, p);
   p.hurt = Math.max(p.hurt, options.invuln === false ? 0.18 : 0.35);
   if (options.invuln ?? true) p.invuln = 0.7;
   burst(s, p.x, p.y - 26, options.color ?? '#ff6b6b', 8, 120);
   if (p.hp > 0) return false;
   // 联机 PVP 阵亡：当场爆装，别人可以捡。**PVE 一行都不动** —— 那边是局末
   // settleOnDeath 写存档、下一局摆回地图，两条链路混起来会改坏「二次机会」。
-  if (s.online && s.runKind === 'pvpve') burstEquipmentOnDeath(s, p);
-  if (p.id === s.me) {
-    s.gameOver = true;
-    say(s, options.deathText ?? '你被击倒了 · 按 R 重新开始');
+  if (s.online && s.runKind === 'pvpve') {
+    burstEquipmentOnDeath(s, p);
+    // 独立结算时钟从这一帧起按帧递减：5 秒后本机的 V 层才提示「撤离失败」。
+    // 它挂在玩家实体上并进 hash，A、B 两端算出的归零帧号完全相同。
+    p.deathTimer = PVP_DEATH_SECONDS;
+    // 「谁倒下了」是每个玩家实体上的 `hp`，不是全局结局：死者会在 step 的
+    // `if (p.hp <= 0) continue` 里停止行动，其余人继续抢装备。若这里只在
+    // 本机死亡时置 `s.gameOver`，A 端冻结全场、B 端继续跑，同一帧立刻分叉。
+    say(s, options.deathText ?? `${p.name ?? '玩家'} 被击倒了 · 装备散落一地`);
+    return true;
   }
-  // 远端玩家倒下：不结束本局（本局是我的），尸体留在原地由绘制层表现。
+  // 单机 / PVE：本机倒下才结束这一局。用实体 id 比较而不是 `s.me`，
+  // 判定层不需要知道「我」是谁。R 重开功能已按产品决定删除，别再提示。
+  if (p.id === s.player.id) {
+    s.gameOver = true;
+    say(s, options.deathText ?? '你被击倒了');
+  }
+  // 远端玩家倒下：不结束本局，尸体留在原地由绘制层表现。
   return true;
 }

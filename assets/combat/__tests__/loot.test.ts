@@ -6,7 +6,7 @@ import {
 import { createState, spawnFromMap } from '../state.ts';
 import { testArena } from '../../resource/maps/arena-test.ts';
 import { arena } from '../../resource/maps/arena.generated.ts';
-import { deployRun, projection, step } from '../simulation.ts';
+import { deployRun, projection, reset, step } from '../simulation.ts';
 import { swingAtTarget } from '../attack.ts';
 import { updateDrops } from '../weapons.ts';
 import { NO_MODIFIERS } from '../modifiers.ts';
@@ -15,7 +15,7 @@ const tick = (s: ReturnType<typeof createState>, frames = 1) => {
   for (let i = 0; i < frames; i += 1) {
     step(s, 1 / 60, {
       pointerDown: false, pointerHeld: false, pointerUp: false,
-      dodge: false, restart: false,
+      dodge: false,
     }, NO_MODIFIERS);
   }
 };
@@ -173,10 +173,8 @@ describe('arena population and loot settlement', () => {
     swingAtTarget(s, 0, NO_MODIFIERS);
     swingAtTarget(s, 1, NO_MODIFIERS);
     const before = s.lootLog.map((r) => r.itemId);
-    step(s, 1 / 60, {
-      pointerDown: false, pointerHeld: false, pointerUp: false,
-      dodge: false, restart: true,
-    });
+    // R 重开已从帧协议删除；夹具重置是局外动作，不走 step()。
+    reset(s);
     expect(s.lootLog).toHaveLength(0);
     expect(s.skeletons).toHaveLength(testArena.monsters.length);
     for (const sk of s.skeletons) sk.hp = 1;

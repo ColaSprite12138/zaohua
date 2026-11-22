@@ -284,6 +284,16 @@
   }
   /* 与 `.acct-form label` 同一个坑：display:flex 会盖掉 hidden 的 UA 样式。 */
   #login-gate[hidden] { display: none !important; }
+  /* 联机 PVP 个人阵亡结算：5 秒后弹，点「返回大厅」才结算并真正离开房间。 */
+  #pvp-defeat {
+    position: fixed; inset: 0; z-index: 45;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; overflow: auto;
+    background: rgba(9, 17, 25, .88);
+    pointer-events: auto;
+  }
+  #pvp-defeat[hidden] { display: none !important; }
+  #pvp-defeat-back { width: 100%; padding: 10px; border-color: var(--gold); color: var(--gold); }
   .gate-card {
     width: 420px; max-width: 100%;
     background: #101c28; border: 1px solid var(--line); border-radius: 14px;
@@ -362,6 +372,22 @@
         注册只用用户名和密码，<b>不收手机号、不要造化账号</b>。
       </p>
       <button id="gate-close" type="button" hidden>暂不登录，继续玩</button>
+    </div>
+  </div>
+
+  <!--
+    联机 PVP 的**按玩家**阵亡结算。和 `login-gate` 一样是全屏 modal，但语义相反：
+    它不是「挡住游戏」，而是「本局对我已经结束」。Worker 只在本机实体 hp<=0 且
+    5 秒结算时钟归零时发 result.pvpDeath；本面板因此只会出现在死者那一端，
+    其他玩家的画面不受影响。点「返回大厅」才真正结算存档并离开房间。
+  -->
+  <div id="pvp-defeat" hidden>
+    <div class="gate-card">
+      <div class="gate-brand"><b>撤离失败</b><span>搜打撤</span></div>
+      <p class="gate-lead" id="pvp-defeat-lead">
+        你被击倒了 · 带入的物品与战利品已散落在原地，其他玩家仍在局内。
+      </p>
+      <button id="pvp-defeat-back" type="button">返回大厅</button>
     </div>
   </div>
 

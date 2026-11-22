@@ -22,10 +22,18 @@ import { destructibleAtPoint, orderSmash } from './destructibles.ts';
 import { CLICK_DRAG_PIXELS, PLAYER_DODGE_CD, STRIDE_PIXELS, type GameState, type StepInput } from './state.ts';
 import { lockedFlags, moveMultiplier } from './status.ts';
 import { sortedPlayers } from './players.ts';
-import { BODY_RADIUS, canStandAt, walkable, type World } from './world.ts';
+import { BODY_RADIUS, cameraFor, canStandAt, walkable, type World } from './world.ts';
 
 export function classifyPointer(s: GameState, input: StepInput): void {
   if (s.player.dodge > 0) return;
+  /**
+   * 视图原点按**当前迭代玩家**的位置现算，不读 `s.camera`。
+   *
+   * `s.camera` 是本机座位的 V 层状态：联机时 A、B 各跟随自己，若判定层读它，
+   * B 模拟 A 的点击就会用 B 的视角去算拖拽，两端必然分叉。这里改成纯函数
+   * `cameraFor(world, p.x, p.y)`，同一玩家在两端算出完全相同的值。
+   */
+  const cam = cameraFor(s.world, s.player.x, s.player.y);
   // View space = world minus camera. Deriving it HERE (instead of trusting an
   // extra screen-space input) keeps the engine contract at "world coordinates
   // only" and makes the "did the pointer move?" test camera-independent: while
@@ -33,14 +41,14 @@ export function classifyPointer(s: GameState, input: StepInput): void {
   // its WORLD position every frame, and a world-space drag test would call
   // every such click a drag (= a move order instead of an attack).
   const view = input.mouse
-    ? { x: input.mouse.x - s.camera.x, y: input.mouse.y - s.camera.y }
+    ? { x: input.mouse.x - cam.x, y: input.mouse.y - cam.y }
     : undefined;
   if (input.pointerDown && view) {
     s.press = {
       vx: view.x,
       vy: view.y,
-      wx: input.mouse?.x ?? s.camera.x + view.x,
-      wy: input.mouse?.y ?? s.camera.y + view.y,
+      wx: input.mouse?.x ?? cam.x + view.x,
+      wy: input.mouse?.y ?? cam.y + view.y,
       hold: false,
     };
   }

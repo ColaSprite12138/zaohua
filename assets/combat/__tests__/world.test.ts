@@ -193,7 +193,7 @@ describe('acceptance fixture vs playable arena', () => {
     for (let i = 0; i < 120; i += 1) {
       step(s, 1 / 60, {
         pointerDown: false, pointerHeld: false, pointerUp: false,
-        dodge: false, restart: false,
+        dodge: false,
       });
     }
     expect(walkable(s.world, s.player.x, s.player.y)).toBe(true);

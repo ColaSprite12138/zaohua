@@ -60,6 +60,8 @@ export type HashParts = {
   readonly drops: number
   readonly players: number
   readonly destructibles: number
+  /** 其余共享世界（区域 / 弹道 / 事件 / 局内时钟）的全状态指纹。 */
+  readonly shared: number
 }
 
 type HashReport = {
@@ -153,10 +155,11 @@ function readParts(value: unknown): HashParts | undefined {
   const d = Number(p.drops)
   const pl = Number(p.players)
   const de = Number(p.destructibles)
-  if (![s, d, pl, de].every((n) => Number.isFinite(n))) return undefined
+  const sh = p.shared === undefined ? 0 : Number(p.shared)
+  if (![s, d, pl, de, sh].every((n) => Number.isFinite(n))) return undefined
   return {
     skeletons: s >>> 0, drops: d >>> 0,
-    players: pl >>> 0, destructibles: de >>> 0,
+    players: pl >>> 0, destructibles: de >>> 0, shared: sh >>> 0,
   }
 }
 

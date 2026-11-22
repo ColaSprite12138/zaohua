@@ -378,13 +378,13 @@ describe('the projection makes projectiles observable', () => {
     s.activeWeaponSlot = 0;
     s.runInventory.activeWeaponSlot = 0;
     step(s, FRAME, {
-      pointerDown: false, pointerHeld: false, pointerUp: false, dodge: false, restart: false,
+      pointerDown: false, pointerHeld: false, pointerUp: false, dodge: false,
       mouse: { x: sk.x, y: sk.y - BODY_LIFT },
     }, NO_MODIFIERS);
     s.targetEnemy = 0;
     s.attackOrder = true;
     step(s, FRAME, {
-      pointerDown: false, pointerHeld: false, pointerUp: false, dodge: false, restart: false,
+      pointerDown: false, pointerHeld: false, pointerUp: false, dodge: false,
     }, NO_MODIFIERS);
     const view = projection(s);
     expect(view.ammo).toBe(0);

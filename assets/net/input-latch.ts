@@ -33,11 +33,9 @@ export type RawInput = {
   readonly potion: boolean;
   readonly healPotion: boolean;
   readonly extractChannel: boolean;
-  readonly restart: boolean;
   readonly skill: number;
   readonly switchWeapon: number;
   readonly pointerOnHud: boolean;
-  readonly bigMap: boolean;
 };
 
 export function emptyRawInput(): RawInput {
@@ -50,11 +48,9 @@ export function emptyRawInput(): RawInput {
     potion: false,
     healPotion: false,
     extractChannel: false,
-    restart: false,
     skill: NO_SKILL,
     switchWeapon: NO_SWITCH,
     pointerOnHud: false,
-    bigMap: false,
   };
 }
 
@@ -66,8 +62,6 @@ type Edges = {
   potion: boolean;
   healPotion: boolean;
   extractChannel: boolean;
-  restart: boolean;
-  bigMap: boolean;
   skill: number;
   switchWeapon: number;
 };
@@ -92,8 +86,6 @@ function emptyEdges(): Edges {
     potion: false,
     healPotion: false,
     extractChannel: false,
-    restart: false,
-    bigMap: false,
     skill: NO_SKILL,
     switchWeapon: NO_SWITCH,
   };
@@ -123,8 +115,6 @@ export function capture(latch: InputLatch, raw: RawInput): void {
   e.potion = e.potion || raw.potion;
   e.healPotion = e.healPotion || raw.healPotion;
   e.extractChannel = e.extractChannel || raw.extractChannel;
-  e.restart = e.restart || raw.restart;
-  e.bigMap = e.bigMap || raw.bigMap;
   if (raw.skill !== NO_SKILL) e.skill = raw.skill;
   if (raw.switchWeapon !== NO_SWITCH) e.switchWeapon = raw.switchWeapon;
 }
@@ -145,12 +135,10 @@ export function take(latch: InputLatch, tick: number): InputFrame {
     potion: e.potion,
     healPotion: e.healPotion,
     extractChannel: e.extractChannel,
-    restart: e.restart,
     skill: e.skill,
     switchWeapon: e.switchWeapon,
     mouse: h.mouse ? { x: h.mouse.x, y: h.mouse.y } : null,
     pointerOnHud: h.pointerOnHud,
-    bigMap: e.bigMap,
   };
   latch.edges = emptyEdges();
   return frame;

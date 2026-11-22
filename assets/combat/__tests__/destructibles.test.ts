@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DESTRUCTIBLE_IDS, beginSmash, destructibleAtPoint, destructibleDef, guardsAround,
-  orderSmash, updateDestructibles,
+  orderSmash, tickDestructibles, updateDestructibles,
 } from '../destructibles.ts';
 import { poolEntries } from '../loot.ts';
 import {
@@ -29,7 +29,6 @@ const input = (over: Partial<StepInput> = {}): StepInput => ({
   pointerHeld: false,
   pointerUp: false,
   dodge: false,
-  restart: false,
   ...over,
 });
 
@@ -202,8 +201,10 @@ describe('砸开与产出', () => {
     expect(obj.rubble).toBeGreaterThan(0);
     const drops = s.drops.length;
 
-    // 残骸倒计时走完：外观上什么都不剩……
-    updateDestructibles(s, RUBBLE_SECONDS);
+    // 残骸倒计时走完：外观上什么都不剩。共享复位已拆到
+    // `tickDestructibles()`（每帧全局一次），不再塞在按玩家的
+    // `updateDestructibles()` 里被 N 个玩家重复递减。
+    tickDestructibles(s, RUBBLE_SECONDS);
     expect(obj.rubble).toBe(0);
     // ……但状态仍然是「已砸开」：不可交互、不重新出现、不能再产出。
     expect(obj.broken).toBe(true);

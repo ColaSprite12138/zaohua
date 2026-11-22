@@ -110,7 +110,10 @@ export function updateSkeletons(s: GameState, dt: number): void {
     // 曾经这里写的是 `const p = s.player`，于是两端各自把怪拉向自己 ——
     // 同一个怪在 A 屏幕上追 A、在 B 屏幕上追 B，两张画面永远是两个世界。
     // `nearestPlayer` 用「距离平方 + id 破平」，两端算出同一个人。
-    const p = nearestPlayer(s, sk.x, sk.y) ?? s.player;
+    const p = nearestPlayer(s, sk.x, sk.y);
+    // 名单为空就别演算这只怪：**绝不 `?? s.player` 兜底** —— 那是本机玩家，
+    // A、B 两端会各自拿自己当目标，同一个怪就追向两个不同的人。
+    if (p === null) continue;
     sk.attackCd = Math.max(0, sk.attackCd - dt);
     sk.hit = Math.max(0, sk.hit - dt);
     sk.swing = Math.max(0, sk.swing - dt);

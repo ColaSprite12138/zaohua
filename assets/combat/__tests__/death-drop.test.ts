@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { leftoverDeathDrops, settleOnDeath, spawnDeathDrop } from '../death-drop.ts';
-import { createState, deployRun, step, type Deployment } from '../simulation.ts';
+import { createState, deployRun, reset, step, type Deployment } from '../simulation.ts';
 import type { GameState, StepInput } from '../state.ts';
 import type { RunLoadout } from '../../meta/inventory.ts';
 
@@ -18,7 +18,6 @@ const idle = (over: Partial<StepInput> = {}): StepInput => ({
   pointerHeld: false,
   pointerUp: false,
   dodge: false,
-  restart: false,
   ...over,
 });
 
@@ -63,10 +62,11 @@ describe('副本死亡掉落：摆点与拾取', () => {
     expect(s.drops).toHaveLength(0);
   });
 
-  it('a restart (R) keeps the corpse loot that is still on the ground', () => {
+  it('a fixture reset keeps the corpse loot that is still on the ground', () => {
     const probe = createState();
     const s = quiet({ kind: 'dungeon', deathDrop: { x: probe.map.spawn.x, y: probe.map.spawn.y, items: [{ defId: 'longsword' }] } });
-    step(s, 0.1, idle({ restart: true }));
+    // R 重开功能已按产品决定彻底删除；夹具重置是局外动作，不进输入帧、不进 step()。
+    reset(s);
     // 重开一局 = 重玩这张图，图上的东西还在；已经捡走的不在 drops 里，也不会凭空复制
     expect(s.drops.filter((d) => d.fromDeathDrop === true)).toHaveLength(1);
   });

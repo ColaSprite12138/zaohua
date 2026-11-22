@@ -74,7 +74,7 @@ export default async function worldMap(play) {
     if (s.regions.length !== 5) throw new Error(`应有 5 个分区（含正中宝库），实际 ${s.regions.length}`);
     if (!s.regions.some((r) => r.id === 'vault')) throw new Error('分区表里没有宝库');
     if (s.zone?.id !== 'court') throw new Error(`出生点应在院落，实际 ${JSON.stringify(s.zone)}`);
-    if (s.bigMap !== false) throw new Error('开局大地图应该是关着的');
+    if (s.viewBigMap !== false) throw new Error('开局大地图应该是关着的');
     await play.screenshot('world-zone-court');
   });
 
@@ -82,7 +82,7 @@ export default async function worldMap(play) {
     await play.keyboard.press('KeyM');
     await play.advance(0.2);
     s = await play.state('game.state');
-    if (s.bigMap !== true) throw new Error('按 M 应该打开大地图');
+    if (s.viewBigMap !== true) throw new Error('按 M 应该打开大地图');
     await play.screenshot('worldmap-open');
 
     // 打开时点远处的地面：玩家一步都不该动（指针落在覆盖层上 = HUD）。
@@ -98,7 +98,7 @@ export default async function worldMap(play) {
     await play.keyboard.press('KeyM');
     await play.advance(0.2);
     s = await play.state('game.state');
-    if (s.bigMap !== false) throw new Error('再按一次 M 应该关掉大地图');
+    if (s.viewBigMap !== false) throw new Error('再按一次 M 应该关掉大地图');
   });
 
   await play.step('walking the ring: court → corridor through the north corridor', async () => {

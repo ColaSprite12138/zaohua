@@ -6,14 +6,15 @@
  * 截图很难抓，所以每一条都从状态本身断言。
  */
 import { describe, expect, it } from 'vitest';
-import { createState, type GameState, type Player } from '../state.ts';
+import { createState, PVP_DEATH_SECONDS, type GameState, type Player, type StepInput } from '../state.ts';
+import { NO_MODIFIERS } from '../modifiers.ts';
 import { damagePlayer } from '../attack.ts';
 import { updateZones, spawnZone } from '../reactions.ts';
 import { updateDrops } from '../weapons.ts';
 import { monsterSource } from '../source.ts';
 import { hashGameState } from '../../net/state-hash.ts';
 import { step } from '../simulation.ts';
-import { createRemotePlayer, spawnOffset, type PeerSnapshot } from '../players.ts';
+import { createRemotePlayer, playerById, spawnOffset, type PeerSnapshot } from '../players.ts';
 
 /** 造一个「我 + 一个远端」的双人状态，两者都在出生点附近。 */
 function twoPlayers(s: GameState): { me: Player; other: Player } {
@@ -217,7 +218,7 @@ describe('联机 PVP 当场爆装（PVE 链路完全隔离）', () => {
     // 一个只给远端玩家「往右走」的输入帧：死者不该被驱动。
     const input = {
       pointerDown: true, pointerHeld: false, pointerUp: false, dodge: false,
-      mouse: { x: x + 200, y: other.y }, restart: false,
+      mouse: { x: x + 200, y: other.y },
     };
     step(s, 1 / 60, input, undefined,
       new Map([[other.id, { ...input, pointerDown: false }]]));
@@ -230,15 +231,19 @@ describe('开局：两端看到的是同一份世界', () => {
   /** 造一台客户端的完整世界：本机 + 一个远端，身份都用真实座位 id。 */
   function clientView(selfId: string, peerId: string): GameState {
     const s = createState();
-    s.player.id = selfId;
-    s.me = selfId;
-    const off = spawnOffset(selfId);
-    s.player.x = s.map.spawn.x + off.dx;
-    s.player.y = s.map.spawn.y + off.dy;
-    const peer = createRemotePlayer(peerId, peerId, s.map.spawn, {
+    const snapshot: PeerSnapshot = {
       loadout: null, hpMax: 100, manaMax: 100, starSkills: [],
-    });
-    s.players = [s.player, peer];
+    };
+    // 真机上本机玩家与远端玩家是**同一种 `Player` 实体**：本机走
+    // `deployRun(loadout)`，远端用对方上报的同一份装备快照构造。夹具必须
+    // 复刻这一点 —— 若本机还留着 `createState()` 的默认药水 / 默认技能栏 /
+    // 默认朝向 / 未偏移的 `intent.target`，两端对「同一个 id」的字段天然
+    // 不同，全状态指纹会立刻报分叉（旧摘要只查 x/y/hp，正好漏掉这些）。
+    const self = createRemotePlayer(selfId, selfId, s.map.spawn, snapshot);
+    const peer = createRemotePlayer(peerId, peerId, s.map.spawn, snapshot);
+    s.player = self;
+    s.me = selfId;
+    s.players = [self, peer];
     return s;
   }
 
@@ -305,7 +310,7 @@ describe('点击判定不能依赖「本机视角」的相机', () => {
     const mouse = { x: startX + 200, y: startY + 90 };
     const idle = {
       pointerDown: false, pointerHeld: false, pointerUp: false,
-      dodge: false, restart: false,
+      dodge: false,
     };
     const clickOf = (i: number) => ({
       ...idle,
@@ -325,5 +330,217 @@ describe('点击判定不能依赖「本机视角」的相机', () => {
       step(b, 1 / 60, idle, undefined, new Map([['seatA', inputA]]));
       expect(hashGameState(a, i)).toBe(hashGameState(b, i));
     }
+  });
+});
+
+/**
+ * 用户 2026-11-21 真机现象的机制级护栏：
+ *   ① A 砸箱子到一半闪避打断，B 却看到 A 一直挥刀；
+ *   ② 闪避之后 A 的后续移动指令只有 A 自己看得到。
+ *
+ * 根因是「按玩家的时间量只在 `s.player`（本机）上推进」+ 共享系统塞进
+ * 按玩家循环。这里让 A / B 两个座位拿**同一份输入 Map**跑同一段帧序列，
+ * 用全状态指纹逐帧对账 —— 不是对某个 case 打补丁，而是把「两端跑同一份
+ * F」变成可执行断言。
+ */
+describe('PVP 局内：点箱子 → 闪避打断 → 再点地面，两端逐帧全状态一致', () => {
+  const DT = 1 / 60;
+  const snapshot: PeerSnapshot = {
+    loadout: null, hpMax: 100, manaMax: 100, starSkills: [],
+  };
+  const idle: StepInput = {
+    mouse: undefined,
+    pointerDown: false, pointerHeld: false, pointerUp: false, dodge: false,
+  };
+
+  /** 一台客户端：两名真 Player 实体，由同一个构造路径产出，逐位相同。 */
+  function view(selfId: 'seatA' | 'seatB', keepMonsters = false): GameState {
+    const s = createState();
+    const pa = createRemotePlayer('seatA', 'seatA', s.map.spawn, snapshot);
+    const pb = createRemotePlayer('seatB', 'seatB', s.map.spawn, snapshot);
+    s.player = selfId === 'seatA' ? pa : pb;
+    s.me = selfId;
+    s.players = [pa, pb];
+    s.online = true;
+    s.runKind = 'pvpve';
+    // 第一条用例只盯玩家动作、砸箱进度与后续走位；长序列用例保留怪，
+    // 用来逼出「挨打磨损武器」这类挂在 `s.player` 上的资源分叉。
+    if (!keepMonsters) s.skeletons = [];
+    return s;
+  }
+
+  it('A 的每一帧在 B 的机器上逐位相同（attackFx / dodge / intent 都进对账）', () => {
+    const a = view('seatA');
+    const b = view('seatB');
+    const crate = a.destructibles.find((o) => o.kind === 'crate');
+    expect(crate, '夹具地图里要有一个箱子').toBeTruthy();
+    const crateUid = crate!.uid;
+
+    // 「点箱子」产生的意图：两端对**同一个 seatA** 下同一份指令。
+    for (const s of [a, b]) {
+      const p = playerById(s, 'seatA')!;
+      p.x = crate!.x;
+      p.y = crate!.y + 40;
+      p.intent.target = { x: p.x, y: p.y };
+      p.intent.smashTarget = crateUid;
+    }
+
+    const ground = { x: crate!.x + 220, y: crate!.y + 120 };
+    const frameForA = (tick: number): StepInput => {
+      if (tick === 30) return { ...idle, dodge: true };
+      if (tick >= 70 && tick <= 80) {
+        return {
+          ...idle,
+          pointerDown: tick === 70,
+          pointerHeld: tick > 70 && tick < 80,
+          pointerUp: tick === 80,
+          mouse: ground,
+        };
+      }
+      return idle;
+    };
+
+    let smashStarted = false;
+    for (let tick = 0; tick < 140; tick += 1) {
+      const frameA = frameForA(tick);
+      // 本机帧与远端帧本来就该是同一张 Map：`collectInputs` 会用座位 id
+      // 再写一次本机输入，两端最终拿到的表完全相同。
+      const all = new Map<string, StepInput>([['seatA', frameA], ['seatB', idle]]);
+      step(a, DT, frameA, NO_MODIFIERS, all);
+      step(b, DT, idle, NO_MODIFIERS, all);
+      expect(hashGameState(a, tick)).toBe(hashGameState(b, tick));
+      const pa = playerById(a, 'seatA')!;
+      const pb = playerById(b, 'seatA')!;
+      expect([
+        pa.dodge, pa.dodgeCd, pa.attackFx, pa.hurt, pa.x, pa.y,
+        pa.intent.moveMode, pa.intent.target.x, pa.intent.target.y,
+      ]).toEqual([
+        pb.dodge, pb.dodgeCd, pb.attackFx, pb.hurt, pb.x, pb.y,
+        pb.intent.moveMode, pb.intent.target.x, pb.intent.target.y,
+      ]);
+      if (pa.intent.smash !== null) smashStarted = true;
+    }
+    expect(smashStarted, '夹具真的砸到了箱子，不是空跑').toBe(true);
+    // 闪避打断之后 A 仍能接到后续移动指令（用户真机现象 ②）。
+    const finalA = playerById(a, 'seatA')!;
+    expect(finalA.dodge).toBe(0);
+    expect(finalA.intent.moveMode).not.toBe('idle');
+  });
+
+  it('带怪 / 技能 / 药水 / 切武器的 300 帧长序列，两端仍逐帧全状态一致', () => {
+    const a = view('seatA', true);
+    const b = view('seatB', true);
+    const aim = { x: a.map.spawn.x + 260, y: a.map.spawn.y + 120 };
+    const frameForA = (tick: number): StepInput => {
+      const phase = tick % 60;
+      if (phase === 5) return { ...idle, skill: 0, mouse: aim };
+      if (phase === 12) return { ...idle, dodge: true };
+      if (phase === 20) return { ...idle, potion: true };
+      if (phase === 25) return { ...idle, switchWeapon: 1 as const };
+      if (phase >= 30 && phase <= 40) {
+        return {
+          ...idle,
+          pointerDown: phase === 30,
+          pointerHeld: phase > 30 && phase < 40,
+          pointerUp: phase === 40,
+          mouse: aim,
+        };
+      }
+      return idle;
+    };
+
+    for (let tick = 0; tick < 300; tick += 1) {
+      const frameA = frameForA(tick);
+      const all = new Map<string, StepInput>([['seatA', frameA], ['seatB', idle]]);
+      step(a, DT, frameA, NO_MODIFIERS, all);
+      step(b, DT, idle, NO_MODIFIERS, all);
+      expect(hashGameState(a, tick)).toBe(hashGameState(b, tick));
+    }
+  });
+});
+
+/**
+ * 联机 PVP 阵亡（用户 2026-11-21 拍板）：死者当场爆装 → 5 秒独立结算时钟 →
+ * 提示「撤离失败」→ 点「返回大厅」；**不置 s.gameOver**，其他人照常玩。
+ * 倒计时属于 S，必须两端逐帧一致，否则 A 已经能回大厅、B 那里还在倒数。
+ */
+describe('联机 PVP 阵亡：按玩家独立结算', () => {
+  const DT = 1 / 60;
+  const idle: StepInput = {
+    mouse: undefined,
+    pointerDown: false,
+    pointerHeld: false,
+    pointerUp: false,
+    dodge: false,
+  };
+
+  function view(selfId: string, peerId: string): GameState {
+    const s = createState();
+    const snapshot: PeerSnapshot = {
+      loadout: null, hpMax: 100, manaMax: 100, starSkills: [],
+    };
+    const self = createRemotePlayer(selfId, selfId, s.map.spawn, snapshot);
+    const peer = createRemotePlayer(peerId, peerId, s.map.spawn, snapshot);
+    s.player = self;
+    s.me = selfId;
+    s.players = [self, peer];
+    s.online = true;
+    s.runKind = 'pvpve';
+    return s;
+  }
+
+  it('阵亡当场爆装、起 5 秒时钟，不冻结全场也不碰别人', () => {
+    const s = view('seatA', 'seatB');
+    const a = playerById(s, 'seatA')!;
+    const b = playerById(s, 'seatB')!;
+    a.runInventory.bag.push({
+      uid: 'pvp-death-loot', defId: '10006', container: 'bag', col: 0, row: 0,
+    } as never);
+    const before = s.drops.length;
+
+    damagePlayer(s, 999, { source: monsterSource('100001') }, a);
+
+    expect(a.hp).toBe(0);
+    expect(a.deathTimer).toBe(PVP_DEATH_SECONDS);
+    expect(s.drops.length).toBeGreaterThan(before);  // 装备当场散落
+    expect(s.gameOver).toBe(false);                  // 不是全局结局
+    expect(b.hp).toBe(b.maxHp);                      // 另一个人毫发无伤
+  });
+
+  it('A 阵亡后的 5 秒，两端逐帧全状态一致，且 B 仍能正常走位', () => {
+    const a = view('seatA', 'seatB');
+    const b = view('seatB', 'seatA');
+    const aim = { x: a.map.spawn.x + 260, y: a.map.spawn.y + 120 };
+    // 两端各自对「同一个 seatA」结算致命伤：完整模拟，不靠广播结果。
+    for (const s of [a, b]) {
+      damagePlayer(s, 999, { source: monsterSource('100001') }, playerById(s, 'seatA')!);
+    }
+    expect(hashGameState(a, 0)).toBe(hashGameState(b, 0));
+
+    const bStart = playerById(a, 'seatB')!.x;
+    const frameB = (tick: number): StepInput => {
+      const phase = tick % 60;
+      if (phase === 0) return { ...idle, pointerDown: true, mouse: aim };
+      if (phase > 0 && phase < 20) return { ...idle, pointerHeld: true, mouse: aim };
+      if (phase === 20) return { ...idle, pointerUp: true, mouse: aim };
+      return idle;
+    };
+
+    for (let tick = 0; tick < 60 * 6; tick += 1) {
+      const fb = frameB(tick);
+      const all = new Map<string, StepInput>([['seatA', idle], ['seatB', fb]]);
+      step(a, DT, idle, NO_MODIFIERS, all);
+      step(b, DT, fb, NO_MODIFIERS, all);
+      expect(hashGameState(a, tick + 1)).toBe(hashGameState(b, tick + 1));
+      // 倒计时两端每一帧都相同，不能只在最后一帧对上。
+      expect(playerById(a, 'seatA')!.deathTimer)
+        .toBe(playerById(b, 'seatA')!.deathTimer);
+    }
+
+    expect(playerById(a, 'seatA')!.deathTimer).toBe(0);
+    expect(playerById(b, 'seatA')!.deathTimer).toBe(0);
+    expect(a.gameOver).toBe(false);
+    expect(b.gameOver).toBe(false);
+    expect(playerById(a, 'seatB')!.x).not.toBe(bStart);   // B 没被冻结
   });
 });
