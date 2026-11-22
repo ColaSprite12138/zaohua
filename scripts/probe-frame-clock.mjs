@@ -66,6 +66,10 @@ if (!captured) {
   process.exit(1)
 }
 
+/** 与 assets/net/step-clock.ts::FIXED_HZ 保持一致。 */
+const HZ = 24
+/** 一帧多少毫秒。 */
+const FRAME_MS = 1000 / HZ
 /** 与 game/server/source/index.ts::RECENT_FRAMES 保持一致。 */
 const RECENT = 4
 
@@ -83,7 +87,7 @@ game.start()
 // 先给 A 五条意图（模拟客户端每 3 帧发一批）。
 game.applyAction('a', { s: 0, b: b64(encodeBatchBytes([0, 1, 2, 3, 4].map((seq) => encodeFrame(seq, 1)))) })
 
-// 先趁意图还在窗口里（窗口只有 12 帧 ≈ 200ms）看它们有没有被贴上。
+// 先趁意图还在窗口里（窗口 4 帧 ≈ 167ms @24Hz）看它们有没有被贴上。
 await sleep(100)
 const sEarly = game.getState()
 const earlyTicks = Object.keys(sEarly.inputs).map(Number).sort((x, y) => x - y)
@@ -92,7 +96,9 @@ check('A 的意图确实被贴进广播窗口', earlyA.length > 0, `A 命中 ${e
 
 await sleep(300)
 const s1 = game.getState()
-check('帧号按墙钟自行推进（400ms 应 ≈ 20~32 帧）', s1.frame >= 15 && s1.frame <= 40, `frame=${s1.frame}`)
+// 400ms @24Hz ≈ 9.6 帧；给抖动留 ±40% 的余量。
+check(`帧号按墙钟自行推进（400ms 应 ≈ ${Math.round(0.4 * HZ)} 帧）`,
+  s1.frame >= Math.round(0.4 * HZ * 0.6) && s1.frame <= Math.round(0.4 * HZ * 1.4), `frame=${s1.frame}`)
 
 // ---- 2) A 的意图被贴到了具体帧上，B 一帧都没有 ----
 const ticks = Object.keys(s1.inputs).map(Number).sort((x, y) => x - y)
@@ -131,7 +137,7 @@ if (reply) {
   const s3 = game.getState()
   check('ack 之后回包被删掉（不然每轮广播都重带）', !s3.reply.a)
   // 分块语义：先攒够历史，再请求一个跨块的区间。
-  await sleep(2500)
+  await sleep(Math.ceil((120 / HZ) * 1000) + 400)
   const grown = game.getState().frame
   game.applyAction('a', { replay: { from: 0, to: grown } })
   const s4 = game.getState()
@@ -151,11 +157,12 @@ const before = game.getState().frame
 await sleep(600)
 const after = game.getState().frame
 const hz = (after - before) / 0.6
-check('帧钟约 60 Hz（误差 ±15%）', hz > 51 && hz < 69, `${hz.toFixed(1)} Hz`)
+check(`帧钟约 ${HZ} Hz（误差 ±15%）`,
+  hz > HZ * 0.85 && hz < HZ * 1.15, `${hz.toFixed(1)} Hz`)
 
-// ---- 7) 最纯粹的一条：**零输入**下也必须严格 60 Hz、帧号连续 ----
+// ---- 7) 最纯粹的一条：**零输入**下也必须严格按时推进、帧号连续 ----
 // 这一组刻意不调任何 applyAction —— 一个客户端都没交东西，甚至一个都没连上。
-// 只要它还在这里按 60 Hz 推进，「绝不等待客户端」就成了结构事实而不是口号。
+// 只要它还在这里按固定节拍推进，「绝不等待客户端」就成了结构事实而不是口号。
 const solo = captured.createGame([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }])
 solo.start()
 await sleep(300)
@@ -165,8 +172,8 @@ await sleep(3000)
 const zeroTo = solo.getState().frame
 const zeroElapsed = (Date.now() - zeroAt) / 1000
 const zeroHz = (zeroTo - zeroFrom) / zeroElapsed
-check('零输入 3 秒仍严格 ~60 Hz（没有任何客户端在喂它）',
-  zeroHz >= 56 && zeroHz <= 64, `${zeroHz.toFixed(1)} Hz, frame ${zeroFrom}→${zeroTo}`)
+check(`零输入 3 秒仍严格 ~${HZ} Hz（没有任何客户端在喂它）`,
+  zeroHz >= HZ * 0.9 && zeroHz <= HZ * 1.1, `${zeroHz.toFixed(1)} Hz, frame ${zeroFrom}→${zeroTo}`)
 
 const zeroTicks = Object.keys(solo.getState().inputs).map(Number).sort((x, y) => x - y)
 const gapless = zeroTicks.every((t, i) => i === 0 || t === zeroTicks[i - 1] + 1)
@@ -196,14 +203,16 @@ for (let sent = 0; sent < 36; sent += 12) {
 await sleep(200)
 const spamMid = spam.getState()
 check('灌 36 条意图不能让帧钟变快（帧号只由时间决定）',
-  spamMid.frame - spamFrom <= 20, `200ms 只走了 ${spamMid.frame - spamFrom} 帧`)
+  spamMid.frame - spamFrom <= Math.round(0.2 * HZ * 2), `200ms 只走了 ${spamMid.frame - spamFrom} 帧`)
 check('多余的意图排队等后续帧，不插队也不丢',
   spamMid.stats.submitted === 36 && spamMid.stats.dropped === 0 && spamMid.stats.applied < 36,
   `submitted=${spamMid.stats.submitted} applied=${spamMid.stats.applied} dropped=${spamMid.stats.dropped}`)
-await sleep(600)
+// 36 条 @24Hz 要 1.5 秒才消化完，留足时间。
+await sleep(Math.ceil((36 / HZ) * 1000) + 600)
 const spamDone = spam.getState()
 const spamHz = (spamDone.frame - spamFrom) / ((Date.now() - spamAt) / 1000)
-check('灌包之后整体速率仍回到 ~60 Hz', spamHz >= 52 && spamHz <= 68, `${spamHz.toFixed(1)} Hz`)
+check(`灌包之后整体速率仍回到 ~${HZ} Hz`,
+  spamHz >= HZ * 0.88 && spamHz <= HZ * 1.12, `${spamHz.toFixed(1)} Hz`)
 check('积压按帧消化完（applied 追上 submitted）', spamDone.stats.applied === 36,
   `applied=${spamDone.stats.applied}`)
 spam.stop()

@@ -254,7 +254,11 @@ export function hashGameState(state: HashableState, tick: number): number {
 }
 
 /** 每 60 tick 一次对账。1 秒一次足够抓分歧，又不至于把带宽吃掉。 */
-export const HASH_INTERVAL_TICKS = 60;
+/**
+ * 每多少帧报一次状态指纹。**按帧率派生，保持「约 1 秒一次」**：
+ * 60 Hz 时是 60，24 Hz 时是 24 —— 写死 60 会让 24 Hz 下的对账间隔变成 2.5 秒。
+ */
+export const HASH_INTERVAL_TICKS = 24;
 
 export type HashParts = {
   skeletons: number;

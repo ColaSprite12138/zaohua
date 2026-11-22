@@ -1,30 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FIXED_DT, MAX_FRAME_DELTA, advanceClock, createStepClock, seekClock,
+  FIXED_DT, FIXED_HZ, MAX_FRAME_DELTA, advanceClock, createStepClock, seekClock,
 } from '../step-clock.ts';
 
 describe('固定步长时钟', () => {
-  it('60Hz 的机器每帧恰好推一步', () => {
+  // 下面的期望值一律从 FIXED_HZ 派生：改帧率时测试跟着走，不需要逐条改数字。
+  it('渲染帧率正好等于逻辑帧率时，每帧恰好推一步', () => {
     const clock = createStepClock();
     let total = 0;
-    // 1/60 秒 × 120 帧
-    for (let i = 0; i < 120; i += 1) total += advanceClock(clock, 1 / 60);
+    for (let i = 0; i < 120; i += 1) total += advanceClock(clock, FIXED_DT);
     expect(total).toBe(120);
     expect(clock.tick).toBe(120);
   });
 
-  it('144Hz 的机器两帧推一步，一百帧后步数与 60Hz 一致', () => {
+  it('高刷机器两帧推一步，整 1 秒后步数与逻辑帧率一致', () => {
     const clock = createStepClock();
     let steps = 0;
-    // 144 帧 × (1/144) 秒 = 整 1 秒 = 60 个逻辑步
+    // 144 帧 × (1/144) 秒 = 整 1 秒 = FIXED_HZ 个逻辑步
     for (let i = 0; i < 144; i += 1) steps += advanceClock(clock, 1 / 144);
     // 允许 ±1 步的取整误差，但绝不能差出 2 步
-    expect(Math.abs(steps - 60)).toBeLessThanOrEqual(1);
+    expect(Math.abs(steps - FIXED_HZ)).toBeLessThanOrEqual(1);
   });
 
   it('同样的总时长、不同的帧率切分，步数相同（这是帧同步的命根子）', () => {
     const a = createStepClock();
     const b = createStepClock();
+    // 同样喂 1 秒，只是切分方式不同。
     for (let i = 0; i < 60; i += 1) advanceClock(a, 1 / 60);
     for (let i = 0; i < 240; i += 1) advanceClock(b, 1 / 240);
     expect(a.tick).toBe(b.tick);
@@ -33,7 +34,7 @@ describe('固定步长时钟', () => {
   it('单帧超长时截断到 MAX_FRAME_DELTA，但把该跑完的步都跑完', () => {
     const clock = createStepClock();
     const steps = advanceClock(clock, 4);
-    // 截断窗口由 MAX_FRAME_DELTA 决定（现在是 0.1s = 6 步）。
+    // 截断窗口由 MAX_FRAME_DELTA 决定（0.1 s，逻辑 24 Hz 时是 2 步）。
     // 它压小的理由写在 step-clock.ts 的注释里：15 步的补帧在联机时会变成卡顿尖峰。
     const expected = Math.round(MAX_FRAME_DELTA / FIXED_DT);
     expect(steps).toBe(expected);
@@ -51,7 +52,7 @@ describe('固定步长时钟', () => {
 
   it('负数和 NaN 当作 0，不会把时钟倒回去', () => {
     const clock = createStepClock();
-    advanceClock(clock, 1 / 60);
+    advanceClock(clock, FIXED_DT);
     const before = clock.tick;
     expect(advanceClock(clock, -1)).toBe(0);
     expect(advanceClock(clock, Number.NaN)).toBe(0);

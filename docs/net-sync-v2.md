@@ -31,7 +31,7 @@ v2 的做法是把这两样东西的所有权收到服务器：**帧号归服务
 |---|---|---|
 | 1 | 宿主 `getDelta(playerId, ackedSeq)` 是否按玩家定向下发 | **不依赖**。补帧回包按 `reply[playerId] = {seq, …}` 存，客户端只取自己那份；宿主就算全员广播同一份，正确性也不变（只是多花带宽） |
 | 2 | 重连进已在 playing 的房间拿到什么 state | **不依赖**。客户端 `nextTick` 从 0 起，缺口一律走 `replay`；重连与抖动同一条通道 |
-| 3 | 宿主 `tick()` 能否与逻辑帧率解耦 | **已解耦**。`createGame().start()` 自起 60 Hz 定时器（半周期轮询 + 累加补偿），`tick()` 只让快照「看起来变了」。`scripts/probe-frame-clock.mjs` 实测 58–63 Hz |
+| 3 | 宿主 `tick()` 能否与逻辑帧率解耦 | **已解耦**。`createGame().start()` 自起 24 Hz 定时器（半周期轮询 + 累加补偿），`tick()` 只让快照「看起来变了」。`scripts/probe-frame-clock.mjs` 实测 23–25 Hz |
 
 ## 0.2 「空帧」在两个方向上的规则**不一样**，别搞混
 
@@ -67,13 +67,13 @@ v2 的做法是把这两样东西的所有权收到服务器：**帧号归服务
 
 ### 2.1 帧钟
 
-- 帧号用**独立定时器**按 60 Hz（16.67 ms）推进。
+- 帧号用**独立定时器**按 24 Hz（41.67 ms）推进。
   **只要时间到就推，不看任何人的脸色** —— 代码里没有任何「还差谁的意图」分支：
   `advanceFrame` 每帧从每人队列取队首一条，取不到就不贴他（= 空输入），
   帧号照走。`scripts/probe-frame-clock.mjs` 有一条硬断言：**零输入 3 秒仍 60.1 Hz**，
   以及「灌 36 条意图不能让帧钟变快」。
-  **广播频率跟着逻辑帧率走**（`tickIntervalMs = FRAME_MS` = 16.67 ms，2026-11-22 定），
-  所以每轮广播正好带 1 帧新内容、窗口只留 4 帧。
+  **广播频率跟着逻辑帧率走**（`tickIntervalMs = FRAME_MS` = 41.67 ms，2026-11-22 定），
+  所以每轮广播正好带 1 帧新内容、窗口只留 4 帧（167 ms，能吸收 3 轮广播丢失）。
   注意两者仍然是**两个不同的定时器**：逻辑帧钟是独立定时器 + 累加补偿，广播是宿主
   的 `tick()`。把它们合成一个会让帧间隔跟着宿主负载抖（见 §8.2）。
 - 帧号永不等待任何人，也不因某人掉线而变慢。
@@ -129,7 +129,7 @@ v2 的做法是把这两样东西的所有权收到服务器：**帧号归服务
 
 1. **作者延迟增加一个回程**：RTT + lookahead×16.7 ms。本机回环约 40–60 ms，跨网 100–200 ms。
    这是「客户端不做预表现 + 不拥有自己的帧」的必然结果。
-2. **服务器必须有独立的 60 Hz 定时器**，不能复用宿主的广播定时器（宿主会抖，见 §8.2）。
+2. **服务器必须有独立的 24 Hz 定时器**，不能复用宿主的广播定时器（宿主会抖，见 §8.2）。
 3. **断线时画面会停**（因为不预测），恢复靠补帧快进；停多久 = 你多久发现缺口，不再是无限。
 
 ## 5. 删除清单（v1 的东西）
@@ -151,7 +151,7 @@ v2 的做法是把这两样东西的所有权收到服务器：**帧号归服务
 |---|---|---|---|
 | 1 | `sync-driver.ts` + 单测（纯逻辑，不碰现有链路） | `vitest run assets/net/__tests__/sync-driver.test.ts` 全绿 | ✅ 2026-11-22 |
 | 2 | 协议换 `seq`：`input-frame.ts` 去掉 `tick`，加 `seq` | 单测 + typecheck | ✅ 2026-11-22 |
-| 3 | 服务器 v2：60 Hz 帧钟、贴当前帧、全量 history、replay 分块、departed | `frame-log.test.ts` + `scripts/probe-frame-clock.mjs`（14 项全绿） | ✅ 2026-11-22 |
+| 3 | 服务器 v2：帧钟、贴当前帧、全量 history、replay 分块、departed | `frame-log.test.ts` + `scripts/probe-frame-clock.mjs`（25 项全绿） | ✅ 2026-11-22 |
 | 4 | 客户端接线：`game.pack.ts` 的 `advanceLockstep` 整段替换 | 单机 `playthrough-swing` 39 步通过 | ✅ 2026-11-22 |
 | 5 | 双人长跑验收 | `HOLD_MS=180000`：零分叉、卡 5 s 能回来 | ⬜ **未验**（缺 `MATCH_USER_A/B` 账号） |
 
@@ -163,7 +163,7 @@ v2 的做法是把这两样东西的所有权收到服务器：**帧号归服务
 detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到账号之前，v2 的正确性证据只到：
 
 - 纯逻辑单测（帧钟语义、补帧区间、执行指针不变式）；
-- 服务器**真实产物**探针（`game/server/dist/index.js`，14 项：60 Hz、不等客户端、
+- 服务器**真实产物**探针（`game/server/dist/index.js`，25 项：24 Hz、不等客户端、
   意图按序贴帧、空帧覆盖、replay 分块与 ack）；
 - 单机 playthrough（证明客户端主循环改造没破坏单机）。
 
@@ -175,12 +175,12 @@ detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到�
 
 | 位置 | 字段 | 含义 |
 |---|---|---|
-| `game/server/source/index.ts` | `state.frame` | 服务器帧号，60 Hz 自走，**客户端只能跟随** |
+| `game/server/source/index.ts` | `state.frame` | 服务器帧号，24 Hz 自走，**客户端只能跟随** |
 | 同上 | `state.inputs[tick][pid] = {t,n:1,b}` | 广播窗口（最近 12 帧，**每帧都有条目**，空对象 = 全员空输入） |
 | 同上 | `state.reply[pid] = {seq,from,to,done,more,data}` | 补帧回包，客户端 ack 后删 |
 | `assets/net/frame-log.ts` | `history` | 全量历史（只存有人按键的帧，`sliceHistory` 补空帧） |
 | `assets/net/sync-driver.ts` | `nextTick` | 执行指针，**结构上不可能超过广播过的帧号** |
-| `game.pack.ts` | `intentAcc` / `netOutbox` | 意图采样（墙钟 60 Hz），与执行解耦 |
+| `game.pack.ts` | `intentAcc` / `netOutbox` | 意图采样（墙钟 24 Hz），与执行解耦 |
 | 同上 | `MAX_CATCHUP_STEPS = 6` | 每渲染帧最多补 6 步，**剩下的留在 acc 下一帧继续**（不丢时间） |
 
 
@@ -190,8 +190,8 @@ detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到�
 
 | 频率 | 谁定 | 现在 | 能不能改 |
 |---|---|---|---|
-| 逻辑帧率 | `step-clock.ts::FIXED_HZ`（唯一真源，`frame-log.ts` 转出） | 60 Hz | 能，但玩法数值全是 dt 驱动的，改了只是粒度变粗 |
-| 广播频率 | `game/server/source/index.ts` 的 `roomPolicy.tickIntervalMs` | **`FRAME_MS` = 16.67 ms（跟着逻辑帧率）** | 能，但宿主负载会跟着涨 |
+| 逻辑帧率 | `step-clock.ts::FIXED_HZ`（唯一真源，`frame-log.ts` 转出） | **24 Hz** | 能，但玩法数值全是 dt 驱动的，改了只是粒度变粗 |
+| 广播频率 | `game/server/source/index.ts` 的 `roomPolicy.tickIntervalMs` | **`FRAME_MS` = 41.67 ms（跟着逻辑帧率）** | 能，但宿主负载会跟着涨 |
 
 **一直是 `FRAME_MS` 而不是写死 42**（2026-11-22 用户定）。以前 42 ms 是「少压宿主」的保守值，
 代价是每轮攒 2.5 帧、窗口要 12 帧才够抗丢包。现在两者对齐：每轮 1 帧、窗口 4 帧。
@@ -207,16 +207,20 @@ detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到�
 
 ### 8.3 带宽实测（`probe-frame-clock.mjs` 第 9 组）
 
-60 Hz 广播（16.67 ms 一轮），实测：
+24 Hz 广播（41.67 ms 一轮），实测：
 
 | 场景 | 一次广播 | 带宽 |
 |---|---|---|
-| 2 人空载（没人按键） | 438 字符 | **25.7 KB/s** |
-| 2 人满载（都在动，每帧都发） | ~990 字符 | **~58 KB/s** |
-| 16 人满载 | ~5100 字符 | **~300 KB/s** |
+| 2 人空载（没人按键） | 438 字符 | **10.3 KB/s** |
+| 2 人满载（都在动，每帧都发） | ~990 字符 | **~24 KB/s** |
+| 16 人满载 | ~5100 字符 | **~120 KB/s** |
 
-**16 人满载那一档偏高，根因是 `playerId`（UUID 36 字符）在每一帧每一人身上重复一遍。**
-要降到 1/3 得做「座位索引」（`inputs` 里用 slot 而不是 id，id 只在 `players` 里出现一次），
+对比 60 Hz 那版（25.7 / 58 / 300 KB/s）：降到 24 Hz 让三档都少了 60%，
+**这一档收益是实打实的**（与 §8.3 前面「降帧率不省带宽」不矛盾 —— 那里说的是 42 ms→24 Hz
+的对比，而把广播从 60 次/秒降到 24 次/秒是另一回事）。
+
+**16 人满载仍偏高，根因是 `playerId`（UUID 36 字符）在每一帧每一人身上重复一遍。**
+要再降到 1/3 得做「座位索引」（`inputs` 里用 slot 而不是 id，id 只在 `players` 里出现一次），
 这是已知可优化项，不是本轮范围。
 
 **拆开看，74% 是固定开销**：
@@ -240,7 +244,7 @@ detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到�
 ### 8.3.1 补帧回包必须带 TTL
 
 补帧回包（一块 120 帧 ≈ 1 KB）在 `state.reply[playerId]` 里，跟着快照每轮广播——
-**在 60 Hz 下就是 60 KB/s 的纯浪费**。客户端 ack 后立即删，但如果 ack 丢了或客户端没实现，
+**在 24 Hz 下就是 24 KB/s、60 Hz 下 60 KB/s 的纯浪费**。客户端 ack 后立即删，但如果 ack 丢了或客户端没实现，
 它会一直挂着。
 
 所以有 `REPLAY_TTL_TICKS = 180`（宿主 3 秒）兜底：超过就删。
@@ -250,12 +254,14 @@ detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到�
 
 1. `step-clock.ts::FIXED_HZ`（唯一真源，其余全部由它派生）
 2. `roomPolicy.tickIntervalMs` = `FRAME_MS`（跟随逻辑帧率）
-3. `RECENT_FRAMES` = 覆盖一轮广播新增帧数 × 4（60 Hz 对齐时每轮 1 帧 → 4）
+3. `RECENT_FRAMES` = 覆盖一轮广播新增帧数 × 4（广播与逻辑同频时每轮 1 帧 → 4）
 4. `state-hash.ts::HASH_INTERVAL_TICKS` = `FIXED_HZ`（保持 1 秒一次对账）
-5. `game.pack.ts::MAX_CATCHUP_STEPS` ≈ `MAX_FRAME_DELTA × FIXED_HZ`
-6. `sync-driver.ts::DEFAULT_LOOKAHEAD`（帧数 × dt = 固定延迟，60 Hz 时 2 帧 = 33 ms）
+5. `step-clock.ts::MAX_FRAME_DELTA`（卡顿恢复时单帧最多吃进多少秒）与
+   `game.pack.ts::MAX_CATCHUP_STEPS`（= `MAX_FRAME_DELTA × FIXED_HZ`，现 0.25 s × 24 = 6 步）
+6. `sync-driver.ts::DEFAULT_LOOKAHEAD`（帧数 × dt = 固定延迟：60 Hz 时 2 帧 = 33 ms，24 Hz 时 = 83 ms）
 7. 单机 `advanceSolo` 用同一个 `FIXED_DT`，所以**单机手感会一起变**；
-   若要保持单机 60 Hz，就得让 `FIXED_DT` 按模式取两个值（可行，但两套规则集）
+   **现在是全局一起降**（单机也是 24 Hz）。要单机保持 60 Hz 就得让 `FIXED_DT` 按模式取两个值
+   （技术上可行，但等于两套规则集，且单机验过的行为不代表联机）
 8. 重跑：`vitest`、`probe-frame-clock.mjs`（断言里有多处帧数）、单机 playthrough
 
 ### 8.5 24 Hz 会不会吃掉判定窗口
@@ -270,9 +276,36 @@ detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到�
 ### 8.6 这次对齐带来的两个待实测
 
 1. **宿主能不能接受 `tickIntervalMs = 16.67`。** 若它内部有最小值（clamp 到 20–33 ms），
-   广播就会低于 60 Hz，每轮带 1–2 帧。窗口 4 仍然够用，只是延迟略增 —— 不会坏，
+   广播就会低于 24 Hz，每轮带 1–2 帧。窗口 4 仍然够用，只是延迟略增 —— 不会坏，
    但要在 `stats.tickMs` 里确认 p50 真的是 16–17 ms。
 2. **16 人局的宿主 CPU。** `getDelta()` 从 23.8 次/秒涨到 60 次/秒，序列化量 2.5 倍。
    2 人局无压力；16 人局必须实测，扛不住就退回 30 Hz（`FIXED_HZ = 30`，清单见 §8.4）。
 
 这两条都只能在真宿主上验，本机探针回答不了。
+
+### 8.7 客户端到底怎么「跟着服务器帧号走」
+
+用户口径：**收到服务器的帧号事件，就处理事件并推进帧号。** 落地是这样：
+
+```
+收到一帧 ──► accept(driver, {tick, frames})   // 只按 tick 塞进缓冲，不动 nextTick
+                  │
+每渲染帧 ──► while (acc >= FIXED_DT && canStep(driver)) {
+                packet = take(driver)        // 取走 nextTick 那一帧
+                nextTick += 1                // ← 唯一让帧号前进的地方
+                step(state, FIXED_DT, 本机帧, 远端帧)
+             }
+```
+
+三条必须成立的：
+
+1. **`nextTick` 只在 `take()` 里 +1**，而 `take()` 要求手里从 `nextTick` 起的连续帧数
+   ≥ `lookahead`。所以帧号**结构上不可能超过服务器广播过的帧号** —— 不是靠检查拦住的。
+2. **不是「收到一帧就立刻执行那一帧」**。那样网络抖动会一比一传进画面：这一帧来得早、
+   下一帧晚 60 ms，画面就忽快忽慢 —— 正是 §7 要避免的。`lookahead` 就是那个抖动缓冲：
+   手里多攒 `lookahead` 帧再开始播，播放节拍由 `acc`（墙钟）控制，与收包节奏脱钩。
+3. **缺帧时不跳、不猜、不填空白**：`canStep` 为 false 就整帧不走、`acc` 不扣时间，
+   同时发 `replay` 把洞补上。
+
+`lookahead = 2` 在 24 Hz 下 = **83 ms 固定缓冲**。要更低延迟可以降到 1（42 ms），
+代价是网络抖动 40 ms 就会让画面停顿 —— 这是延迟与平滑的旋钮，不影响一致性。
