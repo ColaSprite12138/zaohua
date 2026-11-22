@@ -68,6 +68,14 @@ export const MAX_CATCHUP_STEPS = 6;
 /** 超过这个长度就算「停顿」而不是「掉帧」，只用于诊断。 */
 export const STALL_THRESHOLD = 0.5;
 
+/**
+ * 落后多少帧就进入**追帧**模式。
+ *
+ * 正常水位是 `DEFAULT_LOOKAHEAD`（2）加网络抖动，实测稳定在 2~6。超过 12
+ * （24 Hz 下 0.5 秒）就不是抖动，而是「已经看得见未来却算不过来」。
+ */
+export const CATCHUP_TRIGGER_TICKS = 12;
+
 export type StepClock = {
   /** 还没被消耗的零头秒数，永远落在 [0, dt)。 */
   acc: number;
@@ -141,6 +149,23 @@ export function takeStep(clock: StepClock): boolean {
   clock.acc -= clock.dt;
   clock.tick += 1;
   return true;
+}
+
+/**
+ * 追帧专用：**不等墙钟**，直接推进一格。
+ *
+ * 为什么必须有它：`addTime` 把单帧时间截断到 `MAX_CATCHUP_STEPS` 步，超出部分
+ * 记进 `droppedSeconds` 丢掉。所以一次切后台 / 开 DevTools 造成的 2 秒停顿，
+ * 只补得回 0.25 秒，剩下的永久留在链路上 —— 靠 `acc` 按实时累积**永远追不回**
+ * （每秒只能跑 24 步，和服务器出帧速度持平）。
+ *
+ * `acc` 扣成负数是有意的：后续 `addTime` 会先把它填回来，表现为接下来几帧
+ * 略快于实时，正是「追」该有的样子。帧同步**不能跳帧**（每一帧都要算，
+ * 否则状态对不上），能做的只有算快一点。
+ */
+export function forceStep(clock: StepClock): void {
+  clock.acc -= clock.dt;
+  clock.tick += 1;
 }
 
 /**

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_CATCHUP_STEPS, NET_DT, NET_HZ, SOLO_DT, SOLO_HZ,
-  advanceClock, createStepClock, seekClock, setRate,
+  addTime, advanceClock, createStepClock, forceStep, seekClock, setRate,
 } from '../step-clock.ts';
 
 describe('固定步长时钟：两种帧率', () => {
@@ -99,5 +99,20 @@ describe('固定步长时钟：边界', () => {
     seekClock(clock, 900);
     expect(clock.tick).toBe(900);
     expect(clock.acc).toBe(0);
+  });
+
+  it('forceStep 不等墙钟：acc 欠账由后续 addTime 填回', () => {
+    const clock = createStepClock(NET_HZ);
+    // 追帧：连跑 5 步，一步墙钟时间都没吃进来
+    for (let i = 0; i < 5; i += 1) forceStep(clock);
+    expect(clock.tick).toBe(5);
+    expect(clock.acc).toBeCloseTo(-5 * NET_DT, 9);
+    // 之后按实时喂 2 步的时间：只补得回 2 步的账，tick 不会回退
+    addTime(clock, 2 * NET_DT);
+    expect(clock.tick).toBe(5);
+    expect(clock.acc).toBeCloseTo(-3 * NET_DT, 9);
+    // 攒够一步才能再走 —— 证明负 acc 不会凭空变出步数
+    expect(advanceClock(clock, 4 * NET_DT)).toBe(1);
+    expect(clock.tick).toBe(6);
   });
 });

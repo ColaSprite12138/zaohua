@@ -39,8 +39,8 @@ import { testArena } from '../resource/maps/arena-test.ts';
 // 帧同步：固定步长 + **服务器帧钟驱动的执行队列** + hash 对账。
 // 这些模块刻意不 import 任何引擎类型 —— 它们只是算数和数据结构，能在 node 里单测。
 import {
-  MAX_CATCHUP_STEPS, NET_HZ, SOLO_HZ,
-  addTime, createStepClock, seekClock, setRate, takeStep,
+  CATCHUP_TRIGGER_TICKS, MAX_CATCHUP_STEPS, NET_HZ, SOLO_HZ,
+  addTime, createStepClock, forceStep, seekClock, setRate, takeStep,
 } from '../net/step-clock.ts';
 import {
   NO_SKILL, NO_SWITCH, decodePacket, emptyInputFrame, encodeBatch,
@@ -394,6 +394,11 @@ export const game: Plugin = {
        * `netPlayerId` 对不上 —— 玩家会看到自己操作全部失效、对方却能动。
        */
       localMiss: 0,
+      /**
+       * 进入追帧模式的渲染帧数。持续增长说明一直追不上（积压不降），
+       * 稳定不涨 = 只在开局的短暂积压里追了一次，正常。
+       */
+      catchUpFrames: 0,
     };
 
     function rebuildPeers(): void {
@@ -567,6 +572,7 @@ export const game: Plugin = {
       netStat.localMouse = 0;
       netStat.localUps = 0;
       netStat.localMiss = 0;
+      netStat.catchUpFrames = 0;
       netStat.replays = 0;
       netStat.stale = 0;
       netStat.duplicates = 0;
@@ -747,12 +753,28 @@ export const game: Plugin = {
 
       // ---- 2) 执行：只跑服务器给过的帧 ----
       addTime(stepClock, delta);
+      // 落后水位 = 手里已收到、但还没算的帧数。正常等于播放缓冲 + 网络抖动
+      // （`DEFAULT_LOOKAHEAD` = 2，实测 2~6）。
+      //
+      // 明显超出就说明「看得见未来却算不过来」，必须**主动追**：`addTime` 把
+      // 单帧时间截断到 6 步（0.25 s）并把超出部分丢掉，所以一次切后台 / 开
+      // DevTools 造成的 2 秒停顿只补得回 0.25 秒，剩下的永久留在链路上 ——
+      // 2026-11-22 实测「领先 52」（≈2.2 s），玩家的点击要好几秒才有反应。
+      const backlog = Math.max(0, driver.highestSeen - driver.nextTick);
+      const catchUp = backlog > CATCHUP_TRIGGER_TICKS;
+      if (catchUp) netStat.catchUpFrames += 1;
       let steps = 0;
-      while (stepClock.acc + 1e-9 >= stepClock.dt && canStep(driver)) {
+      while (canStep(driver)) {
         if (steps >= MAX_CATCHUP_STEPS) break;
+        // 非追赶时严格按墙钟；追赶时绕过 `acc`（`forceStep`），否则高刷下
+        // 每帧只加 7 ms 永远攒不够一步，52 帧级的积压永远抹不平。
+        // 单帧仍是 6 步上限：141 fps × 6 ≈ 850 步/秒，2.2 秒的积压几十毫秒
+        // 就追平，表现为「画面快进一下」而不是「永久落后」。
+        if (!catchUp && stepClock.acc + 1e-9 < stepClock.dt) break;
         const packet = takeSync(driver);
         if (!packet) break;
-        takeStep(stepClock);
+        if (catchUp) forceStep(stepClock);
+        else takeStep(stepClock);
         const remoteInputs = new Map<string, ReturnType<typeof toStepInput>>();
         for (const [peerId, frame] of packet.frames) {
           if (peerId === netPlayerId) continue;
