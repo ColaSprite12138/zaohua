@@ -882,6 +882,14 @@ export const game: Plugin = {
           peers?: ({ id: string; name?: string } | string)[];
           /** netIn：服务器广播的帧批次（一个 tick 一个包，含每个玩家的意图）。 */
           batches?: { tick: number; frames: { from: string; b: string }[] }[];
+          /**
+           * netIn 附带：服务器**逻辑帧号**（`state.frame`）。
+           *
+           * 为什么必须传：广播窗口只有最近 4 帧。页面切后台 / 断线一会儿，
+           * 窗口早就跳过去了，客户端靠 `batches` 完全看不出「已经落后几百帧」。
+           * 有了这个数才能算出缺口并向服务器要 replay —— 否则就是永久卡死。
+           */
+          srv?: number;
           /** netReplayData：补帧回包。 */
           replay?: { seq: number; data: [number, [string, string][]][] };
         } | null;
@@ -974,6 +982,12 @@ export const game: Plugin = {
         } else if (msg.type === 'netSeat') {
           applySeat({ active: msg.active, playerId: msg.playerId, peers: msg.peers });
         } else if (msg.type === 'netIn') {
+          // `srv` 即使在没有可投递帧时也会到（见 net-bridge 的注释）：它让
+          // `driver.highestSeen` 跟上服务器的真实进度，`requestReplay` 才算得出
+          // 「还差多少」，补帧通道才有起点。
+          if (typeof msg.srv === 'number' && msg.srv > driver.highestSeen) {
+            driver.highestSeen = msg.srv;
+          }
           if (Array.isArray(msg.batches)) applyFrames(msg.batches);
         } else if (msg.type === 'netReplayData') {
           if (msg.replay && typeof msg.replay === 'object') applyReplay(msg.replay);

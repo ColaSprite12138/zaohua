@@ -97,8 +97,10 @@
    * 累计量归零（`armTimeline`）时差值为负，这一拍作废。
    */
   var diagLast = {
-    tick: 0, at: 0, framesIn: 0, renderFrames: 0, execTicks: 0,
+    tick: 0, at: 0, framesIn: 0, renderFrames: 0, execTicks: 0, updates: 0,
     serverFps: null, renderFps: null, execFps: null,
+    /** 上一次看到的服务器 tick 与「连续几拍没涨」。静默检测用。 */
+    srv: -1, silentTicks: 0,
   };
 
   /** 指数平滑：每秒只推一次，裸差分会在 23/25 之间跳得很难看。 */
@@ -114,6 +116,20 @@
   /** 毫秒数：没有值给 `--`，其余一位小数。 */
   function msText(value) {
     return typeof value === 'number' && value > 0 ? value.toFixed(1) + 'ms' : '--';
+  }
+
+  /**
+   * 服务端的**逻辑帧号**。
+   *
+   * `state.frame` 是 `frame-log.advanceFrame` 推进的那个号（24 Hz），
+   * `state.serverTick` 是宿主 42 ms 的 tick 计数 —— 两者不是一回事，
+   * 拿后者当帧号会让「落后多少」算错一个数量级。
+   */
+  function serverFrameOf(state) {
+    if (!state || typeof state !== 'object') return -1;
+    if (typeof state.frame === 'number') return state.frame;
+    if (typeof state.serverTick === 'number') return state.serverTick;
+    return -1;
   }
 
   function ensureDiag() {
@@ -143,6 +159,7 @@
     var serverFps = diagLast.serverFps;
     var renderFps = diagLast.renderFps;
     var execFps = diagLast.execFps;
+    var updatesPerSec = null;
     if (elapsed > 0) {
       // 服务器帧率 = 这一拍新收到的服务器帧数 / 实际间隔。这就是逻辑帧率：
       // 一局里客户端每秒能拿到多少个可执行的服务器帧。
@@ -153,13 +170,24 @@
       // 执行帧率 = 引擎每秒真的算了几步。它长期低于服务器帧率，就是积压在
       // 增长（`领先` 会跟着涨）—— 这是判断「收得比算得快」的唯一直接证据。
       var dExec = typeof stat.ticks === 'number' ? stat.ticks - diagLast.execTicks : -1;
+      // 平台回调帧率 = 宿主每秒真的把 game_update 递给我们几次。它和「服务器」
+      // 的差别是排查断线的分水岭：回调 0 次 = 平台层静默（和引擎无关）。
+      var dUpd = S.stats.updates - diagLast.updates;
       serverFps = smoothFps(serverFps, dIn < 0 ? null : dIn * 1000 / elapsed);
       renderFps = smoothFps(renderFps, dOut < 0 ? null : dOut * 1000 / elapsed);
       execFps = smoothFps(execFps, dExec < 0 ? null : dExec * 1000 / elapsed);
+      updatesPerSec = dUpd < 0 ? null : dUpd * 1000 / elapsed;
     }
     if (typeof stat.framesIn === 'number') diagLast.framesIn = stat.framesIn;
     if (typeof stat.renderFrames === 'number') diagLast.renderFrames = stat.renderFrames;
     if (typeof stat.ticks === 'number') diagLast.execTicks = stat.ticks;
+    diagLast.updates = S.stats.updates;
+    // 服务器**逻辑**帧号（`state.frame`）到底还在不在涨 —— 这是「连接是否静默」
+    // 的唯一判据。别用 `serverTick`：那是宿主 42ms 的 tick 计数，和逻辑帧号无关。
+    var srvTick = serverFrameOf(S.session && S.session.state);
+    if (srvTick >= 0 && srvTick === diagLast.srv) diagLast.silentTicks += 1;
+    else diagLast.silentTicks = 0;
+    diagLast.srv = srvTick;
     // tick 增速到这里不再用于显示，但仍记下来：它和「服务器帧率」的差就是
     // 执行落后量，排查「包在到、但没在执行」时是唯一线索。
     diagLast.tick = stat.tick;
@@ -177,7 +205,11 @@
     //   领先 = 服务器帧号 - 执行帧号（正常等于播放缓冲 + 网络延迟，突变说明在补帧）
     //   补   = 发过多少次补帧请求（持续增长 = 这条链路一直在丢包）
     //   缺   = 已经看到更高帧号但手里还缺几帧（> 0 就是在等 replay）
-    el.textContent = 'tick ' + stat.tick
+    // 静默 = 服务器的 tick 连续几拍没涨。它和「渲染慢」「逻辑慢」都不同：
+    // 那两个至少还有数据在流，静默是**什么都没有**，只能等连接恢复或重进。
+    var silent = diagLast.silentTicks >= 3;
+    el.textContent = (silent ? '⚠ 静默 ' + diagLast.silentTicks + 's  ' : '')
+      + 'tick ' + stat.tick
       + '  服务器 ' + fpsText(serverFps)
       + '  执行 ' + fpsText(execFps)
       + '  渲染 ' + fpsText(renderFps)
@@ -189,7 +221,13 @@
       // 帧间隔 vs 绘制耗时：渲染帧率低的时候，这两个数直接分清责任
       //   「间隔大、绘小」= 引擎根本没给帧（rAF 被节流 / 页面被遮挡）
       //   「间隔小、绘大」= 绘制吃满了这一帧（该优化 paint）
-      + '  [间隔 ' + msText(stat.frameGapMs) + ' 绘 ' + msText(stat.paintMs) + ']';
+      + '  [间隔 ' + msText(stat.frameGapMs) + ' 绘 ' + msText(stat.paintMs) + ']'
+      // upd = 宿主每秒递来几次 game_update（平台层活没活）
+      // del = 已经投递给引擎的帧号水位；srv = 服务器当前帧号
+      // 「upd 0、srv 不动」= 平台静默；「upd 有、srv 涨、del 也涨但服务器为 0」
+      // = 投递被水位挡住 —— 这两种的修法完全不同，所以必须分开展示。
+      + '  [upd ' + (updatesPerSec === null ? '--' : updatesPerSec.toFixed(0)) + '/s'
+      + ' del ' + S.delivered + ' srv ' + srvTick + ']';
     // 长时间 `缺 > 0` 说明补帧通道没通，不只是卡一下。
     if ((stat.gap || 0) > 0 && (stat.replays || 0) > 3) el.style.color = '#f09595';
     // 服务器帧率的判据是**逻辑帧率**（`NET_HZ` = 24），不是 60 了。低于 19
@@ -208,6 +246,9 @@
       && typeof stat.paintMs === 'number' && stat.paintMs < stat.frameGapMs * 0.5) {
       el.style.color = '#f0b429';
     }
+    // 静默优先级最高：此时其它数字（渲染/绘制）全都正常，只有「没有数据」这一条
+    // 是真的。不给红色就会被读成「一切正常」，正是 2026-11-22 用户报的那个坑。
+    if (silent) el.style.color = '#f09595';
   }
 
   function hideDiag() {
@@ -406,9 +447,18 @@
       // 从服务端的全量历史里取 —— 不靠广播碰运气。
       S.delivered = highest;
     }
+    // 服务器逻辑帧号（见 `serverFrameOf`）。**每轮都要带给 Worker**，哪怕这一轮
+    // 一个可投递的帧都没有：
+    //   - 广播窗口只有最近 4 帧，后台 / 断线一会儿回来时窗口早跳过去了；
+    //   - 若 `S.delivered` 恰好停在那 4 帧之后，Worker 会一帧都收不到，也就
+    //     **完全不知道服务器已经跑到几千帧**，于是既不补帧也不追，永久卡死。
+    // 有了 srv，Worker 至少能算出「落后多少」并向服务器要 replay 补。
+    var srvFrame = serverFrameOf(state);
     if (batches.length > 0) {
       S.stats.packetsIn += batches.length;
-      post({ type: 'netIn', batches: batches });
+      post({ type: 'netIn', batches: batches, srv: srvFrame });
+    } else if (srvFrame >= 0) {
+      post({ type: 'netIn', batches: [], srv: srvFrame });
     }
 
     // 补帧回包：只取自己那一份（别人请求的块与自己无关）。
@@ -702,6 +752,46 @@
     S.peers = [];
     S.pendingSnapshot = null;
     post({ type: 'netSeat', active: false, playerId: '', peers: [] });
+  }
+
+  /**
+   * 从后台回来时的恢复动作。**这是「切后台一会儿回来两边卡死」的正面修复。**
+   *
+   * 病根：浏览器对**隐藏页面**的 `setInterval` 会节流到秒级甚至分钟级，而
+   * `pollSession` 正是 60 ms 一轮 —— 页面一进后台它就停摆。服务器照常 24 Hz
+   * 出帧，客户端却一帧都不取；回来时广播窗口（`RECENT_FRAMES = 4`）早就跳过去
+   * 几百帧了，`S.delivered` 若停在那之后，窗口里每一帧都会被 `tick <= delivered`
+   * 挡掉，于是**一帧都收不到、也永远不知道该补哪一段** —— 角标上就是
+   * 「服务器 0.0/s、执行 0.0/s、渲染 143/s」，看着像游戏在跑，其实数据早断了。
+   *
+   * 三件事缺一不可：
+   * 1. 清水位 `S.delivered`，让窗口里的帧重新可投递；
+   * 2. 立刻轮询一次，不等下一轮定时器（后台里那一轮可能还没到）；
+   * 3. 把「服务器到哪了」重新带给 Worker —— 这一步靠 `pollSession → netIn.srv`
+   *    完成，Worker 侧不需要额外状态（它只有 `nextTick` 和 buffer，没有水位）。
+   *
+   * 它救不回「连接本身已断」的情况 —— 那种只能靠角标的「⚠ 静默」提示玩家重进。
+   */
+  function resumeFromHidden() {
+    if (!S.active || !S.session) return;
+    S.delivered = -1;
+    S.replaySeq = -1;
+    S.lastSignature = '';
+    diagLast.silentTicks = 0;
+    diagLast.srv = -1;
+    pollSession();
+  }
+
+  if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'visible') resumeFromHidden();
+    });
+  }
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    // bfcache 恢复：页面被整体冻结过，定时器与连接都可能是旧的那一份。
+    window.addEventListener('pageshow', function (ev) {
+      if (ev && ev.persisted) resumeFromHidden();
+    });
   }
 
   /** 只读诊断。UI 与验收脚本都读这一份，不各自维护计数器。 */
