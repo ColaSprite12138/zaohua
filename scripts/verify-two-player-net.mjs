@@ -74,15 +74,29 @@ async function enter (browser, session) {
   if (gate === 'resume') await frame.click('#gate-resume-go')
   else if (gate === 'guest' || gate === 'blocking') await frame.click('#gate-guest')
   // attachCloudSave() 是异步的，hideGate() 在它之后；轮询等门帘真关掉。
+  //
+  // 每次循环都**重新取帧**、门禁还开着就再点一次。宿主会在座位被顶、云存档
+  // 应用后重导航 iframe，此时旧句柄的 evaluate 会抛错 —— 旧实现在 catch 里
+  // 什么都不做，于是「句柄失效」被当成「门禁没关」，20 秒后误报失败
+  // （2026-11-22 实测：同一个页面手动探针 1.5 秒就关，脚本却连续两次判死）。
   let closed = false
-  for (let i = 0; i < 30 && !closed; i += 1) {
+  for (let i = 0; i < 40 && !closed; i += 1) {
     await page.waitForTimeout(500)
     try {
-      closed = await frame.evaluate(() => {
+      frame = await shellFrame(page)
+      const st = await frame.evaluate(() => {
         const g = document.getElementById('login-gate')
-        return !g || g.hidden
+        const go = document.getElementById('gate-resume-go')
+        return {
+          hidden: !g || g.hidden,
+          canResume: Boolean(go) && !go.disabled && !go.hidden,
+          canGuest: Boolean(document.getElementById('gate-guest')),
+        }
       })
-    } catch { /* iframe 正在导航 */ }
+      if (st.hidden) { closed = true; break }
+      if (st.canResume) await frame.click('#gate-resume-go')
+      else if (st.canGuest) await frame.click('#gate-guest')
+    } catch { /* iframe 正在导航，下一轮重新取帧 */ }
   }
   if (!closed) throw new Error(`登录门禁没关掉（gate=${gate}）：真实点击会被 #login-gate 吞掉`)
   frame = await shellFrame(page)
@@ -270,7 +284,16 @@ for (const [x, y] of CANDIDATES) {
   const snap = await probe(await heal(pa))
   const w = snap?.state?.playerWorld
   const moved = startWorld && w ? Math.hypot(w.x - startWorld.x, w.y - startWorld.y) : 0
-  result.clickInfo.push({ probeAfter: [x, y], moved })
+  // 诊断：点击没位移时，要知道是「根本没设目标」（`moveMode` 还是 idle）
+  // 还是「目标设了但走不动」（point/follow 却不移动 = 被墙卡住）。
+  result.clickInfo.push({
+    probeAfter: [x, y],
+    moved,
+    moveMode: snap?.state?.moveMode ?? null,
+    followingPointer: snap?.state?.followingPointer ?? null,
+    target: snap?.state?.target ?? null,
+    worldAfter: w ?? null,
+  })
   if (moved > 20) break
 }
 await pa.page.waitForTimeout(1500)

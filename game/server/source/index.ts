@@ -1,7 +1,7 @@
 import { createPlatformStateSyncRuntime } from '@vibegame/state-sync-runtime/server'
 import { decodeBase64, encodeBase64 } from '../../../assets/net/base64.ts'
 import { createFrameLog, advanceFrame, forgetPlayer, sliceHistory, submitIntent, FRAME_HZ, FRAME_MS, type FrameLog } from '../../../assets/net/frame-log.ts'
-import { decodePacket, encodeInputFrame, type InputFrame } from '../../../assets/net/input-frame.ts'
+import { decodePacket, encodeBatch, type InputFrame } from '../../../assets/net/input-frame.ts'
 
 /**
  * 搜打撤的房间服务 —— **帧钟 + 输入归属**（v2，2026-11-22）。
@@ -246,8 +246,20 @@ function readHash(input: unknown): HashReport | null {
   return { tick, hash: hash >>> 0, parts: readParts(report.parts) }
 }
 
+/**
+ * 单帧下行编码。
+ *
+ * **必须带包 tag**：客户端统一用 `decodePacket` 解，它靠首字节区分
+ * `PACKET_FRAME` / `PACKET_BATCH`。以前这里直接 `encodeInputFrame().buffer`，
+ * 那是**裸帧**（首字节是 `seq` 的低 8 位），客户端一律判成 `unknown` →
+ * `decodeOneFrame` 返回 null → 广播里每一帧的意图表都是空的。
+ *
+ * 后果极具迷惑性（2026-11-22 双人实测）：服务器照常 tick、`submitted/applied`
+ * 都有数、客户端 `framesIn` 也在涨、`scores` 全绿，但**两个玩家一动不动**，
+ * 自己的点击也永远不生效 —— 因为本机输入同样要经服务器贴帧广播回来。
+ */
 function encodeOne(intent: InputFrame): string {
-  return encodeBase64(new Uint8Array(encodeInputFrame(intent).buffer))
+  return encodeBase64(encodeBatch([intent]))
 }
 
 function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void }) {

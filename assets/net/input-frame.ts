@@ -100,6 +100,15 @@ function clampCoord(value: number): number {
   return scaled;
 }
 
+/**
+ * 编一帧**裸帧数据**（无包 tag，首字节是 `seq` 低 8 位）。
+ *
+ * ⚠️ **不要把这个输出直接交给 `decodePacket`**：它靠首字节判断
+ * `PACKET_FRAME` / `PACKET_BATCH`，裸帧会被判成 `unknown` 而静默返回 null。
+ * 走网络的单帧请用 `encodeBatch([frame])`（服务器 `encodeOne` 就是这么做的，
+ * 2026-11-22 因为这里裸编码导致下行帧全部解不出来、双人一动不动）。
+ * 这个函数只给 `encodeBatch` / 单测的字节级 roundtrip 用。
+ */
 export function encodeInputFrame(frame: InputFrame, out?: DataView): DataView {
   const view = out ?? new DataView(new ArrayBuffer(INPUT_FRAME_BYTES));
   let flags = 0;

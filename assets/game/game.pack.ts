@@ -383,6 +383,17 @@ export const game: Plugin = {
        * 与 `framesIn` 一起给主窗口算两个帧率：收包帧率 / 渲染帧率。
        */
       renderFrames: 0,
+      /**
+       * 采到 pointerUp 边沿的帧数。与 `localEdges`（按下）对照用：
+       * 只有 down 没有 up = 点击永远不结算（`movement.ts` 的点击分支靠 up 触发），
+       * 表现正是「点了完全不动」。
+       */
+      localUps: 0,
+      /**
+       * 执行时**没在广播帧里找到本机**的次数。持续增长说明服务器贴的 key 与
+       * `netPlayerId` 对不上 —— 玩家会看到自己操作全部失效、对方却能动。
+       */
+      localMiss: 0,
     };
 
     function rebuildPeers(): void {
@@ -554,6 +565,8 @@ export const game: Plugin = {
       netStat.flushes = 0;
       netStat.localEdges = 0;
       netStat.localMouse = 0;
+      netStat.localUps = 0;
+      netStat.localMiss = 0;
       netStat.replays = 0;
       netStat.stale = 0;
       netStat.duplicates = 0;
@@ -586,9 +599,15 @@ export const game: Plugin = {
           const frame = decodeOneFrame(entry.b);
           if (frame) frames.set(entry.from, frame);
         }
-        if (frames.size === 0) continue;
+        // **空桶必须照样 accept。** 服务器每帧都往窗口里写一条（见
+        // `game/server/source/index.ts::onFrame` 的注释），全员没输入的帧就是
+        // 空桶；客户端靠「收到第 N 帧」推进执行指针，跳过空帧 = 指针永远停在 0。
+        // 2026-11-22 双人实测：进局后两人都不动 → 每帧空桶 → tick 卡在 0、
+        // framesIn 0，而服务器侧已经跑到 tick 437 并在 47.5ms 稳定推进。
         const result = acceptFrame(driver, { tick: batch.tick, frames });
-        if (result === 'accepted') netStat.framesIn += frames.size;
+        // `framesIn` 数的是**帧**，不是帧里的意图条数：它是角标上「服务器
+        // 帧率」的分子，一帧里有 1 个还是 2 个玩家都只算一帧。
+        if (result === 'accepted') netStat.framesIn += 1;
         else if (result === 'stale') netStat.stale += 1;
         else netStat.duplicates += 1;
       }
@@ -603,9 +622,10 @@ export const game: Plugin = {
           const frame = decodeOneFrame(encoded);
           if (frame) frames.set(playerId, frame);
         }
-        if (frames.size === 0) continue;
+        // 补帧块同理：空 entries 是「那个 tick 全员没输入」，不是「没补到」。
+        // 跳过它，缺口就永远补不上，`missingRange` 会一直重请求同一段。
         const result = acceptFrame(driver, { tick, frames });
-        if (result === 'accepted') netStat.framesIn += frames.size;
+        if (result === 'accepted') netStat.framesIn += 1;
         else if (result === 'stale') netStat.stale += 1;
       }
       // 确认收到：服务端删掉这份回包，否则每轮广播都会重带一次。
@@ -714,6 +734,7 @@ export const game: Plugin = {
         nextIntentSeq += 1;
         lastIntent = intent;
         if (intent.pointerDown) netStat.localEdges += 1;
+        if (intent.pointerUp) netStat.localUps += 1;
         if (intent.mouse) netStat.localMouse += 1;
         netOutbox.push(intent);
         netStat.intentsOut += 1;
@@ -740,6 +761,7 @@ export const game: Plugin = {
         // **本机输入也来自这一帧广播**：没有预表现，玩家按下到生效要等一个回程。
         // 这是「不做预表现 + 不拥有自己的帧」的必然代价（`docs/net-sync-v2.md` §4）。
         const localFrame = packet.frames.get(netPlayerId);
+        if (!localFrame) netStat.localMiss += 1;
         capturePrevPositions();
         step(
           state,
