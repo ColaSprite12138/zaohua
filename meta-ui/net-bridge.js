@@ -35,6 +35,17 @@
     pendingSnapshot: null,
     /** 已经交付给 Worker 的最大服务器帧号（去重用）。 */
     delivered: -1,
+    /**
+     * 上一次**处理过**的服务器逻辑帧号。
+     *
+     * 平台对同一帧会回调很多次（2026-11-22 实测 `upd 113/s`，而服务器只有 24 Hz）。
+     * 每次回调都要 `JSON.stringify(peers)` + 遍历 `inputs` + `postMessage`，
+     * 而且全落在**主线程** —— PVE 没有这条链路，这就是 PVP 比 PVE 顿的那部分。
+     * 同一帧重复到达时没有任何新信息，直接跳过。
+     */
+    lastFrameApplied: -1,
+    /** 上一次把 `srv` 发给 Worker 时的帧号（否则重复回调会重复 post 空 netIn）。 */
+    srvSent: -1,
     /** 上一次投递给 Worker 的补帧回包 seq（同一份不重复投）。 */
     replaySeq: -1,
     /** 服务端观测到的分叉 tick（只提示一次）。 */
@@ -61,7 +72,7 @@
      * 间隔，就是 D 公式里那个 J 的原料。
      */
     timing: { lastTick: -1, lastAt: 0, gaps: [] },
-    stats: { sends: 0, packetsIn: 0, errors: 0, updates: 0, seats: 0 },
+    stats: { sends: 0, packetsIn: 0, errors: 0, updates: 0, seats: 0, dupUpdates: 0 },
   };
 
   try {
@@ -107,6 +118,26 @@
   function smoothFps(prev, cur) {
     if (cur === null || cur < 0) return prev;
     return prev === null ? cur : prev * 0.6 + cur * 0.4;
+  }
+
+  /**
+   * **主线程** rAF 计数。
+   *
+   * 角标上的「渲染」数是引擎 Worker 里 `paint()` 的调用次数 —— 它说明引擎算得
+   * 多快，但用户眼睛看到的是**浏览器把画面合到屏幕上**的速度，那在主线程。
+   * PVP 比 PVE 多出来的全部负担（平台回调、`postMessage`、WS、序列化）都压在
+   * 主线程上，所以这两个数会分叉：`渲染 142/s` 而 `主线程 55/s` = 主线程被抢，
+   * 与引擎无关。没有这个数就只能看着引擎自报的高帧率干瞪眼。
+   */
+  var mainThread = { frames: 0, lastFrames: 0, at: 0, fps: null };
+  if (typeof requestAnimationFrame === 'function') {
+    (function rafLoop() {
+      var tick = function () {
+        mainThread.frames += 1;
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    })();
   }
 
   function fpsText(value) {
@@ -185,6 +216,18 @@
     // 服务器**逻辑**帧号（`state.frame`）到底还在不在涨 —— 这是「连接是否静默」
     // 的唯一判据。别用 `serverTick`：那是宿主 42ms 的 tick 计数，和逻辑帧号无关。
     var srvTick = serverFrameOf(S.session && S.session.state);
+    // 主线程帧率：两个渲染帧之间主线程真的跑了几次 rAF。
+    if (mainThread.at > 0) {
+      var dtRaf = now - mainThread.at;
+      if (dtRaf > 0) {
+        mainThread.fps = smoothFps(
+          mainThread.fps,
+          (mainThread.frames - mainThread.lastFrames) * 1000 / dtRaf,
+        );
+      }
+    }
+    mainThread.at = now;
+    mainThread.lastFrames = mainThread.frames;
     if (srvTick >= 0 && srvTick === diagLast.srv) diagLast.silentTicks += 1;
     else diagLast.silentTicks = 0;
     diagLast.srv = srvTick;
@@ -221,7 +264,8 @@
       // 帧间隔 vs 绘制耗时：渲染帧率低的时候，这两个数直接分清责任
       //   「间隔大、绘小」= 引擎根本没给帧（rAF 被节流 / 页面被遮挡）
       //   「间隔小、绘大」= 绘制吃满了这一帧（该优化 paint）
-      + '  [间隔 ' + msText(stat.frameGapMs) + ' 绘 ' + msText(stat.paintMs) + ']'
+      + '  [间隔 ' + msText(stat.frameGapMs) + ' 绘 ' + msText(stat.paintMs)
+      + ' 主线程 ' + fpsText(mainThread.fps) + ']'
       // upd = 宿主每秒递来几次 game_update（平台层活没活）
       // del = 已经投递给引擎的帧号水位；srv = 服务器当前帧号
       // 「upd 0、srv 不动」= 平台静默；「upd 有、srv 涨、del 也涨但服务器为 0」
@@ -244,6 +288,11 @@
     // 就是引擎没在给帧（页面被遮挡 / rAF 被节流），优化 paint 一点用都没有。
     if (typeof stat.frameGapMs === 'number' && stat.frameGapMs > 33
       && typeof stat.paintMs === 'number' && stat.paintMs < stat.frameGapMs * 0.5) {
+      el.style.color = '#f0b429';
+    }
+    // 主线程跟不上引擎 = 负担压在主线程（平台回调 / postMessage / 序列化），
+    // 引擎自己画得再快也没用。这是「PVP 比 PVE 顿」最直接的一个判据。
+    if (mainThread.fps !== null && renderFps !== null && mainThread.fps < renderFps * 0.8) {
       el.style.color = '#f0b429';
     }
     // 静默优先级最高：此时其它数字（渲染/绘制）全都正常，只有「没有数据」这一条
@@ -367,6 +416,27 @@
       && !raw.inputs && !Array.isArray(raw.players);
     if (wrapped) state = raw.state;
     S.stats.updates += 1;
+
+    /*
+     * **同一帧只处理一次。**
+     *
+     * 2026-11-22 真机实测：`upd` 是 113 次/秒，而服务器逻辑帧率只有 24 Hz ——
+     * 平台把同一次广播回调了四五遍（事件通道 + 兜底轮询 + 可能的重复事件名）。
+     * 每一遍都要跑下面这一整套：`JSON.stringify(peers)`、遍历 `inputs` 组批次、
+     * `postMessage` 给 Worker。这些全在**主线程**上，而 PVE 根本没有这条链路 ——
+     * 所以「PVP 比 PVE 顿」有很大一部分是这里，不是引擎。
+     *
+     * 同一帧重复到达时状态没有任何变化，跳过是安全的：补帧回包最多延后一帧
+     * （41 ms）才被看到，而它在服务端有 3 秒 TTL，不影响正确性。
+     */
+    var frameNow = serverFrameOf(state);
+    if (frameNow >= 0) {
+      if (frameNow === S.lastFrameApplied) {
+        S.stats.dupUpdates += 1;
+        return;
+      }
+      S.lastFrameApplied = frameNow;
+    }
     S.sessionStateKeys = (wrapped ? ['(wrapped)'] : [])
       .concat(Object.keys(raw)).concat(wrapped ? Object.keys(state) : []).slice(0, 24);
 
@@ -457,8 +527,12 @@
     if (batches.length > 0) {
       S.stats.packetsIn += batches.length;
       post({ type: 'netIn', batches: batches, srv: srvFrame });
-    } else if (srvFrame >= 0) {
+      S.srvSent = srvFrame;
+    } else if (srvFrame >= 0 && srvFrame !== S.srvSent) {
+      // 只在服务器帧号**变了**才发这条空投递：它是「落后多少」的唯一外部来源，
+      // 但同一帧重复回调时发它只会白白占用主线程（实测被放大到 113 次/秒）。
       post({ type: 'netIn', batches: [], srv: srvFrame });
+      S.srvSent = srvFrame;
     }
 
     // 补帧回包：只取自己那一份（别人请求的块与自己无关）。
@@ -733,6 +807,8 @@
     S.peers = [];
     S.delivered = -1;
     S.replaySeq = -1;
+    S.lastFrameApplied = -1;
+    S.srvSent = -1;
     S.lastSignature = '';
     S.sessionStateKeys = [];
     hideDiag();
@@ -776,6 +852,8 @@
     if (!S.active || !S.session) return;
     S.delivered = -1;
     S.replaySeq = -1;
+    S.lastFrameApplied = -1;
+    S.srvSent = -1;
     S.lastSignature = '';
     diagLast.silentTicks = 0;
     diagLast.srv = -1;
