@@ -19,6 +19,116 @@
 
 所以顺序是：传输层可以先做，但**不能只做传输层就宣布“一致”**。
 
+## 1.1 机制层最高铁律（2026-11-21 用户定稿）
+
+> 本节优先于全文其余部分。用户原话：**「PVP 战局中的任何信息，都要用帧同步来做，保持两边逻辑完全一样」**、
+> **「有一些逻辑会区分自己和其他人，把这些逻辑改掉，对局内的效果是一视同仁的，才能从机制上保证
+> 所有人看到的同一帧的画面是一模一样的」**。若旧代码限制实现，授权原地重构、必要时可推倒重来。
+
+**唯一不变量**
+
+```
+S(t+1) = F(S(t), I_all(t))
+I_all(t) = { playerId → InputFrame }  // 全体玩家、按 id 排序、缺谁就不推进谁
+```
+
+`F` 对每台机器必须逐位相同。由此推出一条**硬约束**：
+
+> **`F` 内不得出现任何「本机」概念。** 判定层禁止读 `s.me` / `s.camera` / `isMe`，
+> 禁止 `isMe ? input : remoteInputs.get(...)` 这类按座位分流。
+> 本机输入与远端输入合进**同一个** `Map<id, StepInput>`；`step()` 里只有
+> `for (const p of sortedPlayers(s)) { const i = inputs.get(p.id); ... }`，
+> 没有 `isMe` 分支——**本机走的必须是远端那套代码**。
+
+**关于 `s.player` 的实施定稿（2026-11-21）**：旧 PVE 规则函数（约 88 个）通过
+`GameState` 的代理 getter 读 `s.player.xxx` / `s.hp` / `s.intent`。在「原地重构、
+PVE 逐位不变」这条用户拍板的边界内，没有把它们逐个改成显式 `Player` 参数，
+而是把 `s.player` 的**语义**从「我」改成「当前按 id 排序迭代的玩家」：
+
+```ts
+withPlayer(s, p, () => updatePlayer(s, p, inputs.get(p.id)!, dt, mods));
+```
+
+`withPlayer()`（`combat/players.ts`）对**全体玩家（含本机）**做完全对称的绑定与恢复，
+顺序由 `sortedPlayers()` 钉死；绑定期间读到的永远是同一个 `p`，两端逐字相同。
+切回后的 `s.player` 只允许出现在 V 层（帧末相机、只读投影）与输入装配边界
+`collectInputs()`，任何规则系统都不在循环外读它。静态守卫
+`scripts/check-local-context.mjs` 禁止 `s.me` / `isMe` / `s.camera` / 输入分流，
+并对 `s.player` 的出现次数设**只降不升**的预算（当前 113）。
+
+> 将来若要彻底删掉代理 getter、让所有规则函数显式接 `Player`，属于**可选深化**，
+> 不影响「两端跑同一份 `F`」这个结论；代价是重跑整套 PVE 基线。是否做由用户定。
+
+原因：两端跑同一份源码，但「本机」在 A 端是 A、在 B 端是 B，同一行代码读到不同数据
+⇒ 等价于两套逻辑。2026-11-21 实测的两个现象（B 看到 A 一直挥刀、闪避后只有 A 自己能动）
+以及计时器冻结、破坏物跑 N 次、全局输入只认本机、hash 盲区，全是**这一个根的症状**，
+不是一组独立 bug。统一迭代上下文即自动一视同仁，不给单个 case 打补丁。
+
+**状态分层（决定什么进帧 / 进对账）**
+
+| 层 | 内容 | 归属 |
+|---|---|---|
+| `S` 世界状态 | 全体 `Player`（含 intent / 计时器 / 技能 CD / 背包 / vx/vy / 动作相位）、怪、掉落、破坏物、区域、弹道、局内时钟、RNG | **两端逐位一致**，进全状态指纹 |
+| `V` 视图状态 | 相机、迷雾、大地图开关、hover 准星、HUD | **各随本机座位**，不进帧、不进 `S`、不进对账 |
+
+**用户拍板的四条（2026-11-21 二次确认，不得自行更改）**
+
+1. **一致范围**：只保证 `S` 逐位一致；`V` 各随本机座位渲染。不做共享单一镜头。
+2. **R 重开**：**所有模式彻底删除**。这是初版臆造的功能，本来就不该存在；联机里单人
+   `reset(s)` 会重置整局，语义上不成立。保留 `reset()` 供 `deployRun()` 使用，只删「按键触发」链路。
+3. **M 大地图**：纯本地视图开关，**绝不写进 `GameState`**。当前 `step()` 里
+   `if (input.bigMap) s.bigMap = !s.bigMap` 把本机按键写进共享状态、还反向影响输入采集，
+   是功能缺陷，不是设计。
+4. **改动范围**：原地重构判定层，**PVE 行为逐位不变**（675 单测 + `verify-all.sh` 守），
+   不推倒重来；推倒会丢掉整套玩法规则与验收基线。
+
+**从机制上防回归**：`scripts/check-local-context.mjs` 已接进 `verify.sh` 与
+`verify-all.sh` —— 判定层出现 `s.me` / `isMe` / `s.camera` / `remoteInputs?.get`
+直接判红，`s.player` 用预算制只许降；CI 拦住，不靠人记得。
+`assets/net/state-hash.ts` 用规范化全状态指纹取代手挑字段的 hash：
+按 id 排序的全体玩家全部字段（意图 / 计时器 / 技能栏 / 背包 / 读条 / 动作相位）、
+怪 / 掉落 / 破坏物 / 区域 / 弹道 / 事件 / 局内时钟都进对账，五个分项
+（`skeletons` / `drops` / `players` / `destructibles` / `shared`）留给服务端留证。
+`camera` / `hover*` / `toast` / `particles` / `trail` / 顶层玩家代理明确排除。
+**`mismatches === 0` 现在才真正等价于「同一帧世界状态一致」**，而且能被
+双视角逐帧测试直接证伪。
+
+### 1.1.1 实施落地清单（2026-11-21）
+
+| 根因 | 修法 | 落点 |
+|---|---|---|
+| 按玩家计时器只推进 `s.player`（本机），远端 `dodge/attackFx/技能CD` 冻结 | `tickTimers` 改为按 `sortedPlayers` 循环 + `withPlayer`；共享的 `tickSkillFx` / `tickToast` 移出循环各跑一次 | `simulation.ts` / `skills.ts` |
+| 共享破坏物推进塞在按玩家循环里，N 个玩家多减 N 次 `rubble`、反复清 `smashing` | 拆出 `tickDestructibles()` 全局一次，`updateDestructibles()` 只做按玩家砸箱 | `destructibles.ts` |
+| `classifyPointer` 读本机 `s.camera` 算拖拽，B 用 B 的视角模拟 A | 改成按当前迭代玩家坐标现算 `cameraFor(world, p.x, p.y)`，判定层零 `s.camera` | `movement.ts` |
+| 本机 / 远端输入按 `isMe` 分流 | `collectInputs()` 合成同一张 `Map<id, StepInput>`，循环只 `inputs.get(p.id)` | `simulation.ts` |
+| 「背包满」只对本机判，远端拾取直接删共享掉落 | 每台机器持有全体玩家背包副本，`collectDrop(p.runInventory, ...)` 对所有人判 | `weapons.ts` |
+| 挨打 / 弹道命中磨损的是各端本机那把武器 | `wearWeapon(..., target: Player)`；弹道带 `ownerId`，命中按发射者找玩家 | `durability.ts` / `attack.ts` / `projectiles.ts` / `projectile-runtime.ts` |
+| `nearestPlayer` / `playerById` 用 `?? s.player` 兜底 | 找不到就不结算，绝不落回本机 | `enemies.ts` / `projectile-runtime.ts` |
+| 联机 PVP 本机阵亡只在自己那端置 `s.gameOver` 冻结全场 | 阵亡是玩家实体上的 `hp<=0`：死者停止行动、当场爆装，其余人继续；`s.gameOver` 不动 | `attack.ts` |
+| 阵亡后死者怎么离开本局（用户 2026-11-21 拍板） | **按玩家独立结算**：`Player.deathTimer` 从 5 秒按帧递减（进 S / 进 hash，两端逐位一致），归零后 Worker 发 `result.pvpDeath`；死者本机弹「撤离失败」面板，点「返回大厅」才结算存档并 `rooms.leave()`。其他人照常玩 | `state.ts` / `simulation.ts` / `attack.ts` / `state-hash.ts` / `game.pack.ts` / `meta-ui/shell-bridge.js` / `meta-ui/match-flow.js` |
+| R 重开 / M 大地图写进全局状态 | R 全模式删除（夹具走 `fixtureReset` BroadcastChannel）；M 是纯本地 `view.bigMap` | `input-frame.ts` / `game.pack.ts` / `paint.ts` / `scripts/lib/fixture-reset.mjs` |
+| hash 只查 4 项，`mismatches=0` 却是假绿 | 规范化全状态指纹 + 五分项 | `state-hash.ts` / `game/server/source/index.ts` |
+
+**证据（不是推断）**：`assets/combat/__tests__/multiplayer-consistency.test.ts` 里
+A / B 两个座位拿同一张输入 Map 跑 ①「点箱子 → 闪避打断 → 再点地面」140 帧、
+② 带怪 / 技能 / 药水 / 切武器 300 帧，③ A 阵亡后 6 秒（360 帧）里两端逐帧比对
+全状态指纹与 `deathTimer`、并断言 B 仍能走位 —— **逐帧比对全状态指纹与关键玩家
+字段**，并断言闪避后移动指令真的生效。另有一条「两端相机不同仍逐帧同 hash」的旧护栏。
+
+**已确认的产品口径（2026-11-21 用户拍板）**：联机 PVP 目前没有队友机制，阵亡是
+**按玩家独立结算**，不是全局结局：
+
+1. 当场爆装（沿用 `splitOnDeath()`：保险格回家，背包 + 10 个穿戴槽全丢）；
+2. 死者 `hp<=0` 后停止行动，但场子不冻结，其他玩家正常进行游戏；
+3. `Player.deathTimer = 5` 秒按帧递减，两端同一帧归零；
+4. 归零后**只给死者本机**弹「撤离失败」面板 + 「返回大厅」按钮；
+5. 点按钮才做局外存档结算，并真正 `rooms.leave()` —— 少了这一步服务端还在等
+   死者输入帧，其余玩家会被锁步卡死。
+
+**PVE 逐位不变**：以上分支全部挂在 `s.online && s.runKind === 'pvpve'` 下；
+单机 / 副本仍走 `s.gameOver` → `settleOnDeath()` → 下一局遗物摆回地图。
+`monster-skill` 验收支的偶发失败经排查与该改动无关，见 `.workbuddy/memory/2026-11-21.md`。
+
 ## 2. “一致”的准确定义
 
 必须分两层，否则会得出错误结论：
@@ -251,8 +361,10 @@ retx 不持续增长）。判据全是数字，不读截图。**只跑短局会�
 6. **超时兜底的一致性**：门禁等 300 帧后用空快照开局。若只有一端超时（例如
    一端被遮挡、rAF 被节流），两端初始装备不同 ⇒ 分叉。正常网络下不会触发，
    但这是兜底路径的已知洞；排障看角标的等待帧数。
-7. **联机按 R 重开**：`reset()` 只重置 `s.player`（本机），远端玩家的资源不会
-   一起重置。两端各自按 R 的行为尚未对齐，属于下一轮。
+7. **（已解决）联机按 R 重开**：R 重开已按产品决定**全模式删除**（初版 AI 臆造，
+   `restart` 不进 `InputFrame`、不进 `StepInput`、不进 `step()`）；自动化夹具改走
+   `BroadcastChannel('forgeax-arena-run')` 的 `fixtureReset`，是局外动作、不参与 `F`。
+   所以「两端各自按 R 导致资源不对齐」这条洞已不存在，别再按旧描述排障。
 8. **开局墙钟进度有约 40 帧固定偏移**：两次 3 分钟长跑实测两端 tick 差
    46 / 39 帧，不随时间发散；期间 191 次 hash 零分叉、玩家坐标与走位位移
    逐位相同。偏移来自开局握手（房主先 `startGame`、名单 / 装备快照到达有先后），
