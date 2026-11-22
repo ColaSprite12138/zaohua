@@ -192,6 +192,14 @@ export const game: Plugin = {
       drawY: lastDrawPos.y,
       /** 渲染进度 0..1：0 = 画的是上一步，1 = 画的是当前步。 */
       alpha: renderAlpha(stepClock.acc, stepClock.dt),
+      /**
+       * 渲染帧间隔与绘制耗时（毫秒，均做过指数平滑）。
+       *
+       * 只读诊断：用来回答「画面为什么慢」—— 间隔大而绘制小说明引擎没给帧，
+       * 绘制吃满间隔才是 `paint()` 的问题。不进 `S`、不进 hash、不参与判定。
+       */
+      frameGapMs: netStat.frameGapMs,
+      paintMs: netStat.paintMs,
     });
 
     // Last pointer position seen in the input snapshot. The snapshot carries a
