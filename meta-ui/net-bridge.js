@@ -476,8 +476,63 @@
       S.session.startGame();
     } catch (err) {
       // 已经开过、或人数还没到 minPlayersToStart：都不是致命错误，
-      // 看门狗会在下一轮再试一次。
+      // 看门狗（`maybeStartGame`）会在下一轮再试。
       console.warn('[net] startGame 未被接受', err);
+    }
+  }
+
+  /**
+   * 看门狗上限。`pollSession` 是 **60ms 一轮**（见 `setInterval`），所以
+   * 300 轮 ≈ 18 秒；50 轮 ≈ 3 秒。写成「轮」而不是毫秒，是为了不受轮询
+   * 节奏变化的影响 —— 但改轮询间隔时这两个数要跟着算一遍。
+   */
+  var GAME_START_MAX_TRIES = 300;
+  /** 前 3 秒只在确认自己是房主时调用（避免两个客户端抢着 startGame）。 */
+  var GAME_START_TRUST_HOST_TRIES = 50;
+
+  /**
+   * 服务器是不是已经在出帧了。
+   *
+   * 判据是「收到过任何一帧或一 tick 输入」，不是 `startGame()` 有没有抛错 ——
+   * `startGame()` 成功是静默的，抛错也不代表失败（可能已经开过了）。
+   */
+  function gameRunning(state) {
+    if (!state || typeof state !== 'object') return false;
+    if (typeof state.serverTick === 'number' && state.serverTick > 0) return true;
+    var inputs = state.inputs;
+    return Boolean(inputs && typeof inputs === 'object' && Object.keys(inputs).length > 0);
+  }
+
+  /**
+   * 开局看门狗：**这是唯一保证服务器会启动的地方**。
+   *
+   * 为什么不能只靠 `attach()` 里那一次 `tryStartGame()`：走快速匹配时房主由
+   * 撮合服务指派（`create_room` 的那一方），但 `session.isHost` 这个标记在
+   * `attach()` 那一刻经常还没落到会话上。2026-11-22 双人实测：两边名单到了
+   * （同伴 1 / 影子 1）、输入通道也通了，但 `服务器 0.0/s`、`tick 0` 卡死 ——
+   * 就是没人调成 `startGame`，服务器停在 waiting。
+   *
+   * 两级策略：前 3 秒只信 `isRoomOwner()`（防止两个客户端抢着启动）；之后
+   * 不再等 host 标记同步，直接调 —— 平台对非房主的调用是**忽略**（不抛错），
+   * 多调一次没有副作用，比永久卡死强。
+   */
+  function maybeStartGame(state) {
+    if (!S.session || typeof S.session.startGame !== 'function') return;
+    if (S.startRetries >= GAME_START_MAX_TRIES) return;
+    if (gameRunning(state)) return;
+    S.startRetries += 1;
+    if (S.startRetries === GAME_START_MAX_TRIES) {
+      // 说清楚「放弃」这件事：再重试也不会变好，玩家需要的是知道该退了重开，
+      // 而不是盯着 tick 0 等一个永远不会来的帧。
+      console.warn('[net] startGame 连试 ' + GAME_START_MAX_TRIES
+        + ' 次服务器仍未出帧，放弃自动启动。请退出房间重新匹配。');
+      return;
+    }
+    if (!isRoomOwner() && S.startRetries <= GAME_START_TRUST_HOST_TRIES) return;
+    try {
+      S.session.startGame();
+    } catch (err) {
+      console.warn('[net] startGame 未被接受（第 ' + S.startRetries + ' 次）', err);
     }
   }
 
@@ -492,6 +547,10 @@
   function pollSession() {
     if (!S.active || !S.session) return;
     var state = S.session.state;
+    // 看门狗放在**最前面**，两个 return 之前都轮得到它：
+    //   1. `state` 缺失本身就是「服务器没跑」的强信号，更要重试；
+    //   2. 签名不变正是「一帧没出」的典型状态，恰恰这时候最需要重试。
+    maybeStartGame(state);
     if (!state || typeof state !== 'object') return;
     var inputs = state.inputs || {};
     var players = Array.isArray(state.players) ? state.players.length : 0;
