@@ -41,10 +41,8 @@ import { testArena } from '../resource/maps/arena-test.ts';
 // 这些模块刻意不 import 任何引擎类型 —— 它们只是算数和数据结构，能在 node 里单测。
 import {
   CATCHUP_EXIT_TICKS, CATCHUP_TRIGGER_TICKS, MAX_CATCHUP_STEPS, NET_HZ, SOLO_HZ,
-  addTime, clearDebt, createStepClock, forceStep, markExecuted, seekClock,
-  setRate, takeStep,
+  addTime, clearDebt, createStepClock, forceStep, seekClock, setRate, takeStep,
 } from '../net/step-clock.ts';
-import { LOW_LATENCY_NET } from '../net/low-latency.ts';
 import {
   NO_SKILL, NO_SWITCH, decodePacket, encodeBatch,
   toStepInput, type InputFrame,
@@ -796,11 +794,14 @@ export const game: Plugin = {
      *    不能停 —— 停了就等于「我一卡，我的操作也跟着停」。意图不带帧号，
      *    而且**这一帧没有操作就不发**（`intent-filter.ts`）。
      * 2. **执行**：`canStep` 要求手里从 `nextTick` 起连续 `lookahead` 帧都齐了。
-     *    低延迟临时模式下 `lookahead = 1`，帧到了就按序立刻执行（不再攒 2 帧、
-     *    不再等墙钟 `acc`）；旧模式仍是「攒够缓冲才播」。
-     *    **连续性检查两种模式都在**：缺 2799 时哪怕 2800 已经到了也一帧都不走。
+     *    临时低延迟模式 `lookahead = 1`（只要这一帧到了），旧模式 2。
+     *    不够就**一帧都不走**（画面停住、操作无响应），而且时间**不扣** ——
+     *    恢复后一次性补算。
+     *    **执行仍按墙钟 `takeStep`（`acc >= dt`）**，不要改成「收到帧就立刻跑」：
+     *    `paintWithInterp` 连相机一起做落后一步插值，要求执行恰好落在 alpha=1，
+     *    否则每次执行都突跳 `(1-alpha)` 个身位 —— 2026-11-23 相机抽搐的根因。
+     *    细节见 `net/low-latency.ts` 与 `docs/net-sync-v2.md` §8.8。
      * 3. **补帧**：看到更高的帧号但中间有洞，立刻向服务器要。同一缺口有节流。
-     *    低延迟模式下这条通道更重要 —— 它正是有序性的保障，不能关。
      *
      * 这里**没有**「等某个玩家」的语义。谁没交意图，那一帧他就是空输入，
      * 绝不让最慢的客户端决定全场帧率。
@@ -835,9 +836,8 @@ export const game: Plugin = {
 
       // ---- 2) 执行：只跑服务器给过的帧 ----
       addTime(stepClock, delta);
-      // 落后水位 = 手里已收到、但还没算的帧数。
-      // 旧模式 = 播放缓冲 2 + 网络抖动（实测 2~6）；低延迟临时模式下帧到了
-      // 就按序执行，稳态应贴着 0（见 `net/low-latency.ts`）。
+      // 落后水位 = 手里已收到、但还没算的帧数。正常等于播放缓冲 + 网络抖动
+      // （临时低延迟模式 `lookahead = 1`，稳态 0~1；旧模式 2，实测 2~6）。
       //
       // 明显超出就说明「看得见未来却算不过来」，必须**主动追**：`addTime` 把
       // 单帧时间截断到 6 步（0.25 s）并把超出部分丢掉，所以一次切后台 / 开
@@ -848,23 +848,19 @@ export const game: Plugin = {
       // 永远停在阈值下方（实测稳定 11 帧 = 458 ms 的点击迟滞）。
       if (backlog > CATCHUP_TRIGGER_TICKS) catchingUp = true;
       else if (backlog <= CATCHUP_EXIT_TICKS) catchingUp = false;
-      // 低延迟模式下执行已不看墙钟 `acc`，每渲染帧最多 6 步本身就是最快的
-      // 追帧，`forceStep` 反而会把插值相位扣成负数。旧路径原样保留在下方。
-      const catchUp = !LOW_LATENCY_NET && catchingUp;
+      const catchUp = catchingUp;
       if (catchUp) netStat.catchUpFrames += 1;
       let steps = 0;
       while (canStep(driver)) {
         if (steps >= MAX_CATCHUP_STEPS) break;
-        // 低延迟：帧到了就走 —— `canStep` 已保证 `nextTick` 在手里，且它前面
-        // 的每一帧都已按序完整 `step(dt)` 过，缺一帧就整帧停住等补帧。
-        // 旧模式：非追赶时严格按墙钟；追赶时绕过 `acc`（`forceStep`）。
-        // 单帧 6 步上限两种模式都不变：141 fps × 6 ≈ 850 步/秒，积压几十
-        // 毫秒就追平，表现为「画面快进一下」而不是「永久落后」。
-        if (!LOW_LATENCY_NET && !catchUp && stepClock.acc + 1e-9 < stepClock.dt) break;
+        // 非追赶时严格按墙钟；追赶时绕过 `acc`（`forceStep`），否则高刷下
+        // 每帧只加 7 ms 永远攒不够一步，52 帧级的积压永远抹不平。
+        // 单帧仍是 6 步上限：141 fps × 6 ≈ 850 步/秒，2.2 秒的积压几十毫秒
+        // 就追平，表现为「画面快进一下」而不是「永久落后」。
+        if (!catchUp && stepClock.acc + 1e-9 < stepClock.dt) break;
         const packet = takeSync(driver);
         if (!packet) break;
-        if (LOW_LATENCY_NET) markExecuted(stepClock);
-        else if (catchUp) forceStep(stepClock);
+        if (catchUp) forceStep(stepClock);
         else takeStep(stepClock);
         // 服务器贴定的这一帧**原样**转成 `StepInput`，再按全体名单展开成完整
         // `I_all`。这里没有「本机 / 远端」之分：旧实现按 `netPlayerId` 拆成

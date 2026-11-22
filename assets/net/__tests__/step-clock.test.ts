@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_CATCHUP_STEPS, NET_DT, NET_HZ, SOLO_DT, SOLO_HZ,
-  addTime, advanceClock, clearDebt, createStepClock, forceStep, markExecuted,
-  seekClock, setRate, takeStep,
+  addTime, advanceClock, clearDebt, createStepClock, forceStep, seekClock, setRate, takeStep,
 } from '../step-clock.ts';
 
 describe('固定步长时钟：两种帧率', () => {
@@ -152,29 +151,5 @@ describe('clearDebt：追帧欠账封顶', () => {
     addTime(c, c.dt);
     expect(takeStep(c)).toBe(true);
     expect(takeStep(c)).toBe(false);
-  });
-});
-
-/**
- * 低延迟临时模式（2026-11-23）：执行由服务器帧到达驱动，不再等 `acc` 攒满。
- * 最大的风险是 `acc` 被扣成负数或恒 0 —— `renderAlpha` 会永远返回 0，
- * 画面退化成 24 Hz 逐帧跳，而渲染/执行帧率数字全都正常。
- */
-describe('markExecuted：执行由广播驱动，插值相位仍由真实时间推进', () => {
-  it('每执行一步 tick +1、acc 归零，随后 alpha 能从 0 涨到 1', () => {
-    const c = createStepClock(NET_HZ);
-    addTime(c, NET_DT * 3); // 收包前攒了不少墙钟时间
-    markExecuted(c);
-    expect(c.tick).toBe(1);
-    expect(c.acc).toBe(0);
-    // 归零后由真实时间推进（等价于 renderAlpha(acc, dt)，它把值夹在 [0,1]）
-    addTime(c, NET_DT * 0.5);
-    expect(c.acc / c.dt).toBeCloseTo(0.5, 6);
-    addTime(c, NET_DT * 0.5);
-    expect(c.acc / c.dt).toBeCloseTo(1, 6);
-    // 下一帧到达：再走一步，相位重新从 0 开始
-    markExecuted(c);
-    expect(c.tick).toBe(2);
-    expect(c.acc / c.dt).toBe(0);
   });
 });

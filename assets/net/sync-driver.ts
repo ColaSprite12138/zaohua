@@ -55,8 +55,10 @@ export type SyncDriver = {
  * 播放缓冲深度。
  *
  * 2026-11-23 临时低延迟模式：取 1 —— `canStep()` 只要求 `nextTick` 这一帧
- * 在手里，帧到了就按序执行；**连续帧检查本身没有取消**，缺 2799 时哪怕
- * 2800 已经到了也一帧都不走，而是由 `requestReplay()` 把 2799 补回来。
+ * 在手里，帧到了就在**下一个墙钟节拍**按序执行；**连续帧检查本身没有取消**，
+ * 缺 2799 时哪怕 2800 已经到了也一帧都不走，而是由 `requestReplay()` 把
+ * 2799 补回来。执行仍走 `step-clock.ts::takeStep()` 的 `acc >= dt`，这次
+ * 只动缓冲深度、不动节拍 —— 动节拍会让相机插值抽搐（见 `low-latency.ts`）。
  * 旧值 2 保留在 `low-latency.ts::BUFFERED_LOOKAHEAD`，改
  * `LOW_LATENCY_NET = false` 即恢复。
  */

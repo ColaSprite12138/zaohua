@@ -71,20 +71,17 @@ export const STALL_THRESHOLD = 0.5;
 /**
  * 落后多少帧就进入**追帧**模式。
  *
- * 旧模式（`LOW_LATENCY_NET = false`）的正常水位是播放缓冲 2 加网络抖动，
- * 实测稳定在 2~6。**不能设成 12**：一次性丢过时间后积压会停在 11 左右
- * （阈值下方），于是永远不触发追帧 —— 2026-11-22 用户实测「放前台不动也
- * 稳定领先 11」（458 ms）。8 是「抖动上限 + 1」：超过它就不是抖动，而是
- * 实打实的积压。
- *
- * 2026-11-23 低延迟临时模式下 `lookahead = 1`、正常水位贴 0，而且执行已由
- * 服务器帧到达驱动（每渲染帧最多 6 步就是天然追帧），这两个阈值与
- * `forceStep` 都只在旧模式生效 —— `game.pack.ts` 用 `!LOW_LATENCY_NET` 隔开。
+ * 旧模式（`LOW_LATENCY_NET = false`）的正常水位是播放缓冲 2 + 网络抖动，
+ * 实测 2~6；2026-11-23 临时低延迟模式 `lookahead = 1`，稳态贴 0~1。
+ * **阈值不用跟着改**：8 是「抖动上限 + 1」，超过它就不是抖动，而是实打实的
+ * 积压。**不能设成 12**：一次性丢过时间后积压会停在 11 左右（阈值下方），
+ * 于是永远不触发追帧 —— 2026-11-22 用户实测「放前台不动也稳定领先 11」（458 ms）。
  */
 export const CATCHUP_TRIGGER_TICKS = 8;
 
 /**
- * 追到多少帧才**停止**追帧（= `DEFAULT_LOOKAHEAD` + 1，即播放缓冲水位）。
+ * 追到多少帧才**停止**追帧（旧模式 = 播放缓冲 2 + 1；低延迟模式沿用 3 作
+ * 滞回下限，稳态领先本来就 ≤ 1，不会让追帧常开）。
  *
  * 必须和进入阈值拉开距离（滞回）。若退出条件也是「≤ 12」，追帧跑一帧 6 步
  * 把 backlog 从 12 拉到 11，下一秒条件就不成立、立刻退出，于是永远停在阈值
@@ -183,23 +180,6 @@ export function takeStep(clock: StepClock): boolean {
 export function forceStep(clock: StepClock): void {
   clock.acc -= clock.dt;
   clock.tick += 1;
-}
-
-/**
- * 低延迟临时模式专用：**服务器帧到了就执行一步**，不检查 `acc` 是否攒满。
- *
- * 与 `takeStep` 的区别不是「少扣时间」，而是节拍来源不同：
- * - 旧路径：`acc` 由墙钟 `addTime` 攒，够一个 dt 才允许走一步（固定延迟换不抖）。
- * - 低延迟路径：执行时机由帧到达驱动，`acc` 只作为**渲染插值相位** ——
- *   每执行一步归零，随后由 `addTime(delta)` 随真实时间涨回 dt，
- *   `renderAlpha()` 因此仍能在 `[prev, cur]` 之间平滑，而不是恒 0
- *   （恒 0 会把画面退化成 24 Hz 逐帧跳，2026-11-22 踩过）。
- *
- * 每步仍完整推进 `tick`，`step(state, dt, I_all)` 一帧不跳。见 `low-latency.ts`。
- */
-export function markExecuted(clock: StepClock): void {
-  clock.tick += 1;
-  clock.acc = 0;
 }
 
 /**
