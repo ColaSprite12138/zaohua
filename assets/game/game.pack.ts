@@ -378,6 +378,11 @@ export const game: Plugin = {
       melted: 0,
       /** 兼容旧面板：迟到帧在 v2 里由补帧通道处理，这里的值等于 `stale`。 */
       lateFrames: 0,
+      /**
+       * 真正画出去的帧数（`paintWithInterp` 的调用次数，含插值分支）。
+       * 与 `framesIn` 一起给主窗口算两个帧率：收包帧率 / 渲染帧率。
+       */
+      renderFrames: 0,
     };
 
     function rebuildPeers(): void {
@@ -1160,6 +1165,10 @@ export const game: Plugin = {
             painter.setTransform(surfaceScale, 0, 0, surfaceScale, 0, 0);
             // 状态图标的悬停提示要指针位置：传视图坐标（不是物理像素），
             // 否则 2x 渲染下会指到左上角去。
+            // 「客户端渲染帧率」的唯一可信来源：真正走到绘制这一行的次数。
+            // 挂在调用处而不是 `paintWithInterp` 内部，是因为它有两条返回分支
+            // （alpha<=0 直接画），数在里面会漏掉那一半。
+            netStat.renderFrames += 1;
             paintWithInterp(() => {
               paint(painter, state, pointer ? { x: screenX, y: screenY } : undefined, renderDt, view);
             });

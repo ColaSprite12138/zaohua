@@ -89,7 +89,27 @@
   // 丢帧次数，这些只有引擎知道。以前只能在 DevTools 里切 frame 敲命令，
   // 这不该让用户承担。
   var diagEl = null;
-  var diagLast = { tick: 0, at: 0 };
+  /**
+   * 上一拍的两个累计计数与已平滑的帧率。
+   *
+   * 帧率必须由**累计量之差**算，不能拿执行帧号（`tick`）凑：执行帧号受播放
+   * 缓冲和补帧影响，会滞后于服务器，而用户要看的是「服务器这一秒出了多少帧」。
+   * 累计量归零（`armTimeline`）时差值为负，这一拍作废。
+   */
+  var diagLast = {
+    tick: 0, at: 0, framesIn: 0, renderFrames: 0,
+    serverFps: null, renderFps: null,
+  };
+
+  /** 指数平滑：每秒只推一次，裸差分会在 23/25 之间跳得很难看。 */
+  function smoothFps(prev, cur) {
+    if (cur === null || cur < 0) return prev;
+    return prev === null ? cur : prev * 0.6 + cur * 0.4;
+  }
+
+  function fpsText(value) {
+    return value === null ? '--' : value.toFixed(1) + '/s';
+  }
 
   function ensureDiag() {
     if (diagEl) return diagEl;
@@ -114,14 +134,27 @@
   function renderDiag(stat) {
     if (!stat || !S.active) return;
     var now = Date.now();
-    var rateText = '--';
-    var rate = null;
-    if (diagLast.at > 0 && now > diagLast.at) {
-      rate = (stat.tick - diagLast.tick) * 1000 / (now - diagLast.at);
-      rateText = rate.toFixed(1) + '/s';
+    var elapsed = diagLast.at > 0 ? now - diagLast.at : 0;
+    var serverFps = diagLast.serverFps;
+    var renderFps = diagLast.renderFps;
+    if (elapsed > 0) {
+      // 服务器帧率 = 这一拍新收到的服务器帧数 / 实际间隔。这就是逻辑帧率：
+      // 一局里客户端每秒能拿到多少个可执行的服务器帧。
+      var dIn = typeof stat.framesIn === 'number' ? stat.framesIn - diagLast.framesIn : -1;
+      var dOut = typeof stat.renderFrames === 'number'
+        ? stat.renderFrames - diagLast.renderFrames
+        : -1;
+      serverFps = smoothFps(serverFps, dIn < 0 ? null : dIn * 1000 / elapsed);
+      renderFps = smoothFps(renderFps, dOut < 0 ? null : dOut * 1000 / elapsed);
     }
+    if (typeof stat.framesIn === 'number') diagLast.framesIn = stat.framesIn;
+    if (typeof stat.renderFrames === 'number') diagLast.renderFrames = stat.renderFrames;
+    // tick 增速到这里不再用于显示，但仍记下来：它和「服务器帧率」的差就是
+    // 执行落后量，排查「包在到、但没在执行」时是唯一线索。
     diagLast.tick = stat.tick;
     diagLast.at = now;
+    diagLast.serverFps = serverFps;
+    diagLast.renderFps = renderFps;
     var el = ensureDiag();
     if (!el) return;
     // 同伴 = 座位名单里的其他人；影子 = 真正建出来的远端角色。
@@ -133,7 +166,8 @@
     //   补   = 发过多少次补帧请求（持续增长 = 这条链路一直在丢包）
     //   缺   = 已经看到更高帧号但手里还缺几帧（> 0 就是在等 replay）
     el.textContent = 'tick ' + stat.tick
-      + '  ' + rateText
+      + '  服务器 ' + fpsText(serverFps)
+      + '  渲染 ' + fpsText(renderFps)
       + '  领先 ' + (stat.lead || 0)
       + '  补 ' + (stat.replays || 0)
       + '  缺 ' + (stat.gap || 0)
@@ -141,17 +175,25 @@
       + ' · 影子 ' + shadowCount;
     // 长时间 `缺 > 0` 说明补帧通道没通，不只是卡一下。
     if ((stat.gap || 0) > 0 && (stat.replays || 0) > 3) el.style.color = '#f09595';
-    // 60 是满速；低于 56 节奏已经不匀，低于 45 是明显卡。
-    if (rate !== null) {
-      el.style.color = rate < 45 ? '#f09595' : (rate < 56 ? '#f0b429' : '#9fe1cb');
+    // 服务器帧率的判据是**逻辑帧率**（`NET_HZ` = 24），不是 60 了。低于 19
+    // 节奏已经开始丢帧，低于 14 是明显掉拍。渲染帧率只展示不染色 —— 它跟着
+    // 宿主 rAF 和显示器走，30 Hz 屏上 30/s 完全正常，染色只会误报。
+    if (serverFps !== null) {
+      el.style.color = serverFps < 14 ? '#f09595' : (serverFps < 19 ? '#f0b429' : '#9fe1cb');
     }
   }
 
   function hideDiag() {
     if (diagEl && diagEl.parentNode) diagEl.parentNode.removeChild(diagEl);
     diagEl = null;
+    // 累计量一起清：下一局是从 `armTimeline` 归零的新时间轴，留着旧值会让
+    // 第一拍照样算出负增量（本次作废），白白丢一秒读数。
     diagLast.tick = 0;
     diagLast.at = 0;
+    diagLast.framesIn = 0;
+    diagLast.renderFrames = 0;
+    diagLast.serverFps = null;
+    diagLast.renderFps = null;
   }
 
   /* --------------------------- Worker → 平台 --------------------------- */
