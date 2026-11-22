@@ -138,6 +138,18 @@ fi
 [ ! -s "$OUT/tsc.out" ] || die "typecheck：tsc 有诊断输出"
 log "[ OK ] typecheck :: 0 error"
 
+# 帧同步两条静态纪律：确定性守卫管浮点/墙钟，本机上下文守卫管「我 / 别人」。
+# 分叉不会当场报错，只能在 hash 对账里看见，所以规矩必须写进验收脚本。
+log "[RUN ] determinism :: 禁用函数与超越函数预算"
+node scripts/check-determinism.mjs > "$OUT/determinism.out" 2>&1 \
+  || { cat "$OUT/determinism.out"; die "确定性守卫未通过（见 docs/net-sync-design.md §6）"; }
+log "[ OK ] determinism :: $(tail -n 1 "$OUT/determinism.out")"
+
+log "[RUN ] local-context :: 判定层不得区分本机 / 远端"
+node scripts/check-local-context.mjs > "$OUT/local-context.out" 2>&1 \
+  || { cat "$OUT/local-context.out"; die "本机上下文守卫未通过（见 docs/net-sync-design.md §1.1）"; }
+log "[ OK ] local-context :: $(tail -n 1 "$OUT/local-context.out")"
+
 run_json build "$FX" project build --json
 
 run_json playthrough "$FX" project play \

@@ -175,6 +175,12 @@ node scripts/check-determinism.mjs > "$OUT/determinism.out" 2>&1 \
   || { cat "$OUT/determinism.out"; die "确定性守卫未通过（见 docs/net-sync-design.md §6）"; }
 log "[ OK ] determinism :: $(tail -n 1 "$OUT/determinism.out")"
 
+# 本机上下文守卫：判定层读 s.me / s.camera / isMe 就等于两端跑两份逻辑。
+log "[RUN ] local-context :: 判定层不得区分本机 / 远端"
+node scripts/check-local-context.mjs > "$OUT/local-context.out" 2>&1 \
+  || { cat "$OUT/local-context.out"; die "本机上下文守卫未通过（见 docs/net-sync-design.md §1.1）"; }
+log "[ OK ] local-context :: $(tail -n 1 "$OUT/local-context.out")"
+
 for m in $modules; do
   path="assets/$m/__tests__"
   [ -d "$path" ] || die "$m：找不到独立验收目录 $path"
