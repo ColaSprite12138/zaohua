@@ -51,6 +51,7 @@ import {
   type RawInput,
 } from '../net/input-latch.ts';
 import { hasActivity } from '../net/intent-filter.ts';
+import { interpPos, renderAlpha } from './interp.ts';
 import {
   DEFAULT_LOOKAHEAD, accept as acceptFrame, canStep, contiguous,
   createSyncDriver, pendingTicks, requestReplay, reset as resetSync,
@@ -186,6 +187,11 @@ export const game: Plugin = {
       // 它不进 `step()`、不进 hash、不影响任何判定。
       tick: stepClock.tick,
       hz: stepClock.hz,
+      /** 画面用的插值位置（与 `playerWorld` 不等即证明插值生效）。 */
+      drawX: lastDrawPos.x,
+      drawY: lastDrawPos.y,
+      /** 渲染进度 0..1：0 = 画的是上一步，1 = 画的是当前步。 */
+      alpha: renderAlpha(stepClock.acc, stepClock.dt),
     });
 
     // Last pointer position seen in the input snapshot. The snapshot carries a
@@ -224,6 +230,89 @@ export const game: Plugin = {
     const stepClock = createStepClock(SOLO_HZ);
     /** 一帧渲染采到的输入，按逻辑步分发（边沿只给第一个步）。 */
     const latch = createInputLatch();
+    /**
+     * 上一逻辑帧的**渲染位置**（只给插值用，不进 `S`、不进 hash、不进帧）。
+     *
+     * 逻辑 24 Hz、渲染 60 fps：直接画当前位置会让同一位置被画 2~3 帧才跳一次
+     * （205 px/s 就是每 41.7 ms 跳 8.5 px）。`paint` 前用这里的位置做插值，
+     * 画面变成 60 fps 连续移动，代价是视觉比逻辑晚一步（41.7 ms）。
+     */
+    type PrevPositions = {
+      player: { x: number; y: number } | null;
+      camera: { x: number; y: number } | null;
+      /** 按**对象引用**索引：`Skeleton` 没有稳定 id，死怪也不会立刻出数组。 */
+      skeletons: Map<object, { x: number; y: number }>;
+    };
+    let prevPos: PrevPositions = { player: null, camera: null, skeletons: new Map() };
+    /**
+     * 最后一次**真正画出去**的玩家位置。它和 `state.player` 不相等就说明插值在起作用
+     * （只读诊断：验收脚本靠它证明「画面不是每 41.7 ms 跳一次」，而不是只看「没崩」）。
+     */
+    let lastDrawPos = { x: 0, y: 0 };
+
+    /** 每执行一步之前调一次：把「这一步之前」的位置记下来。 */
+    function capturePrevPositions(): void {
+      const skeletons = new Map<object, { x: number; y: number }>();
+      for (const sk of state.skeletons) skeletons.set(sk, { x: sk.x, y: sk.y });
+      prevPos = {
+        player: { x: state.player.x, y: state.player.y },
+        camera: { x: state.camera.x, y: state.camera.y },
+        skeletons,
+      };
+    }
+
+    /** 新一局 / 瞬移：丢掉上一帧位置，否则插值会把角色从旧局的位置拉过来。 */
+    function clearPrevPositions(): void {
+      prevPos = { player: null, camera: null, skeletons: new Map() };
+    }
+
+    /**
+     * 带着插值画一帧。做法是**临时把插值位置写进 `state`，画完在 `finally` 里还原** ——
+     * 这样 `paint()` 里 20 多个位置读点一行都不用改。
+     *
+     * 安全性：`paint` 是同步的、主循环最后一步；期间没有别的代码读 `S`。
+     * 判定永远用真实位置（`step()` 已经跑完），这里改的只是绘制用的那一瞬。
+     */
+    function paintWithInterp(draw: () => void): void {
+      const alpha = renderAlpha(stepClock.acc, stepClock.dt);
+      const prev = prevPos;
+      if (alpha <= 0 || !prev.player || !prev.camera) {
+        draw();
+        return;
+      }
+      const realPlayer = { x: state.player.x, y: state.player.y };
+      lastDrawPos = { x: realPlayer.x, y: realPlayer.y };
+      const realCamera = { x: state.camera.x, y: state.camera.y };
+      const realSkeletons: { sk: object & { x: number; y: number }; x: number; y: number }[] =
+        state.skeletons.map((sk) => ({ sk, x: sk.x, y: sk.y }));
+      try {
+        const player = interpPos(prev.player, realPlayer, alpha);
+        lastDrawPos = { x: player.x, y: player.y };
+        state.player.x = player.x;
+        state.player.y = player.y;
+        const camera = interpPos(prev.camera, realCamera, alpha);
+        state.camera.x = camera.x;
+        state.camera.y = camera.y;
+        for (const entry of realSkeletons) {
+          const before = prev.skeletons.get(entry.sk);
+          if (!before) continue;
+          const now = interpPos(before, entry, alpha);
+          entry.sk.x = now.x;
+          entry.sk.y = now.y;
+        }
+        draw();
+      } finally {
+        state.player.x = realPlayer.x;
+        state.player.y = realPlayer.y;
+        state.camera.x = realCamera.x;
+        state.camera.y = realCamera.y;
+        for (const entry of realSkeletons) {
+          entry.sk.x = entry.x;
+          entry.sk.y = entry.y;
+        }
+      }
+    }
+
     /** 联机中：服务器帧钟已经接上，帧号由服务器广播决定。 */
     let netActive = false;
     /** 平台给的座号。服务端广播里的 playerId 与它必须一致。 */
@@ -581,6 +670,7 @@ export const game: Plugin = {
       while (takeStep(stepClock)) {
         const tick = stepClock.tick - 1;
         const frame = takeLatched(latch, tick);
+        capturePrevPositions();
         step(state, stepClock.dt, toStepInput(frame), modifiers);
         reportHash(tick);
       }
@@ -645,6 +735,7 @@ export const game: Plugin = {
         // **本机输入也来自这一帧广播**：没有预表现，玩家按下到生效要等一个回程。
         // 这是「不做预表现 + 不拥有自己的帧」的必然代价（`docs/net-sync-v2.md` §4）。
         const localFrame = packet.frames.get(netPlayerId);
+        capturePrevPositions();
         step(
           state,
           stepClock.dt,
@@ -715,6 +806,7 @@ export const game: Plugin = {
           // The shell has ALREADY emptied its own bag + equipment; `loadout`
           // is the structured-cloned copy this Worker now owns exclusively.
           setArena(state, arena);
+          clearPrevPositions();
           modifiers = createModifiers(msg.deployment?.stars?.nodes ?? []);
           deployRun(state, msg.deployment ?? {});
           // 出生点偏移必须**对所有玩家**用同一套规则：`createRemotePlayer` 按 id
@@ -773,6 +865,7 @@ export const game: Plugin = {
            * 生产宿主不会收到这条消息（只有验收脚本会发）。
            */
           reset(state);
+          clearPrevPositions();
           setRate(stepClock, SOLO_HZ);
           seekClock(stepClock, 0);
           lastResult = null;
@@ -784,6 +877,7 @@ export const game: Plugin = {
           state.runInventory = makeRunInventory(EMPTY_RUN);
           modifiers = createModifiers([]);
           reset(state);
+          clearPrevPositions();
           setRate(stepClock, SOLO_HZ);
           seekClock(stepClock, 0);
           lastResult = null;
@@ -813,6 +907,7 @@ export const game: Plugin = {
           if (locked) {
             locked = false;
             reset(state);
+            clearPrevPositions();
             lastResult = null;
             resultSent = false;
           }
@@ -1065,7 +1160,9 @@ export const game: Plugin = {
             painter.setTransform(surfaceScale, 0, 0, surfaceScale, 0, 0);
             // 状态图标的悬停提示要指针位置：传视图坐标（不是物理像素），
             // 否则 2x 渲染下会指到左上角去。
-            paint(painter, state, pointer ? { x: screenX, y: screenY } : undefined, renderDt, view);
+            paintWithInterp(() => {
+              paint(painter, state, pointer ? { x: screenX, y: screenY } : undefined, renderDt, view);
+            });
             texture.update();
             // Pointer feedback: the source realm cannot touch CSS, so tell the
             // main window which enemy (if any) is under the free cursor. Sent
