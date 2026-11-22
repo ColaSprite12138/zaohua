@@ -11,6 +11,15 @@
 >
 > 看到那条报错就**换通道**，不要停下来报障，更不要为了它去改游戏代码。细节见 `HANDOFF.md`「已知陷阱速查」与 `.workbuddy/memory/MEMORY.md` §3。
 
+> **对局内逻辑铁律（用户 2026-11-22 要求写死，硬性，改 `assets/combat` / `assets/game` / `assets/net` 前必读）**：
+> 帧同步下 **`step()` 每帧必须模拟 `s.players` 全体，缺席者按空输入推进，本机不享有任何特权** ——
+> 包括「本机没输入垫空帧、远端没输入跳过」这种**写在输入装配层**的隐性分流。
+> 它曾造成 PVP：A 砸开箱 / 砍掉血，B 永远砸不开 / 不掉血。这类分叉只在
+> 「两个不同本机身份 + 玩家安静帧 + 长局后期」出现，单机 playthrough 与同进程单测天然测不到。
+> **权威正文：[`docs/net-sync-design.md`](docs/net-sync-design.md) §1.2**（八个已踩坑 / 十条自查清单 / 三件套验证）。
+> 新增引导 / 冷却 / DOT 等「安静帧才结算」的逻辑，必须补 `assets/net/__tests__/two-seat-parity.test.ts`
+> 式两座位闭环用例，断言两端全状态 hash 相同；单测绿 ≠ 真机不分叉。
+
 > **本工程交接先读 [`HANDOFF.md`](HANDOFF.md)**：当前已实现的功能契约、保护清单、改完必跑的验收、可回滚基线都在那里。本文其余部分是 ForgeAX 引擎模板自带的通用 SDK 规范，不含本工程特性。
 
 > **Git 提交纪律（用户 2026-11-10 明确要求，硬性）**：远端 `origin` = `git@github.com:ColaSprite12138/zaohua.git`（`main`）。

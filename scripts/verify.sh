@@ -44,6 +44,7 @@ add_module() {
 }
 
 combat_play=0
+net_parity=0
 force_full=0
 shell_check=0
 tables_check=0
@@ -55,7 +56,7 @@ if [ "$#" -gt 0 ]; then
       *" $m "*) add_module "$m" ;;
       *) die "未知模块：$m（可用：$ALL_MODULES）" ;;
     esac
-    [ "$m" = "combat" ] && { combat_play=1; loot_report=1; }
+    [ "$m" = "combat" ] && { combat_play=1; loot_report=1; net_parity=1; }
     [ "$m" = "meta" ] && shell_check=1
     [ "$m" = "resource" ] && tables_check=1
   done
@@ -85,7 +86,10 @@ else
       *.md|docs/*) continue ;;
       assets/combat/*)
         add_module combat
-        case "$f" in *.ts) combat_play=1 ;; esac ;;
+        # 帧同步护栏：对局内逻辑一改，必须跑两座位闭环。combat 自己的单测
+        # 只有一个「本机」，天然测不到「两端展开出不同 I_all」的分叉。
+        # 见 docs/net-sync-design.md §1.2。
+        case "$f" in *.ts) combat_play=1; net_parity=1 ;; esac ;;
       assets/battle/*)   add_module battle ;;
       assets/meta/*|meta-ui/*|scripts/verify-meta-ui.cjs|scripts/build-meta-ui.mjs|scripts/inject-shell.mjs|scripts/verify-shell.cjs)
         add_module meta
@@ -199,6 +203,18 @@ for m in $modules; do
   [ -n "$count" ] && [ "$count" -ge 1 ] || die "$m：未读到通过的测试数（验收被删空？）"
   log "[ OK ] $m :: $count passed"
 done
+
+# 两座位闭环：两个独立 GameState + 真帧钟 + 真缺席帧，逐帧比对全状态指纹。
+# 只挂在 combat / 显式 combat 改动上，不进 ALL_MODULES（net 不是玩法模块）。
+# 这类分叉只在两个不同本机身份下出现，模块单测与单机 playthrough 都测不到；
+# 规矩见 docs/net-sync-design.md §1.2，护栏本身必须能证伪（贴回旧 collectInputs 要变红）。
+if [ "$net_parity" -eq 1 ]; then
+  log "[RUN ] net :: 两座位闭环（PVP 防分叉，见 net-sync-design.md §1.2）"
+  "$VITEST" run assets/net/__tests__/two-seat-parity.test.ts \
+    > "$OUT/inc-net-parity.out" 2> "$OUT/inc-net-parity.err" \
+    || { tail -n 25 "$OUT/inc-net-parity.out" "$OUT/inc-net-parity.err"; die "两座位闭环失败"; }
+  log "[ OK ] net :: 两座位闭环"
+fi
 
 if [ "$combat_play" -eq 1 ]; then
   check_play() {
