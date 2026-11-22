@@ -49,6 +49,7 @@ import {
   capture as captureInput, createInputLatch, take as takeLatched,
   type RawInput,
 } from '../net/input-latch.ts';
+import { hasActivity } from '../net/intent-filter.ts';
 import {
   DEFAULT_LOOKAHEAD, accept as acceptFrame, canStep, contiguous,
   createSyncDriver, pendingTicks, requestReplay, reset as resetSync,
@@ -229,8 +230,13 @@ export const game: Plugin = {
     /**
      * 还没打包发走的**意图**。注意它不带帧号：服务器贴到哪一帧就是哪一帧，
      * 客户端没有资格决定（`docs/net-sync-v2.md` §2.2）。
+     *
+     * **没有操作的帧不进这里，也不发空帧**：服务器那一帧里没有我 = 空输入，
+     * 语义等价；而队列是 FIFO 的，前面堆空意图会让我真正按下的那一下晚几十帧。
      */
     let netOutbox: InputFrame[] = [];
+    /** 上一次真的发出去的意图；`hasActivity` 拿它做基准判断「有没有变化」。 */
+    let lastIntent: InputFrame | null = null;
     /**
      * 意图采样累加器。**与执行节拍解耦**：执行会被服务器卡住，但采样不能停 ——
      * 停了就等于「我一卡，我的操作也跟着停」，恢复后那段时间是彻底的空白。
@@ -252,8 +258,10 @@ export const game: Plugin = {
     const netStat = {
       /** 真正执行的帧数。只可能是服务器给过的帧。 */
       ticks: 0,
-      /** 采到并发出的意图条数。 */
+      /** 采到并发出的意图条数（**只有有操作的帧才算**）。 */
       intentsOut: 0,
+      /** 采到但「没有任何操作」因此没发的帧数。远大于 intentsOut = 玩家在挂机。 */
+      idleFrames: 0,
       framesOut: 0, framesIn: 0,
       /** 服务器帧号领先执行指针多少（= 播放缓冲 + 网络延迟）。 */
       lead: 0,
@@ -329,6 +337,7 @@ export const game: Plugin = {
         awaitingLoadouts = false;
         netOutbox = [];
         intentAcc = 0;
+        lastIntent = null;
         driver = createSyncDriver(0, DEFAULT_LOOKAHEAD);
         state.players = state.players.filter((p) => p.id === state.me);
         return;
@@ -429,6 +438,8 @@ export const game: Plugin = {
       netOutbox = [];
       netStat.ticks = 0;
       netStat.intentsOut = 0;
+      netStat.idleFrames = 0;
+      lastIntent = null;
       netStat.framesOut = 0;
       netStat.framesIn = 0;
       netStat.hashes = 0;
@@ -577,7 +588,8 @@ export const game: Plugin = {
      * 三件互不干扰的事，顺序不能换：
      *
      * 1. **采意图**（墙钟节拍，60 Hz，和执行解耦）。执行会被服务器卡住，但采样
-     *    不能停 —— 停了就等于「我一卡，我的操作也跟着停」。意图不带帧号。
+     *    不能停 —— 停了就等于「我一卡，我的操作也跟着停」。意图不带帧号，
+     *    而且**这一帧没有操作就不发**（`intent-filter.ts`）。
      * 2. **执行**：`canStep` 要求手里从 `nextTick` 起连续 `lookahead` 帧都齐了。
      *    不够就**一帧都不走**（画面停住、操作无响应），而且时间**不扣** ——
      *    恢复后一次性补算。这是「固定延迟换画面不抖」的全部实现。
@@ -593,13 +605,19 @@ export const game: Plugin = {
       let sampled = 0;
       while (intentAcc >= FIXED_DT && sampled < 8) {
         intentAcc -= FIXED_DT;
+        sampled += 1;
+        // 先取出这一帧（顺带清掉边沿），再判断值不值得发。
         const intent = takeLatched(latch, nextIntentSeq);
+        if (!hasActivity(intent, lastIntent)) {
+          netStat.idleFrames += 1;
+          continue;
+        }
         nextIntentSeq += 1;
+        lastIntent = intent;
         if (intent.pointerDown) netStat.localEdges += 1;
         if (intent.mouse) netStat.localMouse += 1;
         netOutbox.push(intent);
         netStat.intentsOut += 1;
-        sampled += 1;
       }
       // 标签页被切走很久之后回来：`intentAcc` 会堆成几秒，一次灌几百条意图
       // 只会让服务器把它们贴到未来几百帧上。直接丢掉，玩家不会希望「回来
@@ -643,13 +661,18 @@ export const game: Plugin = {
       }
     }
 
-    /** 攒够 3 条意图（50ms）发一批：与平台 20Hz 的状态广播同频，多发只是浪费。 */
-    function flushOutbox(force = false): void {
+    /**
+     * 有意图就立刻发。
+     *
+     * 以前是「攒够 3 条（50 ms）再发」，那是为了让包数跟 20 Hz 广播对齐。现在
+     * 只在有操作时才产意图，攒批就等于让「点一下」白等两帧 —— 而一次操作一个包
+     * 本来就不费什么（40 字节级），所以直接发。
+     */
+    function flushOutbox(): void {
       if (!netActive) {
         netOutbox.length = 0;
         return;
       }
-      if (!force && netOutbox.length < 3) return;
       if (netOutbox.length === 0) return;
       const frames = netOutbox.splice(0, 16);
       netStat.framesOut += frames.length;
