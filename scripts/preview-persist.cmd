@@ -41,6 +41,20 @@ if not exist "%ROOT%\game\server\dist\index.js" (
   exit /b 1
 )
 
+rem 造化预览 / forgeax build 都会重写 dist\index.html，把 meta-ui 壳层（登录门禁、
+rem 仓库、匹配面板）整个抹掉 —— 表现是「打开直接进战斗、没有登录界面」。
+rem 这里每次启动前补一次，幂等。
+cd /d "%ROOT%"
+if exist "%ROOT%\scripts\patch-preview-shell.mjs" (
+  "%NODE%" "%ROOT%\scripts\patch-preview-shell.mjs" >nul 2>&1
+  if errorlevel 1 (
+    echo [WARN] 壳层补丁失败：页面会直接进战斗、没有登录/仓库界面。
+    echo        手动跑一次 node scripts\patch-preview-shell.mjs 看报错。
+  ) else (
+    echo [ OK ] meta-ui 壳层已补齐
+  )
+)
+
 netstat -ano | findstr "LISTENING" | findstr ":%PORT% " >nul
 if not errorlevel 1 (
   echo [WARN] 端口 %PORT% 已在监听，可能已经有一个宿主在跑。
