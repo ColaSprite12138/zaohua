@@ -133,6 +133,8 @@ type RelayState = {
     replays: number
     /** 帧钟被事件循环阻塞、一次性补多帧的次数。 */
     catchup: number
+    /** 因为停摆超过半秒而**放弃补算**的帧数（逻辑时间比墙钟短了这么多）。 */
+    skipped: number
   }
 }
 
@@ -149,7 +151,7 @@ function emptyState(players: RelayPlayer[]): RelayState {
     reply: {},
     stats: {
       packets: 0, intents: 0, badPackets: 0, hashReports: 0,
-      mismatches: 0, retired: 0, replays: 0, catchup: 0,
+      mismatches: 0, retired: 0, replays: 0, catchup: 0, skipped: 0,
     },
   }
 }
@@ -302,7 +304,12 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
       stats: {
         ...state.stats,
         tickMs: tickQuantiles(),
+        /** 还有积压的玩家数（队列里攒着没贴的意图）。 */
         pending: [...log.pending.entries()].filter(([, q]) => q.length > 0).length,
+        /** 收到 / 贴出 / 丢弃的意图条数。`submitted - applied` 就是还没贴的。 */
+        submitted: log.stats.submitted,
+        applied: log.stats.applied,
+        dropped: log.stats.dropped,
       },
     };
   }
@@ -324,8 +331,15 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
         }
         if (guard > 1) state.stats.catchup += 1
         // 落后超过半秒（进程被挂起 / 长 GC）：不再补，直接对齐到现在。
-        // 补几百帧只会让所有人一起卡更久，而且那些帧本来就没有输入。
-        if (now - nextAt > 500) nextAt = now + period
+        //
+        // 这里丢掉的是**帧数**，不是帧号连续性 —— 帧号是自增整数，永远 +1，
+        // 客户端不会看到空洞。代价只是「这一局的逻辑时间比墙钟短了半秒」。
+        // 反过来硬补几百帧，会让所有人都跟着卡更久，而且那些帧本来就没输入。
+        // 计数放出来是为了让面板能解释「游戏内时间比真实时间慢」。
+        if (now - nextAt > 500) {
+          state.stats.skipped += Math.round((now - nextAt) / period)
+          nextAt = now + period
+        }
       }, Math.max(1, Math.floor(period / 2)))
       if (typeof timer === 'object' && timer && 'unref' in timer) {
         // 宿主进程常驻，但别让一个空房间的定时器拖住进程退出。

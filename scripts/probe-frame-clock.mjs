@@ -150,6 +150,61 @@ const after = game.getState().frame
 const hz = (after - before) / 0.6
 check('帧钟约 60 Hz（误差 ±15%）', hz > 51 && hz < 69, `${hz.toFixed(1)} Hz`)
 
+// ---- 7) 最纯粹的一条：**零输入**下也必须严格 60 Hz、帧号连续 ----
+// 这一组刻意不调任何 applyAction —— 一个客户端都没交东西，甚至一个都没连上。
+// 只要它还在这里按 60 Hz 推进，「绝不等待客户端」就成了结构事实而不是口号。
+const solo = captured.createGame([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }])
+solo.start()
+await sleep(300)
+const zeroFrom = solo.getState().frame
+const zeroAt = Date.now()
+await sleep(3000)
+const zeroTo = solo.getState().frame
+const zeroElapsed = (Date.now() - zeroAt) / 1000
+const zeroHz = (zeroTo - zeroFrom) / zeroElapsed
+check('零输入 3 秒仍严格 ~60 Hz（没有任何客户端在喂它）',
+  zeroHz >= 56 && zeroHz <= 64, `${zeroHz.toFixed(1)} Hz, frame ${zeroFrom}→${zeroTo}`)
+
+const zeroTicks = Object.keys(solo.getState().inputs).map(Number).sort((x, y) => x - y)
+const gapless = zeroTicks.every((t, i) => i === 0 || t === zeroTicks[i - 1] + 1)
+check('帧号连续无空洞（帧号是自增整数，不按墙钟算）', gapless, `窗口 ${zeroTicks.length} 帧`)
+check('广播窗口仍覆盖满 12 帧（空帧也算条目）', zeroTicks.length === 12, `窗口 ${zeroTicks.length} 帧`)
+check('窗口最大值 = 当前帧号', Math.max(...zeroTicks) === solo.getState().frame,
+  `max=${Math.max(...zeroTicks)} frame=${solo.getState().frame}`)
+// 全员空帧：每条 bucket 都必须是空对象，而不是缺 key。
+const allEmpty = zeroTicks.every((t) => Object.keys(solo.getState().inputs[String(t)]).length === 0)
+check('全员空帧时条目在、但里面没有玩家（= 空输入，不是「缺帧」）', allEmpty)
+solo.stop()
+
+// ---- 8) 反向证明：客户端**多交**意图也不能让帧钟变快 ----
+// 帧号只由服务器的时间决定。堆输入既不能插队也不能加速 —— 它们只在后续帧里
+// 一帧一条地被贴出去，多出来的就排队等着。
+const spam = captured.createGame([{ id: 'a', name: 'A' }])
+spam.start()
+await sleep(120)
+const spamFrom = spam.getState().frame
+const spamAt = Date.now()
+// 36 条，低于 MAX_PENDING_PER_PLAYER(40)，所以一条都不会被丢。
+for (let sent = 0; sent < 36; sent += 12) {
+  const frames = []
+  for (let j = 0; j < 12; j += 1) frames.push(encodeFrame(sent + j, 0))
+  spam.applyAction('a', { s: sent, b: b64(encodeBatchBytes(frames)) })
+}
+await sleep(200)
+const spamMid = spam.getState()
+check('灌 36 条意图不能让帧钟变快（帧号只由时间决定）',
+  spamMid.frame - spamFrom <= 20, `200ms 只走了 ${spamMid.frame - spamFrom} 帧`)
+check('多余的意图排队等后续帧，不插队也不丢',
+  spamMid.stats.submitted === 36 && spamMid.stats.dropped === 0 && spamMid.stats.applied < 36,
+  `submitted=${spamMid.stats.submitted} applied=${spamMid.stats.applied} dropped=${spamMid.stats.dropped}`)
+await sleep(600)
+const spamDone = spam.getState()
+const spamHz = (spamDone.frame - spamFrom) / ((Date.now() - spamAt) / 1000)
+check('灌包之后整体速率仍回到 ~60 Hz', spamHz >= 52 && spamHz <= 68, `${spamHz.toFixed(1)} Hz`)
+check('积压按帧消化完（applied 追上 submitted）', spamDone.stats.applied === 36,
+  `applied=${spamDone.stats.applied}`)
+spam.stop()
+
 game.stop()
 const failed = results.filter((r) => !r.pass)
 console.log(`\n${failed.length === 0 ? '全部通过' : `${failed.length} 项失败`}（${results.length} 项）`)
