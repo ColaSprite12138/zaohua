@@ -14,7 +14,7 @@
 import type { RunLoadout } from '../meta/inventory.ts';
 import { makeRunInventory } from './run-inventory.ts';
 import {
-  PLAYER_HP_MAX, PLAYER_MANA_MAX, PRE_EQUIPPED_SKILLS, createSkillBar,
+  PLAYER_HP_MAX, PLAYER_MANA_MAX, PRE_EQUIPPED_SKILLS, SPAWN_FACE, createSkillBar,
   type GameState, type Player,
 } from './state.ts';
 
@@ -65,6 +65,10 @@ export function playerById(s: GameState, id: string): Player | null {
   return s.players.find((p) => p.id === id) ?? null;
 }
 
+/**
+ * 开局朝向由 `state.ts` 的 `SPAWN_FACE` 统一提供：本机 `reset()` 与远端
+ * `createRemotePlayer()` 用同一个值，否则 `face` 一进 hash 就分叉。
+ */
 /** 出生点微偏移：同一张图的 spawn 是同一个点，两个人会完全重叠。 */
 export function spawnOffset(id: string): { dx: number; dy: number } {
   let acc = 0;
@@ -126,7 +130,7 @@ export function createRemotePlayer(
     y: spawn.y + dy,
     vx: 0,
     vy: 0,
-    face: Math.PI / 2,
+    face: SPAWN_FACE,
     stride: 0,
     hp: hpMax,
     maxHp: hpMax,

@@ -154,6 +154,16 @@ export const PRE_EQUIPPED_SKILLS: readonly string[] = Object.freeze([
 export const PLAYER_HP_MAX = 100;
 
 /**
+ * 开局朝向（`+y`，屏幕下方）。
+ *
+ * **本机与远端必须同源。** 曾经 `reset()` 给本机设 `0`、`createRemotePlayer()`
+ * 给远端设 `Math.PI / 2`，于是 A 眼里自己朝上、B 眼里 A 朝下；`face` 在
+ * `PLAYER_KEYS` 里进 hash，`players` 分项从开局就分叉，站立不动时也没有
+ * 「朝移动方向」的覆盖来抹平（2026-11-22 造化校验实测 tick 60）。
+ */
+export const SPAWN_FACE = Math.PI / 2;
+
+/**
  * 联机 PVP 阵亡后的**按玩家**结算倒计时（秒）。
  *
  * 用户 2026-11-21 拍板：阵亡当场爆装 → 5 秒 → 提示「撤离失败」→ 死者点
@@ -1437,7 +1447,7 @@ export function reset(s: GameState): void {
   p.y = s.map.spawn.y;
   p.vx = 0;
   p.vy = 0;
-  p.face = 0;
+  p.face = SPAWN_FACE;
   p.stride = 0;
   p.invuln = 0;
   p.dodge = 0;
