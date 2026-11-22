@@ -39,7 +39,8 @@ import { testArena } from '../resource/maps/arena-test.ts';
 // 帧同步：固定步长 + **服务器帧钟驱动的执行队列** + hash 对账。
 // 这些模块刻意不 import 任何引擎类型 —— 它们只是算数和数据结构，能在 node 里单测。
 import {
-  FIXED_DT, addTime, createStepClock, seekClock, takeStep,
+  MAX_CATCHUP_STEPS, NET_HZ, SOLO_HZ,
+  addTime, createStepClock, seekClock, setRate, takeStep,
 } from '../net/step-clock.ts';
 import {
   NO_SKILL, NO_SWITCH, decodePacket, emptyInputFrame, encodeBatch,
@@ -178,7 +179,14 @@ export const game: Plugin = {
      * `viewBigMap` 只给自动化断言看，不来自 `GameState`、不进输入帧、不进 hash、
      * 不参与 `step()`；`projection()` 本身仍然只序列化 `S`。
      */
-    const readProjection = () => ({ ...projection(state), viewBigMap: view.bigMap });
+    const readProjection = () => ({
+      ...projection(state),
+      viewBigMap: view.bigMap,
+      // 只读诊断：验收脚本靠它区分「单机 60 Hz / 联机 24 Hz」，以及量实际推进速率。
+      // 它不进 `step()`、不进 hash、不影响任何判定。
+      tick: stepClock.tick,
+      hz: stepClock.hz,
+    });
 
     // Last pointer position seen in the input snapshot. The snapshot carries a
     // position only on frames where the browser delivered a pointer event; a
@@ -211,7 +219,9 @@ export const game: Plugin = {
      * 固定步长时钟。单机也用它 —— 这是「同一份输入 → 同一份结果」的地基，
      * 而单机同样需要它：可变 dt 会让重放、回放、验收脚本全部不可复现。
      */
-    const stepClock = createStepClock();
+    // 初始按**单机**帧率起：还没进联机局时跑的就是纯本地逻辑（PVE / 主线）。
+    // 进联机局由 `armTimeline()` 用 `setRate(NET_HZ)` 切过去。
+    const stepClock = createStepClock(SOLO_HZ);
     /** 一帧渲染采到的输入，按逻辑步分发（边沿只给第一个步）。 */
     const latch = createInputLatch();
     /** 联机中：服务器帧钟已经接上，帧号由服务器广播决定。 */
@@ -339,6 +349,8 @@ export const game: Plugin = {
         intentAcc = 0;
         lastIntent = null;
         driver = createSyncDriver(0, DEFAULT_LOOKAHEAD);
+        // 回到纯本地：帧率切回 60 Hz，帧号重新由墙钟推进。
+        setRate(stepClock, SOLO_HZ);
         state.players = state.players.filter((p) => p.id === state.me);
         return;
       }
@@ -427,6 +439,8 @@ export const game: Plugin = {
 
     function armTimeline(): void {
       if (!netActive || !netPlayerId) return;
+      // 切到**联机**帧率（24 Hz）：帧号从此由服务器推进。
+      setRate(stepClock, NET_HZ);
       seekClock(stepClock, 0);
       // 执行指针归零：服务器的帧号也从 0 起，两边同一条时间轴。
       driver = createSyncDriver(0, DEFAULT_LOOKAHEAD);
@@ -567,22 +581,10 @@ export const game: Plugin = {
       while (takeStep(stepClock)) {
         const tick = stepClock.tick - 1;
         const frame = takeLatched(latch, tick);
-        step(state, FIXED_DT, toStepInput(frame), modifiers);
+        step(state, stepClock.dt, toStepInput(frame), modifiers);
         reportHash(tick);
       }
     }
-
-    /**
-     * 卡住 5 秒后恢复时，`acc` 里攒着 5 秒的量（300 步）。一口气跑完会让这一
-     * 渲染帧占用几十毫秒，玩家看到的是「卡完再卡一下」。
-     *
-     * 所以每渲染帧最多补这么多步，**剩下的留在 `acc` 里下一帧继续** —— 这是
-     * 「不丢时间」和「不卡死」之间唯一正确的取法。
-     *
-     * 取值 = `MAX_FRAME_DELTA (0.25s) × FIXED_HZ` = 6 步 @24 Hz。
-     * 追帧速率 360 步/秒，卡 12 秒（300 帧）能在 0.8 秒内追平，观感是快进。
-     */
-    const MAX_CATCHUP_STEPS = 6;
 
     /**
      * 联机推进：**只执行服务器广播过的连续帧**。
@@ -605,8 +607,8 @@ export const game: Plugin = {
       // ---- 1) 采意图：按墙钟走，不受执行卡顿影响 ----
       intentAcc += delta;
       let sampled = 0;
-      while (intentAcc >= FIXED_DT && sampled < 8) {
-        intentAcc -= FIXED_DT;
+      while (intentAcc >= stepClock.dt && sampled < 8) {
+        intentAcc -= stepClock.dt;
         sampled += 1;
         // 先取出这一帧（顺带清掉边沿），再判断值不值得发。
         const intent = takeLatched(latch, nextIntentSeq);
@@ -624,13 +626,13 @@ export const game: Plugin = {
       // 标签页被切走很久之后回来：`intentAcc` 会堆成几秒，一次灌几百条意图
       // 只会让服务器把它们贴到未来几百帧上。直接丢掉，玩家不会希望「回来
       // 之后自动跑完离开的那段」。
-      if (intentAcc > FIXED_DT * 8) intentAcc = 0;
+      if (intentAcc > stepClock.dt * 8) intentAcc = 0;
       flushOutbox();
 
       // ---- 2) 执行：只跑服务器给过的帧 ----
       addTime(stepClock, delta);
       let steps = 0;
-      while (stepClock.acc + 1e-9 >= FIXED_DT && canStep(driver)) {
+      while (stepClock.acc + 1e-9 >= stepClock.dt && canStep(driver)) {
         if (steps >= MAX_CATCHUP_STEPS) break;
         const packet = takeSync(driver);
         if (!packet) break;
@@ -645,7 +647,7 @@ export const game: Plugin = {
         const localFrame = packet.frames.get(netPlayerId);
         step(
           state,
-          FIXED_DT,
+          stepClock.dt,
           localFrame ? toStepInput(localFrame) : toStepInput(emptyInputFrame(packet.tick)),
           modifiers,
           remoteInputs,
@@ -748,6 +750,8 @@ export const game: Plugin = {
             // 收齐之后由 applySeat 触发 tryArmAfterLoadouts() → armTimeline()。
             tryArmAfterLoadouts();
           } else {
+            // 单机（PVE 副本 / 主线）：纯本地逻辑，锁 60 Hz。
+            setRate(stepClock, SOLO_HZ);
             seekClock(stepClock, 0);
           }
         } else if (msg.type === 'runCommand') {
@@ -769,6 +773,7 @@ export const game: Plugin = {
            * 生产宿主不会收到这条消息（只有验收脚本会发）。
            */
           reset(state);
+          setRate(stepClock, SOLO_HZ);
           seekClock(stepClock, 0);
           lastResult = null;
           resultSent = false;
@@ -779,6 +784,7 @@ export const game: Plugin = {
           state.runInventory = makeRunInventory(EMPTY_RUN);
           modifiers = createModifiers([]);
           reset(state);
+          setRate(stepClock, SOLO_HZ);
           seekClock(stepClock, 0);
           lastResult = null;
           resultSent = false;
@@ -955,7 +961,7 @@ export const game: Plugin = {
             const snapshot = world.getResource<InputSnapshot>(INPUT_SNAPSHOT_RESOURCE_KEY);
             const raw = world.getResource(Time).delta;
             // 渲染用的真实帧时长，只喂给绘制层的视觉插值。
-            // 模拟层拿到的永远是 FIXED_DT —— 这是 P2 的第一条改动，也是帧同步的前提：
+            // 模拟层拿到的永远是当前模式的定长 dt —— 这是 P2 的第一条改动，也是帧同步的前提：
             // 60Hz 与 144Hz 的机器跑同一份输入，必须走出同一串位置。
             const renderDt = Math.min(Math.max(raw, 0), 0.05);
             const reported = snapshot?.mouse?.position;

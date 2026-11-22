@@ -1,58 +1,92 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FIXED_DT, FIXED_HZ, MAX_FRAME_DELTA, advanceClock, createStepClock, seekClock,
+  MAX_CATCHUP_STEPS, NET_DT, NET_HZ, SOLO_DT, SOLO_HZ,
+  advanceClock, createStepClock, seekClock, setRate,
 } from '../step-clock.ts';
 
-describe('固定步长时钟', () => {
-  // 下面的期望值一律从 FIXED_HZ 派生：改帧率时测试跟着走，不需要逐条改数字。
-  it('渲染帧率正好等于逻辑帧率时，每帧恰好推一步', () => {
-    const clock = createStepClock();
-    let total = 0;
-    for (let i = 0; i < 120; i += 1) total += advanceClock(clock, FIXED_DT);
-    expect(total).toBe(120);
-    expect(clock.tick).toBe(120);
+describe('固定步长时钟：两种帧率', () => {
+  it('默认是联机帧率（服务器定帧），单机要显式传 SOLO_HZ', () => {
+    expect(createStepClock().hz).toBe(NET_HZ);
+    expect(createStepClock().dt).toBe(NET_DT);
+    expect(createStepClock(SOLO_HZ).hz).toBe(SOLO_HZ);
+    expect(createStepClock(SOLO_HZ).dt).toBe(SOLO_DT);
   });
 
-  it('高刷机器两帧推一步，整 1 秒后步数与逻辑帧率一致', () => {
-    const clock = createStepClock();
-    let steps = 0;
-    // 144 帧 × (1/144) 秒 = 整 1 秒 = FIXED_HZ 个逻辑步
-    for (let i = 0; i < 144; i += 1) steps += advanceClock(clock, 1 / 144);
-    // 允许 ±1 步的取整误差，但绝不能差出 2 步
-    expect(Math.abs(steps - FIXED_HZ)).toBeLessThanOrEqual(1);
+  it('帧率正好对上时，每帧恰好推一步', () => {
+    for (const hz of [NET_HZ, SOLO_HZ]) {
+      const clock = createStepClock(hz);
+      let total = 0;
+      for (let i = 0; i < 120; i += 1) total += advanceClock(clock, 1 / hz);
+      expect(total).toBe(120);
+      expect(clock.tick).toBe(120);
+    }
   });
 
-  it('同样的总时长、不同的帧率切分，步数相同（这是帧同步的命根子）', () => {
-    const a = createStepClock();
-    const b = createStepClock();
-    // 同样喂 1 秒，只是切分方式不同。
+  it('高刷机器多帧推一步，整 1 秒后步数等于帧率', () => {
+    for (const hz of [NET_HZ, SOLO_HZ]) {
+      const clock = createStepClock(hz);
+      let steps = 0;
+      // 144 帧 × (1/144) 秒 = 整 1 秒
+      for (let i = 0; i < 144; i += 1) steps += advanceClock(clock, 1 / 144);
+      // 允许 ±1 步的取整误差，但绝不能差出 2 步
+      expect(Math.abs(steps - hz)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('同样 1 秒、不同切分方式，步数相同（这是帧同步的命根子）', () => {
+    const a = createStepClock(SOLO_HZ);
+    const b = createStepClock(SOLO_HZ);
     for (let i = 0; i < 60; i += 1) advanceClock(a, 1 / 60);
     for (let i = 0; i < 240; i += 1) advanceClock(b, 1 / 240);
     expect(a.tick).toBe(b.tick);
   });
 
-  it('单帧超长时截断到 MAX_FRAME_DELTA，但把该跑完的步都跑完', () => {
-    const clock = createStepClock();
-    const steps = advanceClock(clock, 4);
-    // 截断窗口由 MAX_FRAME_DELTA 决定（0.1 s，逻辑 24 Hz 时是 2 步）。
-    // 它压小的理由写在 step-clock.ts 的注释里：15 步的补帧在联机时会变成卡顿尖峰。
-    const expected = Math.round(MAX_FRAME_DELTA / FIXED_DT);
-    expect(steps).toBe(expected);
-    expect(clock.droppedSeconds).toBeCloseTo(4 - MAX_FRAME_DELTA, 6);
-    expect(clock.stalls).toBe(1);
+  it('从联机帧率切回单机，零头和 dt 都换过来', () => {
+    const clock = createStepClock(NET_HZ);
+    advanceClock(clock, 0.01); // 攒一点不足一步的零头
+    expect(clock.acc).toBeGreaterThan(0);
+    setRate(clock, SOLO_HZ);
+    // 一半 24 Hz 的余数拿到 60 Hz 下没有意义，必须清掉。
+    expect(clock.acc).toBe(0);
+    expect(clock.hz).toBe(SOLO_HZ);
+    expect(clock.dt).toBe(SOLO_DT);
+  });
+});
+
+describe('固定步长时钟：追帧上限按**步数**而不是秒数', () => {
+  it('两种帧率下单帧最多都补 MAX_CATCHUP_STEPS 步', () => {
+    for (const hz of [NET_HZ, SOLO_HZ]) {
+      const clock = createStepClock(hz);
+      // 喂 4 秒（远超上限），只应补上限那么多步。
+      const steps = advanceClock(clock, 4);
+      expect(steps).toBe(MAX_CATCHUP_STEPS);
+      // 多出来的时间是**丢掉**（记 droppedSeconds），不是少跑步。
+      expect(clock.droppedSeconds).toBeCloseTo(4 - MAX_CATCHUP_STEPS / hz, 6);
+      expect(clock.stalls).toBe(1);
+    }
   });
 
-  it('截断不丢步：多出来的时间是丢掉，不是少跑步', () => {
-    const clock = createStepClock();
+  it('60 Hz 下单帧上限就是 0.1 秒（不会被 24 Hz 的 0.25 秒带偏）', () => {
+    const clock = createStepClock(SOLO_HZ);
     advanceClock(clock, 1);
-    // 1 秒远超截断窗口，所以只推进截断窗口内的那些步。
-    expect(clock.tick).toBe(Math.round(MAX_FRAME_DELTA / FIXED_DT));
-    expect(clock.acc).toBeLessThan(FIXED_DT);
+    // 0.1 秒 / (1/60) = 6 步。若沿用 0.25 s 会变成 15 步，单帧工作量翻 2.5 倍。
+    expect(clock.tick).toBe(6);
+    expect(clock.acc).toBeLessThan(SOLO_DT);
   });
 
+  it('上限之外的时间不会被吃进累加器', () => {
+    for (const hz of [NET_HZ, SOLO_HZ]) {
+      const clock = createStepClock(hz);
+      advanceClock(clock, (MAX_CATCHUP_STEPS / hz) * 2);
+      expect(clock.acc).toBeLessThan(clock.dt);
+    }
+  });
+});
+
+describe('固定步长时钟：边界', () => {
   it('负数和 NaN 当作 0，不会把时钟倒回去', () => {
-    const clock = createStepClock();
-    advanceClock(clock, FIXED_DT);
+    const clock = createStepClock(SOLO_HZ);
+    advanceClock(clock, SOLO_DT);
     const before = clock.tick;
     expect(advanceClock(clock, -1)).toBe(0);
     expect(advanceClock(clock, Number.NaN)).toBe(0);
@@ -60,16 +94,10 @@ describe('固定步长时钟', () => {
   });
 
   it('seekClock 把时间轴直接对齐到指定 tick', () => {
-    const clock = createStepClock();
+    const clock = createStepClock(NET_HZ);
     advanceClock(clock, 0.1);
     seekClock(clock, 900);
     expect(clock.tick).toBe(900);
     expect(clock.acc).toBe(0);
-  });
-
-  it('MAX_FRAME_DELTA 之外的时间不会被吃进累加器', () => {
-    const clock = createStepClock();
-    advanceClock(clock, MAX_FRAME_DELTA * 2);
-    expect(clock.acc).toBeLessThan(FIXED_DT);
   });
 });

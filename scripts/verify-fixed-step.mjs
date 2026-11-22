@@ -73,6 +73,10 @@ if (!first || !first.state) {
 
 const startWorld = first.state.playerWorld
 const startAlive = first.state.skeletonsAlive
+// 帧率证据：单机（PVE 副本 / 主线）必须是纯本地 60 Hz。
+// 两次 probe 之间按墙钟算 tick 增量，比「读一个瞬时值」可信得多。
+const tick0 = first.state.tick
+const at0 = Date.now()
 
 const netBefore = await page.evaluate(() => {
   const net = window.MetaShell && window.MetaShell.net
@@ -93,6 +97,11 @@ const netAfter = await page.evaluate(() => {
   return net ? net.status() : null
 })
 
+const elapsedMs = Date.now() - at0
+const soloHz = after?.state?.tick !== undefined && elapsedMs > 0
+  ? (after.state.tick - tick0) / (elapsedMs / 1000)
+  : 0
+
 await browser.close()
 
 function moved(a, b) {
@@ -102,6 +111,9 @@ function moved(a, b) {
 
 const checks = [
   ['出征后拿到了引擎投影', Boolean(first.state)],
+  ['单机帧率声明是 60 Hz（不是联机那个 24）', first.state.hz === 60],
+  [`单机实际推进速率 ≈ 60 Hz（实测 ${soloHz.toFixed(1)}）`,
+    soloHz >= 54 && soloHz <= 66],
   ['两次点击之后玩家真的动了（输入没被固定步长吃掉）', moved(startWorld, after?.state?.playerWorld)],
   ['移动是连续的：第二次指令也改变了轨迹', moved(mid?.state?.playerWorld, after?.state?.playerWorld)
     || moved(startWorld, mid?.state?.playerWorld)],
@@ -124,6 +136,8 @@ console.log(JSON.stringify({
   startAlive,
   afterAlive: after?.state?.skeletonsAlive,
   net: netAfter,
+  soloHz: Number(soloHz.toFixed(2)),
+  tickRange: [tick0, after?.state?.tick],
   errors: errors.slice(0, 5),
 }, null, 2))
 console.log(`\n=== ${checks.length - failed} 通过, ${failed} 失败 ===`)

@@ -27,13 +27,15 @@
  */
 
 import type { InputFrame } from './input-frame.ts';
-import { FIXED_HZ } from './step-clock.ts';
+import { NET_HZ } from './step-clock.ts';
 
 /**
- * 逻辑帧率。**唯一真源在 `step-clock.ts::FIXED_HZ`**，这里只是转出 ——
+ * 服务器帧钟的频率。**唯一真源在 `step-clock.ts::NET_HZ`**，这里只是转出 ——
  * 服务器和客户端各写一份常量是最容易「改一边忘另一边」的分叉源。
+ *
+ * 注意它只能是**联机**帧率：服务器只在联机局里存在，PVE 副本 / 主线是纯本地 60 Hz。
  */
-export const FRAME_HZ = FIXED_HZ;
+export const FRAME_HZ = NET_HZ;
 
 /** 一帧的毫秒数。服务器帧钟按它定周期。 */
 export const FRAME_MS = 1000 / FRAME_HZ;

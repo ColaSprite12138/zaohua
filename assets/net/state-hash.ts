@@ -1,5 +1,5 @@
 /**
- * 状态 hash：两端每 60 tick 各算一份，对上才算同步。
+ * 状态 hash：两端每隔 `HASH_INTERVAL_TICKS` 帧各算一份，对上才算同步。
  *
  * ## 为什么必须量化
  *
@@ -33,6 +33,8 @@
  * 一次 hash 只碰几千个整数，FNV-1a 够快；零依赖、十行代码，两端不可能因为
  * 库版本不同算出不同结果。
  */
+
+import { NET_HZ } from './step-clock.ts';
 
 /** 一个可复用的增量 hasher。`add()` 吃 32 位整数，`digest()` 出 u32。 */
 export type Hasher = {
@@ -255,10 +257,10 @@ export function hashGameState(state: HashableState, tick: number): number {
 
 /** 每 60 tick 一次对账。1 秒一次足够抓分歧，又不至于把带宽吃掉。 */
 /**
- * 每多少帧报一次状态指纹。**按帧率派生，保持「约 1 秒一次」**：
- * 60 Hz 时是 60，24 Hz 时是 24 —— 写死 60 会让 24 Hz 下的对账间隔变成 2.5 秒。
+ * 每多少帧报一次状态指纹。**只在联机局有意义**（PVE 单机不上报），所以按联机帧率派生，
+ * 保持「约 1 秒一次」：24 Hz → 24。写死 60 会让对账间隔变成 2.5 秒。
  */
-export const HASH_INTERVAL_TICKS = 24;
+export const HASH_INTERVAL_TICKS = NET_HZ;
 
 export type HashParts = {
   skeletons: number;

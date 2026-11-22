@@ -3,7 +3,7 @@ import {
   HASH_INTERVAL_TICKS, createHasher, hashGameState, hashWords, quantize,
   type HashableState,
 } from '../state-hash.ts';
-import { FIXED_HZ } from '../step-clock.ts';
+import { NET_HZ } from '../step-clock.ts';
 
 function state(overrides: Partial<HashableState> = {}): HashableState {
   return {
@@ -119,7 +119,7 @@ describe('状态 hash', () => {
   });
 
   it('对账间隔跟随帧率，保持约 1 秒一次', () => {
-    // 写死 60 会让 24 Hz 下的对账变成 2.5 秒一次，所以这里断言它等于 FIXED_HZ。
-    expect(HASH_INTERVAL_TICKS).toBe(FIXED_HZ);
+    // 对账只在联机局有意义，所以间隔跟着**联机**帧率走。写死 60 会变成 2.5 秒一次。
+    expect(HASH_INTERVAL_TICKS).toBe(NET_HZ);
   });
 });

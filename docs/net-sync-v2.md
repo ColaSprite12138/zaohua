@@ -154,6 +154,7 @@ v2 的做法是把这两样东西的所有权收到服务器：**帧号归服务
 | 3 | 服务器 v2：帧钟、贴当前帧、全量 history、replay 分块、departed | `frame-log.test.ts` + `scripts/probe-frame-clock.mjs`（25 项全绿） | ✅ 2026-11-22 |
 | 4 | 客户端接线：`game.pack.ts` 的 `advanceLockstep` 整段替换 | 单机 `playthrough-swing` 39 步通过 | ✅ 2026-11-22 |
 | 5 | 双人长跑验收 | `HOLD_MS=180000`：零分叉、卡 5 s 能回来 | ⬜ **未验**（缺 `MATCH_USER_A/B` 账号） |
+| 6 | 单机 / 联机分帧率（60 / 24） | `verify-fixed-step.mjs`：`hz===60` 且实测 60.14 Hz；单机 playthrough 101 步 | ✅ 2026-11-22 |
 
 第 2–4 步是**同一批**落地的：协议、服务器、客户端三者是一套，单独改任何一半都会让联机不可用。
 
@@ -186,11 +187,36 @@ detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到�
 
 ## 8. 帧率与带宽：为什么逻辑帧率不能跟着广播频率走
 
+### 8.0 先分清两种模式：它们的帧率不一样
+
+| 模式 | 帧率 | 谁定帧号 | 有没有服务器 |
+|---|---|---|---|
+| **PVE 副本 / 主线**（纯本地） | **60 Hz** | 客户端自己（墙钟） | 没有。`netActive === false`，`advanceSolo` 走 `advanceClock` |
+| **联机 PVP / 联机局** | **24 Hz** | 服务器 | 有。`advanceNet` 只执行广播帧 |
+
+落地方式：步长**不再是全局常量**，而是跟着 `StepClock` 走。
+
+```ts
+const stepClock = createStepClock(SOLO_HZ);   // 初始：还没进联机局，跑纯本地
+setRate(stepClock, NET_HZ);                   // armTimeline()：进联机局
+setRate(stepClock, SOLO_HZ);                  // 回单机 / 新一局 PVE
+```
+
+`step(state, stepClock.dt, ...)` 拿到的永远是当前模式那个 `dt`。这不是两套规则集：
+玩法数值全是 dt 驱动的（「0.4 秒冷却」就是 0.4 秒），60 Hz 只是把同一秒切成 60 份而不是 24 份。
+
+**为什么 PVE 要 60**：纯本地没有网络可等，帧率越高输入越跟手、位移越顺滑，没有任何理由降到 24。
+**为什么联机要 24**：帧号必须由服务器推进，而服务器每秒 tick 24 次、广播 24 次（见 §8.1）。
+
+证据：`scripts/verify-fixed-step.mjs` 里两条断言 —— `state.hz === 60` 且实测推进速率在 54–66 Hz
+（实测 60.14 Hz，tick 301→473）。
+
 ### 8.1 两个频率是**两件事**
 
 | 频率 | 谁定 | 现在 | 能不能改 |
 |---|---|---|---|
-| 逻辑帧率 | `step-clock.ts::FIXED_HZ`（唯一真源，`frame-log.ts` 转出） | **24 Hz** | 能，但玩法数值全是 dt 驱动的，改了只是粒度变粗 |
+| 逻辑帧率（联机） | `step-clock.ts::NET_HZ`（唯一真源，`frame-log.ts` 转出） | **24 Hz** | 能，但玩法数值全是 dt 驱动的，改了只是粒度变粗 |
+| 逻辑帧率（单机） | `step-clock.ts::SOLO_HZ` | **60 Hz** | 纯本地，不进协议、不参与对账 |
 | 广播频率 | `game/server/source/index.ts` 的 `roomPolicy.tickIntervalMs` | **`FRAME_MS` = 41.67 ms（跟着逻辑帧率）** | 能，但宿主负载会跟着涨 |
 
 **一直是 `FRAME_MS` 而不是写死 42**（2026-11-22 用户定）。以前 42 ms 是「少压宿主」的保守值，
@@ -256,12 +282,13 @@ detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到�
 2. `roomPolicy.tickIntervalMs` = `FRAME_MS`（跟随逻辑帧率）
 3. `RECENT_FRAMES` = 覆盖一轮广播新增帧数 × 4（广播与逻辑同频时每轮 1 帧 → 4）
 4. `state-hash.ts::HASH_INTERVAL_TICKS` = `FIXED_HZ`（保持 1 秒一次对账）
-5. `step-clock.ts::MAX_FRAME_DELTA`（卡顿恢复时单帧最多吃进多少秒）与
-   `game.pack.ts::MAX_CATCHUP_STEPS`（= `MAX_FRAME_DELTA × FIXED_HZ`，现 0.25 s × 24 = 6 步）
+5. `step-clock.ts::MAX_CATCHUP_STEPS`（单帧最多补几**步**，现 6）。
+   **按步数而不是秒数**，两种帧率下单帧工作量才一致：24 Hz 下 6 步 = 0.25 s、60 Hz 下 = 0.1 s。
+   若按秒数写死 0.25 s，60 Hz 下会变成 15 步，切模式后单帧工作量翻 2.5 倍。
 6. `sync-driver.ts::DEFAULT_LOOKAHEAD`（帧数 × dt = 固定延迟：60 Hz 时 2 帧 = 33 ms，24 Hz 时 = 83 ms）
 7. 单机 `advanceSolo` 用同一个 `FIXED_DT`，所以**单机手感会一起变**；
-   **现在是全局一起降**（单机也是 24 Hz）。要单机保持 60 Hz 就得让 `FIXED_DT` 按模式取两个值
-   （技术上可行，但等于两套规则集，且单机验过的行为不代表联机）
+   **2026-11-22 定稿：单机 60 Hz、联机 24 Hz，各自取各自的 `dt`**（见 §8.0）。
+   改动入口只有 `setRate()` 三个调用点（armTimeline / 回单机 / deploy 单机分支）
 8. 重跑：`vitest`、`probe-frame-clock.mjs`（断言里有多处帧数）、单机 playthrough
 
 ### 8.5 24 Hz 会不会吃掉判定窗口
