@@ -39,7 +39,7 @@ import { testArena } from '../resource/maps/arena-test.ts';
 // 帧同步：固定步长 + **服务器帧钟驱动的执行队列** + hash 对账。
 // 这些模块刻意不 import 任何引擎类型 —— 它们只是算数和数据结构，能在 node 里单测。
 import {
-  CATCHUP_TRIGGER_TICKS, MAX_CATCHUP_STEPS, NET_HZ, SOLO_HZ,
+  CATCHUP_EXIT_TICKS, CATCHUP_TRIGGER_TICKS, MAX_CATCHUP_STEPS, NET_HZ, SOLO_HZ,
   addTime, createStepClock, forceStep, seekClock, setRate, takeStep,
 } from '../net/step-clock.ts';
 import {
@@ -400,6 +400,8 @@ export const game: Plugin = {
        */
       catchUpFrames: 0,
     };
+    /** 是否正在追帧（跨渲染帧的滞回状态，见 `CATCHUP_TRIGGER/EXIT_TICKS`）。 */
+    let catchingUp = false;
 
     function rebuildPeers(): void {
       syncRemotes();
@@ -573,6 +575,7 @@ export const game: Plugin = {
       netStat.localUps = 0;
       netStat.localMiss = 0;
       netStat.catchUpFrames = 0;
+      catchingUp = false;
       netStat.replays = 0;
       netStat.stale = 0;
       netStat.duplicates = 0;
@@ -761,7 +764,11 @@ export const game: Plugin = {
       // DevTools 造成的 2 秒停顿只补得回 0.25 秒，剩下的永久留在链路上 ——
       // 2026-11-22 实测「领先 52」（≈2.2 s），玩家的点击要好几秒才有反应。
       const backlog = Math.max(0, driver.highestSeen - driver.nextTick);
-      const catchUp = backlog > CATCHUP_TRIGGER_TICKS;
+      // 滞回：>12 进追帧，追到 ≤3 才停。单边条件会让追帧跑一帧就退出、
+      // 永远停在阈值下方（实测稳定 11 帧 = 458 ms 的点击迟滞）。
+      if (backlog > CATCHUP_TRIGGER_TICKS) catchingUp = true;
+      else if (backlog <= CATCHUP_EXIT_TICKS) catchingUp = false;
+      const catchUp = catchingUp;
       if (catchUp) netStat.catchUpFrames += 1;
       let steps = 0;
       while (canStep(driver)) {

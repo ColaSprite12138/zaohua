@@ -97,8 +97,8 @@
    * 累计量归零（`armTimeline`）时差值为负，这一拍作废。
    */
   var diagLast = {
-    tick: 0, at: 0, framesIn: 0, renderFrames: 0,
-    serverFps: null, renderFps: null,
+    tick: 0, at: 0, framesIn: 0, renderFrames: 0, execTicks: 0,
+    serverFps: null, renderFps: null, execFps: null,
   };
 
   /** 指数平滑：每秒只推一次，裸差分会在 23/25 之间跳得很难看。 */
@@ -137,6 +137,7 @@
     var elapsed = diagLast.at > 0 ? now - diagLast.at : 0;
     var serverFps = diagLast.serverFps;
     var renderFps = diagLast.renderFps;
+    var execFps = diagLast.execFps;
     if (elapsed > 0) {
       // 服务器帧率 = 这一拍新收到的服务器帧数 / 实际间隔。这就是逻辑帧率：
       // 一局里客户端每秒能拿到多少个可执行的服务器帧。
@@ -144,17 +145,23 @@
       var dOut = typeof stat.renderFrames === 'number'
         ? stat.renderFrames - diagLast.renderFrames
         : -1;
+      // 执行帧率 = 引擎每秒真的算了几步。它长期低于服务器帧率，就是积压在
+      // 增长（`领先` 会跟着涨）—— 这是判断「收得比算得快」的唯一直接证据。
+      var dExec = typeof stat.ticks === 'number' ? stat.ticks - diagLast.execTicks : -1;
       serverFps = smoothFps(serverFps, dIn < 0 ? null : dIn * 1000 / elapsed);
       renderFps = smoothFps(renderFps, dOut < 0 ? null : dOut * 1000 / elapsed);
+      execFps = smoothFps(execFps, dExec < 0 ? null : dExec * 1000 / elapsed);
     }
     if (typeof stat.framesIn === 'number') diagLast.framesIn = stat.framesIn;
     if (typeof stat.renderFrames === 'number') diagLast.renderFrames = stat.renderFrames;
+    if (typeof stat.ticks === 'number') diagLast.execTicks = stat.ticks;
     // tick 增速到这里不再用于显示，但仍记下来：它和「服务器帧率」的差就是
     // 执行落后量，排查「包在到、但没在执行」时是唯一线索。
     diagLast.tick = stat.tick;
     diagLast.at = now;
     diagLast.serverFps = serverFps;
     diagLast.renderFps = renderFps;
+    diagLast.execFps = execFps;
     var el = ensureDiag();
     if (!el) return;
     // 同伴 = 座位名单里的其他人；影子 = 真正建出来的远端角色。
@@ -167,6 +174,7 @@
     //   缺   = 已经看到更高帧号但手里还缺几帧（> 0 就是在等 replay）
     el.textContent = 'tick ' + stat.tick
       + '  服务器 ' + fpsText(serverFps)
+      + '  执行 ' + fpsText(execFps)
       + '  渲染 ' + fpsText(renderFps)
       + '  领先 ' + (stat.lead || 0)
       + '  补 ' + (stat.replays || 0)
@@ -176,10 +184,14 @@
     // 长时间 `缺 > 0` 说明补帧通道没通，不只是卡一下。
     if ((stat.gap || 0) > 0 && (stat.replays || 0) > 3) el.style.color = '#f09595';
     // 服务器帧率的判据是**逻辑帧率**（`NET_HZ` = 24），不是 60 了。低于 19
-    // 节奏已经开始丢帧，低于 14 是明显掉拍。渲染帧率只展示不染色 —— 它跟着
-    // 宿主 rAF 和显示器走，30 Hz 屏上 30/s 完全正常，染色只会误报。
+    // 节奏已经开始丢帧，低于 14 是明显掉拍。
     if (serverFps !== null) {
       el.style.color = serverFps < 14 ? '#f09595' : (serverFps < 19 ? '#f0b429' : '#9fe1cb');
+    }
+    // 执行帧率明显低于服务器 = 在积压，`领先` 会跟着涨。这一条比看领先更早
+    // 暴露问题：领先还没涨起来，差额已经能看出来了。
+    if (serverFps !== null && execFps !== null && execFps < serverFps * 0.9) {
+      el.style.color = '#f0b429';
     }
   }
 
@@ -192,8 +204,10 @@
     diagLast.at = 0;
     diagLast.framesIn = 0;
     diagLast.renderFrames = 0;
+    diagLast.execTicks = 0;
     diagLast.serverFps = null;
     diagLast.renderFps = null;
+    diagLast.execFps = null;
   }
 
   /* --------------------------- Worker → 平台 --------------------------- */
