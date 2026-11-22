@@ -22,6 +22,7 @@
  */
 
 import type { InputFrame } from './input-frame.ts';
+import { EFFECTIVE_LOOKAHEAD } from './low-latency.ts';
 
 /** 服务器广播的一帧：这一帧里每个玩家按了什么（缺席者不在表里，按空输入算）。 */
 export type FramePacket = {
@@ -50,7 +51,16 @@ export type SyncDriver = {
   duplicates: number;
 };
 
-export const DEFAULT_LOOKAHEAD = 2;
+/**
+ * 播放缓冲深度。
+ *
+ * 2026-11-23 临时低延迟模式：取 1 —— `canStep()` 只要求 `nextTick` 这一帧
+ * 在手里，帧到了就按序执行；**连续帧检查本身没有取消**，缺 2799 时哪怕
+ * 2800 已经到了也一帧都不走，而是由 `requestReplay()` 把 2799 补回来。
+ * 旧值 2 保留在 `low-latency.ts::BUFFERED_LOOKAHEAD`，改
+ * `LOW_LATENCY_NET = false` 即恢复。
+ */
+export const DEFAULT_LOOKAHEAD = EFFECTIVE_LOOKAHEAD;
 
 /** 同一缺口最多多久重复请求一次（毫秒）—— 请求可能丢，不能只发一次。 */
 export const DEFAULT_REPLAY_RETRY_MS = 500;

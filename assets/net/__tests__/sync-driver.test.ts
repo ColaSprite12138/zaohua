@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { emptyInputFrame, type InputFrame } from '../input-frame.ts';
 import {
-  accept, canStep, contiguous, createSyncDriver, missingRange,
+  DEFAULT_LOOKAHEAD, accept, canStep, contiguous, createSyncDriver, missingRange,
   pendingTicks, requestReplay, reset, take, type FramePacket, type SyncDriver,
 } from '../sync-driver.ts';
 
@@ -28,6 +28,31 @@ describe('sync-driver：只执行服务器广播的连续帧', () => {
     expect(take(d)?.tick).toBe(2);
     expect(take(d)).toBeNull();
     expect(d.nextTick).toBe(3);
+  });
+
+  /**
+   * 2026-11-23 用户口径：去掉排队缓冲 ≠ 去掉有序性。
+   * 「收到 2800 并执行 2800 的前提是 2799 已经收到并执行；没收到就补 2799。」
+   * 用当前生效的 `DEFAULT_LOOKAHEAD` 跑，两种模式（1 / 2）都必须成立。
+   */
+  it('低延迟也不越帧：收到 2800 缺 2799 就停住补帧，补齐后按序执行', () => {
+    // 2797、2798 已按序执行完，执行指针停在 2799。
+    const d = createSyncDriver(2799, DEFAULT_LOOKAHEAD);
+    accept(d, packet(2800)); // 2799 丢了，2800 先到
+    expect(d.highestSeen).toBe(2800);
+    expect(canStep(d)).toBe(false);
+    expect(take(d)).toBeNull();
+    expect(d.nextTick).toBe(2799);
+    // 有序性靠这条通道兜底：立刻把缺的那一帧要回来（请求从 2799 起）。
+    expect(requestReplay(d, 1000)).toEqual({ from: 2799, to: 2800 });
+    expect(pendingTicks(d)).toEqual([2799]);
+
+    // 服务器只补 2799 即可推进；2800 已在手里，不会被重复执行。
+    accept(d, packet(2799));
+    expect(take(d)?.tick).toBe(2799);
+    expect(take(d)?.tick).toBe(2800);
+    expect(take(d)).toBeNull();
+    expect(d.nextTick).toBe(2801);
   });
 
   it('缺帧时既不能执行也不能跳过去', () => {
