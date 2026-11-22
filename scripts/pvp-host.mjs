@@ -21,7 +21,7 @@
  * 注意：这是本地 offline provider（zaohua-offline-v2），只用于开发联调；
  * 发布到造化平台后跑的是平台注入的真 PlatformClient，与本宿主无关。
  */
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import {
   existsSync, mkdirSync, readFileSync, readdirSync,
   rmSync, statSync, unlinkSync, writeFileSync,
@@ -129,14 +129,20 @@ async function launch (args) {
   writeFileSync(launcher, `@echo off\r\n"${process.execPath}" ${quoted} > "${logFile}" 2>&1\r\n`)
   // 单独一层 .cmd：直接把含引号的 start 命令塞给 cmd.exe 会被参数转义搞坏。
   writeFileSync(spawnFile, `@echo off\r\nstart "forgeax-pvp-host" /min cmd /c "${launcher}"\r\n`)
-  const r = spawnSync('cmd.exe', ['/d', '/c', spawnFile], {
-    cwd: root, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8',
+  // 不能等这个 cmd.exe 退出：`start /min` 拉起的宿主是长驻进程，它会继承
+  // spawnSync 的 stdout/stderr pipe，导致父进程永远等不到 EOF（实测启动器
+  // 卡死在 "[--] 跳过重建" 之后，宿主日志却已经 ready）。改用 detached +
+  // stdio:ignore 发完即走，就绪与否只看 logFile 里的 ready 事件。
+  let launchError = null
+  const child = spawn('cmd.exe', ['/d', '/c', spawnFile], {
+    cwd: root, stdio: 'ignore', detached: true, windowsHide: true,
   })
-  if (r.error) throw new Error(`start: ${r.error.message}`)
-  if (r.status !== 0) throw new Error(`start 启动失败 (exit ${r.status}) ${r.stderr || ''}`)
+  child.on('error', (e) => { launchError = e })
+  child.unref()
 
   const deadline = Date.now() + 30000
   while (Date.now() < deadline) {
+    if (launchError) throw new Error(`start: ${launchError.message}`)
     if (existsSync(logFile)) {
       const m = readFileSync(logFile, 'utf8').match(/"type":"ready"[^}]*?"pid":(\d+)/)
       if (m) return Number(m[1])
@@ -241,8 +247,17 @@ async function start (opts) {
     const p = await probe(opts.validate ? 90000 : 45000)
     console.log('[ OK ] 页面自证通过')
     console.log(`       serveVersion=${p.serveVersion} bytes=${p.bytes} shell=${p.shellMarker} gate=${p.loginGate} match=${p.quickMatch} platformInjected=${p.platformInjected}`)
-    const v = opts.validate ? await waitValidation(60000) : validationSummary()
-    if (v) console.log(`       官方校验: state=${v.state} required=${v.requiredPassed} multiplayer=${v.multiplayer} layers=${JSON.stringify(v.layers)}`)
+    if (opts.validate) {
+      const v = await waitValidation(60000)
+      if (v) console.log(`       官方校验: state=${v.state} required=${v.requiredPassed} multiplayer=${v.multiplayer} layers=${JSON.stringify(v.layers)}`)
+    } else {
+      const v = validationSummary()
+      if (v && (v.state === 'passed' || v.state === 'failed')) {
+        console.log(`       上次官方校验: state=${v.state} required=${v.requiredPassed} multiplayer=${v.multiplayer}`)
+      } else {
+        console.log('       本次未跑官方校验（双击默认不跑；加 --validate 启用），旧报告未完成的部分忽略')
+      }
+    }
     console.log('')
     console.log(`       固定地址: ${PREVIEW_URL}`)
     console.log('       双开: 两个独立 Chrome 用户配置 / 隐身窗，或两个标签带 ?identity=A / ?identity=B（同 playerId 会互踢座位）')
