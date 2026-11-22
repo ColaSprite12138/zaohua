@@ -120,14 +120,16 @@ export function capture(latch: InputLatch, raw: RawInput): void {
 }
 
 /**
- * 每个逻辑步调一次，拿到属于该 tick 的输入帧。边沿被**整体取走并清空**：
+ * 每个逻辑步调一次，拿到属于这一次申报的输入帧。边沿被**整体取走并清空**：
  * 同一帧的第 2 次及以后调用只剩持续态；跨多个渲染帧攒下来的点击也只生效一次。
+ *
+ * 参数是 `seq`（客户端自增的意图序号），**不是帧号** —— 帧号归服务器所有。
  */
-export function take(latch: InputLatch, tick: number): InputFrame {
+export function take(latch: InputLatch, seq: number): InputFrame {
   const e = latch.edges;
   const h = latch.held;
   const frame: InputFrame = {
-    tick,
+    seq,
     pointerDown: e.pointerDown,
     pointerHeld: h.pointerHeld,
     pointerUp: e.pointerUp,
@@ -144,7 +146,7 @@ export function take(latch: InputLatch, tick: number): InputFrame {
   return frame;
 }
 
-/** 本地玩家掉线/暂停时用：给某个 tick 一个「全程无输入」的帧。 */
-export function idleFrame(tick: number): InputFrame {
-  return emptyInputFrame(tick);
+/** 本地玩家掉线/暂停时用：给某次申报一个「全程无输入」的帧。 */
+export function idleFrame(seq: number): InputFrame {
+  return emptyInputFrame(seq);
 }

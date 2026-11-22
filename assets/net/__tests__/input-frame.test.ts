@@ -90,18 +90,18 @@ describe('输入帧编解码', () => {
   });
 
   it('批量包能装多帧且顺序不变', () => {
-    const frames = [frame({ tick: 1 }), frame({ tick: 2, pointerDown: true }), frame({ tick: 3 })];
+    const frames = [frame({ seq: 1 }), frame({ seq: 2, pointerDown: true }), frame({ seq: 3 })];
     const bytes = encodeBatch(frames);
     expect(bytes[0]).toBe(PACKET_BATCH);
     const decoded = decodePacket(bytes);
     expect(decoded.kind).toBe('batch');
     if (decoded.kind !== 'batch') return;
-    expect(decoded.frames.map((f) => f.tick)).toEqual([1, 2, 3]);
+    expect(decoded.frames.map((f) => f.seq)).toEqual([1, 2, 3]);
     expect(decoded.frames[1]!.pointerDown).toBe(true);
   });
 
   it('声明帧数大于实际字节数时按实际解，不越界读', () => {
-    const bytes = encodeBatch([frame({ tick: 1 })]);
+    const bytes = encodeBatch([frame({ seq: 1 })]);
     // 把 count 改成 99，模拟截断/畸形包
     new DataView(bytes.buffer).setUint16(1, 99, true);
     const decoded = decodePacket(bytes);

@@ -204,6 +204,7 @@
 | P0 撮合服务 | 完成（63 断言，线上 `api.colasprite.net/api/v1/match/*`） |
 | P1 快速匹配入口 | 完成（两人同房同 seed 开局，`stage=verified`） |
 | **P2 帧同步** | **完成**（固定步长 / 输入帧 / relay / 等齐 / hash 对账；双人真机 14/14） |
+| **P2.5 服务器定帧（v2）** | **代码已落地 2026-11-22，双人未验**：服务器 60 Hz 独立帧钟、意图不带帧号、全量 history + 分块 replay、客户端只执行广播帧（`docs/net-sync-v2.md`）。证据：`frame-log.test.ts` + `scripts/probe-frame-clock.mjs` 14 项 + 单机 playthrough。**缺 `MATCH_USER_A/B` 账号，双人长跑还没跑** |
 | **P3a 远端输入作用于世界** | **完成（可破坏物）**：远端砸开的箱子两端一致、掉落同一批、进 hash 对账 |
 | **P3b 怪 / 掉落 / 互砍** | **待做**：要把 `GameState.player`（单数）改成按 `playerId` 分槽，波及渲染 / 输入 / 技能 / HUD |
 | P4 反作弊（`onCheckJoin`、视野裁剪、输入限幅） | 待做 |

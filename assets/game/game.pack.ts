@@ -36,7 +36,7 @@ import { paint } from './paint.ts';
 import { HEAL_KEY, POTION_KEY, SKILL_KEYS } from '../shared/constants.ts';
 import { arena } from '../resource/maps/arena.generated.ts';
 import { testArena } from '../resource/maps/arena-test.ts';
-// 帧同步（P2）：固定步长 + 输入帧 + 等齐队列 + hash 对账。
+// 帧同步：固定步长 + **服务器帧钟驱动的执行队列** + hash 对账。
 // 这些模块刻意不 import 任何引擎类型 —— 它们只是算数和数据结构，能在 node 里单测。
 import {
   FIXED_DT, addTime, createStepClock, seekClock, takeStep,
@@ -50,9 +50,10 @@ import {
   type RawInput,
 } from '../net/input-latch.ts';
 import {
-  DEFAULT_LOCAL_DELAY, createLockstep, noteWait, pendingPeers,
-  pushLocal, pushRemote, retirePeer, runnableTick, take as takeLockstep,
-} from '../net/lockstep.ts';
+  DEFAULT_LOOKAHEAD, accept as acceptFrame, canStep, contiguous,
+  createSyncDriver, pendingTicks, requestReplay, reset as resetSync,
+  take as takeSync, type SyncDriver,
+} from '../net/sync-driver.ts';
 import { HASH_INTERVAL_TICKS, hashGameParts, hashGameState } from '../net/state-hash.ts';
 import { createRemotePlayer, spawnOffset, type PeerSnapshot } from '../combat/players.ts';
 import { decodeBase64, encodeBase64 } from '../net/base64.ts';
@@ -212,47 +213,67 @@ export const game: Plugin = {
     const stepClock = createStepClock();
     /** 一帧渲染采到的输入，按逻辑步分发（边沿只给第一个步）。 */
     const latch = createInputLatch();
-    /** 联机中：input relay 已接上，tick 由 lockstep 决定。 */
+    /** 联机中：服务器帧钟已经接上，帧号由服务器广播决定。 */
     let netActive = false;
     /** 平台给的座号。服务端广播里的 playerId 与它必须一致。 */
     let netPlayerId = '';
-    /** 锁步队列。单机时 localDelay = 0 且没有 peer，等价于不排队。 */
-    let lockstep = createLockstep({ localId: '', localDelay: 0 });
-    /** 在场 peer 与「服务端宣布过的离场」，两者重建 lockstep 的等待集合。 */
+    /**
+     * 执行指针。**只因为「执行了服务器广播的一帧」而前进**，所以它永远不可能
+     * 超过服务器已经广播过的最大帧号 —— 这不是靠检查保证的，是结构上做不到。
+     */
+    let driver: SyncDriver = createSyncDriver(0, DEFAULT_LOOKAHEAD);
+    /** 在场 peer（座位名单）。 */
     let netPeers = new Set<string>();
     /** peer 的显示名（服务端 broadcast 里带过来），只用于头顶标签。 */
     const netPeerNames = new Map<string, string>();
-    const netRetired = new Map<string, number>();
-    /** 还没打包发走的本地帧。攒 3 帧（50ms）发一次，与平台 20Hz 广播同频。 */
+    /**
+     * 还没打包发走的**意图**。注意它不带帧号：服务器贴到哪一帧就是哪一帧，
+     * 客户端没有资格决定（`docs/net-sync-v2.md` §2.2）。
+     */
     let netOutbox: InputFrame[] = [];
-    /** 上一次「卡住重发」的时刻；0 = 当前没在等。 */
-    let netRetxAt = 0;
+    /**
+     * 意图采样累加器。**与执行节拍解耦**：执行会被服务器卡住，但采样不能停 ——
+     * 停了就等于「我一卡，我的操作也跟着停」，恢复后那段时间是彻底的空白。
+     */
+    let intentAcc = 0;
+    /** 下一条意图的序号。只用于服务端去重与诊断，不参与任何判定。 */
+    let nextIntentSeq = 0;
     /**
      * 参战名单是否已经确定。联机局在名单到达**之前不能推进**：否则会把它当
-     * 单机跑（runnableTick 永远非空），等对方入座时我这边已经跑出几百 tick，
-     * 两端帧号永远对不上。名单一旦见过一次就算 settled，之后有人离场仍继续。
+     * 单机跑，等对方入座时我这边已经跑出几百帧，两端帧号永远对不上。
      */
     let netSeatSettled = false;
     /** 对端上报的开局装备快照（id -> 快照）。收齐之前不许开时间轴。 */
     const netPeerSnapshots = new Map<string, PeerSnapshot>();
-    /** deploy 已执行、正在等全员快照；这段时间冻结锁步推进。 */
+    /** deploy 已执行、正在等全员快照；这段时间冻结推进。 */
     let awaitingLoadouts = false;
     let loadoutWaitFrames = 0;
     /** 联机诊断：主窗口的 `host.net.status()` 只读这些数，不重复计数。 */
     const netStat = {
-      ticks: 0, framesOut: 0, framesIn: 0, lateIn: 0, droppedOut: 0,
+      /** 真正执行的帧数。只可能是服务器给过的帧。 */
+      ticks: 0,
+      /** 采到并发出的意图条数。 */
+      intentsOut: 0,
+      framesOut: 0, framesIn: 0,
+      /** 服务器帧号领先执行指针多少（= 播放缓冲 + 网络延迟）。 */
+      lead: 0,
+      /** 收到过的最大服务器帧号。 */
+      highest: 0,
+      /** 已经执行过、又被重发过来的帧（replay 与实时流重叠时正常出现）。 */
+      stale: 0,
+      duplicates: 0,
       hashes: 0, flushes: 0, localEdges: 0, localMouse: 0,
-      /** 因为触到单帧步数上限而被丢掉的时间（次）。持续增长 = 一直在追帧。 */
+      /** 补帧请求次数。持续增长 = 一直在丢包。 */
+      replays: 0,
+      /** 当前缺口大小（已经看到更高帧号但中间有洞的帧数）。 */
+      gap: 0,
+      /** 兼容旧诊断面板的字段：v2 不再「丢时间」，恒为 0。 */
       melted: 0,
-      /** 卡住重发的次数（次）。持续增长说明这条链一直在丢包，得查平台侧。 */
-      retx: 0,
+      /** 兼容旧面板：迟到帧在 v2 里由补帧通道处理，这里的值等于 `stale`。 */
+      lateFrames: 0,
     };
 
     function rebuildPeers(): void {
-      lockstep.peers = new Set([...netPeers].filter((id) => id !== netPlayerId));
-      for (const [id, from] of netRetired) {
-        if (lockstep.peers.has(id)) lockstep.retired.set(id, from);
-      }
       syncRemotes();
     }
 
@@ -273,8 +294,8 @@ export const game: Plugin = {
       }
       const spawn = state.map.spawn;
       const keep: typeof state.players = [state.player];
-      for (const id of [...lockstep.peers].sort()) {
-        if (lockstep.retired.has(id) || id === state.me) continue;
+      for (const id of [...netPeers].sort()) {
+        if (id === netPlayerId || id === state.me) continue;
         const existing = state.players.find((p) => p.id === id);
         if (existing) {
           existing.name = netPeerNames.get(id) || existing.name;
@@ -306,9 +327,9 @@ export const game: Plugin = {
         netPeerNames.clear();
         netPeerSnapshots.clear();
         awaitingLoadouts = false;
-        netRetired.clear();
         netOutbox = [];
-        lockstep = createLockstep({ localId: '', localDelay: 0 });
+        intentAcc = 0;
+        driver = createSyncDriver(0, DEFAULT_LOOKAHEAD);
         state.players = state.players.filter((p) => p.id === state.me);
         return;
       }
@@ -338,9 +359,8 @@ export const game: Plugin = {
       if (list.length > 0) netSeatSettled = true;
       if (starting) armTimeline();
       rebuildPeers();
-      // 预热帧必须立刻发，不能等主循环推进：推进本身在等对方的帧，而对方也在
-      // 等我的 tick 0。等 advanceLockstep 跑起来再 flush 就是典型的鸡生蛋死锁。
-      flushOutbox();
+      // 有意不发任何「预热帧」：v2 里本机输入要等服务器贴帧再广播回来，本地
+      // 没有需要预热的东西。硬发只会往服务器队列里灌几条开局空意图。
       // 名单没变、但这一轮带回了装备快照，也要试着放行门禁。
       tryArmAfterLoadouts();
     }
@@ -399,71 +419,86 @@ export const game: Plugin = {
     function armTimeline(): void {
       if (!netActive || !netPlayerId) return;
       seekClock(stepClock, 0);
-      lockstep = createLockstep({ localId: netPlayerId, localDelay: DEFAULT_LOCAL_DELAY });
-      // 新 lockstep 的 peers 是空的，旧影子还停在上一局的位置 —— 两个都要重置。
-      // 不恢复名单的后果不是「卡住」，而是**更隐蔽的错**：peers 空 → 锁步不等任何人
-      // → tick 满速推进、看起来一切正常，但双方各跑各的、谁都不出现在对方画面里。
-      // 2026-11-20 实测角标就是 `tick 611 60.1/s 等 0 丢 0 同伴 0 · 影子 1`。
+      // 执行指针归零：服务器的帧号也从 0 起，两边同一条时间轴。
+      driver = createSyncDriver(0, DEFAULT_LOOKAHEAD);
+      intentAcc = 0;
+      nextIntentSeq = 0;
+      // 旧影子还停在上一局的位置，要清掉。不清的后果不是「卡住」，而是更隐蔽的错：
+      // 名单还在但角色是上一局的，两端算出来的状态从第一帧就不同。
       state.players = state.players.filter((p) => p.id === state.me);
-      // 预热：本地帧提前 delay 个 tick 提交，所以开局这几格先用「无输入」占位，
-      // 否则第一个 tick 永远等不到自己的帧，整局卡死在 0。
-      // **这几帧也必须发出去**：对方在等 tick 0，而它们是唯一会带上 tick 0
-      // 的本地帧。只 pushLocal 不进 outbox 的话，双方都会永远等对方的第一帧。
       netOutbox = [];
-      for (let i = 0; i < DEFAULT_LOCAL_DELAY; i += 1) {
-        const warm = emptyInputFrame(lockstep.tick + i);
-        pushLocal(lockstep, warm);
-        netOutbox.push(warm);
-      }
       netStat.ticks = 0;
+      netStat.intentsOut = 0;
       netStat.framesOut = 0;
       netStat.framesIn = 0;
-      netStat.lateIn = 0;
-      netStat.droppedOut = 0;
       netStat.hashes = 0;
       netStat.flushes = 0;
       netStat.localEdges = 0;
       netStat.localMouse = 0;
-      netStat.melted = 0;
-      netStat.retx = 0;
-      flushOutbox();
+      netStat.replays = 0;
+      netStat.stale = 0;
+      netStat.duplicates = 0;
       // 必须放在最后：用（已经填好的）netPeers 把名单和新影子补回来。
       rebuildPeers();
-      // 时间轴重建 = 队列被清空。必须让主窗口把「已交付水位」也清掉，否则
-      // 在 armTimeline 之前投递过的对方帧（tick 0..delay-1）就永远补不回来了：
-      // 新队列里没有它们，主窗口却认为已经交付。2026-11-21 实测的死锁
-      // （A 卡 tick 5、B 卡 tick 0、互相 pending）根因就是这一条。
-      netRetxAt = 0;
+      // 时间轴重建 = 执行指针归零。让主窗口把「已投递水位」也清掉，否则窗口里
+      // 还留着的旧帧会被当成「已经给过了」而永远不再投递。
       channel?.postMessage({ type: 'netResync' });
     }
 
-    /** 收到远端输入包：base64 → 批量帧 → 锁步队列。迟到/重复由队列自己记账。 */
-    function applyRemotePackets(packets: { from: string; t: number; n: number; b: string }[]): void {
+    /**
+     * 收到一批服务器广播的帧。**一个 tick 一个包**，包里是这个 tick 里每个
+     * 玩家的意图（缺席者不在表里 = 空输入）。
+     *
+     * 这里刻意不区分「自己的」和「别人的」帧 —— v2 里它们是同一种东西，
+     * 本机玩家的操作也要等服务器贴帧后广播回来才生效。
+     */
+    function applyFrames(batches: { tick: number; frames: { from: string; b: string }[] }[]): void {
       let rosterChanged = false;
-      for (const packet of packets) {
-        // 收到对方的帧 = 对方确实在场。即便 netSeat 那条名单迟到/为空，
-        // 这里也必须解锁，否则「等名单才推进 / 推进才发帧」会互相锁死。
+      for (const batch of batches) {
+        // 收到帧 = 名单确实存在。即便 netSeat 迟到/为空也要解锁，否则
+        // 「等名单才推进 / 推进才有帧可收」会互相锁死。
         if (!netSeatSettled) netSeatSettled = true;
-        if (!netPeers.has(packet.from)) {
-          netPeers.add(packet.from);
-          rosterChanged = true;
+        const frames = new Map<string, InputFrame>();
+        for (const entry of batch.frames) {
+          if (entry.from !== netPlayerId && !netPeers.has(entry.from)) {
+            netPeers.add(entry.from);
+            rosterChanged = true;
+          }
+          const frame = decodeOneFrame(entry.b);
+          if (frame) frames.set(entry.from, frame);
         }
-        const decoded = decodePacket(decodeBase64(packet.b));
-        if (decoded.kind !== 'batch') continue;
-        for (const frame of decoded.frames) {
-          const result = pushRemote(lockstep, packet.from, frame);
-          if (result === 'accepted') netStat.framesIn += 1;
-          else if (result === 'late') netStat.lateIn += 1;
-        }
+        if (frames.size === 0) continue;
+        const result = acceptFrame(driver, { tick: batch.tick, frames });
+        if (result === 'accepted') netStat.framesIn += frames.size;
+        else if (result === 'stale') netStat.stale += 1;
+        else netStat.duplicates += 1;
       }
       if (rosterChanged) rebuildPeers();
     }
 
-    function applyRetired(peers: { peerId: string; fromTick: number }[]): void {
-      for (const entry of peers) {
-        netRetired.set(entry.peerId, entry.fromTick);
-        retirePeer(lockstep, entry.peerId, entry.fromTick);
+    /** 补帧回包：`data` 是 `[[tick, [[playerId, base64], ...]], ...]`。 */
+    function applyReplay(reply: { seq: number; data: [number, [string, string][]][] }): void {
+      for (const [tick, entries] of reply.data) {
+        const frames = new Map<string, InputFrame>();
+        for (const [playerId, encoded] of entries) {
+          const frame = decodeOneFrame(encoded);
+          if (frame) frames.set(playerId, frame);
+        }
+        if (frames.size === 0) continue;
+        const result = acceptFrame(driver, { tick, frames });
+        if (result === 'accepted') netStat.framesIn += frames.size;
+        else if (result === 'stale') netStat.stale += 1;
       }
+      // 确认收到：服务端删掉这份回包，否则每轮广播都会重带一次。
+      channel?.postMessage({ type: 'netReplayAck', seq: reply.seq });
+    }
+
+    /** 一个 base64 包 → 一帧。批量包里只有第一帧（服务器每帧一包）。 */
+    function decodeOneFrame(encoded: string): InputFrame | null {
+      const decoded = decodePacket(decodeBase64(encoded));
+      if (decoded.kind === 'frame') return decoded.frame;
+      if (decoded.kind === 'batch') return decoded.frames[0] ?? null;
+      return null;
     }
 
     /** 每 60 tick 一次对账。单机只算不发（用来验证「同一 seed 两遍跑出同一个 hash」）。 */
@@ -483,16 +518,23 @@ export const game: Plugin = {
       if (!netActive) return;
       if (now - netDiagAt < 1000) return;
       netDiagAt = now;
+      const have = contiguous(driver);
+      const lead = Math.max(0, driver.highestSeen - driver.nextTick);
+      netStat.lead = lead;
+      netStat.highest = driver.highestSeen;
+      netStat.gap = Math.max(0, lead - have);
+      netStat.lateFrames = netStat.stale;
       channel?.postMessage({
         type: 'netStat',
         stat: {
           ...netStat,
-          tick: lockstep.tick,
-          waiting: noteWait(lockstep, now),
-          pending: pendingPeers(lockstep),
-          peers: [...lockstep.peers],
-          lateFrames: lockstep.lateFrames,
-          longestWaitMs: lockstep.longestWaitMs,
+          /** 下一个要执行的帧号。永远 ≤ `highest`。 */
+          tick: driver.nextTick,
+          /** 1 = 现在没有可执行帧（在等服务器 / 在补帧）。 */
+          waiting: canStep(driver) ? 0 : 1,
+          /** 已看到更高帧号、但手里还缺的帧（最多列 16 个）。 */
+          pending: pendingTicks(driver),
+          peers: [...netPeers],
           /** 已经建出来的影子数量。与 peers 数量对照能区分「名单没到」和「影子没建」。 */
           remotes: Math.max(0, state.players.length - 1),
           /** 诊断：卡在 0 时用来一眼分辨「名单没到 / 主循环被锁 / 帧没发出去」。 */
@@ -520,95 +562,88 @@ export const game: Plugin = {
     }
 
     /**
-     * 联机推进：**等齐才走**。
+     * 卡住 5 秒后恢复时，`acc` 里攒着 5 秒的量（300 步）。一口气跑完会让这一
+     * 渲染帧占用几十毫秒，玩家看到的是「卡完再卡一下」。
      *
-     * 三条不能动的顺序：
-     * 1. 先确认 acc 够一步、且 `runnableTick` 非空 —— 两者都满足才真的推进；
-     *    缺帧时既不推 tick 也不扣时间，否则恢复后永远追不回来，两端 tick 永久错位。
-     * 2. `takeLockstep()` 取出的本地帧是**三个 tick 前**采的：本地输入和远端走
-     *    同一条延迟队列，没有「我先动了再发」。
-     * 3. 每推进一步才采样下一个待提交 tick，保证「每 tick 恰好一个本地帧」，
-     *    与渲染帧率无关（144Hz 的机器也不会多发）。
+     * 所以每渲染帧最多补这么多步，**剩下的留在 `acc` 里下一帧继续** —— 这是
+     * 「不丢时间」和「不卡死」之间唯一正确的取法。6 步 ≈ 0.1s，追上 300 帧
+     * 需要 50 个渲染帧（约 0.8 秒），观感是快进而非冻结。
      */
+    const MAX_CATCHUP_STEPS = 6;
+
     /**
-     * 一帧最多推进多少逻辑步。
+     * 联机推进：**只执行服务器广播过的连续帧**。
      *
-     * 等过对方帧之后，`acc` 里攒着的时间会在放行时一次性补上；不设上限的话一次
-     * 能跑十几步（`step` + 影子 + 渲染都翻十几倍），玩家看到的就是一帧顿一下。
-     * 这里宁可**丢掉**超出部分：帧同步的 tick 是逻辑时间，丢时间只会让整局慢
-     * 一点，不会让两端分叉（双方都是按各自节奏推进同一个 tick 序列）。
+     * 三件互不干扰的事，顺序不能换：
+     *
+     * 1. **采意图**（墙钟节拍，60 Hz，和执行解耦）。执行会被服务器卡住，但采样
+     *    不能停 —— 停了就等于「我一卡，我的操作也跟着停」。意图不带帧号。
+     * 2. **执行**：`canStep` 要求手里从 `nextTick` 起连续 `lookahead` 帧都齐了。
+     *    不够就**一帧都不走**（画面停住、操作无响应），而且时间**不扣** ——
+     *    恢复后一次性补算。这是「固定延迟换画面不抖」的全部实现。
+     * 3. **补帧**：看到更高的帧号但中间有洞，立刻向服务器要。同一缺口有节流。
+     *
+     * 这里**没有**「等某个玩家」的语义。谁没交意图，那一帧他就是空输入，
+     * 绝不让最慢的客户端决定全场帧率。
      */
-    const MAX_STEPS_PER_FRAME = 4;
+    function advanceNet(delta: number): void {
+      const now = Date.now();
+      // ---- 1) 采意图：按墙钟走，不受执行卡顿影响 ----
+      intentAcc += delta;
+      let sampled = 0;
+      while (intentAcc >= FIXED_DT && sampled < 8) {
+        intentAcc -= FIXED_DT;
+        const intent = takeLatched(latch, nextIntentSeq);
+        nextIntentSeq += 1;
+        if (intent.pointerDown) netStat.localEdges += 1;
+        if (intent.mouse) netStat.localMouse += 1;
+        netOutbox.push(intent);
+        netStat.intentsOut += 1;
+        sampled += 1;
+      }
+      // 标签页被切走很久之后回来：`intentAcc` 会堆成几秒，一次灌几百条意图
+      // 只会让服务器把它们贴到未来几百帧上。直接丢掉，玩家不会希望「回来
+      // 之后自动跑完离开的那段」。
+      if (intentAcc > FIXED_DT * 8) intentAcc = 0;
+      flushOutbox();
 
-    /** 等这么久还没有可推进的 tick，就认为「对方没收到我的帧」，重发一次。 */
-    const RETX_AFTER_MS = 600;
-
-    function advanceLockstep(delta: number): void {
+      // ---- 2) 执行：只跑服务器给过的帧 ----
       addTime(stepClock, delta);
-      let stepsThisFrame = 0;
-      for (;;) {
-        if (stepClock.acc + 1e-9 < FIXED_DT) break;
-        if (runnableTick(lockstep) === null) break;
-        const inputs = takeLockstep(lockstep);
-        if (!inputs) break;
+      let steps = 0;
+      while (stepClock.acc + 1e-9 >= FIXED_DT && canStep(driver)) {
+        if (steps >= MAX_CATCHUP_STEPS) break;
+        const packet = takeSync(driver);
+        if (!packet) break;
         takeStep(stepClock);
         const remoteInputs = new Map<string, ReturnType<typeof toStepInput>>();
-        for (const [peerId, frame] of inputs.remote) {
+        for (const [peerId, frame] of packet.frames) {
+          if (peerId === netPlayerId) continue;
           remoteInputs.set(peerId, toStepInput(frame));
         }
-        step(state, FIXED_DT, toStepInput(inputs.local), modifiers, remoteInputs);
-        // 远端玩家不再有「影子规则」：他们就是 `state.players` 里的真玩家，
-        // 和本机玩家跑同一份 `step()`（先按 id 排序，两端顺序一致）。
-        // 这里只需要把这一 tick 所有人的输入交上去。
-        reportHash(inputs.tick);
+        // **本机输入也来自这一帧广播**：没有预表现，玩家按下到生效要等一个回程。
+        // 这是「不做预表现 + 不拥有自己的帧」的必然代价（`docs/net-sync-v2.md` §4）。
+        const localFrame = packet.frames.get(netPlayerId);
+        step(
+          state,
+          FIXED_DT,
+          localFrame ? toStepInput(localFrame) : toStepInput(emptyInputFrame(packet.tick)),
+          modifiers,
+          remoteInputs,
+        );
+        reportHash(packet.tick);
         netStat.ticks += 1;
-        stepsThisFrame += 1;
-        // 采样下一个待提交的 tick：本地帧和远端走同一条 3 tick 延迟队列。
-        // `submitTick` 每次只 +1 —— 让它一路领先、始终比 `tick` 大 3 格，
-        // 中间不留空洞（留了就会被自己卡死，见 `lockstep.ts::take` 的注释）。
-        const frame = takeLatched(latch, lockstep.submitTick);
-        if (frame.pointerDown) netStat.localEdges += 1;
-        if (frame.mouse) netStat.localMouse += 1;
-        pushLocal(lockstep, frame);
-        lockstep.submitTick += 1;
-        netOutbox.push(frame);
-        if (stepsThisFrame >= MAX_STEPS_PER_FRAME && stepClock.acc + 1e-9 >= FIXED_DT) {
-          // 已经补到上限、还剩时间：直接丢掉，避免这一帧变成十几步的尖峰。
-          stepClock.acc = 0;
-          netStat.melted += 1;
-          break;
-        }
+        steps += 1;
       }
-      // ---- 卡住自愈：重发对方还没消费掉的本地帧 ----
-      // 锁步是「等齐才走」，但帧发出去**没有任何 ack**：只要某一批没送到（平台节流、
-      // 页面切后台、服务端 24 tick 的窗口滚过去），双方就永久停在同一个 tick 上。
-      // 实测就是这样卡死的：`pending` 各自指着对方、`等` 一路涨到 17s 不动。
-      // 等够 RETX_AFTER_MS 就不再干等：把 [tick, submitTick) 的本地帧重塞回 outbox
-      // 并强制发出，同时让主窗口清掉去重水位（否则它会把同一批当重复丢回）。
-      const nowMs = Date.now();
-      if (runnableTick(lockstep) === null) {
-        if (netRetxAt === 0) netRetxAt = nowMs;
-        else if (nowMs - netRetxAt > RETX_AFTER_MS) {
-          netRetxAt = nowMs;
-          const resend: InputFrame[] = [];
-          for (const t of lockstep.localFrames.keys()) {
-            if (t >= lockstep.tick && t < lockstep.submitTick) resend.push(lockstep.localFrames.get(t)!);
-          }
-          resend.sort((a, b) => a.tick - b.tick);
-          if (resend.length > 0) {
-            channel?.postMessage({ type: 'netResync' });
-            netOutbox = resend;
-            flushOutbox(true);
-            netStat.retx += 1;
-          }
-        }
-      } else {
-        netRetxAt = 0;
+
+      // ---- 3) 补帧：有洞就立刻要 ----
+      const gap = requestReplay(driver, now);
+      if (gap) {
+        netStat.replays += 1;
+        channel?.postMessage({ type: 'netReplay', from: gap.from, to: gap.to });
       }
-      flushOutbox();
     }
 
-    /** 攒够 3 帧（50ms）发一次：与平台 20Hz 的状态广播同频，多发只是浪费。 */
+    /** 攒够 3 条意图（50ms）发一批：与平台 20Hz 的状态广播同频，多发只是浪费。 */
     function flushOutbox(force = false): void {
       if (!netActive) {
         netOutbox.length = 0;
@@ -621,7 +656,8 @@ export const game: Plugin = {
       netStat.flushes += 1;
       channel?.postMessage({
         type: 'netOut',
-        t: frames[0]!.tick,
+        // 第一条意图的序号。**不是帧号** —— 落在哪一帧由服务器决定。
+        s: frames[0]!.seq,
         n: frames.length,
         b: encodeBase64(encodeBatch(frames)),
       });
@@ -640,10 +676,10 @@ export const game: Plugin = {
           active?: boolean;
           playerId?: string;
           peers?: ({ id: string; name?: string } | string)[];
-          /** netIn：远端输入包（base64 的定长批量帧）。 */
-          packets?: { from: string; t: number; n: number; b: string }[];
-          /** netRetire：服务端宣布的离场。 */
-          gone?: { peerId: string; fromTick: number }[];
+          /** netIn：服务器广播的帧批次（一个 tick 一个包，含每个玩家的意图）。 */
+          batches?: { tick: number; frames: { from: string; b: string }[] }[];
+          /** netReplayData：补帧回包。 */
+          replay?: { seq: number; data: [number, [string, string][]][] };
         } | null;
         if (!msg || typeof msg !== 'object') return;
         if (msg.type === 'deploy') {
@@ -727,9 +763,9 @@ export const game: Plugin = {
         } else if (msg.type === 'netSeat') {
           applySeat({ active: msg.active, playerId: msg.playerId, peers: msg.peers });
         } else if (msg.type === 'netIn') {
-          if (Array.isArray(msg.packets)) applyRemotePackets(msg.packets);
-        } else if (msg.type === 'netRetire') {
-          if (Array.isArray(msg.gone)) applyRetired(msg.gone);
+          if (Array.isArray(msg.batches)) applyFrames(msg.batches);
+        } else if (msg.type === 'netReplayData') {
+          if (msg.replay && typeof msg.replay === 'object') applyReplay(msg.replay);
         } else if (msg.type === 'netSeatRequest') {
           // 主窗口刚起来 / 刚刷新时不知道 Worker 在不在等座位信息。
           channel?.postMessage({
@@ -975,7 +1011,7 @@ export const game: Plugin = {
                   loadoutWaitFrames += 1;
                   if (loadoutWaitFrames > 300) forceStartWithoutLoadouts();
                 }
-                if (netSeatSettled && !awaitingLoadouts) advanceLockstep(raw);
+                if (netSeatSettled && !awaitingLoadouts) advanceNet(raw);
               } else advanceSolo(raw);
               // Pickups / weapon switches happen INSIDE this Worker now. Only
               // a changed snapshot is sent to the read-only character panel.

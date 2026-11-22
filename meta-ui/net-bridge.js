@@ -33,13 +33,13 @@
     seatSig: '',
     /** 还没被服务端确认收下的开局装备快照（会重发，直到 game_update 里看到自己）。 */
     pendingSnapshot: null,
-    /** peerId -> 已经交付给 Worker 的最后一个包起始 tick（去重用）。 */
-    seen: {},
-    /** peerId -> 已经转发过的离场 tick。 */
-    retired: {},
+    /** 已经交付给 Worker 的最大服务器帧号（去重用）。 */
+    delivered: -1,
+    /** 上一次投递给 Worker 的补帧回包 seq（同一份不重复投）。 */
+    replaySeq: -1,
     /** 服务端观测到的分叉 tick（只提示一次）。 */
     divergedTick: -1,
-    /** Worker 每秒推一次的锁步诊断（tick / 在等谁 / 迟到帧数）。 */
+    /** Worker 每秒推一次的诊断（执行帧号 / 领先多少 / 补了几次）。 */
     lastStat: null,
     /** 兜底轮询的上一次 state 签名（不变就跳过）。 */
     lastSignature: '',
@@ -124,18 +124,23 @@
     diagLast.at = now;
     var el = ensureDiag();
     if (!el) return;
-    var wait = typeof stat.waiting === 'number' ? stat.waiting : 0;
     // 同伴 = 座位名单里的其他人；影子 = 真正建出来的远端角色。
     // 两者不等就说明卡在 syncRemotes（名单有、影子没建）。
     var mateCount = (stat.peers && stat.peers.length) || 0;
     var shadowCount = typeof stat.remotes === 'number' ? stat.remotes : '?';
+    // v2 三个关键数：
+    //   领先 = 服务器帧号 - 执行帧号（正常等于播放缓冲 + 网络延迟，突变说明在补帧）
+    //   补   = 发过多少次补帧请求（持续增长 = 这条链路一直在丢包）
+    //   缺   = 已经看到更高帧号但手里还缺几帧（> 0 就是在等 replay）
     el.textContent = 'tick ' + stat.tick
       + '  ' + rateText
-      + '  等 ' + (wait >= 1 ? Math.round(wait) + 'ms' : '0')
-      + '  丢 ' + (stat.melted || 0)
-      + '  迟 ' + (stat.lateFrames || 0)
+      + '  领先 ' + (stat.lead || 0)
+      + '  补 ' + (stat.replays || 0)
+      + '  缺 ' + (stat.gap || 0)
       + '  同伴 ' + mateCount
       + ' · 影子 ' + shadowCount;
+    // 长时间 `缺 > 0` 说明补帧通道没通，不只是卡一下。
+    if ((stat.gap || 0) > 0 && (stat.replays || 0) > 3) el.style.color = '#f09595';
     // 60 是满速；低于 56 节奏已经不匀，低于 45 是明显卡。
     if (rate !== null) {
       el.style.color = rate < 45 ? '#f09595' : (rate < 56 ? '#f0b429' : '#9fe1cb');
@@ -189,14 +194,32 @@
         return;
       }
       if (msg.type === 'netResync') {
-        // 引擎重建了时间轴（新一局 / 重开局）：那边清空了锁步队列，这边也必须把
-        // 「已交付水位」清掉，让服务端窗口里还留着的旧包重新投递一次。
-        //
-        // 不清就是**永久死锁**：包在 armTimeline 之前已投递 → 被新队列丢掉 →
-        // 水位却记着「已交付」→ 对方永远等不到它的 tick 0，而它自己又等对方的
-        // tick N。2026-11-21 实测：A 卡 tick 5、B 卡 tick 0，`pending` 互相指着对方。
-        S.seen = {};
+        // 引擎重建了执行指针（新一局）：这边也必须把「已投递水位」清掉，
+        // 否则窗口里还留着的旧帧会被当成「已经给过了」而永远不再投递。
+        S.delivered = -1;
+        S.replaySeq = -1;
         S.stats.resyncs = (S.stats.resyncs || 0) + 1;
+        return;
+      }
+      if (msg.type === 'netReplay') {
+        // 缺口立刻补：客户端只描述区间，不解释原因（抖动 / 断线 / 重连同一条通道）。
+        if (!S.active || !S.session) return;
+        try {
+          S.session.sendAction({ replay: { from: msg.from, to: msg.to } });
+          S.stats.replays = (S.stats.replays || 0) + 1;
+        } catch (err) {
+          S.stats.errors += 1;
+        }
+        return;
+      }
+      if (msg.type === 'netReplayAck') {
+        // 取走了就让服务端删掉，不然每轮广播都会重带一份。
+        if (!S.active || !S.session) return;
+        try {
+          S.session.sendAction({ replayAck: msg.seq });
+        } catch (err) {
+          S.stats.errors += 1;
+        }
         return;
       }
       if (msg.type !== 'netOut') return;
@@ -204,11 +227,12 @@
       if (typeof msg.b !== 'string' || !msg.b) return;
       try {
         // 平台这条通道只收 JSON；帧本身是定长二进制，外面套 base64。
-        S.session.sendAction({ t: msg.t, n: msg.n, b: msg.b });
+        // **`s` 是意图序号，不是帧号** —— 落在哪一帧由服务器决定。
+        S.session.sendAction({ s: msg.s, b: msg.b });
         S.stats.sends += 1;
       } catch (err) {
         S.stats.errors += 1;
-        // 发送失败不是致命错误：下一批还会再发，而且对局会因缺帧自然停在等待上。
+        // 发送失败不是致命错误：下一批还会再发，服务器那边那几帧就是空输入。
       }
     };
   }
@@ -277,44 +301,54 @@
       post({ type: 'netSeat', active: true, playerId: S.playerId, peers: peers });
     }
 
-    var packets = [];
+    /*
+     * 帧投递：**一个 tick 一个批次，包含所有人的意图（含自己）**。
+     *
+     * 为什么要含自己：v2 里本机输入也要等服务器贴帧、广播回来才生效（不做
+     * 预表现）。以前这里把 `pid === S.playerId` 过滤掉，是因为 v1 的客户端
+     * 自己留着一份本地副本 —— 那份副本正是分叉的源头。
+     */
+    var batches = [];
     var inputs = state.inputs;
     if (inputs && typeof inputs === 'object') {
+      var highest = S.delivered;
       for (var key in inputs) {
         if (!Object.prototype.hasOwnProperty.call(inputs, key)) continue;
+        var tick = Number(key);
+        if (!Number.isFinite(tick)) continue;
+        if (tick <= S.delivered) continue;
         var bucket = inputs[key];
         if (!bucket || typeof bucket !== 'object') continue;
+        var frames = [];
         for (var pid in bucket) {
           if (!Object.prototype.hasOwnProperty.call(bucket, pid)) continue;
-          if (pid === S.playerId) continue;
           var packet = bucket[pid];
           if (!packet || typeof packet.b !== 'string') continue;
-          var last = S.seen[pid];
-          if (typeof last === 'number' && packet.t <= last) continue;
-          S.seen[pid] = packet.t;
-          packets.push({ from: pid, t: packet.t, n: packet.n, b: packet.b });
+          frames.push({ from: pid, b: packet.b });
         }
+        // **空帧也要投递**：服务器每帧都写窗口，全员没输入的帧是空对象。
+        // 跳过它，Worker 的执行指针就推不动 —— 画面停住，还会误报缺口去补帧。
+        batches.push({ tick: tick, frames: frames });
+        if (tick > highest) highest = tick;
       }
+      // 水位只推进到「这一轮见到的最大帧号」。中间若真有洞，客户端会发 replay
+      // 从服务端的全量历史里取 —— 不靠广播碰运气。
+      S.delivered = highest;
     }
-    if (packets.length > 0) {
-      S.stats.packetsIn += packets.length;
-      post({ type: 'netIn', packets: packets });
+    if (batches.length > 0) {
+      S.stats.packetsIn += batches.length;
+      post({ type: 'netIn', batches: batches });
     }
 
-    // 离场：只有服务端能宣布（它用的是游戏 tick，与客户端同一条时间轴）。
-    var departed = state.departed;
-    if (departed && typeof departed === 'object') {
-      var retires = [];
-      for (var gone in departed) {
-        if (!Object.prototype.hasOwnProperty.call(departed, gone)) continue;
-        if (gone === S.playerId) continue;
-        var fromTick = departed[gone];
-        if (typeof fromTick !== 'number') continue;
-        if (S.retired[gone] === fromTick) continue;
-        S.retired[gone] = fromTick;
-        retires.push({ peerId: gone, fromTick: fromTick });
+    // 补帧回包：只取自己那一份（别人请求的块与自己无关）。
+    var reply = state.reply;
+    if (reply && typeof reply === 'object' && S.playerId) {
+      var mine = reply[S.playerId];
+      if (mine && typeof mine.seq === 'number' && mine.seq !== S.replaySeq
+        && Array.isArray(mine.data)) {
+        S.replaySeq = mine.seq;
+        post({ type: 'netReplayData', replay: { seq: mine.seq, data: mine.data } });
       }
-      if (retires.length > 0) post({ type: 'netRetire', gone: retires });
     }
 
     // 分叉：服务器只记录不裁决，这里只提示一次，避免每秒刷屏。
@@ -446,8 +480,8 @@
     // 另一个人永远等不到它的 tick 0（2026-11-20 双人验收实测：B 跑到 732、
     // A 卡在 0）。
     S.peers = peersFromSession();
-    S.seen = {};
-    S.retired = {};
+    S.delivered = -1;
+    S.replaySeq = -1;
     S.divergedTick = -1;
     S.lastSignature = '';
     S.sessionStateKeys = [];
@@ -467,7 +501,7 @@
     // 第三层保险：直接听会话的底层信号。`subscribeEvents` 的 handlers 在
     // createRoom/joinRoom 重建连接后可能失效，而 `session.state` 若只是快照
     // 也不会自己更新。底层 `on()` 不依赖这两者。事件名在不同构建里有
-    // game_update / game_updated 两种，都挂上，靠 S.seen 去重挡重复投递。
+    // game_update / game_updated 两种，都挂上，靠 S.delivered 水位挡重复投递。
     if (typeof session.on === 'function') {
       ['game_init', 'game_initialized', 'game_update', 'game_updated'].forEach(function (type) {
         try {
@@ -517,8 +551,8 @@
     S.active = false;
     S.session = null;
     S.peers = [];
-    S.seen = {};
-    S.retired = {};
+    S.delivered = -1;
+    S.replaySeq = -1;
     S.lastSignature = '';
     S.sessionStateKeys = [];
     hideDiag();

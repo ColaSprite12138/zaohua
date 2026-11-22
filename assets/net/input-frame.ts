@@ -10,7 +10,7 @@
  *
  * 布局（小端，共 12 字节）：
  * ```
- *   0  u32  tick              逻辑帧号（开局从 0 起）
+ *   0  u32  seq               意图序号（客户端自增；**不是帧号**）
  *   4  u8   flags             见 FLAG_*
  *   5  u8   skill             技能槽 0..6；NO_SKILL=255 表示这一帧没按技能
  *   6  u8   switchWeapon      0/1；NO_SWITCH=255 表示没切枪
@@ -23,6 +23,11 @@
  * 那是世界空间的判定。传屏幕像素的话，16:9 与 4:3、1x 与 2x 的窗口会把同一次
  * 点击解出不同的世界点，两端第一枪就打偏。
  *
+ * **为什么第一个字段是 `seq` 而不是帧号**：帧号归服务器所有。客户端只能申报
+ * 「我按了什么、这是第几次申报」，落在哪一帧由服务器决定（见
+ * `docs/net-sync-v2.md` §1）。如果客户端自己带帧号，服务器就得信它 —— 那等于
+ * 把帧号归属又还给了客户端，v1 的分叉/卡死会原样复现。
+ *
  * **为什么 ×4 而不是直接取整**：1 像素误差会让 `hitTestEnemy` 在半径边界上
  * 给出不同结果（我砍到了 / 我没砍到）。1/4 像素的误差远小于任何判定半径，
  * 而 int16 在 ×4 精度下仍能表示 ±8191 像素，比最宽的地图还宽一倍。
@@ -30,7 +35,8 @@
 
 /** 一帧的操作意图。字段与 `StepInput` 一一对应，唯独坐标是世界空间。 */
 export type InputFrame = {
-  readonly tick: number;
+  /** 客户端自增的意图序号。服务器只用来去重与诊断，**不决定落在哪一帧**。 */
+  readonly seq: number;
   readonly pointerDown: boolean;
   readonly pointerHeld: boolean;
   readonly pointerUp: boolean;
@@ -68,10 +74,10 @@ export const AUX_HAS_MOUSE = 1 << 0;
 export const AUX_POINTER_ON_HUD = 1 << 1;
 /* bit2 预留：M 大地图是纯本地视图状态，不进帧。 */
 
-/** 一帧「什么都没按」的输入。远端掉线、或这一帧没等到帧时用它。 */
-export function emptyInputFrame(tick: number): InputFrame {
+/** 一帧「什么都没按」的输入。远端玩家这一帧没有意图时用它。 */
+export function emptyInputFrame(seq: number): InputFrame {
   return {
-    tick,
+    seq,
     pointerDown: false,
     pointerHeld: false,
     pointerUp: false,
@@ -109,7 +115,7 @@ export function encodeInputFrame(frame: InputFrame, out?: DataView): DataView {
   if (frame.mouse) aux |= AUX_HAS_MOUSE;
   if (frame.pointerOnHud) aux |= AUX_POINTER_ON_HUD;
 
-  view.setUint32(0, frame.tick >>> 0, true);
+  view.setUint32(0, frame.seq >>> 0, true);
   view.setUint8(4, flags);
   view.setUint8(5, frame.skill & 0xff);
   view.setUint8(6, frame.switchWeapon & 0xff);
@@ -127,7 +133,7 @@ export function decodeInputFrame(bytes: Uint8Array, offset = 0): InputFrame {
   const switchWeapon = view.getUint8(6);
   const hasMouse = (aux & AUX_HAS_MOUSE) !== 0;
   return {
-    tick: view.getUint32(0, true),
+    seq: view.getUint32(0, true),
     pointerDown: (flags & FLAG_POINTER_DOWN) !== 0,
     pointerHeld: (flags & FLAG_POINTER_HELD) !== 0,
     pointerUp: (flags & FLAG_POINTER_UP) !== 0,
@@ -178,7 +184,7 @@ function encodeInto(frame: InputFrame, view: DataView, offset: number): void {
   let aux = 0;
   if (frame.mouse) aux |= AUX_HAS_MOUSE;
   if (frame.pointerOnHud) aux |= AUX_POINTER_ON_HUD;
-  view.setUint32(offset, frame.tick >>> 0, true);
+  view.setUint32(offset, frame.seq >>> 0, true);
   view.setUint8(offset + 4, flags);
   view.setUint8(offset + 5, frame.skill & 0xff);
   view.setUint8(offset + 6, frame.switchWeapon & 0xff);
