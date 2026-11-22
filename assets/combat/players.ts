@@ -13,6 +13,7 @@
  */
 import type { RunLoadout } from '../meta/inventory.ts';
 import { makeRunInventory } from './run-inventory.ts';
+import { BODY_RADIUS, canStandAt, nearestWalkable, type World } from './world.ts';
 import {
   PLAYER_HP_MAX, PLAYER_MANA_MAX, PRE_EQUIPPED_SKILLS, SPAWN_FACE, createSkillBar,
   type GameState, type Player,
@@ -66,6 +67,17 @@ export function playerById(s: GameState, id: string): Player | null {
 }
 
 /**
+ * 四个候选偏移。**顺序是规则的一部分**：`spawnPointFor` 靠它逐个试可站性，
+ * 两端必须用同一个顺序才能算出同一个点。
+ */
+const SPAWN_DIRS = [
+  { dx: 52, dy: 0 },
+  { dx: 0, dy: 52 },
+  { dx: -52, dy: 0 },
+  { dx: 0, dy: -52 },
+] as const;
+
+/**
  * 开局朝向由 `state.ts` 的 `SPAWN_FACE` 统一提供：本机 `reset()` 与远端
  * `createRemotePlayer()` 用同一个值，否则 `face` 一进 hash 就分叉。
  */
@@ -74,13 +86,47 @@ export function spawnOffset(id: string): { dx: number; dy: number } {
   let acc = 0;
   for (let i = 0; i < id.length; i += 1) acc = (acc * 31 + id.charCodeAt(i)) % 100000;
   // 四个轴向量都是整数，不引入三角函数（见确定性纪律）。
-  const dirs = [
-    { dx: 52, dy: 0 },
-    { dx: 0, dy: 52 },
-    { dx: -52, dy: 0 },
-    { dx: 0, dy: -52 },
-  ];
-  return dirs[acc % 4]!;
+  return SPAWN_DIRS[acc % SPAWN_DIRS.length]!;
+}
+
+/**
+ * 出生点：`map.spawn` 按 id 分方向错开，**且必须站得下人**。
+ *
+ * ## 为什么要在偏移之后还要检查
+ *
+ * `arena` 的出生点 `(69,50)`（x=2224, y=1616）左边两格全是墙：
+ *
+ * ```
+ * r48 11222
+ * r49 11222
+ * r50 12222   ← spawn 在中间那个 2 上
+ * r51 12222
+ * ```
+ *
+ * 而 `spawnOffset` 的 `-x` 方向是 -52px ≈ 1.6 格，正好从 col 69 跨进 col 67
+ * 的墙里。抽到这个方向的玩家**一出生就卡死**（2026-11-22 用户实测
+ * 「我的人物出生都卡在墙里」）。所以偏移只是"试图错开"，能不能站是另一回事。
+ *
+ * ## 确定性
+ *
+ * 只读 `world.tiles`（同一张图两端一致）与 id，不碰 `Math.random` / 墙钟。
+ * 两端对同一个玩家必然算出同一个点 —— 这是坐标进 hash 的前提。
+ */
+export function spawnPointFor(world: World, id: string): { x: number; y: number } {
+  const base = world.map.spawn;
+  let acc = 0;
+  for (let i = 0; i < id.length; i += 1) acc = (acc * 31 + id.charCodeAt(i)) % 100000;
+  const start = acc % SPAWN_DIRS.length;
+  // 从哈希决定的方向开始，按固定顺序环形试一遍：第一个站得下的就是结果。
+  for (let i = 0; i < SPAWN_DIRS.length; i += 1) {
+    const dir = SPAWN_DIRS[(start + i) % SPAWN_DIRS.length]!;
+    const x = base.x + dir.dx;
+    const y = base.y + dir.dy;
+    if (canStandAt(world, x, y, BODY_RADIUS)) return { x, y };
+  }
+  // 四个方向都不行（极窄图 / spawn 贴墙）：先用 spawn 本身，再退到最近可站格。
+  if (canStandAt(world, base.x, base.y, BODY_RADIUS)) return { x: base.x, y: base.y };
+  return nearestWalkable(world, base.x, base.y);
 }
 
 /**
@@ -117,8 +163,19 @@ export function createRemotePlayer(
   spawn: { x: number; y: number },
   /** 开局装备快照。两端必须用同一份，否则「背包满」的判定会分叉。 */
   snapshot?: PeerSnapshot,
+  /**
+   * 地图世界。传了就按 `spawnPointFor` 算出生点（**推荐**：会检查能不能站人，
+   * 免得像 arena 的 -x 方向那样直接落进墙里）。不传时退回「裸 spawn + 哈希偏移」，
+   * 只为兼容没有 world 的夹具。
+   */
+  world?: World,
 ): Player {
-  const { dx, dy } = spawnOffset(id);
+  const at = world
+    ? spawnPointFor(world, id)
+    : (() => {
+      const off = spawnOffset(id);
+      return { x: spawn.x + off.dx, y: spawn.y + off.dy };
+    })();
   const hpMax = snapshot?.hpMax ?? PLAYER_HP_MAX;
   const manaMax = snapshot?.manaMax ?? PLAYER_MANA_MAX;
   const starSkills = snapshot?.starSkills ?? PRE_EQUIPPED_SKILLS;
@@ -126,8 +183,8 @@ export function createRemotePlayer(
   return {
     id,
     name,
-    x: spawn.x + dx,
-    y: spawn.y + dy,
+    x: at.x,
+    y: at.y,
     vx: 0,
     vy: 0,
     face: SPAWN_FACE,
@@ -162,7 +219,9 @@ export function createRemotePlayer(
     channel: null,
     deathTimer: -1,
     intent: {
-      target: { x: spawn.x + dx, y: spawn.y + dy },
+      // 和出生点用同一个坐标：`dx/dy` 已经并进 `at` 了，这里再算一次
+      // 会在「新位置其实不是 spawn+offset」时把初始目标指回墙里。
+      target: { x: at.x, y: at.y },
       moveMode: 'idle',
       targetEnemy: null,
       attackOrder: false,

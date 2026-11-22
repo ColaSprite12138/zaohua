@@ -10,7 +10,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { createState, type GameState, type Player } from '../state.ts';
-import { nearestPlayer, playerById, sortedPlayers } from '../players.ts';
+import { nearestPlayer, playerById, sortedPlayers, spawnPointFor } from '../players.ts';
+import { BODY_RADIUS, canStandAt, makeWorld } from '../world.ts';
+import { arena } from '../../resource/maps/arena.generated.ts';
 
 function withPlayers(s: GameState, spots: { id: string; x: number; y: number }[]): void {
   s.players = spots.map((spot) => {
@@ -97,5 +99,42 @@ describe('怪物索敌接上了实体容器', () => {
     ]);
     const picked = nearestPlayer(s, monster!.x, monster!.y);
     expect(picked!.id).toBe('p1');
+  });
+});
+
+/*
+ * 出生点护栏（2026-11-22 用户实测「我的人物出生都卡在墙里」）。
+ *
+ * 根因：`arena` 的出生点 (69,50) 左边两格全是墙，而老的 `spawnOffset`
+ * 是四个固定方向之一（-52px ≈ 1.6 格），`-x` 那个正好跨进 col 67 的墙。
+ * 于是「谁抽到 -x 谁一出生就卡死」，而且它在两端算出来是同一个人 ——
+ * 分叉排查时完全看不出来，只能靠人眼发现「我卡墙里了」。
+ *
+ * 这组护栏钉三件事：能站人、同 id 同点（确定性）、不同 id 不全挤在一格。
+ */
+describe('出生点必须站得下人', () => {
+  const world = makeWorld(arena as never);
+
+  it('真实 arena：64 个 id 的出生点全部可站', () => {
+    for (let i = 0; i < 64; i += 1) {
+      const at = spawnPointFor(world, `seat-${i}`);
+      expect(canStandAt(world, at.x, at.y, BODY_RADIUS)).toBe(true);
+    }
+  });
+
+  it('确定性：同一个 id 反复算，永远同一个点', () => {
+    const a = spawnPointFor(world, 'seat-7');
+    const b = spawnPointFor(world, 'seat-7');
+    expect(a).toEqual(b);
+  });
+
+  it('错开：不同 id 不会全部落在 spawn 原地', () => {
+    const spots = new Set(
+      Array.from({ length: 32 }, (_, i) => {
+        const at = spawnPointFor(world, `seat-${i}`);
+        return `${at.x},${at.y}`;
+      }),
+    );
+    expect(spots.size).toBeGreaterThan(1);
   });
 });

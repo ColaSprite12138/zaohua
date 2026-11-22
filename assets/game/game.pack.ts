@@ -58,7 +58,7 @@ import {
   take as takeSync, type SyncDriver,
 } from '../net/sync-driver.ts';
 import { HASH_INTERVAL_TICKS, hashGameParts, hashGameState } from '../net/state-hash.ts';
-import { createRemotePlayer, spawnOffset, type PeerSnapshot } from '../combat/players.ts';
+import { createRemotePlayer, spawnPointFor, type PeerSnapshot } from '../combat/players.ts';
 import { decodeBase64, encodeBase64 } from '../net/base64.ts';
 
 const PACKAGE_ID = definePackageId('019fb7ce-3d00-7000-8000-000000000001');
@@ -459,7 +459,15 @@ export const game: Plugin = {
           keep.push(existing);
           continue;
         }
-        keep.push(createRemotePlayer(id, netPeerNames.get(id) || id.slice(0, 6), spawn, netPeerSnapshots.get(id)));
+        keep.push(createRemotePlayer(
+          id,
+          netPeerNames.get(id) || id.slice(0, 6),
+          spawn,
+          netPeerSnapshots.get(id),
+          // 传 world 才会做可站性检查：`spawnOffset` 有一个方向正对着 arena
+          // 出生点左边的墙，不检查会让玩家一出生就卡死。
+          state.world,
+        ));
       }
       state.players = keep;
     }
@@ -907,12 +915,13 @@ export const game: Plugin = {
           // 给远端算了，本机如果还杵在裸 spawn 上，两端对同一个人的坐标认知就
           // 不同（A 看 A 在中心、B 看 A 在旁边），而坐标进 hash。
           if (netActive && netPlayerId) {
-            const off = spawnOffset(netPlayerId);
-            const sx = state.map.spawn.x + off.dx;
-            const sy = state.map.spawn.y + off.dy;
-            state.player.x = sx;
-            state.player.y = sy;
-            state.player.intent.target = { x: sx, y: sy };
+            // 和远端走**同一个** `spawnPointFor`：它会在四个候选方向里挑第一个
+            // 站得下的。早先这里直接用 `spawnOffset` 的位移，而 arena 出生点左边
+            // 两格是墙 —— 抽到 -x 的玩家一出生就卡在墙里（2026-11-22 实测）。
+            const at = spawnPointFor(state.world, netPlayerId);
+            state.player.x = at.x;
+            state.player.y = at.y;
+            state.player.intent.target = { x: at.x, y: at.y };
           }
           lastResult = null;
           resultSent = false;
