@@ -67,7 +67,7 @@ if (!captured) {
 }
 
 /** 与 game/server/source/index.ts::RECENT_FRAMES 保持一致。 */
-const RECENT = 6
+const RECENT = 4
 
 const players = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]
 const game = captured.createGame(players)
@@ -208,15 +208,39 @@ check('积压按帧消化完（applied 追上 submitted）', spamDone.stats.appl
   `applied=${spamDone.stats.applied}`)
 spam.stop()
 
+// ---- 8.5) 补帧回包的 TTL：客户端不 ack 也不能无限重发 ----
+// 上一组留了一份没 ack 的回包（120 帧 ≈ 1 KB）。它必须自己过期，否则会跟着
+// 每轮广播重发 —— 60 Hz 下就是 60 KB/s 的纯浪费。
+check('未 ack 的补帧回包仍在（还没到 TTL）', Boolean(game.getState().reply.a))
+// 模拟宿主调 200 轮 tick（60 轮 = 1 秒，TTL = 180 轮）。
+for (let i = 0; i < 200; i += 1) game.tick()
+check('超过 TTL 后回包自动清掉（ack 丢了也不会无限重发）', !game.getState().reply.a)
+
 // ---- 9) 带宽实测：一次广播的 JSON 有多大 ----
 // 这决定了「降帧率」到底省多少。注意大头往往不是帧数，而是每个 playerId
 // 在每一帧里都要重复一遍（UUID 36 字符 × 人数 × 帧数）。
-const wire = JSON.stringify(game.getState())
-const perBroadcast = wire.length
-const broadcastHz = 1000 / 42
-console.log(`\n[带宽] 一次广播 JSON = ${perBroadcast} 字符`)
-console.log(`[带宽] 2 人局 ≈ ${(perBroadcast * broadcastHz / 1024).toFixed(1)} KB/s`
-  + `（16 人按人数线性放大 ≈ ${(perBroadcast * 8 * broadcastHz / 1024).toFixed(0)} KB/s）`)
+const snap = game.getState()
+const size = (o) => JSON.stringify(o).length
+const perBroadcast = size(snap)
+const broadcastHz = 1000 / Number(captured.roomPolicy.tickIntervalMs)
+const kb = (chars) => (chars * broadcastHz / 1024).toFixed(1)
+console.log(`\n[带宽] 广播间隔 = ${captured.roomPolicy.tickIntervalMs.toFixed(2)} ms（${broadcastHz.toFixed(1)} 次/秒）`)
+const inputChars = size(snap.inputs)
+console.log(`[带宽] 一次广播 JSON = ${perBroadcast} 字符 → 2 人空载 ≈ ${kb(perBroadcast)} KB/s`)
+// 满载估算：固定开销不动，每人每帧多一条输入。真实 playerId 是 UUID（36 字符），
+// 而探针里用的是 'a'/'b'，所以这里按「每条 74 字符」单独算，不拿实测值乘人数。
+const perEntry = 74
+const loaded16 = (perBroadcast - inputChars) + 16 * 4 * perEntry
+console.log(`[带宽] 16 人满载（每人每帧都在动）≈ ${(loaded16 * broadcastHz / 1024).toFixed(0)} KB/s`)
+console.log(`        其中固定开销 ${perBroadcast - inputChars} 字符/轮、输入 ${inputChars} 字符/轮（2 人空载）`)
+// 各部分的贡献：降带宽要先知道钱花在哪。
+console.log('[带宽] 字段贡献（越靠前越值得削）：')
+console.log(`  stats      ${size({ ...snap, stats: {} })} → 省 ${perBroadcast - size({ ...snap, stats: {} })}`)
+console.log(`  hashes     ${size({ ...snap, hashes: {} })} → 省 ${perBroadcast - size({ ...snap, hashes: {} })}`)
+console.log(`  tickMs     → 省 ${perBroadcast - size({ ...snap, stats: { ...snap.stats, tickMs: {} } })}`)
+console.log(`  players    → 省 ${perBroadcast - size({ ...snap, players: [] })}`)
+const tickKeys = Object.keys(snap.inputs)
+console.log(`  inputs     → ${size(snap.inputs)} 字符 / ${tickKeys.length} 帧 [${tickKeys.join(',')}]`)
 
 game.stop()
 const failed = results.filter((r) => !r.pass)

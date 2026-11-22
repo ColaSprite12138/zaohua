@@ -52,18 +52,26 @@ const RULESET = 'extract-v2'
  * 这不是历史窗口（历史在 `frameLog.history` 里是全量的），只是**每轮广播都
  * 重发一遍**的那一小段。
  *
- * 怎么算这个数：宿主 42 ms 广播一次，逻辑 60 Hz，所以每轮新增 2.5 帧。
- * 6 帧 = 100 ms，正好覆盖「本轮 2.5 帧 + 上一轮那 2.5 帧 + 余量」——
- * 也就是**丢一整轮广播还能在下一轮补齐**，不必触发 replay。
+ * 怎么算这个数：**广播频率跟着逻辑帧率走**（`tickIntervalMs = FRAME_MS`），
+ * 60 Hz 下每轮正好新增 1 帧。4 帧 = 67 ms，覆盖「本轮 + 上三轮」——
+ * 丢 3 轮广播都还能从下一轮补齐，不必触发 replay。
  * 更早的缺口由客户端发 `replay` 从全量历史里取，不靠广播碰运气。
  *
- * 12 → 6 是 2026-11-22 的带宽收紧：覆盖能力不变（仍能吸收一次整包丢失），
- * 每轮载荷直接减半。
+ * 12 → 6 → 4 的收紧过程：42 ms 广播时每轮 2.5 帧，现在 16.7 ms 每轮 1 帧，
+ * 同样的「抗丢包」能力需要的帧数少得多。窗口越小，每轮载荷越小。
  */
-const RECENT_FRAMES = 6
+const RECENT_FRAMES = 4
 
 /** 一次 replay 最多回多少帧（120 帧 ≈ 2 秒）。剩下的下一次再要。 */
 const REPLAY_CHUNK = 120
+
+/**
+ * 补帧回包的存活时间（宿主 tick 数）。宿主 16.67 ms 一轮、60 轮 = 1 秒。
+ *
+ * 3 秒足够客户端 ack 往返十几次；超过就说明这份回包没人要了 —— 必须清掉，
+ * 否则它会跟着每轮广播重发，一块 120 帧 ≈ 1 KB × 60 轮/秒 = 60 KB/s 的纯浪费。
+ */
+const REPLAY_TTL_TICKS = 180
 
 /** 单个 base64 包的上限，防畸形包把内存吃光。 */
 const MAX_PACKET_CHARS = 4096
@@ -99,6 +107,8 @@ type HashReport = {
 /** 一段补帧回包：`data` 是 `[tick, [[playerId, base64(12B)], ...]]` 的紧凑列表。 */
 type ReplayReply = {
   readonly seq: number
+  /** 生成时的 serverTick。TTL 用 —— 客户端 ack 丢了也不能让它一直重发。 */
+  readonly at: number
   /** 客户端请求的区间（原样回带，便于客户端确认这是不是它要的那段）。 */
   readonly from: number
   readonly to: number
@@ -372,6 +382,13 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
       }
       tickAt = now
       state.serverTick += 1
+      // 补帧回包有 TTL：客户端 ack 丢了、或者它根本没实现 ack，都不能让这一块
+      // 每轮广播都重发一遍（一块 120 帧 ≈ 1 KB，60 Hz 下发就是 60 KB/s 的纯浪费）。
+      // 主路径仍是 ack 立即删；这里只兜底。
+      for (const pid of Object.keys(state.reply)) {
+        const reply = state.reply[pid]
+        if (reply && state.serverTick - reply.at > REPLAY_TTL_TICKS) delete state.reply[pid]
+      }
       return false
     },
     /**
@@ -416,6 +433,7 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
         replySeq += 1
         state.reply[playerId] = {
           seq: replySeq,
+          at: state.serverTick,
           from: replayRequest.from,
           to: replayRequest.to,
           done,
@@ -512,6 +530,8 @@ if (!platform) throw new Error('PlatformServer was not injected by the platform 
 
 createPlatformStateSyncRuntime({
   platform,
-  roomPolicy: { maxPlayers: 16, minPlayersToStart: 2, tickIntervalMs: 42 },
+  // **广播频率跟着逻辑帧率走**（用户 2026-11-22 定）：60 Hz 逻辑 → 16.67 ms 一轮。
+  // 以前写死 42 ms，导致每轮攒 2.5 帧、窗口要 12 帧才够抗丢包。
+  roomPolicy: { maxPlayers: 16, minPlayersToStart: 2, tickIntervalMs: FRAME_MS },
   createGame,
 })
