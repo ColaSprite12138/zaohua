@@ -2,6 +2,11 @@
 # restored .sh / .py / .mjs / .ts file stays runnable in Git Bash.
 * text=auto eol=lf
 
+# Windows batch files must keep CRLF in the working tree: a double-clicked
+# .cmd with LF-only endings is parsed unreliably by cmd.exe. Repo still stores LF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
 *.png binary
 *.jpg binary
 *.zip binary
