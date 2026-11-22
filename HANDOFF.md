@@ -586,6 +586,8 @@ talent 22（talent 15 + starmap-data 7）、resource 17（tables 9 + map 8）、
 | 造化预览之后，本地 58080 上所有点击都失效（连登录门禁都点不动） | 预览宿主（`preview_start` / `preview_reload`）会重建 `dist/`，它那份产物在无宿主页面里点不动。验 58080 必须用 `pnpm build` 的产物，并在预览重建后重新 `inject-shell` |
 | 打开本地 58080 报 `PlatformClient was not ready before Tian Gong Engine initialize`，画布不出世界 | **这不是故障，是通道选错。** 静态托管页没有 PlatformClient，引擎拒绝初始化 —— 58080 只能看壳层 UI，**跑不了游戏**。三条通道各管一件事：**PVP / 联机 → 只能造化宿主**（`preview_start(validate:true)` 或 `package` 产物）+ 两个真账号 + `scripts/verify-two-player-net.mjs <previewUrl>`；**单机玩法 / 帧率 / playthrough → `forgeax project play <script>.mjs`**（自带 PlatformClient stub）；**58080 → 只做交付地址与壳层截图** |
 | AI 反复拿本地预览当验证入口，报错后再说「起不来 / 量不了」 | 同一个坑踩过多次（2026-11-22 用户第二次明确纠正并要求写进文档）。看到上一条报错就**换通道**，不要报障、不要归因成环境问题、更不要为了这个去改游戏代码 |
+| 造化预览能打开、但改动没生效（跑的还是上一版） | `preview_start` **不带 `validate: true`** 只重建 `dist/`，`.game-builder/artifacts/forgeax-player/assets/program-*.js`（引擎/Worker 代码）保持上一轮那份；而 `patch-preview-shell` 只换 `index.html` 里的壳层。于是页面是新的、引擎是旧的。**改了 `assets/**` 就用 `preview_start(validate: true)`**（它走 `scripts.package` → `package-with-shell.mjs` 才会重生成 artifacts）。判别：`grep -o "\.srv" .game-builder/artifacts/forgeax-player/assets/program-*.js \| wc -l` 应 > 0（换成你这次新加的字段名） |
+| 上一轮给的造化预览地址这一轮 `ERR_CONNECTION_REFUSED` | 预览宿主是**当次构建任务的子进程**，turn 结束即被回收。要验就在同一轮内验完；跨轮必须重起 `preview_start`（端口会变） |
 | 静态托管造化产物 → 页面白屏/转圈 | 那是给宿主用的单页，只拉 `index.html + zaohua-platform-init.js` 就停住。要静态托管就用 `dist/` + `inject-shell.mjs`（走 hostless 分支） |
 | `play.screenshot` 拍不到 0.3 秒的特效 | 截图从调用到成像有 **1~2 秒游戏时间延迟**。短特效要么配地面残留（`sweepMark` / `frostMark`，3.2s），要么只靠单测断言，别指望截图 |
 | HUD 贴着画布底边写字被切一半 | 1280×600 下引擎可见区只到逻辑 y≈704（底部约 16 逻辑像素被吃掉）。底部元素一律按 `paint.ts::HUD_BOTTOM` 留白，别用 `VIEW_H - 个位数` |
