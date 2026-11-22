@@ -146,8 +146,25 @@ export const game: Plugin = {
      * 2x is the ceiling on purpose: 2560x1440 is 3.7M pixels to upload per
      * frame, which is the most this 2D painter should push. Raising it further
      * belongs with finer art (a smaller voxel unit), not with this one change.
+     *
+     * ## 2026-11-22：默认 1x（**实测 2x 把呈现帧率打到 4 fps**）
+     *
+     * 用户录屏（1920×1350 窗口）逐帧算灰度差：**每 7~8 帧整幅跳一次
+     * （diff 12~13），中间连续 7 帧只有 0.0x** —— 真实呈现 ≈ 4 fps。
+     * 同一时刻角标自报 `间隔 6.9ms / 绘 1.4ms / 渲染 142/s`：`paint()` 确实
+     * 每 7 ms 跑一次，只是**画完的东西上不了屏**。
+     *
+     * 原因就在这个倍数：`ceil(canvasW / 1280)` 只在窗口**大于** 1280 时给 2，
+     * 而那正是最不该超采样的场景 —— 画面本来就要被放大显示。1920 宽的窗口
+     * 渲染 2560×1440，每帧上传 14.7 MB，乘以 142 fps ≈ **2 GB/s** 的纹理上传，
+     * 任何 GPU/合成链都顶不住，只能每 250 ms 吐一帧。
+     *
+     * 收益是什么？像素风 + 整数相机下，2x 只是把边缘锐度提高一档，在 1920 窗口
+     * 上肉眼几乎看不出；代价却是 4 倍像素、4 倍上传。所以默认降到 1x。
+     * 想要锐度可以把这里改回 2 —— 但先确认你的机器扛得住上传，否则就是拿
+     * 60 fps 换一档看不出的锐度。
      */
-    const RENDER_SCALE_MAX = 2;
+    const RENDER_SCALE_MAX = 1;
     const surface = new OffscreenCanvas(VIEW_W, VIEW_H);
     let surfaceScale = 1;
     const resizeSurface = (scale: number): void => {
@@ -417,6 +434,14 @@ export const game: Plugin = {
        * - 间隔本身就已经是 300~1000ms → 根本没拿到帧，别改绘制代码
        */
       frameGapMs: 0,
+      /**
+       * 实际渲染密度（1 = 1280×720 画布，2 = 2560×1440）。**只用于诊断**。
+       *
+       * 它决定了每帧要往 GPU 传多少像素：2x 是 4 倍上传量。2026-11-22 的
+       * 「画面每 250ms 才跳一次」就是 2x 造成的，所以角标必须能看见这个数 ——
+       * 否则改了 `RENDER_SCALE_MAX` 也没法确认到底生效没有。
+       */
+      surfaceScale: 1,
       /**
        * 上一帧 `paint()` 的实际耗时（指数平滑，毫秒）。**只用于诊断**。
        *
@@ -710,6 +735,7 @@ export const game: Plugin = {
       netStat.highest = driver.highestSeen;
       netStat.gap = Math.max(0, lead - have);
       netStat.lateFrames = netStat.stale;
+      netStat.surfaceScale = surfaceScale;
       channel?.postMessage({
         type: 'netStat',
         stat: {
