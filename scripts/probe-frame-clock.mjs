@@ -66,6 +66,9 @@ if (!captured) {
   process.exit(1)
 }
 
+/** 与 game/server/source/index.ts::RECENT_FRAMES 保持一致。 */
+const RECENT = 6
+
 const players = [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }]
 const game = captured.createGame(players)
 const results = []
@@ -97,8 +100,8 @@ const aTicks = ticks.filter((t) => s1.inputs[String(t)].a)
 const bTicks = ticks.filter((t) => s1.inputs[String(t)].b)
 check('B 没有意图就不出现在那些帧里（= 空输入）', bTicks.length === 0, `B 命中 ${bTicks.length} 帧`)
 check('窗口覆盖每一帧（含全员空帧），客户端才推得动',
-  ticks.length === Math.min(12, s1.frame + 1), `窗口 ${ticks.length} 帧 / frame=${s1.frame}`)
-check('广播窗口只保留最近一段（<= 12 帧）', ticks.length <= 12, `窗口 ${ticks.length} 帧`)
+  ticks.length === Math.min(RECENT, s1.frame + 1), `窗口 ${ticks.length} 帧 / frame=${s1.frame}`)
+check('广播窗口只保留最近一段（<= RECENT_FRAMES）', ticks.length <= RECENT, `窗口 ${ticks.length} 帧`)
 check('广播里有当前帧号字段且与窗口一致', typeof s1.frame === 'number' && s1.frame >= Math.max(...ticks),
   `frame=${s1.frame} maxTick=${Math.max(...ticks)}`)
 
@@ -168,7 +171,7 @@ check('零输入 3 秒仍严格 ~60 Hz（没有任何客户端在喂它）',
 const zeroTicks = Object.keys(solo.getState().inputs).map(Number).sort((x, y) => x - y)
 const gapless = zeroTicks.every((t, i) => i === 0 || t === zeroTicks[i - 1] + 1)
 check('帧号连续无空洞（帧号是自增整数，不按墙钟算）', gapless, `窗口 ${zeroTicks.length} 帧`)
-check('广播窗口仍覆盖满 12 帧（空帧也算条目）', zeroTicks.length === 12, `窗口 ${zeroTicks.length} 帧`)
+check('广播窗口仍覆盖满 RECENT_FRAMES 帧（空帧也算条目）', zeroTicks.length === RECENT, `窗口 ${zeroTicks.length} 帧`)
 check('窗口最大值 = 当前帧号', Math.max(...zeroTicks) === solo.getState().frame,
   `max=${Math.max(...zeroTicks)} frame=${solo.getState().frame}`)
 // 全员空帧：每条 bucket 都必须是空对象，而不是缺 key。
@@ -204,6 +207,16 @@ check('灌包之后整体速率仍回到 ~60 Hz', spamHz >= 52 && spamHz <= 68, 
 check('积压按帧消化完（applied 追上 submitted）', spamDone.stats.applied === 36,
   `applied=${spamDone.stats.applied}`)
 spam.stop()
+
+// ---- 9) 带宽实测：一次广播的 JSON 有多大 ----
+// 这决定了「降帧率」到底省多少。注意大头往往不是帧数，而是每个 playerId
+// 在每一帧里都要重复一遍（UUID 36 字符 × 人数 × 帧数）。
+const wire = JSON.stringify(game.getState())
+const perBroadcast = wire.length
+const broadcastHz = 1000 / 42
+console.log(`\n[带宽] 一次广播 JSON = ${perBroadcast} 字符`)
+console.log(`[带宽] 2 人局 ≈ ${(perBroadcast * broadcastHz / 1024).toFixed(1)} KB/s`
+  + `（16 人按人数线性放大 ≈ ${(perBroadcast * 8 * broadcastHz / 1024).toFixed(0)} KB/s）`)
 
 game.stop()
 const failed = results.filter((r) => !r.pass)

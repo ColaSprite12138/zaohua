@@ -27,9 +27,16 @@
  */
 
 import type { InputFrame } from './input-frame.ts';
+import { FIXED_HZ } from './step-clock.ts';
 
-/** 逻辑帧率。与客户端 `step-clock.ts::FIXED_HZ` 必须一致。 */
-export const FRAME_HZ = 60;
+/**
+ * 逻辑帧率。**唯一真源在 `step-clock.ts::FIXED_HZ`**，这里只是转出 ——
+ * 服务器和客户端各写一份常量是最容易「改一边忘另一边」的分叉源。
+ */
+export const FRAME_HZ = FIXED_HZ;
+
+/** 一帧的毫秒数。服务器帧钟按它定周期。 */
+export const FRAME_MS = 1000 / FRAME_HZ;
 
 /** 一个玩家的待贴意图最多攒多少条。超出丢最旧的（说明客户端在灌，不是在玩）。 */
 export const MAX_PENDING_PER_PLAYER = 40;

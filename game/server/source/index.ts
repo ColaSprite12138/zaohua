@@ -1,6 +1,6 @@
 import { createPlatformStateSyncRuntime } from '@vibegame/state-sync-runtime/server'
 import { decodeBase64, encodeBase64 } from '../../../assets/net/base64.ts'
-import { createFrameLog, advanceFrame, forgetPlayer, sliceHistory, submitIntent, FRAME_HZ, type FrameLog } from '../../../assets/net/frame-log.ts'
+import { createFrameLog, advanceFrame, forgetPlayer, sliceHistory, submitIntent, FRAME_HZ, FRAME_MS, type FrameLog } from '../../../assets/net/frame-log.ts'
 import { decodePacket, encodeInputFrame, type InputFrame } from '../../../assets/net/input-frame.ts'
 
 /**
@@ -50,10 +50,17 @@ const RULESET = 'extract-v2'
  * 广播里保留最近多少帧的输入。
  *
  * 这不是历史窗口（历史在 `frameLog.history` 里是全量的），只是**每轮广播都
- * 重发一遍**的那一小段：宿主 42 ms 广播一次、每轮带 12 帧 ≈ 200 ms，足够盖住
- * 一次丢包。更早的缺口由客户端发 `replay` 从全量历史里取，不靠广播碰运气。
+ * 重发一遍**的那一小段。
+ *
+ * 怎么算这个数：宿主 42 ms 广播一次，逻辑 60 Hz，所以每轮新增 2.5 帧。
+ * 6 帧 = 100 ms，正好覆盖「本轮 2.5 帧 + 上一轮那 2.5 帧 + 余量」——
+ * 也就是**丢一整轮广播还能在下一轮补齐**，不必触发 replay。
+ * 更早的缺口由客户端发 `replay` 从全量历史里取，不靠广播碰运气。
+ *
+ * 12 → 6 是 2026-11-22 的带宽收紧：覆盖能力不变（仍能吸收一次整包丢失），
+ * 每轮载荷直接减半。
  */
-const RECENT_FRAMES = 12
+const RECENT_FRAMES = 6
 
 /** 一次 replay 最多回多少帧（120 帧 ≈ 2 秒）。剩下的下一次再要。 */
 const REPLAY_CHUNK = 120
@@ -319,7 +326,7 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
       match?.reportLoading?.()
       // 帧钟：**独立**于宿主 42 ms 的 tick()。半周期轮询 + 累加补偿比
       // setInterval(16.67) 稳（后者在 Node 上会慢慢漂到 17~18 ms）。
-      const period = 1000 / FRAME_HZ
+      const period = FRAME_MS
       let nextAt = Date.now() + period
       timer = setInterval(() => {
         const now = Date.now()

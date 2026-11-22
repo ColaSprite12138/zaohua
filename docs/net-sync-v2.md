@@ -182,3 +182,64 @@ detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到�
 | `game.pack.ts` | `intentAcc` / `netOutbox` | 意图采样（墙钟 60 Hz），与执行解耦 |
 | 同上 | `MAX_CATCHUP_STEPS = 6` | 每渲染帧最多补 6 步，**剩下的留在 acc 下一帧继续**（不丢时间） |
 
+
+## 8. 帧率与带宽：为什么逻辑帧率不能跟着广播频率走
+
+### 8.1 两个频率是**两件事**
+
+| 频率 | 谁定 | 现在 | 能不能改 |
+|---|---|---|---|
+| 逻辑帧率 | `step-clock.ts::FIXED_HZ`（唯一真源，`frame-log.ts` 转出） | 60 Hz | 能，但玩法数值全是 dt 驱动的，改了只是粒度变粗 |
+| 广播频率 | `game/server/source/index.ts` 的 `roomPolicy.tickIntervalMs` | **42 ms（我们自己设的）** | 能，但宿主负载会跟着涨 |
+
+**42 ms 不是平台强制的。** 它是我们为了「少压宿主」自己挑的值。
+
+### 8.2 为什么不能直接拿宿主 `tick()` 当帧钟
+
+宿主的 `tick()` 是 `setInterval(42)`，实际会落在 42–50 ms（事件循环、序列化开销都在里面）。
+若逻辑帧号跟着它走，**帧间隔就不固定** → 画面速度随宿主负载忽快忽慢，
+正好违背 §7 的「每帧按时执行」。
+
+所以帧钟必须是**独立定时器 + 累加补偿**（现在的做法）。广播频率跟着逻辑帧率走，
+而不是反过来。
+
+### 8.3 带宽实测（`probe-frame-clock.mjs` 第 9 组）
+
+2 人局一次广播 `JSON.stringify(getState())` = **1605 字符**，42 ms 一轮 ≈ **37 KB/s**。
+
+**拆开看，74% 是固定开销**：
+
+| 部分 | 占比 | 说明 |
+|---|---|---|
+| 固定开销 | ~1400 字符（74%） | `players` / `stats` / `stats.tickMs` 分位数 / `hashes` / `departed` / `reply` 空对象 |
+| 输入窗口 | ~200 字符（12%） | 6 帧 × 2 人 × `{t,n:1,b:"16字符"}`，**每个 playerId（UUID 36 字符）每帧重复一遍** |
+
+**结论：在 2 人局降帧率几乎没有收益。** 60 Hz → 24 Hz（窗口 6 → 2）只省约 16%，
+因为省掉的全是那 12% 的输入部分。要省带宽应该先削**固定开销**：
+
+1. `stats` / `tickMs` 分位数只在每秒第一轮带，其余轮次给 `{}`；
+2. `hashes` 客户端根本不需要收（它只上行）；
+3. 输入改用「每帧一条 + 座位索引」，`playerId` 只在 `players` 里出现一次。
+
+三项做完，2 人局能到 ~10 KB/s 以下，16 人局从 ~300 KB/s 到 ~50 KB/s。
+
+### 8.4 真要改帧率，动这几处
+
+1. `step-clock.ts::FIXED_HZ`（唯一真源，其余全部由它派生）
+2. `roomPolicy.tickIntervalMs` = `FRAME_MS`（跟随逻辑帧率）
+3. `RECENT_FRAMES` = 覆盖一轮广播新增帧数 × 2（60 Hz/42 ms 时是 6）
+4. `state-hash.ts::HASH_INTERVAL_TICKS` = `FIXED_HZ`（保持 1 秒一次对账）
+5. `game.pack.ts::MAX_CATCHUP_STEPS` ≈ `MAX_FRAME_DELTA × FIXED_HZ`
+6. `sync-driver.ts::DEFAULT_LOOKAHEAD`（帧数 × dt = 固定延迟，60 Hz 时 2 帧 = 33 ms）
+7. 单机 `advanceSolo` 用同一个 `FIXED_DT`，所以**单机手感会一起变**；
+   若要保持单机 60 Hz，就得让 `FIXED_DT` 按模式取两个值（可行，但两套规则集）
+8. 重跑：`vitest`、`probe-frame-clock.mjs`（断言里有多处帧数）、单机 playthrough
+
+### 8.5 24 Hz 会不会吃掉判定窗口
+
+最窄的判定窗口是闪避无敌 **0.36 s**（`movement.ts` 里 `p.invuln = 0.36`）。
+24 Hz 下是 **8.6 帧**，60 Hz 下是 21.6 帧 —— **判定不会漏**。
+
+真正的代价是**观感**：逻辑位移每 42 ms 才更新一次，60 fps 渲染下会有阶梯感
+（200 px/s 的走位 = 每帧跳 8.4 px）。要消掉就得在绘制时用 `acc / FIXED_DT` 做插值。
+降到 30 Hz（33 ms）阶梯感减半，带宽与 24 Hz 差不到 1 KB/s（见 §8.3）。
