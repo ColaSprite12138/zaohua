@@ -111,6 +111,11 @@
     return value === null ? '--' : value.toFixed(1) + '/s';
   }
 
+  /** 毫秒数：没有值给 `--`，其余一位小数。 */
+  function msText(value) {
+    return typeof value === 'number' && value > 0 ? value.toFixed(1) + 'ms' : '--';
+  }
+
   function ensureDiag() {
     if (diagEl) return diagEl;
     try {
@@ -180,7 +185,11 @@
       + '  补 ' + (stat.replays || 0)
       + '  缺 ' + (stat.gap || 0)
       + '  同伴 ' + mateCount
-      + ' · 影子 ' + shadowCount;
+      + ' · 影子 ' + shadowCount
+      // 帧间隔 vs 绘制耗时：渲染帧率低的时候，这两个数直接分清责任
+      //   「间隔大、绘小」= 引擎根本没给帧（rAF 被节流 / 页面被遮挡）
+      //   「间隔小、绘大」= 绘制吃满了这一帧（该优化 paint）
+      + '  [间隔 ' + msText(stat.frameGapMs) + ' 绘 ' + msText(stat.paintMs) + ']';
     // 长时间 `缺 > 0` 说明补帧通道没通，不只是卡一下。
     if ((stat.gap || 0) > 0 && (stat.replays || 0) > 3) el.style.color = '#f09595';
     // 服务器帧率的判据是**逻辑帧率**（`NET_HZ` = 24），不是 60 了。低于 19
@@ -191,6 +200,12 @@
     // 执行帧率明显低于服务器 = 在积压，`领先` 会跟着涨。这一条比看领先更早
     // 暴露问题：领先还没涨起来，差额已经能看出来了。
     if (serverFps !== null && execFps !== null && execFps < serverFps * 0.9) {
+      el.style.color = '#f0b429';
+    }
+    // 「没拿到帧」与「画得慢」分色：间隔 > 33ms（< 30fps）但绘制不到一半，
+    // 就是引擎没在给帧（页面被遮挡 / rAF 被节流），优化 paint 一点用都没有。
+    if (typeof stat.frameGapMs === 'number' && stat.frameGapMs > 33
+      && typeof stat.paintMs === 'number' && stat.paintMs < stat.frameGapMs * 0.5) {
       el.style.color = '#f0b429';
     }
   }

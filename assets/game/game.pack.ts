@@ -399,9 +399,28 @@ export const game: Plugin = {
        * 稳定不涨 = 只在开局的短暂积压里追了一次，正常。
        */
       catchUpFrames: 0,
+      /**
+       * 本渲染帧与上一渲染帧的墙钟间隔（指数平滑，毫秒）。**只用于诊断**。
+       *
+       * 为什么要它：`renderFrames` 算出来的渲染帧率只能说明「画得慢」，
+       * 说不清是「引擎没给我帧」（rAF 被节流 / 标签页被遮挡 / 宿主 iframe
+       * 不可见）还是「我画得慢」。两者的处理和结论完全不同：
+       * - 间隔 ≈ 6.9ms（144Hz）~16.7ms（60Hz）而渲染帧率很低 → 是 `paintMs` 高
+       * - 间隔本身就已经是 300~1000ms → 根本没拿到帧，别改绘制代码
+       */
+      frameGapMs: 0,
+      /**
+       * 上一帧 `paint()` 的实际耗时（指数平滑，毫秒）。**只用于诊断**。
+       *
+       * 它和 `frameGapMs` 是一对：`paintMs / frameGapMs` 接近 1 就是「绘制把
+       * 这一帧吃满了」，接近 0 就是「时间花在别处」。别用它做任何判定。
+       */
+      paintMs: 0,
     };
     /** 是否正在追帧（跨渲染帧的滞回状态，见 `CATCHUP_TRIGGER/EXIT_TICKS`）。 */
     let catchingUp = false;
+    /** 上一渲染帧的墙钟时刻（`performance.now`）。帧间隔诊断用，不进 S。 */
+    let lastFrameAt = 0;
 
     function rebuildPeers(): void {
       syncRemotes();
@@ -576,6 +595,9 @@ export const game: Plugin = {
       netStat.localMiss = 0;
       netStat.catchUpFrames = 0;
       catchingUp = false;
+      lastFrameAt = 0;
+      netStat.frameGapMs = 0;
+      netStat.paintMs = 0;
       netStat.replays = 0;
       netStat.stale = 0;
       netStat.duplicates = 0;
@@ -1111,6 +1133,16 @@ export const game: Plugin = {
           fn: () => {
             const snapshot = world.getResource<InputSnapshot>(INPUT_SNAPSHOT_RESOURCE_KEY);
             const raw = world.getResource(Time).delta;
+            // 渲染帧间隔（诊断）：引擎给没给帧，和「画得慢」是两件事。
+            // determinism-ok: 纯渲染层诊断，只在 `netStat` 里，不进 S / 不进 hash / 不参与判定。
+            const frameAt = performance.now();
+            if (lastFrameAt > 0) {
+              const gap = frameAt - lastFrameAt;
+              netStat.frameGapMs = netStat.frameGapMs > 0
+                ? netStat.frameGapMs * 0.9 + gap * 0.1
+                : gap;
+            }
+            lastFrameAt = frameAt;
             // 渲染用的真实帧时长，只喂给绘制层的视觉插值。
             // 模拟层拿到的永远是当前模式的定长 dt —— 这是 P2 的第一条改动，也是帧同步的前提：
             // 60Hz 与 144Hz 的机器跑同一份输入，必须走出同一串位置。
@@ -1220,9 +1252,16 @@ export const game: Plugin = {
             // 挂在调用处而不是 `paintWithInterp` 内部，是因为它有两条返回分支
             // （alpha<=0 直接画），数在里面会漏掉那一半。
             netStat.renderFrames += 1;
+            // 绘制耗时（诊断）：与 `frameGapMs` 对照就能分清「画得慢」和「没拿到帧」。
+            // determinism-ok: 纯渲染层诊断，只在 `netStat` 里，不进 S / 不进 hash / 不参与判定。
+            const paintAt = performance.now();
             paintWithInterp(() => {
               paint(painter, state, pointer ? { x: screenX, y: screenY } : undefined, renderDt, view);
             });
+            const paintTook = performance.now() - paintAt;
+            netStat.paintMs = netStat.paintMs > 0
+              ? netStat.paintMs * 0.9 + paintTook * 0.1
+              : paintTook;
             texture.update();
             // Pointer feedback: the source realm cannot touch CSS, so tell the
             // main window which enemy (if any) is under the free cursor. Sent
