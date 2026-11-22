@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_CATCHUP_STEPS, NET_DT, NET_HZ, SOLO_DT, SOLO_HZ,
-  addTime, advanceClock, createStepClock, forceStep, seekClock, setRate,
+  addTime, advanceClock, clearDebt, createStepClock, forceStep, seekClock, setRate, takeStep,
 } from '../step-clock.ts';
 
 describe('固定步长时钟：两种帧率', () => {
@@ -114,5 +114,42 @@ describe('固定步长时钟：边界', () => {
     // 攒够一步才能再走 —— 证明负 acc 不会凭空变出步数
     expect(advanceClock(clock, 4 * NET_DT)).toBe(1);
     expect(clock.tick).toBe(6);
+  });
+});
+
+/*
+ * 追帧欠账必须能被清掉（2026-11-22 用户实测「切后台回来走完补帧，之后一直卡」）。
+ *
+ * `forceStep` 每步扣一个 `dt`，而 `addTime` 每帧只加真实帧间隔。积压卡在
+ * 触发/退出之间时 `acc` 单调变负 —— 负了之后非追帧分支一步都走不了，
+ * `renderAlpha` 也恒为 0（无插值），画面变成 24Hz 逐帧跳，而渲染/执行帧率
+ * 全都显示正常。`clearDebt` 就是那个封顶。
+ */
+describe('clearDebt：追帧欠账封顶', () => {
+  it('连续 forceStep 让 acc 变负，clearDebt 归零', () => {
+    const c = createStepClock(24);
+    for (let i = 0; i < 5; i += 1) forceStep(c);
+    expect(c.acc).toBeLessThan(0);
+    clearDebt(c);
+    expect(c.acc).toBe(0);
+  });
+
+  it('正余额不动（不能把攒好的时间抹掉）', () => {
+    const c = createStepClock(24);
+    addTime(c, c.dt * 0.5);
+    const before = c.acc;
+    expect(before).toBeGreaterThan(0);
+    clearDebt(c);
+    expect(c.acc).toBe(before);
+  });
+
+  it('清完之后 takeStep 仍按墙钟节奏走（不会因为清零而丢步或暴走）', () => {
+    const c = createStepClock(24);
+    for (let i = 0; i < 8; i += 1) forceStep(c);
+    clearDebt(c);
+    // 攒满一步就该走一步，且只走一步。
+    addTime(c, c.dt);
+    expect(takeStep(c)).toBe(true);
+    expect(takeStep(c)).toBe(false);
   });
 });

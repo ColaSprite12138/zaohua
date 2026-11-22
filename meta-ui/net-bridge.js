@@ -268,7 +268,10 @@
       + ' 主线程 ' + fpsText(mainThread.fps)
       // 渲染密度：2x = 2560×1440，每帧 4 倍纹理上传。它是「画面动了但上不了屏」
       // 的头号嫌疑，必须能在角标上直接确认生效没有。
-      + ' ×' + (typeof stat.surfaceScale === 'number' ? stat.surfaceScale : '?') + ']'
+      + ' ×' + (typeof stat.surfaceScale === 'number' ? stat.surfaceScale : '?')
+      // 插值进度：恒 0 = 一直在画上一步，画面会退化成 24Hz 逐帧跳，
+      // 而渲染/执行帧率全都正常 —— 这是「数字都好看但就是卡」的元凶。
+      + ' α' + (typeof stat.alpha === 'number' ? stat.alpha.toFixed(2) : '?') + ']'
       // upd = 宿主每秒递来几次 game_update（平台层活没活）
       // del = 已经投递给引擎的帧号水位；srv = 服务器当前帧号
       // 「upd 0、srv 不动」= 平台静默；「upd 有、srv 涨、del 也涨但服务器为 0」

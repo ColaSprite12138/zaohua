@@ -40,7 +40,7 @@ import { testArena } from '../resource/maps/arena-test.ts';
 // 这些模块刻意不 import 任何引擎类型 —— 它们只是算数和数据结构，能在 node 里单测。
 import {
   CATCHUP_EXIT_TICKS, CATCHUP_TRIGGER_TICKS, MAX_CATCHUP_STEPS, NET_HZ, SOLO_HZ,
-  addTime, createStepClock, forceStep, seekClock, setRate, takeStep,
+  addTime, clearDebt, createStepClock, forceStep, seekClock, setRate, takeStep,
 } from '../net/step-clock.ts';
 import {
   NO_SKILL, NO_SWITCH, decodePacket, emptyInputFrame, encodeBatch,
@@ -442,6 +442,14 @@ export const game: Plugin = {
        * 否则改了 `RENDER_SCALE_MAX` 也没法确认到底生效没有。
        */
       surfaceScale: 1,
+      /**
+       * 当前渲染插值进度 0..1（`renderAlpha(acc, dt)`）。**只用于诊断**。
+       *
+       * 它是「画面到底平不平滑」的唯一直接证据：恒为 0 意味着一直在画上一步的
+       * 位置，插值形同不存在 —— 画面会退化成 24 Hz 逐帧跳跃，而渲染/执行帧率
+       * 全都显示正常。`acc` 曾长期为负，就是这个值恒 0 的成因。
+       */
+      alpha: 0,
       /**
        * 上一帧 `paint()` 的实际耗时（指数平滑，毫秒）。**只用于诊断**。
        *
@@ -868,6 +876,28 @@ export const game: Plugin = {
         steps += 1;
       }
 
+      /*
+       * **`acc` 绝不能停在负数上。**
+       *
+       * `forceStep` 每步扣一个 `dt`（41.7ms），而 `addTime` 每渲染帧只加 6.9ms。
+       * 只要 backlog 卡在「进追帧」与「退追帧」之间（实测稳定 8：`> 8` 才进，
+       * `<= 3` 才出），而实时帧又是每帧只到 1 个 —— 每帧净欠约 35ms，几秒后
+       * `acc` 就是大负数。
+       *
+       * 一旦为负，两个后果同时发生：
+       * 1. 非追帧分支的 `acc + 1e-9 < dt` 永远成立 → **一步都走不了**，
+       *    于是 backlog 涨过阈值又进追帧、跑几步又退出，来回振荡 = 走走停停；
+       * 2. `renderAlpha(负数)` 恒等于 0 → 画面永远画「上一步」，**插值彻底失效**，
+       *    从平滑移动退化成 24Hz 的逐帧跳跃。
+       *
+       * 而角标上「渲染 143/s、间隔 6.9ms、绘 1.4ms、领先 8」全都正常 ——
+       * 因为引擎确实在画、时钟确实在走，**只是画出来的是同一个位置**。
+       * 2026-11-22 用户实测「切后台回来走完补帧，之后一直卡且不恢复」就是它。
+       *
+       * 追帧的目的本来就是"多跑几步把积压吃掉"，多跑的那些步不该记成欠账。
+       */
+      clearDebt(stepClock);
+      netStat.alpha = renderAlpha(stepClock.acc, stepClock.dt);
       // ---- 3) 补帧：有洞就立刻要 ----
       const gap = requestReplay(driver, now);
       if (gap) {
