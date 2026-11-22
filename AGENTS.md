@@ -1,5 +1,16 @@
 # ForgeaX Game Project Guide
 
+> **验证通道铁律（用户 2026-11-22 要求写死，硬性，每次新会话必读）**：
+> **本地预览没有平台能力，它不是验证入口。** 打开 `http://127.0.0.1:58080/index.html` 会报
+> `PlatformClient was not ready before Tian Gong Engine initialize`，**引擎世界根本起不来** ——
+> 这不是环境故障，也不是待排查的 bug，是通道选错了。
+> - **PVP / 联机** → 只能**造化宿主**（`preview_start(validate:true)` 或 `package` 产物）+ 两个真账号
+>   + `scripts/verify-two-player-net.mjs <previewUrl>`（`MATCH_USER_A/B`、`HOLD_MS=180000`）。
+> - **单机玩法 / 帧率 / 手感 / playthrough** → `forgeax project play scripts/xxx.mjs --json`（自带 PlatformClient stub）。
+> - **58080** → 只用于「交付给用户自己打开的地址」与「壳层静态截图」，**不许拿它判「能不能跑 / 卡不卡」**。
+>
+> 看到那条报错就**换通道**，不要停下来报障，更不要为了它去改游戏代码。细节见 `HANDOFF.md`「已知陷阱速查」与 `.workbuddy/memory/MEMORY.md` §3。
+
 > **本工程交接先读 [`HANDOFF.md`](HANDOFF.md)**：当前已实现的功能契约、保护清单、改完必跑的验收、可回滚基线都在那里。本文其余部分是 ForgeAX 引擎模板自带的通用 SDK 规范，不含本工程特性。
 
 > **Git 提交纪律（用户 2026-11-10 明确要求，硬性）**：远端 `origin` = `git@github.com:ColaSprite12138/zaohua.git`（`main`）。

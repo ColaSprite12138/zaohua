@@ -400,6 +400,18 @@ MATCH_USER_A=.. MATCH_PASS_A=.. MATCH_USER_B=.. MATCH_PASS_B=.. \
   裸 `1010,430` 落在 HUD 上，换算后的 `1010,478` 才点中地面）。
 - 联机链路：平台上 `multiplayer_integration.stage` 到 `verified`（§3.10）代表 P1 接通；
   P2 的输入链路看上面那 14 条，**本地静态页（58080）永远验不了联机**（没有 PlatformClient）。
+  **2026-11-22 补充（用户要求写死）**：静态页缺 PlatformClient 之后，连**引擎世界都起不来**
+  （`PlatformClient was not ready before Tian Gong Engine initialize`），所以它不是「只能玩单机」，
+  而是「只能看壳层」。三条通道各管一件事，别混：
+
+  | 要验什么 | 唯一通道 |
+  |:--|:--|
+  | PVP / 联机 / 输入互通 / 分叉 | **造化宿主**（`preview_start(validate:true)` 或 `package` 产物）+ 两个真账号 + `scripts/verify-two-player-net.mjs <previewUrl>` |
+  | 单机玩法 / 帧率 / 手感 / playthrough | `forgeax project play scripts/xxx.mjs --json`（自带 PlatformClient stub；`probe-render-cost.mjs` 走这条） |
+  | 交付给用户自己打开 / 壳层静态截图 | `http://127.0.0.1:58080/index.html?v=<随机>` |
+
+  **反模式**：打开 58080 看到那条报错就下结论「起不来 / 量不了」—— 这是环境事实，不是待排查的
+  bug，正确动作是换通道。
 
 ### 6.1 本轮新加的诊断工具（下次直接从这些开始，别再靠猜）
 
