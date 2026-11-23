@@ -210,3 +210,60 @@ export function stepVisualMotion(
   }
   return { x: m.x, y: m.y };
 }
+
+/**
+ * 一个**非本机实体**（远端玩家 / 怪）的视觉追踪单元。
+ *
+ * 为什么需要它：本机玩家只有一份状态，可以直接用 `frameTravel / frameSteps` 算 `V`；
+ * 远端和怪各有几十个，必须逐个记录「这一步走了多远、累计几步」，才能算出各自这段
+ * 逻辑的平均速度。没有它，补帧时远端会一次快进多步、怪会跳格。
+ *
+ * `motion` 的初值取**首次看到的逻辑位置**，所以新进视野的实体不会从 (0,0) 飞过来。
+ */
+export type ActorCell = {
+  motion: VisualMotion;
+  /** 本渲染帧内这个实体累计走过的路程（px）。 */
+  travel: number;
+  /** 本渲染帧内这个实体参与过的逻辑步数。 */
+  steps: number;
+};
+
+export function createActorCell(x: number, y: number): ActorCell {
+  return { motion: createVisualMotion(x, y), travel: 0, steps: 0 };
+}
+
+/**
+ * 记录「这一步之后它走了多远」。`prev` 缺失（刚创建 / 刚进视野）时只记步数，
+ * 不把首次出现算成一段位移 —— 那会让 `V` 虚高，画面冲一下。
+ */
+export function noteActorStep(
+  cell: ActorCell,
+  prev: { readonly x: number; readonly y: number } | undefined,
+  cur: { readonly x: number; readonly y: number },
+): void {
+  if (prev !== undefined) {
+    const dx = cur.x - prev.x;
+    const dy = cur.y - prev.y;
+    cell.travel += Math.sqrt(dx * dx + dy * dy);
+  }
+  cell.steps += 1;
+}
+
+/** 把一个实体的「目标 + 这段逻辑的平均速度」交给它的追随器，然后清空累计。 */
+export function flushActorCell(cell: ActorCell, curX: number, curY: number, dt: number): void {
+  if (cell.steps <= 0) return;
+  const spanSeconds = cell.steps * dt;
+  syncVisualTarget(
+    cell.motion,
+    curX,
+    curY,
+    spanSeconds > 0 ? cell.travel / spanSeconds : 0,
+  );
+  cell.travel = 0;
+  cell.steps = 0;
+}
+
+/** 这一帧画出去的位置（不推进时返回当前值）。 */
+export function stepActorCell(cell: ActorCell, dtRender: number, dt: number): { x: number; y: number } {
+  return stepVisualMotion(cell.motion, dtRender, dt);
+}

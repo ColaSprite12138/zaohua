@@ -35,6 +35,8 @@ export default async function verifyVisualSmooth(play) {
         gap: Number(s.drawGap ?? 0),
         x: Number(s.playerWorld?.x ?? 0),
         y: Number(s.playerWorld?.y ?? 0),
+        actors: Number(s.visualActors ?? 0),
+        actorGap: Number(s.actorMaxGap ?? 0),
       });
     }
 
@@ -63,13 +65,23 @@ export default async function verifyVisualSmooth(play) {
       `画面落后不得超过 1.8 个逻辑步（实测 ${maxGap.toFixed(2)}px，一步 ${STEP.toFixed(2)}px）`,
     );
 
+    // 远端玩家 / 怪也必须被同一套追随器接管，且画面落后有界。
+    const actors = Math.max(...samples.map((s) => s.actors));
+    assert.ok(actors >= 1, `怪 / 远端应被追随器接管（visualActors=${actors}）`);
+    const actorGap = Math.max(...samples.map((s) => s.actorGap));
+    assert.ok(
+      actorGap <= STEP * 1.8,
+      `怪的画面落后不得超过 1.8 步（实测 ${actorGap.toFixed(2)}px）`,
+    );
+
     // 位置真的在朝点击方向单调前进（没有来回抖）。
     const first = samples[0];
     const last = samples[samples.length - 1];
     console.log(
       `[visual-motion] samples=${samples.length} moving=${moving.length}`
       + ` median=${median.toFixed(1)} max=${maxSpeed.toFixed(1)}`
-      + ` maxGap=${maxGap.toFixed(2)} (step=${STEP.toFixed(2)}px)`,
+      + ` maxGap=${maxGap.toFixed(2)} (step=${STEP.toFixed(2)}px)`
+      + ` actors=${actors} actorGap=${actorGap.toFixed(2)}`,
     );
     assert.ok(
       last.x > first.x + 10,

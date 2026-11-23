@@ -53,10 +53,14 @@ import {
   type RawInput,
 } from '../net/input-latch.ts';
 import { hasActivity } from '../net/intent-filter.ts';
-import { interpPos, renderAlpha } from './interp.ts';
+import { renderAlpha } from './interp.ts';
 // 渲染层移动追随器：逻辑执行给出「目标 + 这段逻辑的平均速度」，渲染帧自己走过去。
 // 只影响画面位置（V 层），不进 S / 不进 hash / 不参与判定。
-import { createVisualMotion, resetVisualMotion, stepVisualMotion, syncVisualTarget } from './visual-motion.ts';
+import {
+  createActorCell, createVisualMotion, flushActorCell, noteActorStep,
+  resetVisualMotion, stepActorCell, stepVisualMotion, syncVisualTarget,
+  type ActorCell,
+} from './visual-motion.ts';
 import { cameraFor } from '../combat/world.ts';
 import {
   DEFAULT_LOOKAHEAD, accept as acceptFrame, canStep, contiguous,
@@ -227,6 +231,21 @@ export const game: Plugin = {
         return Math.sqrt(dx * dx + dy * dy);
       })(),
       /**
+       * 被追随器接管的**非本机**实体数（远端玩家 + 怪），以及它们当中
+       * 「画面位置 vs 逻辑位置」的最大距离。稳态应 ≈ 一个逻辑步，不该持续变大。
+       */
+      visualActors: actorCells.size,
+      actorMaxGap: (() => {
+        let worst = 0;
+        for (const [ent, cell] of actorCells) {
+          const dx = ent.x - cell.motion.x;
+          const dy = ent.y - cell.motion.y;
+          const gapPx = Math.sqrt(dx * dx + dy * dy);
+          if (gapPx > worst) worst = gapPx;
+        }
+        return worst;
+      })(),
+      /**
        * 渲染帧间隔与绘制耗时（毫秒，均做过指数平滑）。
        *
        * 只读诊断：用来回答「画面为什么慢」—— 间隔大而绘制小说明引擎没给帧，
@@ -273,19 +292,12 @@ export const game: Plugin = {
     /** 一帧渲染采到的输入，按逻辑步分发（边沿只给第一个步）。 */
     const latch = createInputLatch();
     /**
-     * 上一逻辑帧的**渲染位置**（只给插值用，不进 `S`、不进 hash、不进帧）。
+     * 上一逻辑步之前的位置快照：**所有在场实体**（本机 / 远端玩家 / 怪），按对象引用索引。
      *
-     * 逻辑 24 Hz、渲染 60 fps：直接画当前位置会让同一位置被画 2~3 帧才跳一次
-     * （205 px/s 就是每 41.7 ms 跳 8.5 px）。`paint` 前用这里的位置做插值，
-     * 画面变成 60 fps 连续移动，代价是视觉比逻辑晚一步（41.7 ms）。
+     * 用途只有一个 —— 算「这一步它走了多远」，作为那段逻辑的平均速度 `V`。
+     * 不进 `S`、不进 hash、不进帧。
      */
-    type PrevPositions = {
-      player: { x: number; y: number } | null;
-      camera: { x: number; y: number } | null;
-      /** 按**对象引用**索引：`Skeleton` 没有稳定 id，死怪也不会立刻出数组。 */
-      skeletons: Map<object, { x: number; y: number }>;
-    };
-    let prevPos: PrevPositions = { player: null, camera: null, skeletons: new Map() };
+    let prevActors = new Map<object, { x: number; y: number }>();
     /**
      * 最后一次**真正画出去**的玩家位置。它和 `state.player` 不相等就说明插值在起作用
      * （只读诊断：验收脚本靠它证明「画面不是每 41.7 ms 跳一次」，而不是只看「没崩」）。
@@ -314,6 +326,17 @@ export const game: Plugin = {
     let frameTravel = 0;
 
     /**
+     * **非本机实体**的视觉追踪单元（远端玩家 + 怪），按对象引用索引。
+     *
+     * 为什么按引用而不是 id：`Skeleton` 没有稳定 id，而对象引用在整个生命周期里
+     * 唯一；远端玩家也有稳定 `id`，但统一用引用可以少一条分支。
+     *
+     * 本机玩家不在里面：它只有一份，用 `frameTravel / frameSteps` 直接算，且相机
+     * 要单独跟它。三者共用同一套速度规则，所以画面表现一致。
+     */
+    const actorCells = new Map<{ x: number; y: number }, ActorCell>();
+
+    /**
      * 追随器需要硬切的标记：新局 / 传送 / 换图 / 解锁重置时置位，绘制前消费。
      * 用标记而不是立刻 reset，是因为 `deploy` 改出生坐标发生在 `clearPrevPositions()`
      * **之后**，提前 reset 会切到旧坐标。
@@ -322,27 +345,67 @@ export const game: Plugin = {
 
     /** 把本帧累计的逻辑位移交给追随器。没有执行过逻辑步就什么都不做（目标没变）。 */
     function flushVisualTarget(): void {
-      if (frameSteps <= 0) return;
-      const spanSeconds = frameSteps * stepClock.dt;
-      syncVisualTarget(
-        visual,
-        state.player.x,
-        state.player.y,
-        spanSeconds > 0 ? frameTravel / spanSeconds : 0,
-      );
-      frameSteps = 0;
-      frameTravel = 0;
+      if (frameSteps > 0) {
+        const spanSeconds = frameSteps * stepClock.dt;
+        syncVisualTarget(
+          visual,
+          state.player.x,
+          state.player.y,
+          spanSeconds > 0 ? frameTravel / spanSeconds : 0,
+        );
+        frameSteps = 0;
+        frameTravel = 0;
+      }
+      // 远端玩家与怪：各自的目标与平均速度，同一个口径。
+      for (const [ent, cell] of actorCells) {
+        flushActorCell(cell, ent.x, ent.y, stepClock.dt);
+      }
     }
 
-    /** 每执行一步之前调一次：把「这一步之前」的位置记下来。 */
+    /** 每执行一步之前调一次：把「这一步之前」所有在场实体的位置记下来。 */
     function capturePrevPositions(): void {
-      const skeletons = new Map<object, { x: number; y: number }>();
-      for (const sk of state.skeletons) skeletons.set(sk, { x: sk.x, y: sk.y });
-      prevPos = {
-        player: { x: state.player.x, y: state.player.y },
-        camera: { x: state.camera.x, y: state.camera.y },
-        skeletons,
-      };
+      const snapshot = new Map<object, { x: number; y: number }>();
+      for (const p of state.players) snapshot.set(p, { x: p.x, y: p.y });
+      for (const sk of state.skeletons) snapshot.set(sk, { x: sk.x, y: sk.y });
+      prevActors = snapshot;
+    }
+
+    /**
+     * 每执行一步之后调一次：给**非本机**实体记账（这一步走了多远 + 几步）。
+     * 本机玩家走 `frameTravel / frameSteps`，不在这里，因为它还要带相机。
+     *
+     * 首次见到的实体只建单元、不记位移：它的 `motion` 初值就是当前位置，
+     * 不会从 (0,0) 飞过来。
+     */
+    function noteActorSteps(): void {
+      for (const p of state.players) {
+        if (p === state.player) continue;
+        const cell = actorCells.get(p);
+        if (cell === undefined) {
+          actorCells.set(p, createActorCell(p.x, p.y));
+          continue;
+        }
+        noteActorStep(cell, prevActors.get(p), p);
+      }
+      for (const sk of state.skeletons) {
+        const cell = actorCells.get(sk);
+        if (cell === undefined) {
+          actorCells.set(sk, createActorCell(sk.x, sk.y));
+          continue;
+        }
+        noteActorStep(cell, prevActors.get(sk), sk);
+      }
+    }
+
+    /** 已经离场的实体（怪被打死移出数组 / 远端退局）要把追踪单元一起丢掉。 */
+    function pruneActorCells(): void {
+      if (actorCells.size === 0) return;
+      const alive = new Set<{ x: number; y: number }>();
+      for (const p of state.players) alive.add(p);
+      for (const sk of state.skeletons) alive.add(sk);
+      for (const key of actorCells.keys()) {
+        if (!alive.has(key)) actorCells.delete(key);
+      }
     }
 
     /**
@@ -353,15 +416,17 @@ export const game: Plugin = {
      * 因为 `deploy` 会在调用本函数**之后**才改出生坐标。
      */
     function clearPrevPositions(): void {
-      prevPos = { player: null, camera: null, skeletons: new Map() };
+      prevActors = new Map();
+      actorCells.clear();
       visualNeedsSnap = true;
     }
 
     /**
-     * 带着**渲染层追随器**画一帧：把视觉位置临时写进 `state`，画完在 `finally` 里还原。
+     * 带着**渲染层追随器**画一帧：把视觉位置临时写进实体，画完在 `finally` 里还原。
      *
-     * 与旧实现的区别只有一处：玩家与相机的位置来自 `visual`（追逻辑目标），
-     * 不再来自 `lerp(prev, cur, alpha)`。怪仍按 `alpha` 插值 —— 它们没有追随器。
+     * 三类对象共用同一套速度规则（`visual-motion.ts`）：本机玩家走 `visual`，
+     * 远端玩家与怪走 `actorCells` 里各自的单元。所以「自己的移动、队友的移动、
+     * 怪的移动」在 60/144 fps 下都是连续位移，补帧时也都不跳。
      *
      * 安全性：`paint` 是同步的、主循环最后一步；期间没有别的代码读 `S`。
      * 判定永远用真实位置（`step()` 已经跑完），这里改的只是绘制用的那一瞬。
@@ -373,13 +438,17 @@ export const game: Plugin = {
         frameSteps = 0;
         frameTravel = 0;
       }
+      pruneActorCells();
       const drawn = stepVisualMotion(visual, dtRender, stepClock.dt);
-      const alpha = renderAlpha(stepClock.acc, stepClock.dt);
-      const prev = prevPos;
       const realPlayer = { x: state.player.x, y: state.player.y };
       const realCamera = { x: state.camera.x, y: state.camera.y };
-      const realSkeletons: { sk: object & { x: number; y: number }; x: number; y: number }[] =
-        state.skeletons.map((sk) => ({ sk, x: sk.x, y: sk.y }));
+      const realActors: { ent: { x: number; y: number }; x: number; y: number }[] = [];
+      for (const [ent, cell] of actorCells) {
+        const pose = stepActorCell(cell, dtRender, stepClock.dt);
+        realActors.push({ ent, x: ent.x, y: ent.y });
+        ent.x = pose.x;
+        ent.y = pose.y;
+      }
       lastDrawPos = { x: drawn.x, y: drawn.y };
       try {
         state.player.x = drawn.x;
@@ -389,24 +458,15 @@ export const game: Plugin = {
         const camera = cameraFor(state.world, drawn.x, drawn.y);
         state.camera.x = camera.x;
         state.camera.y = camera.y;
-        if (alpha > 0) {
-          for (const entry of realSkeletons) {
-            const before = prev.skeletons.get(entry.sk);
-            if (!before) continue;
-            const now = interpPos(before, entry, alpha);
-            entry.sk.x = now.x;
-            entry.sk.y = now.y;
-          }
-        }
         draw();
       } finally {
         state.player.x = realPlayer.x;
         state.player.y = realPlayer.y;
         state.camera.x = realCamera.x;
         state.camera.y = realCamera.y;
-        for (const entry of realSkeletons) {
-          entry.sk.x = entry.x;
-          entry.sk.y = entry.y;
+        for (const entry of realActors) {
+          entry.ent.x = entry.x;
+          entry.ent.y = entry.y;
         }
       }
     }
@@ -858,6 +918,7 @@ export const game: Plugin = {
         const movedY = state.player.y - beforeY;
         frameTravel += Math.sqrt(movedX * movedX + movedY * movedY);
         frameSteps += 1;
+        noteActorSteps();
         reportHash(tick);
       }
       flushVisualTarget();
@@ -959,6 +1020,7 @@ export const game: Plugin = {
         const movedY = state.player.y - beforeY;
         frameTravel += Math.sqrt(movedX * movedX + movedY * movedY);
         frameSteps += 1;
+        noteActorSteps();
         // view-only: 本机鼠标只用于悬停环 / 相机，与死亡结算、UI 面板、血条一样
         // 属于 V 层，各随本机座位；不进帧、不进 hash、不参与世界演算。
         updateView(state, inputs.get(state.me) ?? EMPTY_STEP_INPUT);

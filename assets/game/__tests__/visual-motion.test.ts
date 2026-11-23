@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   ENTER_STEPS, SNAP_PX, SPEED_CAP, TELEPORT_PX,
-  createVisualMotion, resetVisualMotion, stepVisualMotion, syncVisualTarget,
+  createActorCell, createVisualMotion, flushActorCell, noteActorStep,
+  resetVisualMotion, stepActorCell, stepVisualMotion, syncVisualTarget,
 } from '../visual-motion.ts';
 
 /** 联机 / 单机共用的逻辑步长与典型走速（`movement.ts::walk` 的 205 px/s）。 */
@@ -162,5 +163,74 @@ describe('visual-motion：单帧位移受剩余距离夹住', () => {
     expect(stepVisualMotion(m, Number.NaN, DT)).toEqual({ x: 10, y: 20 });
     expect(stepVisualMotion(m, FRAME, 0)).toEqual({ x: 10, y: 20 });
     expect(Number.isFinite(m.x) && Number.isFinite(m.y)).toBe(true);
+  });
+});
+
+describe('ActorCell：远端玩家与怪的多实体追踪', () => {
+  it('两个实体各按自己的速度走，互不串', () => {
+    const fast = createActorCell(0, 0);
+    const slow = createActorCell(0, 100);
+    // 同一逻辑步：快的走 10 px，慢的走 2 px。
+    noteActorStep(fast, { x: 0, y: 0 }, { x: 10, y: 0 });
+    noteActorStep(slow, { x: 0, y: 100 }, { x: 2, y: 100 });
+    flushActorCell(fast, 10, 0, DT);
+    flushActorCell(slow, 2, 100, DT);
+
+    expect(fast.motion.speed).toBeCloseTo(10 / DT, 6);
+    expect(slow.motion.speed).toBeCloseTo(2 / DT, 6);
+    // 一个 140 fps 渲染帧内各自走的距离也按自己的速度算。
+    stepActorCell(fast, FRAME, DT);
+    stepActorCell(slow, FRAME, DT);
+    expect(fast.motion.x).toBeCloseTo((10 / DT) * FRAME, 6);
+    expect(slow.motion.x).toBeCloseTo((2 / DT) * FRAME, 6);
+  });
+
+  it('首次出现的实体只记步数，不把出生位移算成速度', () => {
+    const cell = createActorCell(300, 200);
+    noteActorStep(cell, undefined, { x: 300, y: 200 });
+    flushActorCell(cell, 300, 200, DT);
+    expect(cell.motion.speed).toBe(0);
+    expect(cell.motion.x).toBe(300);
+    expect(cell.steps).toBe(0);
+  });
+
+  it('一次补 6 步后按 1.3V 收敛，稳态回到 V', () => {
+    const cell = createActorCell(0, 0);
+    for (let i = 0; i < 6; i += 1) {
+      noteActorStep(cell, { x: i * STEP, y: 0 }, { x: (i + 1) * STEP, y: 0 });
+    }
+    flushActorCell(cell, 6 * STEP, 0, DT);
+    // 6 步的路程 ÷ 6 步的时间 = 一步的速度，不能被放大成 6 倍。
+    expect(cell.motion.speed).toBeCloseTo(V, 6);
+
+    const speeds: number[] = [];
+    for (let i = 0; i < 120; i += 1) {
+      stepActorCell(cell, FRAME, DT);
+      speeds.push(cell.motion.lastSpeed);
+    }
+    expect(speeds[0]).toBeCloseTo(SPEED_CAP * V, 3);
+    expect(Math.max(...speeds)).toBeLessThanOrEqual(SPEED_CAP * V + 1e-6);
+    expect(cell.motion.x).toBeCloseTo(6 * STEP, 6);
+  });
+
+  it('flush 之后累计归零，不会把同一段重复计入', () => {
+    const cell = createActorCell(0, 0);
+    noteActorStep(cell, { x: 0, y: 0 }, { x: STEP, y: 0 });
+    flushActorCell(cell, STEP, 0, DT);
+    expect(cell.travel).toBe(0);
+    expect(cell.steps).toBe(0);
+    // 没有新逻辑步时再 flush，速度不变（不是 0，也不是翻倍）。
+    flushActorCell(cell, STEP, 0, DT);
+    expect(cell.motion.speed).toBeCloseTo(V, 6);
+  });
+
+  it('静止实体每帧都不动，画面不会自己漂', () => {
+    const cell = createActorCell(50, 50);
+    noteActorStep(cell, { x: 50, y: 50 }, { x: 50, y: 50 });
+    flushActorCell(cell, 50, 50, DT);
+    for (let i = 0; i < 60; i += 1) stepActorCell(cell, FRAME, DT);
+    expect(cell.motion.x).toBe(50);
+    expect(cell.motion.y).toBe(50);
+    expect(cell.motion.lastSpeed).toBe(0);
   });
 });
