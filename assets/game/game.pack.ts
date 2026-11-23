@@ -54,6 +54,10 @@ import {
 } from '../net/input-latch.ts';
 import { hasActivity } from '../net/intent-filter.ts';
 import { interpPos, renderAlpha } from './interp.ts';
+// 渲染层移动追随器：逻辑执行给出「目标 + 这段逻辑的平均速度」，渲染帧自己走过去。
+// 只影响画面位置（V 层），不进 S / 不进 hash / 不参与判定。
+import { createVisualMotion, resetVisualMotion, stepVisualMotion, syncVisualTarget } from './visual-motion.ts';
+import { cameraFor } from '../combat/world.ts';
 import {
   DEFAULT_LOOKAHEAD, accept as acceptFrame, canStep, contiguous,
   createSyncDriver, pendingTicks, requestReplay, reset as resetSync,
@@ -209,8 +213,19 @@ export const game: Plugin = {
       /** 画面用的插值位置（与 `playerWorld` 不等即证明插值生效）。 */
       drawX: lastDrawPos.x,
       drawY: lastDrawPos.y,
-      /** 渲染进度 0..1：0 = 画的是上一步，1 = 画的是当前步。 */
+      /** 渲染进度 0..1：0 = 画的是上一步，1 = 画的是当前步（怪仍按它插值）。 */
       alpha: renderAlpha(stepClock.acc, stepClock.dt),
+      /**
+       * 渲染层追随器的诊断（只读，不进 `S`）：
+       * `drawSpeed` 是这一帧画出去的速度，稳态应 ≈ 玩家走速，补帧时才接近 1.3 倍；
+       * `drawGap` 是画面位置与逻辑位置的距离，稳态 ≈ 一个逻辑步，不该持续变大。
+       */
+      drawSpeed: visual.lastSpeed,
+      drawGap: (() => {
+        const dx = state.player.x - lastDrawPos.x;
+        const dy = state.player.y - lastDrawPos.y;
+        return Math.sqrt(dx * dx + dy * dy);
+      })(),
       /**
        * 渲染帧间隔与绘制耗时（毫秒，均做过指数平滑）。
        *
@@ -277,6 +292,48 @@ export const game: Plugin = {
      */
     let lastDrawPos = { x: 0, y: 0 };
 
+    /**
+     * **渲染层移动追随器**（`V` 层，不进 `S` / 不进 hash / 不参与判定）。
+     *
+     * 逻辑执行完只给出两个东西：玩家**最终位置**、以及这一段逻辑的**平均速度**。
+     * 渲染帧从这里出发朝目标走：稳态按 `V` 匀速，补帧时用 `1.3V` 拉近，
+     * 走到就贴住。规则与理由全在 `visual-motion.ts` 顶部。
+     *
+     * 为什么不是「插值」：插值的位置由 `acc` 推导，补帧时一次跑 6 步会表现为
+     * 画面快进；这里用有限超速平滑拉近，画面不跳。
+     */
+    let visual = createVisualMotion(state.player.x, state.player.y);
+
+    /**
+     * 本渲染帧内执行过的逻辑步数 / 玩家走过的总路程（px）。
+     *
+     * `步数 > 0` 才把「目标 + 平均速度」同步给追随器：一帧跑 6 步时 `V` 仍是
+     * 205，而不是 1224 —— 平均速度是「这段逻辑走过的路程 ÷ 这段逻辑的总时间」。
+     */
+    let frameSteps = 0;
+    let frameTravel = 0;
+
+    /**
+     * 追随器需要硬切的标记：新局 / 传送 / 换图 / 解锁重置时置位，绘制前消费。
+     * 用标记而不是立刻 reset，是因为 `deploy` 改出生坐标发生在 `clearPrevPositions()`
+     * **之后**，提前 reset 会切到旧坐标。
+     */
+    let visualNeedsSnap = true;
+
+    /** 把本帧累计的逻辑位移交给追随器。没有执行过逻辑步就什么都不做（目标没变）。 */
+    function flushVisualTarget(): void {
+      if (frameSteps <= 0) return;
+      const spanSeconds = frameSteps * stepClock.dt;
+      syncVisualTarget(
+        visual,
+        state.player.x,
+        state.player.y,
+        spanSeconds > 0 ? frameTravel / spanSeconds : 0,
+      );
+      frameSteps = 0;
+      frameTravel = 0;
+    }
+
     /** 每执行一步之前调一次：把「这一步之前」的位置记下来。 */
     function capturePrevPositions(): void {
       const skeletons = new Map<object, { x: number; y: number }>();
@@ -288,44 +345,58 @@ export const game: Plugin = {
       };
     }
 
-    /** 新一局 / 瞬移：丢掉上一帧位置，否则插值会把角色从旧局的位置拉过来。 */
+    /**
+     * 新一局 / 瞬移：丢掉上一帧位置，否则插值会把角色从旧局的位置拉过来。
+     *
+     * 追随器同样要硬切（`visualNeedsSnap`）：它有自己的持久状态，不清就会
+     * 从上一局 / 上一个出生点滑过来。标记在 `paintWithInterp` 开头消费，
+     * 因为 `deploy` 会在调用本函数**之后**才改出生坐标。
+     */
     function clearPrevPositions(): void {
       prevPos = { player: null, camera: null, skeletons: new Map() };
+      visualNeedsSnap = true;
     }
 
     /**
-     * 带着插值画一帧。做法是**临时把插值位置写进 `state`，画完在 `finally` 里还原** ——
-     * 这样 `paint()` 里 20 多个位置读点一行都不用改。
+     * 带着**渲染层追随器**画一帧：把视觉位置临时写进 `state`，画完在 `finally` 里还原。
+     *
+     * 与旧实现的区别只有一处：玩家与相机的位置来自 `visual`（追逻辑目标），
+     * 不再来自 `lerp(prev, cur, alpha)`。怪仍按 `alpha` 插值 —— 它们没有追随器。
      *
      * 安全性：`paint` 是同步的、主循环最后一步；期间没有别的代码读 `S`。
      * 判定永远用真实位置（`step()` 已经跑完），这里改的只是绘制用的那一瞬。
      */
-    function paintWithInterp(draw: () => void): void {
+    function paintWithInterp(dtRender: number, draw: () => void): void {
+      if (visualNeedsSnap) {
+        resetVisualMotion(visual, state.player.x, state.player.y);
+        visualNeedsSnap = false;
+        frameSteps = 0;
+        frameTravel = 0;
+      }
+      const drawn = stepVisualMotion(visual, dtRender, stepClock.dt);
       const alpha = renderAlpha(stepClock.acc, stepClock.dt);
       const prev = prevPos;
-      if (alpha <= 0 || !prev.player || !prev.camera) {
-        draw();
-        return;
-      }
       const realPlayer = { x: state.player.x, y: state.player.y };
-      lastDrawPos = { x: realPlayer.x, y: realPlayer.y };
       const realCamera = { x: state.camera.x, y: state.camera.y };
       const realSkeletons: { sk: object & { x: number; y: number }; x: number; y: number }[] =
         state.skeletons.map((sk) => ({ sk, x: sk.x, y: sk.y }));
+      lastDrawPos = { x: drawn.x, y: drawn.y };
       try {
-        const player = interpPos(prev.player, realPlayer, alpha);
-        lastDrawPos = { x: player.x, y: player.y };
-        state.player.x = player.x;
-        state.player.y = player.y;
-        const camera = interpPos(prev.camera, realCamera, alpha);
+        state.player.x = drawn.x;
+        state.player.y = drawn.y;
+        // 相机必须跟**画出去的位置**：跟逻辑位置的话，玩家会离开屏幕中心，
+        // 而且偏移量逐帧变化 = 相机抽搐（2026-11-23 踩过）。
+        const camera = cameraFor(state.world, drawn.x, drawn.y);
         state.camera.x = camera.x;
         state.camera.y = camera.y;
-        for (const entry of realSkeletons) {
-          const before = prev.skeletons.get(entry.sk);
-          if (!before) continue;
-          const now = interpPos(before, entry, alpha);
-          entry.sk.x = now.x;
-          entry.sk.y = now.y;
+        if (alpha > 0) {
+          for (const entry of realSkeletons) {
+            const before = prev.skeletons.get(entry.sk);
+            if (!before) continue;
+            const now = interpPos(before, entry, alpha);
+            entry.sk.x = now.x;
+            entry.sk.y = now.y;
+          }
         }
         draw();
       } finally {
@@ -780,9 +851,16 @@ export const game: Plugin = {
         const tick = stepClock.tick - 1;
         const frame = takeLatched(latch, tick);
         capturePrevPositions();
+        const beforeX = state.player.x;
+        const beforeY = state.player.y;
         step(state, stepClock.dt, toStepInput(frame), modifiers);
+        const movedX = state.player.x - beforeX;
+        const movedY = state.player.y - beforeY;
+        frameTravel += Math.sqrt(movedX * movedX + movedY * movedY);
+        frameSteps += 1;
         reportHash(tick);
       }
+      flushVisualTarget();
     }
 
     /**
@@ -798,9 +876,10 @@ export const game: Plugin = {
      *    不够就**一帧都不走**（画面停住、操作无响应），而且时间**不扣** ——
      *    恢复后一次性补算。
      *    **执行仍按墙钟 `takeStep`（`acc >= dt`）**，不要改成「收到帧就立刻跑」：
-     *    `paintWithInterp` 连相机一起做落后一步插值，要求执行恰好落在 alpha=1，
-     *    否则每次执行都突跳 `(1-alpha)` 个身位 —— 2026-11-23 相机抽搐的根因。
-     *    细节见 `net/low-latency.ts` 与 `docs/net-sync-v2.md` §8.8。
+     *    那样会让一帧内的 `S`（画面到逻辑目标的距离）突增，渲染层追随器只能用
+     *    `1.3V` 慢慢追，反而持续落后；按 `dt` 稳定执行，稳态 `S` 才恒定在一个
+     *    逻辑步。（旧理由「相机插值要求 alpha=1」自 2026-11-23 追随器上线后已失效，
+     *    但结论一样，见 `net/low-latency.ts` 与 `docs/net-sync-v2.md` §8.8。）
      * 3. **补帧**：看到更高的帧号但中间有洞，立刻向服务器要。同一缺口有节流。
      *
      * 这里**没有**「等某个玩家」的语义。谁没交意图，那一帧他就是空输入，
@@ -873,7 +952,13 @@ export const game: Plugin = {
         const inputs = assembleInputs(stamped, state.players, EMPTY_STEP_INPUT);
         if (!packet.frames.has(state.me)) netStat.localMiss += 1;
         capturePrevPositions();
+        const beforeX = state.player.x;
+        const beforeY = state.player.y;
         stepAll(state, stepClock.dt, inputs, modifiers);
+        const movedX = state.player.x - beforeX;
+        const movedY = state.player.y - beforeY;
+        frameTravel += Math.sqrt(movedX * movedX + movedY * movedY);
+        frameSteps += 1;
         // view-only: 本机鼠标只用于悬停环 / 相机，与死亡结算、UI 面板、血条一样
         // 属于 V 层，各随本机座位；不进帧、不进 hash、不参与世界演算。
         updateView(state, inputs.get(state.me) ?? EMPTY_STEP_INPUT);
@@ -903,6 +988,8 @@ export const game: Plugin = {
        * 追帧的目的本来就是"多跑几步把积压吃掉"，多跑的那些步不该记成欠账。
        */
       clearDebt(stepClock);
+      // 这一帧执行过的逻辑步 → 目标 + 平均速度，交给渲染层追随器。
+      flushVisualTarget();
       netStat.alpha = renderAlpha(stepClock.acc, stepClock.dt);
       // ---- 3) 补帧：有洞就立刻要 ----
       const gap = requestReplay(driver, now);
@@ -1348,7 +1435,7 @@ export const game: Plugin = {
             // 绘制耗时（诊断）：与 `frameGapMs` 对照就能分清「画得慢」和「没拿到帧」。
             // determinism-ok: 纯渲染层诊断，只在 `netStat` 里，不进 S / 不进 hash / 不参与判定。
             const paintAt = performance.now();
-            paintWithInterp(() => {
+            paintWithInterp(renderDt, () => {
               paint(painter, state, pointer ? { x: screenX, y: screenY } : undefined, renderDt, view);
             });
             const paintTook = performance.now() - paintAt;
