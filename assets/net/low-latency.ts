@@ -58,3 +58,35 @@ export const IMMEDIATE_LOOKAHEAD = 1;
 export const EFFECTIVE_LOOKAHEAD = LOW_LATENCY_NET
   ? IMMEDIATE_LOOKAHEAD
   : BUFFERED_LOOKAHEAD;
+
+/**
+ * **收包即执行**（2026-11-23 用户实验开关）。
+ *
+ * `true`：`advanceNet` 不再等墙钟节拍（`acc >= dt`），一收到连续帧就在**本渲染帧**
+ * 里全部执行（单帧仍受 `MAX_CATCHUP_STEPS` 限制）。目的：把角标的「领先」从追帧
+ * 滞回的下限 3 帧（≈125 ms）压到 0~1，降低输入与画面的延迟。
+ *
+ * ## 为什么现在敢改（此前明确禁止过）
+ *
+ * 2026-11-23 上午试过一次「收包即执行」，用户实测「相机抽搐」。当时的根因是
+ * `paintWithInterp` 依赖 `alpha = 1` 的时刻 —— 执行落在任意 `alpha` 会让画面
+ * 每次突跳 `(1-alpha)` 个身位。
+ *
+ * 现在渲染换成 `game/visual-motion.ts` 的追随器，位置**不再由 `acc` 推导**。
+ * 执行时刻变化只会让 `S`（画面到逻辑目标的距离）短暂变大，追随器照常平滑抹平，
+ * 所以那条禁忌的前提已经消失。
+ *
+ * ## 被牺牲的东西
+ *
+ * - `stepClock.acc` 不再驱动执行：`addTime` 停跑，`forceStep` 每步扣账后由
+ *   `clearDebt` 归零 → `renderAlpha` 恒 0（只剩 `interp.ts` 的单测还在读它）；
+ * - 执行节奏从「每 dt 一步」变成「每个广播批次一步」，`S` 在 0~1 步之间波动，
+ *   追随器输出仍是匀速 `V`；
+ * - 单帧最多 `MAX_CATCHUP_STEPS` 步，积压靠「每帧 6 步」消化（144 fps × 6 ≈ 864
+ *   步/秒，是服务器产出速率的 36 倍），所以 `lead` 会很快回落到 0~1。
+ *
+ * ## 回滚
+ *
+ * 改回 `false` 即恢复墙钟节拍，其余代码一行不用动。
+ */
+export const IMMEDIATE_EXECUTION = true;

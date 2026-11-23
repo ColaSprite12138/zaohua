@@ -53,6 +53,7 @@ import {
   type RawInput,
 } from '../net/input-latch.ts';
 import { hasActivity } from '../net/intent-filter.ts';
+import { IMMEDIATE_EXECUTION } from '../net/low-latency.ts';
 import { renderAlpha } from './interp.ts';
 // 渲染层移动追随器：逻辑执行给出「目标 + 这段逻辑的平均速度」，渲染帧自己走过去。
 // 只影响画面位置（V 层），不进 S / 不进 hash / 不参与判定。
@@ -975,14 +976,11 @@ export const game: Plugin = {
       flushOutbox();
 
       // ---- 2) 执行：只跑服务器给过的帧 ----
-      addTime(stepClock, delta);
-      // 落后水位 = 手里已收到、但还没算的帧数。正常等于播放缓冲 + 网络抖动
-      // （临时低延迟模式 `lookahead = 1`，稳态 0~1；旧模式 2，实测 2~6）。
-      //
-      // 明显超出就说明「看得见未来却算不过来」，必须**主动追**：`addTime` 把
-      // 单帧时间截断到 6 步（0.25 s）并把超出部分丢掉，所以一次切后台 / 开
-      // DevTools 造成的 2 秒停顿只补得回 0.25 秒，剩下的永久留在链路上 ——
-      // 2026-11-22 实测「领先 52」（≈2.2 s），玩家的点击要好几秒才有反应。
+      // 收包即执行（`IMMEDIATE_EXECUTION`）时 `acc` 不参与执行，所以不累加墙钟；
+      // 否则保持原样：墙钟攒够一个 `dt` 才走一步。
+      if (!IMMEDIATE_EXECUTION) addTime(stepClock, delta);
+      // 落后水位 = 服务器帧号 - 已执行帧号。收包即执行下它只反映**在途 + 未到的
+      // 那几帧**（正常 0~1），不再等于「播放缓冲 + 抖动」。
       const backlog = Math.max(0, driver.highestSeen - driver.nextTick);
       // 滞回：>8 进追帧，追到 ≤3 才停。单边条件会让追帧跑一帧就退出、
       // 永远停在阈值下方（实测稳定 11 帧 = 458 ms 的点击迟滞）。
@@ -993,14 +991,13 @@ export const game: Plugin = {
       let steps = 0;
       while (canStep(driver)) {
         if (steps >= MAX_CATCHUP_STEPS) break;
-        // 非追赶时严格按墙钟；追赶时绕过 `acc`（`forceStep`），否则高刷下
-        // 每帧只加 7 ms 永远攒不够一步，52 帧级的积压永远抹不平。
-        // 单帧仍是 6 步上限：141 fps × 6 ≈ 850 步/秒，2.2 秒的积压几十毫秒
-        // 就追平，表现为「画面快进一下」而不是「永久落后」。
-        if (!catchUp && stepClock.acc + 1e-9 < stepClock.dt) break;
+        // 收包即执行：不等墙钟，收到就吃；单帧仍是 6 步上限（一次切后台回来
+        // 积压几十帧时，按 144 fps × 6 步/帧消化，不会一帧卡死）。
+        // 否则非追赶时严格按墙钟，追赶时绕过 `acc`（`forceStep`）。
+        if (!IMMEDIATE_EXECUTION && !catchUp && stepClock.acc + 1e-9 < stepClock.dt) break;
         const packet = takeSync(driver);
         if (!packet) break;
-        if (catchUp) forceStep(stepClock);
+        if (IMMEDIATE_EXECUTION || catchUp) forceStep(stepClock);
         else takeStep(stepClock);
         // 服务器贴定的这一帧**原样**转成 `StepInput`，再按全体名单展开成完整
         // `I_all`。这里没有「本机 / 远端」之分：旧实现按 `netPlayerId` 拆成
