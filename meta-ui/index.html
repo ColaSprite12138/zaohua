@@ -6,10 +6,12 @@
 <title>局外系统 · 背包 / 仓库 / 装备栏</title>
 <style>
   :root {
-    --bg: #0b131c; --panel: #111e2a; --panel2: #162635; --line: #294055;
-    --cell: #0e1a25; --cell-hover: #1a3042; --text: #dbe9f5; --muted: #8fa9bb;
-    --gold: #ffd166; --cyan: #67e8f9; --red: #ff7b7b; --green: #4ade80;
-    --sword: #ffd166;
+    /* 暗黑破坏神式配色：炭黑石底 + 暗金雕边 + 火光橙 + 血红。变量名沿用旧值，
+       只换色号，避免动到引用它们的上百条规则。 */
+    --bg: #090806; --panel: #17130e; --panel2: #241d14; --line: #4b3a20;
+    --cell: #0d0b08; --cell-hover: #2b2115; --text: #e6d9bd; --muted: #9a8b6d;
+    --gold: #d2a333; --cyan: #79b9b4; --red: #cc4038; --green: #7fb45c;
+    --sword: #d2a333;
   }
   * { box-sizing: border-box; }
   body {
@@ -108,12 +110,12 @@
   /* 保险格（设计 4）：**独立容器**，不是背包里的格子 —— 对标三角洲的保险箱。
      它有自己的面板与格子，阵亡时这里的东西跟着回家。 */
   #safe-panel { width: max-content; min-width: 200px; }
-  #safe-panel .grid { box-shadow: 0 0 0 1px rgba(103, 232, 249, .55); }
+  #safe-panel .grid { box-shadow: 0 0 0 1px rgba(210, 163, 51, .55); }
   #safe-panel .grid .cell {
-    background: #101f2b;
-    box-shadow: inset -1px -1px 0 rgba(103, 232, 249, .35);
+    background: #1a140d;
+    box-shadow: inset -1px -1px 0 rgba(210, 163, 51, .32);
   }
-  #safe-panel .grid.dragover { box-shadow: 0 0 0 2px var(--cyan); }
+  #safe-panel .grid.dragover { box-shadow: 0 0 0 2px var(--gold); }
   .safe-note { color: var(--cyan); font-size: 11px; margin-top: 8px; max-width: 230px; line-height: 1.5; }
   .safe-note b { color: var(--gold); font-weight: 700; }
   .grid.dragover { box-shadow: 0 0 0 2px var(--cyan); }
@@ -337,6 +339,141 @@
   #fx-main-panel[hidden], #fx-bag-content[hidden], #star-panel[hidden],
   #shop-panel[hidden], #workshop-panel[hidden], #account-panel[hidden] { display: none !important; }
   .fx-kind-hidden { display: none; }
+
+  /* ==================== 美术层：暗黑破坏神风格 ====================
+     全部内联（CSS 渐变 + SVG data URI），不引用任何外部图片：壳层会把本页
+     内联进 dist/index.html，外部路径在打包后的 ZIP 里会失效。
+     注入层禁止 at-rule 与关键帧，所以这里只用静态渐变与过渡。 */
+  body {
+    background:
+      radial-gradient(ellipse 900px 540px at 50% -10%, rgba(150, 32, 24, .19), transparent 62%),
+      radial-gradient(ellipse 760px 460px at 50% 115%, rgba(210, 163, 51, .07), transparent 60%),
+      repeating-linear-gradient(0deg, transparent 0 3px, rgba(0, 0, 0, .13) 3px 4px),
+      var(--bg);
+  }
+  h1 {
+    font: 500 24px/1.3 Georgia, "Songti SC", "SimSun", serif;
+    letter-spacing: .12em; color: var(--gold);
+    text-shadow: 0 2px 0 #000, 0 0 20px rgba(210, 163, 51, .32);
+    padding-bottom: 10px; margin-bottom: 14px;
+    border-bottom: 1px solid rgba(210, 163, 51, .28);
+  }
+  h1::after {
+    content: "◆"; display: block; position: relative; top: 17px; left: 50%;
+    transform: translateX(-50%); width: 22px; text-align: center;
+    color: var(--gold); font-size: 12px; background: var(--bg);
+  }
+  h2 { font-family: Georgia, "Songti SC", serif; letter-spacing: .05em; text-shadow: 0 1px 2px #000; }
+  button, select {
+    font-family: Georgia, "Microsoft YaHei", serif; letter-spacing: .02em;
+  }
+  button {
+    background: linear-gradient(180deg, #392c1b, #1a140d);
+    border: 1px solid #6b5028; border-radius: 3px;
+    box-shadow: inset 0 1px 0 rgba(255, 220, 140, .18), 0 2px 0 #080705;
+    color: var(--text);
+  }
+  button:hover:not(:disabled) {
+    border-color: var(--gold); color: var(--gold);
+    box-shadow: inset 0 1px 0 rgba(255, 220, 140, .3), 0 0 14px rgba(210, 163, 51, .32);
+  }
+  button:disabled { opacity: .4; }
+  select {
+    background: linear-gradient(180deg, #241c12, #100d09);
+    border: 1px solid #6b5028; border-radius: 3px; color: var(--text);
+  }
+  .panel {
+    background: linear-gradient(180deg, rgba(43, 33, 21, .94), rgba(17, 14, 10, .97));
+    border: 1px solid #5a4425; border-radius: 3px;
+    box-shadow: inset 0 1px 0 rgba(210, 163, 51, .2), inset 0 0 0 3px rgba(9, 8, 6, .62),
+      inset 0 0 26px rgba(0, 0, 0, .55), 0 8px 22px rgba(0, 0, 0, .55);
+  }
+  .panel-title h2 { color: var(--gold); }
+
+  /* 关卡卡片：石碑 + 徽记 + 选中火光。徽记走 SVG data URI，无外部文件。 */
+  .fx-main-panel {
+    background: linear-gradient(180deg, rgba(56, 40, 22, .93), rgba(14, 11, 8, .98));
+    border-color: #705426; padding: 18px 20px 20px;
+  }
+  .kind-cards { gap: 16px; }
+  .kind-card {
+    position: relative; min-height: 138px; padding: 14px 14px 14px 78px;
+    border: 1px solid #4b3a20; border-radius: 3px;
+    background: radial-gradient(circle at 18% 42%, rgba(210, 163, 51, .1), transparent 58%),
+      linear-gradient(155deg, #2a2116, #100d09);
+    box-shadow: inset 0 1px 0 rgba(210, 163, 51, .14), inset 0 0 22px rgba(0, 0, 0, .5);
+    text-align: left; transition: border-color .14s, box-shadow .14s, background .14s;
+  }
+  .kind-card::before {
+    content: ""; position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    width: 54px; height: 54px; background-size: contain; background-repeat: no-repeat;
+    opacity: .82; transition: opacity .14s, filter .14s;
+  }
+  /* 搜打撤 = 骷髅；副本 = 哥特拱门；主线 = 圣剑 */
+  .kind-card[data-kind="pvpve"]::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cg fill='none' stroke='%23d2a333' stroke-width='2.4' stroke-linejoin='round'%3E%3Cpath d='M32 5C18 5 10 15 10 28c0 9 5 15 10 18v9h24v-9c5-3 10-9 10-18C54 15 46 5 32 5Z'/%3E%3Ccircle cx='23' cy='28' r='7' fill='%23090806'/%3E%3Ccircle cx='41' cy='28' r='7' fill='%23090806'/%3E%3Cpath d='M28 41h8l-4 6Z' fill='%23090806'/%3E%3Cpath d='M24 49v6m8-6v6m8-6v6'/%3E%3C/g%3E%3C/svg%3E");
+  }
+  .kind-card[data-kind="dungeon"]::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cg fill='none' stroke='%23d2a333' stroke-width='2.4' stroke-linejoin='round'%3E%3Cpath d='M7 60V26C7 13 18 4 32 4s25 9 25 22v34'/%3E%3Cpath d='M18 60V28c0-8 6-14 14-14s14 6 14 14v32'/%3E%3Cpath d='M32 14v46M22 36h20'/%3E%3Ccircle cx='40' cy='30' r='1.6' fill='%23d2a333'/%3E%3C/g%3E%3C/svg%3E");
+  }
+  .kind-card[data-kind="story"]::before {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cg fill='none' stroke='%23d2a333' stroke-width='2.4' stroke-linejoin='round'%3E%3Cpath d='M32 3 38 17l-2 23-4 6-4-6-2-23Z' fill='%23241d14'/%3E%3Cpath d='M17 45h30M32 45v13M26 58h12'/%3E%3Ccircle cx='32' cy='40' r='2.6' fill='%23d2a333'/%3E%3Cpath d='M32 3v14'/%3E%3C/g%3E%3C/svg%3E");
+  }
+  .kind-card b { color: var(--text); font: 500 17px/1.3 Georgia, "Songti SC", serif; letter-spacing: .06em; }
+  .kind-card span { color: #b4a287; line-height: 1.6; }
+  .kind-card i { color: var(--gold); letter-spacing: .08em; }
+  .kind-card:hover { border-color: #8a6a34; }
+  .kind-card:hover::before { opacity: 1; }
+  .kind-card.selected {
+    border-color: var(--gold);
+    background: radial-gradient(circle at 18% 42%, rgba(210, 163, 51, .26), transparent 62%),
+      linear-gradient(155deg, #3b2b17, #171009);
+    box-shadow: inset 0 0 0 1px rgba(210, 163, 51, .5),
+      0 0 24px rgba(204, 64, 56, .3), 0 0 46px rgba(210, 163, 51, .12);
+  }
+  .kind-card.selected::before { opacity: 1; filter: drop-shadow(0 0 6px rgba(210, 163, 51, .75)); }
+  .kind-card.selected::after {
+    content: "◆"; position: absolute; right: 10px; top: 8px;
+    color: var(--gold); font-size: 13px; text-shadow: 0 0 8px rgba(210, 163, 51, .7);
+  }
+  .fx-view-btn.active { border-color: var(--gold); color: var(--gold); }
+
+  /* 主界面插画：远景城堡 + 熔岩地面的 SVG 场景，纯内联无外部依赖。
+     放在主界面面板下方，用 ::after 铺满剩余空间，不遮挡按钮交互。 */
+  .fx-main-panel { position: relative; padding-bottom: 268px; overflow: hidden; }
+  .fx-main-panel::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 252px;
+    pointer-events: none; background-repeat: no-repeat; background-size: cover;
+    background-position: center bottom; opacity: .82;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 260' preserveAspectRatio='xMidYMax slice'%3E%3Cdefs%3E%3ClinearGradient id='sky' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%231a0f09'/%3E%3Cstop offset='1' stop-color='%23080503'/%3E%3C/linearGradient%3E%3ClinearGradient id='lava' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%23b3371c'/%3E%3Cstop offset='1' stop-color='%234a1108'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='1200' height='260' fill='url(%23sky)'/%3E%3Ccircle cx='600' cy='96' r='58' fill='%238c2a16' opacity='.42'/%3E%3Cpath d='M0 176 Q170 150 340 168 T700 158 T1200 170 L1200 260 L0 260Z' fill='%23140b07'/%3E%3Cg fill='%23090604'%3E%3Cpath d='M120 176v-40h18v-22h10v22h14v40zM160 176v-56h26v-18h4v18h24v56zM974 176v-48h20v-20h12v20h18v48zM1038 176v-64h30v-22h6v22h28v64z'/%3E%3Cpath d='M236 176v-30h32v30zM906 176v-34h28v34z'/%3E%3C/g%3E%3Cg stroke='%23d2a333' stroke-width='2' fill='none' opacity='.55'%3E%3Cpath d='M285 176v-58l20-16 20 16v58zM282 118l23-18 23 18'/%3E%3C/g%3E%3Cpath d='M0 206 Q160 186 320 204 T640 198 T960 208 T1200 200 L1200 260 L0 260Z' fill='url(%23lava)' opacity='.85'/%3E%3Cg stroke='%23ff8c3a' stroke-width='2' opacity='.8' fill='none'%3E%3Cpath d='M70 236l40-10 30 12 45-9 38 11M540 230l48 12 34-10 52 11M920 234l36-9 44 11 40-8'/%3E%3C/g%3E%3Cg fill='%23e0602a' opacity='.5'%3E%3Ccircle cx='180' cy='220' r='3'/%3E%3Ccircle cx='430' cy='228' r='2'/%3E%3Ccircle cx='720' cy='222' r='3'/%3E%3Ccircle cx='1090' cy='230' r='2'/%3E%3C/g%3E%3C/svg%3E");
+  }
+
+  /* 星图：符文石雕刻感（保持 #star-map 的 position:relative 不变，验收依赖） */
+  .constellation {
+    background: linear-gradient(160deg, rgba(43, 33, 21, .95), rgba(13, 11, 8, .97));
+    border-color: #5a4425; box-shadow: inset 0 1px 0 rgba(210, 163, 51, .12);
+  }
+  .constellation.open { border-color: var(--gold); box-shadow: inset 0 0 0 1px rgba(210, 163, 51, .2); }
+  .constellation.done { border-color: var(--green); }
+  .star-chip.available { border-color: var(--gold); }
+  .star-chip.available .cn { color: var(--gold); }
+  .star-chip.lit { background: rgba(210, 163, 51, .17); border-color: var(--gold); }
+  .star-chip.lit .cn { color: var(--gold); }
+  .xp-bar i { background: linear-gradient(90deg, #8b1a1a, var(--gold)); }
+  .equip-slot, .grid .cell { background: var(--cell); }
+  .item { background: linear-gradient(150deg, rgba(210,163,51,.26), rgba(210,163,51,.07)); }
+
+  /* 登录门禁：石碑浮雕 */
+  .gate-card {
+    background: linear-gradient(180deg, #221b12, #0d0a07);
+    border: 1px solid #705426; border-radius: 3px;
+    box-shadow: inset 0 0 0 3px rgba(9, 8, 6, .7), 0 24px 70px rgba(0, 0, 0, .8),
+      0 0 70px rgba(139, 26, 26, .16);
+  }
+  .gate-brand b { font-family: Georgia, "Songti SC", serif; letter-spacing: .1em; }
+  #gate-guest, #gate-resume-go, .gate-card button[type="submit"] {
+    border-color: var(--gold); color: var(--gold);
+  }
 </style>
 </head>
 <body>
