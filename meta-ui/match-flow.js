@@ -492,6 +492,7 @@
           hint: err && err.hint,
           expected: err && err.expected,
           detail: err && err.detail,
+          reasonCode: err && (err.reasonCode || err.reason_code),
           status: err && err.status,
         });
         await fail('建房失败：' + fatalCreateText(err), matchId);
@@ -592,24 +593,38 @@
   /**
    * 「重试也没用」的建房错误：平台侧状态问题，不是网络抖动。
    *
-   * `ACTIVATION_REQUIRED` 是造化在「这个游戏版本还没在工作台发布 / 联机能力还没
-   * 激活」时返回的（2026-11-24 上传 version 5 后实测：上传 ≠ 发布）。原逻辑会
-   * 重试 3 次，每次都撞同一堵墙，玩家只能干等 3 轮才看到一句英文错误码。
+   * `ACTIVATION_REQUIRED` 是平台房间服务拒绝建房时给的错误码（2026-11-24 上传
+   * version 5 后在正式环境实测）。当时只完成了「上传」，没做工作台的最终发布 /
+   * 激活 —— 上传产物 ready 不等于游戏已发布。这个码究竟指「版本没发布」还是
+   * 「联机能力没激活」由平台侧决定，客户端不要猜死：只负责不重试、留全诊断
+   * 字段，并把人话提示指向「去工作台发布」这一个可执行的动作。
    */
+  function platformErrorText(err) {
+    if (!err) return '';
+    // 平台 SDK 契约：房子/令牌错误只认 `error_code`（SCREAMING_SNAKE）；
+    // `code` 是传输数字（token -1 / worker 10012），不能当字符串错误码解析。
+    // RoomRpcError 会把 message 设成 error_code，但不同宿主/不同层的落点不一致，
+    // 所以把所有可能的字段拼起来一起判断 —— 别让 `code || errorCode` 短路吞掉真码。
+    return [
+      err.code, err.errorCode, err.message, err.hint, err.detail,
+      err.reasonCode, err.reason_code,
+    ].map(function (v) { return v == null ? '' : String(v); }).join(' ');
+  }
+
   function isFatalCreateError(err) {
-    var text = String((err && (err.code || err.errorCode)) || '') + ' ' + String((err && err.message) || '');
-    return /ACTIVATION_REQUIRED|NOT_ACTIVATED|FORBIDDEN|QUOTA|UNAVAILABLE/i.test(text);
+    return /ACTIVATION_REQUIRED|NOT_ACTIVATED|FORBIDDEN|QUOTA|UNAVAILABLE/i
+      .test(platformErrorText(err));
   }
 
   /** 把平台错误码翻成人话；认不出来的照原样透传（别把真信息吞掉）。 */
   function fatalCreateText(err) {
-    var text = String((err && err.message) || '');
+    var text = platformErrorText(err);
     if (/ACTIVATION_REQUIRED|NOT_ACTIVATED/i.test(text)) {
-      return '这个版本还没在造化工作台发布（联机未激活）。'
-        + '去工作台点「发布」后再重新匹配 —— 上传 ≠ 发布。';
+      return '这个版本还没在造化工作台完成发布 / 联机未激活。'
+        + '去工作台发布当前上传的版本后再重新匹配 —— 上传成功 ≠ 已发布。';
     }
-    if (/FORBIDDEN/i.test(text)) return '当前账号没有建房权限（' + text + '）';
-    if (/QUOTA|UNAVAILABLE/i.test(text)) return '平台房间资源暂不可用（' + text + '），稍后重试';
+    if (/FORBIDDEN/i.test(text)) return '当前账号没有建房权限（' + errText(err) + '）';
+    if (/QUOTA|UNAVAILABLE/i.test(text)) return '平台房间资源暂不可用（' + errText(err) + '），稍后重试';
     return errText(err);
   }
 
