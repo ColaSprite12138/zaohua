@@ -480,6 +480,12 @@
       await reportRoomWithRetry(matchId, S.roomId, 3);
       setStatus('房间已建好 · 等对方加入');
     } catch (err) {
+      // 平台侧状态问题（未激活 / 无权限 / 配额）：重试只会重复撞墙，
+      // 立刻停手并说清怎么解（见 `isFatalCreateError`）。
+      if (isFatalCreateError(err)) {
+        await fail('建房失败：' + fatalCreateText(err), matchId);
+        return;
+      }
       S.tries += 1;
       if (S.tries >= MAX_TRIES) {
         await fail('建房失败：' + errText(err), matchId);
@@ -570,6 +576,30 @@
     if (!err) return '未知错误';
     if (err.message) return String(err.message);
     return String(err);
+  }
+
+  /**
+   * 「重试也没用」的建房错误：平台侧状态问题，不是网络抖动。
+   *
+   * `ACTIVATION_REQUIRED` 是造化在「这个游戏版本还没在工作台发布 / 联机能力还没
+   * 激活」时返回的（2026-11-24 上传 version 5 后实测：上传 ≠ 发布）。原逻辑会
+   * 重试 3 次，每次都撞同一堵墙，玩家只能干等 3 轮才看到一句英文错误码。
+   */
+  function isFatalCreateError(err) {
+    var text = String((err && (err.code || err.errorCode)) || '') + ' ' + String((err && err.message) || '');
+    return /ACTIVATION_REQUIRED|NOT_ACTIVATED|FORBIDDEN|QUOTA|UNAVAILABLE/i.test(text);
+  }
+
+  /** 把平台错误码翻成人话；认不出来的照原样透传（别把真信息吞掉）。 */
+  function fatalCreateText(err) {
+    var text = String((err && err.message) || '');
+    if (/ACTIVATION_REQUIRED|NOT_ACTIVATED/i.test(text)) {
+      return '这个版本还没在造化工作台发布（联机未激活）。'
+        + '去工作台点「发布」后再重新匹配 —— 上传 ≠ 发布。';
+    }
+    if (/FORBIDDEN/i.test(text)) return '当前账号没有建房权限（' + text + '）';
+    if (/QUOTA|UNAVAILABLE/i.test(text)) return '平台房间资源暂不可用（' + text + '），稍后重试';
+    return errText(err);
   }
 
   /**
