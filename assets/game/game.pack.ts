@@ -542,6 +542,15 @@ export const game: Plugin = {
     /** deploy 已执行、正在等全员快照；这段时间冻结推进。 */
     let awaitingLoadouts = false;
     let loadoutWaitFrames = 0;
+    /**
+     * deploy 说「这一局是联机」，但 `netSeat` 还没到。
+     *
+     * 这段窗口里**绝不能**走单机分支：`netActive` 是座位消息的副作用，
+     * 它晚到一次就会让一局联机被当成 PVE 起在世界里。pendingOnline 由主窗口
+     * 的 `online` 字段置位，`applySeat` 一到就清 —— 正确性只依赖"主窗口知道
+     * 自己在匹配"，不依赖两条 BroadcastChannel 消息的到达顺序。
+     */
+    let pendingOnline = false;
     /** 联机诊断：主窗口的 `host.net.status()` 只读这些数，不重复计数。 */
     const netStat = {
       /** 真正执行的帧数。只可能是服务器给过的帧。 */
@@ -692,6 +701,7 @@ export const game: Plugin = {
     }): void {
       if (msg.active !== true) {
         netActive = false;
+        pendingOnline = false;
         state.online = false;
         netSeatSettled = false;
         netPlayerId = '';
@@ -719,6 +729,8 @@ export const game: Plugin = {
       }
       const starting = !netActive;
       netActive = true;
+      // 座位消息到了：deploy 里挂起的「等座位」窗口结束，后续只看 netActive。
+      pendingOnline = false;
       if (starting) {
         // 新一局：上一局的自快照 / 待部署配置绝不能带过来，否则会拿旧装备建世界。
         netSelfSnapshot = null;
@@ -830,8 +842,13 @@ export const game: Plugin = {
         stars,
       };
       modifiers = createModifiers(stars.nodes);
+      // 正式地图与渲染缓存都等到这一刻才切：deploy 时若提前切，世界还没建，
+      // 玩家会先看到一张"空地图"（旧行为被当成"进了 PVE 地图"）。
+      setArena(state, arena);
+      clearPrevPositions();
       deployRun(state, config);
       pendingDeployment = null;
+      pendingOnline = false;
       netDeployed = true;
       // 出生点偏移必须对**所有玩家**用同一套规则，坐标进 hash。
       if (netPlayerId) {
@@ -871,13 +888,20 @@ export const game: Plugin = {
      * relay 按 matchId 拉，见 `game/server/source/index.ts::fetchCvmLoadouts`）。
      * 走到这里的只剩「CVM 也没有」的兜底情况。
      */
-    function abortForMissingLoadouts(missing: string[]): void {
+    function abortForMissingLoadouts(missing: string[], seatMissing = false): void {
       netStat.loadoutVoided = Math.max(1, missing.length);
       console.warn(
-        `[net] 开局装备快照超时（${loadoutWaitFrames} 帧），${missing.length} 人未交：`
-        + `${missing.join(',') || '未知'} —— 拒绝开局，本局作废（不空快照硬开）`,
+        `[net] 开局门禁超时（${loadoutWaitFrames} 帧），`
+        + (seatMissing
+          ? '座位信息一直没到（netSeat 丢失 / 房间名单为空）'
+          : `${missing.length} 人未交装备快照：${missing.join(',') || '未知'}`)
+        + ' —— 拒绝开局，本局作废（不空快照硬开）',
       );
-      channel?.postMessage({ type: 'netLoadoutsMissing', missing: missing.length });
+      channel?.postMessage({
+        type: 'netLoadoutsMissing',
+        missing: Math.max(1, missing.length),
+        seatMissing,
+      });
     }
 
     function armTimeline(): void {
@@ -1219,6 +1243,13 @@ export const game: Plugin = {
         const msg = event.data as {
           type?: string;
           deployment?: Deployment;
+          /**
+           * deploy：这一局是不是联机（主窗口显式告知）。
+           *
+           * 不能靠 `netSeat` 是否已到推断 —— 那条消息晚一次，联机局就会被
+           * 当成单机 PVE 起在世界里（用户 2026-11-24 实测）。
+           */
+          online?: boolean;
           command?: RunCommand;
           requestId?: number;
           /** netSeat：联机座位/参战名单。 */
@@ -1247,10 +1278,22 @@ export const game: Plugin = {
           // The shell has ALREADY emptied its own bag + equipment; `loadout`
           // is the structured-cloned copy this Worker now owns exclusively.
           // （联机时这份 loadout 被忽略：装备必须来自 relay 下发的自己那份快照。）
-          setArena(state, arena);
-          clearPrevPositions();
           const incoming = msg.deployment ?? {};
-          if (netActive) {
+          /*
+           * **这一局是不是联机，由主窗口显式告知**，不能只看 `netActive`。
+           *
+           * `netSeat` 走 BroadcastChannel，虽然同一发送方保序，但 Worker 可能
+           * 晚启动：`match-flow` 先 post `netSeat` 再点出征，Worker 若这时还没
+           * 建立监听，第一条座位消息就丢了（靠 `netSeatRequest` 补，但 deploy
+           * 已经先到）。那一刻 `netActive === false`，deploy 会走下面的单机分支
+           * —— 用本地 seed / 关卡类型起一局 PVE。用户 2026-11-24 实测
+           * 「两个人都进了 PVE 地图、互相看不见」就是这条。
+           */
+          const online = msg.online === true || netActive;
+          if (online) {
+            // 联机：先挂起，世界参数与装备都等 relay / CVM。
+            // **不 setArena**：世界还没建，不能让画面先切到正式地图。
+            pendingOnline = true;
             /*
              * **联机：不在这里 deployRun。**
              *
@@ -1276,6 +1319,9 @@ export const game: Plugin = {
             return;
           }
           // 单机（PVE 副本 / 主线）：本地 deployment 就是唯一来源。
+          // 只有这条路才立刻切正式地图 —— 联机要等世界真的建出来。
+          setArena(state, arena);
+          clearPrevPositions();
           modifiers = createModifiers(incoming.stars?.nodes ?? []);
           deployRun(state, incoming);
           lastResult = null;
@@ -1589,7 +1635,10 @@ export const game: Plugin = {
             });
 
             if (!locked && !paused) {
-              if (netActive) {
+              // **联机信号有两个来源**：座位到了（netActive），或者主窗口在
+              // deploy 时明说了这一局是联机（pendingOnline，等座位）。
+              // 后者这段窗口里绝不能走单机分支 —— 那会把一局联机当成 PVE 起在世界里。
+              if (netActive || pendingOnline) {
                 // 装备快照没收齐就冻结：既不推进、也不攒时间（理由同上，
                 // 名单/快照到达那一刻一次吐出几百步会让两端 tick 错开）。
                 if (awaitingLoadouts) {
@@ -1600,10 +1649,12 @@ export const game: Plugin = {
                   if (loadoutWaitFrames === 301) {
                     abortForMissingLoadouts(
                       [...netPeers].filter((id) => id !== netPlayerId && !netPeerSnapshots.has(id)),
+                      // 座位都没到（peers 为空）时，缺的不是快照而是名单本身。
+                      !netActive || netPeers.size === 0,
                     );
                   }
                 }
-                if (netSeatSettled && !awaitingLoadouts) advanceNet(raw);
+                if (netActive && netSeatSettled && !awaitingLoadouts) advanceNet(raw);
               } else advanceSolo(raw);
               // Pickups / weapon switches happen INSIDE this Worker now. Only
               // a changed snapshot is sent to the read-only character panel.

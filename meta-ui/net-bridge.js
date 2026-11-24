@@ -67,6 +67,15 @@
      */
     cvmProbe: '',
     /**
+     * relay 从 CVM 拉开局快照的结果（`ok:2/2` / `ok:1/2` / `bad:404` / …）。
+     *
+     * `ok:1/2` 是「映射不上」的直接证据：CVM 有 2 个人的快照，但只有 1 个人
+     * 能和房间名单对上（platformId / 显示名）。这时门禁会超时作废本局 ——
+     * 所以它必须和 `cvmProbe` 一样进角标，否则玩家只看到「队友没同步装备」，
+     * 看不到是映射问题还是出网问题。
+     */
+    cvmLoadouts: '',
+    /**
      * 本局的撮合 matchId。
      *
      * 由 match-flow 在 `attach` 之后告诉这里，再上行给 relay —— relay 拿它去
@@ -393,9 +402,25 @@
       ? '⚠ 快照缺 ' + stat.loadoutVoided + ' 人·本局作废  ' : '';
     // relay → CVM 的出网探测：通了只给一个对钩，没通把原因摊开。
     // 这是「房间里的 Node 进程到底能不能访问我们后端」的唯一可见证据。
-    var cvm = S.cvmProbe
-      ? (S.cvmProbe.indexOf('ok:') === 0 ? 'cvm✓  ' : '⚠ cvm ' + S.cvmProbe + '  ')
-      : '';
+    var cvm = '';
+    if (S.cvmProbe) {
+      cvm += S.cvmProbe.indexOf('ok:') === 0 ? 'cvm✓' : '⚠ cvm ' + S.cvmProbe;
+    }
+    // 开局快照的匹配结果。`ok:1/2` 不是「少拉了一份」，而是「CVM 有 2 份、
+    // 只有 1 份能和房间名单对上」—— 缺的那份会让本局在 301 帧后作废，
+    // 所以必须显式标红，别让它伪装成正常的等待。
+    var lo = S.cvmLoadouts;
+    if (lo && lo !== 'skipped' && lo !== 'pending') {
+      // 形如 `ok:2/2` / `ok:1/2 miss:ab12cd34`。后缀是诊断，不该干扰比例解析。
+      var m = /^ok:(\d+)\/(\d+)(.*)$/.exec(lo);
+      if (m) {
+        var short = Number(m[1]) < Number(m[2]);
+        cvm += (cvm ? ' ' : '') + (short ? '⚠ 快照 ' : '快照 ') + m[1] + '/' + m[2] + (m[3] || '');
+      } else {
+        cvm += (cvm ? ' ' : '') + '⚠ 快照 ' + lo;
+      }
+    }
+    cvm = cvm ? cvm + '  ' : '';
     // 实时带宽：↑ 上行 ↓ 下行。口径见 `traffic` 的注释 —— 下行只算新帧，
     // 所以开局窗口关掉的那一刻会看到它从几百 KB/s 掉到十几 KB/s。
     tickTraffic(now);
@@ -501,7 +526,9 @@
         // 空快照会让两端属性从 tick 0 起就不同，那是最难查的一类分叉。
         if (typeof host.onLoadoutsMissing === 'function') {
           try {
-            host.onLoadoutsMissing(msg.missing || 0);
+            host.onLoadoutsMissing(msg.missing || 0, {
+              seatMissing: msg.seatMissing === true,
+            });
           } catch (err) {
             console.warn('[net] 处理「快照未齐」失败', err);
           }
@@ -580,6 +607,11 @@
     // 而 relay 的日志在云端看不到 —— 只有这个字段能把它带回我们眼前。
     if (state.stats && typeof state.stats.cvmProbe === 'string') {
       S.cvmProbe = state.stats.cvmProbe;
+    }
+    // 快照拉取结果（`ok:2/2` = 两名成员都对上了）。同样只在终态更新，
+    // `pending` 不该一直挂在角标上。
+    if (state.stats && typeof state.stats.cvmLoadouts === 'string') {
+      S.cvmLoadouts = state.stats.cvmLoadouts;
     }
 
     /*
@@ -1149,6 +1181,10 @@
        * 空字符串 = 还没收到任何一帧。
        */
       cvmProbe: S.cvmProbe,
+      /** CVM 开局快照的匹配结果（`ok:2/2`）。`ok:1/2` 就是映射掉了人。 */
+      cvmLoadouts: S.cvmLoadouts,
+      /** 已收到过开局快照的远端人数（诊断「缺谁」用）。 */
+      snapshotCount: Object.keys(S.seenSnapshots || {}).length,
       /** 第一次分叉时两端的分项 hash（怪 / 掉落 / 玩家 / 破坏物）。 */
       divergedParts: S.divergedParts || null,
       engine: S.lastStat,

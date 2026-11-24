@@ -133,6 +133,30 @@ let game = null
   game.stop?.()
 }
 
+// ---- 场景 4：CVM 响应比第二个玩家进房更早 ----
+// 用户 2026-11-24 实测「有队友未同步装备快照（1 人）」：relay 收到 matchId 时
+// 名单里只有一个人，第一次拉取只能填一份；后进房的人必须靠**缓存的 roster**
+// 补上，不能再依赖「再拉一次」的网络时序。
+{
+  game = captured.createGame([{ id: 'seat-a', name: '甲' }])
+  game.start()
+  await sleep(60)
+  game.applyAction('seat-a', { matchId: 'm-test-1234' })
+  for (let i = 0; i < 40 && game.getState().stats.cvmLoadouts === 'pending'; i += 1) await sleep(50)
+  const first = game.getState()
+  check('名单只有一个人时只填一份', first.players[0].snapshot !== undefined, first.stats.cvmLoadouts)
+
+  // 第二个玩家此刻才进房。他没有再触发一次网络请求：直接吃 roster。
+  game.addPlayer({ id: 'seat-b', name: '乙' })
+  const late = game.getState()
+  check('后进房的人靠缓存 roster 补上快照（不再缺 1 人）',
+    JSON.stringify(late.players[1].snapshot) === JSON.stringify(loadoutB),
+    JSON.stringify(late.players[1].snapshot).slice(0, 60))
+  check('补填后角标刷新成全对上（不是停在第一次的 1/1）',
+    late.stats.cvmLoadouts === 'ok:2/2', late.stats.cvmLoadouts)
+  game.stop?.()
+}
+
 stub.close()
 const failed = results.filter((r) => !r.pass)
 console.log(`\n${failed.length === 0 ? '全部通过' : `${failed.length} 项失败`}（${results.length} 项）`)

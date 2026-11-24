@@ -142,6 +142,28 @@
     return (s && (s.display || s.username)) || '玩家';
   }
 
+  /**
+   * 联机诊断的一句话摘要，跟在失败文案后面。
+   *
+   * 只放**能区分原因**的三个数：CVM 拉取结果、房间名单人数、已收到的快照数。
+   * `CVM ok:1/2` + `名单 2` + `已收 1` = 映射只对上一个人；
+   * `CVM fail:timeout` = relay 根本连不上我们后端。两种都表现为同一句
+   * 「队友没同步装备」，但修法完全不同。
+   */
+  function netDiagText() {
+    try {
+      var st = host && host.net && typeof host.net.status === 'function' ? host.net.status() : null;
+      if (!st) return '';
+      var parts = [];
+      if (st.cvmLoadouts) parts.push('CVM ' + st.cvmLoadouts);
+      if (st.peers && typeof st.peers.length === 'number') parts.push('名单 ' + st.peers.length);
+      if (typeof st.snapshotCount === 'number') parts.push('已收 ' + st.snapshotCount);
+      return parts.length > 0 ? ' · ' + parts.join(' / ') : '';
+    } catch (err) {
+      return '';
+    }
+  }
+
   /* ------------------------------ 轮询 -------------------------------- */
 
   function stopTimer() {
@@ -152,6 +174,21 @@
   }
 
   function finish(text, bad) {
+    /*
+     * 开局失败 / 匹配作废时，**如果已经点过出征**，必须先把这一局扔掉再回大厅。
+     *
+     * 以前只 `leaveRoom()`：房间退了，但主窗口的 `inRun` 还是 true、Worker 里
+     * 的世界还在跑 —— 玩家看到的就是「报错之后还站在一张地图上」。
+     * 走 `abortRun()` 而不是「返回大厅」按钮：那不是阵亡，不能按死亡结算
+     * （否则保险格 / 遗物 / 战利品全按失败路径处理）。
+     */
+    host.onlineRun = false;
+    try {
+      var ch = host && typeof host.channelState === 'function' ? host.channelState() : null;
+      if (ch && ch.inRun && typeof host.abortRun === 'function') host.abortRun();
+    } catch (err) {
+      console.warn('[match] 开局失败后退局出错', err);
+    }
     /*
      * 没进局就退出（取消 / 本局作废 / 断线）：把锁定那份装备还回界面。
      * `lockDeployment` 是真正把装备从 lobby 取走（保证「本机带的」与
@@ -185,7 +222,7 @@
    * 两端 hash 必然分叉，而这类分叉只在"有人掉线"的局里出现，事后极难定位。
    * 局没了还能重排，世界分叉了每一份日志都是噪声。
    */
-  host.onLoadoutsMissing = function (missing) {
+  host.onLoadoutsMissing = function (missing, info) {
     var mid = S.ticket && S.ticket.match ? S.ticket.match.id : null;
     if (mid && S.client) {
       try {
@@ -193,7 +230,14 @@
         if (p && typeof p.catch === 'function') p.catch(function () { /* 服务端可能已关局 */ });
       } catch (err) { /* 忽略：本地照样收尾 */ }
     }
-    finish('有队友未同步装备快照（' + (missing || 1) + ' 人），本局已取消；重新匹配即可', true);
+    // 把「为什么缺」一起说出来：`CVM ok:1/2` = 有人映射不上，
+    // `CVM fail:timeout` = relay 出网/接口问题；座位没到则是另一类
+    // （房间名单为空 / netSeat 丢失）。三种的处理方式完全不同。
+    var seatMissing = !!(info && info.seatMissing);
+    var head = seatMissing
+      ? '没收到队友的座位信息（房间名单为空或网络异常）'
+      : '有队友未同步装备快照（' + (missing || 1) + ' 人' + netDiagText() + '）';
+    finish(head + '，本局已取消；重新匹配即可', true);
   };
 
   /**
@@ -687,14 +731,31 @@
       host.net.declareMatch(view.match.id);
     }
     if (!relayOn && total > 1) {
-      // 有对手但接不上 relay：说出来，别让玩家以为「对面在隐身」。
-      setStatus('开局 · ' + total + ' 人 · seed ' + seed + ' · 输入未接通（看不到对方）', 'bad');
+      /*
+       * 有对手但接不上 relay：**不出征**。
+       *
+       * 旧行为是照样点出征 —— 于是两端各起一局单机搜打撤，互相看不见，
+       * 玩家以为「进了 PVE 地图」。那不是降级，是**假成功**：一局 PVP 从
+       * 第一帧起就没有对手，还照常扣装备、照常结算。
+       */
+      finish('房间已建立但输入通道没接通（看不到对方），本局已取消；请刷新后重试', true);
+      return;
+    }
+    if (!relayOn && total <= 1) {
+      setStatus('开局 · 1 人 · 输入未接通（单人局）', 'bad');
     } else {
-      setStatus('开局 · ' + total + ' 人 · seed ' + seed + (relayOn ? ' · 输入已接通' : ''));
+      setStatus('开局 · ' + total + ' 人 · seed ' + seed + ' · 输入已接通');
     }
 
     // 复用「出征」那一条链路：带装备进本、切界面、BroadcastChannel deploy。
     // 不复制一份 deploy 逻辑 —— 复制就会有两套"死亡规则"。
+    //
+    // `onlineRun` 是**这一局是不是联机**的显式标记，由主窗口带进 deploy 消息。
+    // 不能靠 Worker 自己从 `netSeat` 推断：BroadcastChannel 虽然是保序的，
+    // 但 Worker 可能晚启动（`netSeatRequest` 还没回），那一刻 `netActive` 仍是
+    // false ⇒ deploy 走单机分支 ⇒ 用本地 seed / 关卡类型起一局 PVE。
+    // 用户 2026-11-24 实测「两个人都进了 PVE 地图、互相看不见」就是这条。
+    host.onlineRun = relayOn;
     var deploy = $('fx-deploy');
     if (deploy) deploy.click();
     else setStatus('找不到出征按钮，无法起局', 'bad');
@@ -780,8 +841,12 @@
           finish('无法锁定本局装备，请重试', true);
           return;
         }
-        // 平台身份：用**造化**账号的 id/name，不是我们自家账号 ——
-        // relay 名单里的 id/name 就是造化那套，只有同源才对得上。
+        // 平台身份：`platformId` 用**造化**账号 id（relay 名单的 id 就是这套）；
+        // `displayName` 必须用**我们账号**的显示名 —— 因为房间是
+        // `joinRoom(roomId, { playerName: displayName() })` 建的，relay 名单里的
+        // `name` 正是这个值。以前这里传的是造化账号名（`platUser.name`），
+        // 两个名字不同源 ⇒ CVM 的 display_name 一条都对不上，只剩 platformId
+        // 一条路；那条再对不上就是「有队友未同步装备快照（1 人）」。
         var platUser = null;
         try {
           var p = platform();
@@ -792,7 +857,7 @@
           ruleset: MM.RULESET_EXTRACT,
           loadout: locked ? { loadout: locked.loadout, stars: locked.stars } : undefined,
           platformId: platUser && platUser.id ? String(platUser.id) : null,
-          displayName: platUser && platUser.name ? String(platUser.name) : null,
+          displayName: displayName(),
         });
       }
       S.ticket = view;

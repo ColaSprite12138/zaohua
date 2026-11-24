@@ -48,6 +48,15 @@
   var bagOpen = false;
   var channel = null;
   /**
+   * 本次出征带进局的装备副本（`deploy` 那一刻已经 `takeIntoRun` / 从锁定槽取走）。
+   *
+   * 只有一个用途：**开局失败退局**（匹配作废 / 缺快照）时原样还回大厅。
+   * 那条路径不是阵亡，不能按死亡规则扣装备；而世界已经被 `abort` 扔掉，
+   * 不还就等于「排个队，装备没了」。正常结算 / 主动退出都会清掉它，
+   * 避免重复归还导致物品翻倍。
+   */
+  var pendingAbortLoadout = null;
+  /**
    * 本局关卡类型（设计 2 / 4）。三条死亡规则完全不同，所以出征前必须选定：
    *   story  主线 —— 身上 + 背包全不掉
    *   dungeon 副本 —— 死亡掉落，下次进本捡回一次（第二次死亡永久消失）
@@ -368,7 +377,12 @@
         items: drop.items.map(relicOf),
       };
     }
-    if (channel) channel.postMessage({ type: 'deploy', deployment: deployment });
+    // 联机标记：由 match-flow 在起局前设置。Worker 不能靠 `netSeat` 是否已到
+    // 来推断 —— 那条消息晚到一次，这一局就会被当成单机 PVE 起在世界里。
+    var online = !!host.onlineRun;
+    if (channel) channel.postMessage({ type: 'deploy', deployment: deployment, online: online });
+    host.onlineRun = false;
+    pendingAbortLoadout = loadout;
     var corpse = deployment.deathDrop ? '；上一局遗物 ' + deployment.deathDrop.items.length + ' 件掉在原地' : '';
     log('出征 · 带入 ' + countItems(loadout) + ' 件物品；' + KIND_TEXT[currentKind] + corpse);
   });
@@ -400,8 +414,43 @@
     inRun = false;
     showBattle(false);
     host.setState(lobby);
+    pendingAbortLoadout = null;
     log('中途退出 · 本局战利品全部丢失' + keptNote + '（不形成遗物）', true);
   });
+
+  /**
+   * **开局失败退局**（撮合被作废 / 队友快照缺失 / 座位没到）。
+   *
+   * 与 `fx-back` 的区别只有一条：这不是玩家的损失，所以**装备原样还回大厅**、
+   * 不写遗物、不扣保险格。世界由 Worker 的 `abort` 消息丢弃。
+   *
+   * 为什么需要它：`match-flow.finish()` 以前只退房间，主窗口还停在战斗中 ——
+   * 用户看到「报错之后两个人都站在一张地图上」，而那张地图其实是一局
+   * 已经作废的单机世界。
+   */
+  host.abortRun = function () {
+    if (!inRun) return;
+    if (pendingAbortLoadout) {
+      try {
+        var lobby = host.getLobbyState();
+        M.bringBack(lobby, pendingAbortLoadout);
+        host.setState(lobby);
+      } catch (err) {
+        console.warn('[shell] 开局失败归还装备出错', err);
+      }
+      pendingAbortLoadout = null;
+    }
+    if (channel) channel.postMessage({ type: 'abort' });
+    pendingPvpResult = null;
+    var panel = $('pvp-defeat');
+    if (panel) panel.hidden = true;
+    setRunBag(false);
+    host.leaveRun();
+    inRun = false;
+    showBattle(false);
+    syncLeftovers();
+    log('开局未完成 · 已回到大厅（装备未损失）', true);
+  };
 
   $('fx-bag').addEventListener('click', function () {
     if (inRun) setRunBag(!bagOpen);
@@ -506,6 +555,9 @@
     host.setState(lobby);
     showBattle(false);
     syncLeftovers();
+    // 正常结算已经把战利品 / 保险格搬回大厅了，这份「失败退局」用的副本
+    // 必须立刻失效 —— 否则下一局开局失败会把它再还一遍（物品翻倍）。
+    pendingAbortLoadout = null;
 
     var lootNames = (result.lootLog || []).map(function (r) {
       return r.name + '(' + r.quality + ')';

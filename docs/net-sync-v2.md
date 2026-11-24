@@ -297,6 +297,30 @@ deploy 复用那一份。只预览不取走的话，玩家排队期间改一件�
 `abortForMissingLoadouts` 把本局作废回大厅。这是单数据源的必然代价 ——
 宁可不打，也不要一个从 tick 0 就分叉的世界。
 
+#### 7.3.1 对齐键必须同源（2026-11-24 真机修掉的两个「缺 1 人」）
+
+`members[]` 与 relay 名单是两套 id，能对齐的只有两个键：
+
+| 键 | CVM 侧 | relay 侧 | 注意 |
+|---|---|---|---|
+| `platformId` | 点匹配时 `PlatformClient.user.getCurrent().id` | `session.getPlayerId()` | 两者不一定同值；同值才命中 |
+| `displayName` | **必须**是 `displayName()`（我们账号名） | `joinRoom({playerName})` 的那个名字 | 曾经传造化账号名 ⇒ 两源不同，名字兜底永久失效 |
+
+派生规则：
+
+- 名字键只在**唯一**时可用（两行同名时按名字配会把 A 的装备发给 B，比缺更坏）；
+- 匹配按**消耗制**：一份 roster 行只能填一个玩家；
+- relayer 返回的诊断是 `ok:filled/分母`，缺人时附 `miss:<id 前 8 位>`；
+  角标显示 `快照 1/2 miss:ab12cd34`。
+
+**拉取不能依赖时序。** relay 收到 `{matchId}` 时，第二个玩家可能还没 `addPlayer`：
+第一次响应里他那一行没人可填，而旧实现 `loadoutsRequested = true` 永不复位 ⇒
+他永远没有快照，301 帧后整局作废（用户 2026-11-24 实测）。现在：
+
+1. 响应先缓存成 `cvmRoster`（含消耗标记），`addPlayer()` 之后直接补填，**不依赖网络**；
+2. roster 里确实没有这个人才允许再拉一次（`MAX_LOADOUT_ATTEMPTS = 2`，按 matchId 归零）；
+3. 补填成功立即把 `stats.cvmLoadouts` 刷成 `ok:2/2`，角标不再停在第一次的 `ok:1/2`。
+
 ### 7.4 数据来源审计表（改开局路径前先过一遍这张表）
 
 判据只有一条：**这个字段进不进 `state-hash.ts`？** 进了就只能是「服务端下发」或

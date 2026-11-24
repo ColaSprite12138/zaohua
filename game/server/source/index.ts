@@ -466,8 +466,26 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
   const LOADOUT_FROM_CVM = process.env.LOADOUT_FROM_CVM !== '0'
   /** 拉取超时。客户端门禁等 300 帧（12.5 秒），1.5 秒足够。 */
   const CVM_LOADOUT_TIMEOUT_MS = 1500
-  /** 一局只拉一次：matchId 由任一客户端上报，谁先报都一样。 */
-  let loadoutsRequested = false
+  /**
+   * 一局最多拉几次。
+   *
+   * **为什么不是一次**：relay 收到 `{matchId}` 时，房间名单可能还没把第二个人
+   * `addPlayer` 进来（两个客户端几乎同时进房，谁先报 matchId 不确定）。第一次
+   * 拉回 2 份也只能填 1 份，而旧实现 `loadoutsRequested = true` 永不复位 ——
+   * 后进房的那个人**永远没有快照**，301 帧后整局作废。2026-11-24 用户实测
+   * 「有队友未同步装备快照（1 人）」就是这条。
+   *
+   * 现在：拉到就缓存成 roster（后进房的人直接补填，不用再拉）；只有 roster
+   * 里确实没有这个玩家时，才允许再拉一次（上限 2 次，避免坏 matchId 打旋）。
+   */
+  const MAX_LOADOUT_ATTEMPTS = 2
+  let loadoutsAttempts = 0
+  /** 最近一次 CVM 返回的成员行 —— 后进房的人靠它补填，不再依赖网络时序。 */
+  let cvmRoster: { platformId: string | null; displayName: string | null; loadout: string }[] = []
+  let cvmMembers = 0
+  let declaredMatchId = ''
+  /** 已经用掉的 roster 行（防止两个同名/同 id 的玩家抢同一份快照）。 */
+  let cvmRosterUsed = new Set<number>()
 
   /**
    * 按 matchId 从 CVM 拉本局全员的开局装备快照。
@@ -481,9 +499,23 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
    * fire-and-forget：拉不到就退回「只靠客户端上报」，不影响出帧。
    */
   function fetchCvmLoadouts(matchId: string): void {
-    if (!LOADOUT_FROM_CVM || loadoutsRequested) return
+    if (!LOADOUT_FROM_CVM) return
     if (!/^[A-Za-z0-9_-]{6,64}$/.test(matchId)) return
-    loadoutsRequested = true
+    // 新的一局（房间可复用）：计数与缓存都归零，别让上一局的 2 次上限挡住这一局。
+    if (matchId !== declaredMatchId) {
+      loadoutsAttempts = 0
+      cvmRoster = []
+      cvmRosterUsed = new Set()
+      cvmMembers = 0
+    }
+    if (loadoutsAttempts >= MAX_LOADOUT_ATTEMPTS) return
+    // 同一局已经在拉 / 已经拉过：先看 roster 能不能补上，不够才再拉。
+    if (loadoutsAttempts > 0) {
+      const missing = fillFromCvmRoster()
+      if (missing === 0) return
+    }
+    loadoutsAttempts += 1
+    declaredMatchId = matchId
     const fetchFn = (globalThis as unknown as { fetch?: typeof fetch }).fetch
     if (typeof fetchFn !== 'function') {
       state.stats.cvmLoadouts = 'no-fetch'
@@ -537,29 +569,77 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
     if (Number.isFinite(payload.seed)) state.seed = Number(payload.seed)
     state.kind = payload.mode === 'extract' ? 'pvpve' : null
     const list = Array.isArray(payload.members) ? payload.members : []
-    const byId = new Map<string, string>()
-    const byName = new Map<string, string>()
+    cvmRoster = []
+    cvmRosterUsed = new Set()
+    cvmMembers = list.length
     for (const raw of list) {
       if (!raw || typeof raw !== 'object') continue
       const m = raw as { platformId?: unknown; displayName?: unknown; loadout?: unknown }
       if (typeof m.loadout !== 'string') continue
-      if (typeof m.platformId === 'string' && m.platformId) byId.set(m.platformId, m.loadout)
-      if (typeof m.displayName === 'string' && m.displayName) byName.set(m.displayName, m.loadout)
+      cvmRoster.push({
+        platformId: typeof m.platformId === 'string' && m.platformId ? m.platformId : null,
+        displayName: typeof m.displayName === 'string' && m.displayName ? m.displayName : null,
+        loadout: m.loadout,
+      })
     }
-    let filled = 0
+    fillFromCvmRoster()
+    const filled = state.players.filter((p) => p.snapshot !== undefined).length
+    /*
+     * 附带「缺的是谁」（id 前 8 位）。relay 日志在云端看不到，而
+     * `ok:1/2` 只说明少一个、说不清是 id 对不上还是名字对不上 ——
+     * 下次真机复现时，这一小段能直接区分。
+     */
+    const missing = state.players.filter((p) => p.snapshot === undefined)
+    const detail = missing.length > 0
+      ? ` miss:${missing.map((p) => p.id.slice(0, 8)).join(',')}`
+      : ''
+    return `ok:${filled}/${Math.max(cvmMembers, state.players.length)}${detail}`
+  }
+
+  /**
+   * 从缓存的 roster 给「还没有快照」的玩家补填，返回**仍缺快照的玩家数**。
+   *
+   * 为什么缓存而不是只填一次：CVM 的响应可能比房间名单更早到 —— 先到的人在
+   * `state.players` 里，后到的人还没 `addPlayer`。旧实现只在响应那一刻遍历
+   * 名单，后进房的人就被永久漏掉（用户 2026-11-24 实测的「缺 1 人」）。
+   * 现在 `addPlayer()` 之后也会调这个函数，等于把「网络时序」从正确性里拿掉。
+   *
+   * 匹配键：造化 `playerId === platformId`，或显示名。两条都按**消耗制**
+   * （`cvmRosterUsed`）—— 两个人同名时不能拿同一份快照顶上去，那会让
+   * 一端把对方的装备当成自己的。
+   */
+  function fillFromCvmRoster(): number {
+    /*
+     * 显示名只有在**唯一**时才能当键：两个人都叫「玩家」时按名字匹配会把
+     * A 的装备发给 B —— 那不是「缺一份」，而是「端上带错装备」，比缺更坏。
+     * id 键天然唯一，不受这条影响。
+     */
+    const nameCount = new Map<string, number>()
+    for (const row of cvmRoster) {
+      if (row.displayName === null) continue
+      nameCount.set(row.displayName, (nameCount.get(row.displayName) ?? 0) + 1)
+    }
     for (const player of state.players) {
       if (player.snapshot !== undefined) continue
-      const payload = byId.get(player.id) ?? byName.get(player.name)
-      if (payload === undefined) continue
-      try {
-        player.snapshot = JSON.parse(payload)
-        // 和客户端上报走同一条广播窗口规则：不设这个，`snapshot()` 会认为
-        // 「窗口早就关了」，拉到的数据永远发不出去（本地探针抓到的就是这个）。
-        player.snapshotUntil = state.frame + SNAPSHOT_GRACE_FRAMES
-        filled += 1
-      } catch { /* 坏 JSON 当作没拉到 */ }
+      for (let i = 0; i < cvmRoster.length; i += 1) {
+        if (cvmRosterUsed.has(i)) continue
+        const row = cvmRoster[i]
+        if (row === undefined) continue
+        const byId = row.platformId !== null && row.platformId === player.id
+        const byName = row.displayName !== null && row.displayName === player.name
+          && nameCount.get(row.displayName) === 1
+        if (!byId && !byName) continue
+        try {
+          player.snapshot = JSON.parse(row.loadout)
+          // 和客户端上报走同一条广播窗口规则：不设这个，`snapshot()` 会认为
+          // 「窗口早就关了」，拉到的数据永远发不出去（本地探针抓到的就是这个）。
+          player.snapshotUntil = state.frame + SNAPSHOT_GRACE_FRAMES
+          cvmRosterUsed.add(i)
+        } catch { /* 坏 JSON 当作没拉到 */ }
+        break
+      }
     }
-    return `ok:${filled}/${state.players.length}`
+    return state.players.filter((p) => p.snapshot === undefined).length
   }
 
   /**
@@ -824,6 +904,21 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
       if (state.players.some((entry) => entry.id === player.id)) return
       state.players.push({ id: player.id, name: player.name })
       delete state.departed[player.id]
+      /*
+       * 新到的人先吃已经缓存下来的 CVM 名单 —— 这是「缺 1 人」的正解：
+       * 第一次拉取常常发生在他 `addPlayer` 之前，响应里他那一行没人可填。
+       * 缓存后补填完全不依赖网络时序。
+       */
+      const missing = fillFromCvmRoster()
+      // 补填成功就把角标刷新成「全对上」：否则它会一直停在第一次拉取的
+      // `ok:1/1`，看起来像还是缺人（实际已经补齐）。
+      if (missing === 0 && cvmMembers > 0) {
+        state.stats.cvmLoadouts = `ok:${state.players.length}/${Math.max(cvmMembers, state.players.length)}`
+      }
+      // roster 里也没有（CVM 写得比配对晚 / 第一次拉失败）：再拉一次。
+      if (missing > 0 && declaredMatchId && loadoutsAttempts < MAX_LOADOUT_ATTEMPTS) {
+        fetchCvmLoadouts(declaredMatchId)
+      }
     },
     getPlayerCount() {
       return state.players.length
