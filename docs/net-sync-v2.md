@@ -178,24 +178,61 @@ v2 的做法是把这两样东西的所有权收到服务器：**帧号归服务
 | 2 | 协议换 `seq`：`input-frame.ts` 去掉 `tick`，加 `seq` | 单测 + typecheck | ✅ 2026-11-22 |
 | 3 | 服务器 v2：帧钟、贴当前帧、全量 history、replay 分块、departed | `frame-log.test.ts` + `scripts/probe-frame-clock.mjs`（25 项全绿） | ✅ 2026-11-22 |
 | 4 | 客户端接线：`game.pack.ts` 的 `advanceLockstep` 整段替换 | 单机 `playthrough-swing` 39 步通过 | ✅ 2026-11-22 |
-| 5 | 双人长跑验收 | `HOLD_MS=180000`：零分叉、卡 5 s 能回来 | ⬜ **未验**（缺 `MATCH_USER_A/B` 账号） |
+| 5 | 双人长跑验收 | `HOLD_MS=180000`：零分叉、卡 5 s 能回来 | ✅ 2026-11-24（18/18，见 §6.1） |
 | 6 | 单机 / 联机分帧率（60 / 24） | `verify-fixed-step.mjs`：`hz===60` 且实测 60.14 Hz；单机 playthrough 101 步 | ✅ 2026-11-22 |
 
 第 2–4 步是**同一批**落地的：协议、服务器、客户端三者是一套，单独改任何一半都会让联机不可用。
 
-### 6.1 第 5 步为什么没做
+### 6.1 第 5 步验收记录（2026-11-24）
 
-`scripts/verify-two-player-net.mjs` 需要两个真造化账号（`MATCH_USER_A/B` + 密码）和
-detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到账号之前，v2 的正确性证据只到：
+这一格挂了两天「⬜ 未验（缺 `MATCH_USER_A/B` 账号）」。其实后端一直开放
+`POST /api/v1/auth/account/register`，注册两个测试账号就能让 `verify-two-player-net.mjs`
+自己起两个 headless 页面跑完整链路，不必等真人双开。
 
-- 纯逻辑单测（帧钟语义、补帧区间、执行指针不变式）；
-- 服务器**真实产物**探针（`game/server/dist/index.js`，25 项：24 Hz、不等客户端、
-  意图按序贴帧、空帧覆盖、replay 分块与 ack）；
-- 单机 playthrough（证明客户端主循环改造没破坏单机）。
+**先补日志，再谈修复。** 在验收脚本加了 `TRACE_ONLY=1`：只跑登录→匹配→开局，
+把主窗口 / Worker / relay 三层事件流落成 `.game-builder/state/net-trace-*.json`，
+见到 `worker.gate.timeout` 就 `exit 1`。第一次跑就拿到硬证据：
 
-**还不能说「联机可用」**。第一次拿到双人环境时必须先跑 `HOLD_MS=180000`，重点看：
-`netStat.replays` 是否长期为 0、`lead` 是否稳定在 2–4、`gap` 是否长期 0、
-服务端 `diverged` 是否为 null。
+```
+relay cvm.apply {"filled":2,"missing":[],"seed":944567742,"kind":"pvpve"}
+net.state       {"self":"snap","peers":["...:snap"],"seed":...,"kind":...}
+worker.seat     {"self":"none","seed":null,"kind":null}      ← 断层在这里
+worker.deploy.wait {"self":"none","seed":null,"pending":true}
+worker.gate.timeout {"why":"自己的装备快照一直没到","deployed":false}
+```
+
+**真因**：`game.pack.ts` 的 `netSeat` 分发写成了
+`applySeat({ active, playerId, peers })` —— 主窗口发的 `self / seed / kind`
+在这里被丢掉，而 `applySeat()` 恰好靠它们建世界。于是 CVM 全员齐、
+主窗口全收到，Worker 却永远建不出世界，301 帧后整局作废。改成
+**`applySeat(msg)` 整条透传**（并把消息类型补全为 `PeerSnapshot` / seed / kind），
+以后 netSeat 再加字段也不会再漏。
+
+**180 秒长跑结果（`HOLD_MS=180000`，18/18 全绿）**：
+
+| 项 | 实测 |
+|---|---|
+| 两端 relay / 座号 | `active:true`、座号不同 |
+| 双向上行 | A `sends=34`、B 点击后 `0→38`；两端 `packetsIn=277` |
+| 影子互见 | B 的 `remotes` 有 A；A 走位 378 px 后 B 看到的 A 坐标同步变化 |
+| 帧钟 | tick 216 → 4606 / 4616（24 Hz × 180 s），`hashes` 191/192，`retx 0` |
+| 一致性 | `mismatches=0`、`divergedTick=-1`、墙钟偏移 10 帧 |
+| 带宽 | ↑0.1 KB/s · ↓12.2 KB/s（累计 ↓约 2.5 MB） |
+| 结算 | 全程无 `gameOver` / 结算弹窗（旧代码误进 PVE 的「挑战失败」不再出现） |
+
+**复跑**（宿主与验收必须放在**同一次命令**里：AI 工具调用边界会收割
+detached 宿主；用户自己双击 `scripts\pvp-host.cmd` 常驻则无此限制）：
+
+```bash
+node scripts/pvp-host.mjs rebuild && node scripts/pvp-host.mjs stop && node scripts/pvp-host.mjs start
+HOLD_MS=180000 MATCH_USER_A=.. MATCH_PASS_A=.. MATCH_USER_B=.. MATCH_PASS_B=.. \
+  node scripts/verify-two-player-net.mjs http://127.0.0.1:58081/__zaohua/preview
+# 只取事件流：把 HOLD_MS=180000 换成 TRACE_ONLY=1
+```
+
+**口径**：现在可以说「本机 58081 这一套联机链路可用」。线上平台
+version 5 跑的仍是旧前端 / 旧 relay，正式环境必须重新 build + upload +
+工作台发布后才成立；16 人满房帧钟与 `tickIntervalMs` 仍未实测（§8.6）。
 
 ## 7. 落地后的数据结构（对照用）
 

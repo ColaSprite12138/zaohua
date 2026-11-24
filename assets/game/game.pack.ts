@@ -1347,12 +1347,15 @@ export const game: Plugin = {
           online?: boolean;
           command?: RunCommand;
           requestId?: number;
-          /** netSeat：联机座位/参战名单。 */
+          /** netSeat：联机座位/参战名单（远端快照也在里面）。 */
           active?: boolean;
           playerId?: string;
-          peers?: ({ id: string; name?: string } | string)[];
+          peers?: ({ id: string; name?: string; snapshot?: PeerSnapshot } | string)[];
           /** netSeat：**本机自己那份**开局快照（relay 下发，来源 CVM）。 */
-          self?: unknown;
+          self?: PeerSnapshot | null;
+          /** netSeat：服务端权威世界参数，两者都进 hash。 */
+          seed?: number | null;
+          kind?: string | null;
           /** netIn：服务器广播的帧批次（一个 tick 一个包，含每个玩家的意图）。 */
           batches?: { tick: number; frames: { from: string; b: string }[] }[];
           /**
@@ -1476,7 +1479,18 @@ export const game: Plugin = {
           // 不匹配就拒绝开局 —— 别让「16 字节布局解 12 字节帧」静默发生。
           channel?.postMessage({ type: 'ready', ruleset: PROTOCOL_RULESET });
         } else if (msg.type === 'netSeat') {
-          applySeat({ active: msg.active, playerId: msg.playerId, peers: msg.peers });
+          /*
+           * **整条透传，绝不逐字段手抄。**
+           *
+           * 2026-11-24 真机日志（TRACE_ONLY 自动跑出来的硬证据）：主窗口
+           * `netSeat` 已带 self / seed / kind，relay `cvm.apply filled:2`
+           * 全员齐、`net.state` 也是 `self:snap`，可 Worker 的 `worker.seat`
+           * 恒为 `self:none / seed:null / kind:null` ⇒ `tryDeployFromSeat()`
+           * 永不建世界 ⇒ 301 帧门禁作废整局。根因就是这里以前只转发了
+           * `{ active, playerId, peers }`，把三个关键字段丢了。
+           * 整条透传后，netSeat 再加字段也会自动跟上。
+           */
+          applySeat(msg);
         } else if (msg.type === 'netIn') {
           // `srv` 即使在没有可投递帧时也会到（见 net-bridge 的注释）：它让
           // `driver.highestSeen` 跟上服务器的真实进度，`requestReplay` 才算得出

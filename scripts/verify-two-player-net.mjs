@@ -12,6 +12,15 @@
 //   MATCH_USER_A=.. MATCH_PASS_A=.. MATCH_USER_B=.. MATCH_PASS_B=.. \
 //   node scripts/verify-two-player-net.mjs <previewUrl>
 import { chromium } from './lib/playwright.mjs'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+
+/**
+ * `TRACE_ONLY=1` 只跑「登录 → 匹配 → 开局」并把三层黑匣子落成文件，
+ * 不做走位/长跑断言。用途：开局失败时不用让用户复制控制台，AI 自己起两个
+ * headless 账号就能拿到完整事件流（主窗口 / Worker / relay），直接定因。
+ */
+const TRACE_ONLY = process.env.TRACE_ONLY === '1'
 
 const PREVIEW = process.argv[2]
 const API = 'https://api.colasprite.net'
@@ -40,6 +49,17 @@ async function login (who) {
 async function enter (browser, session) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })
   const page = await ctx.newPage()
+  // 黑匣子同时 console.info。页面里的 `MetaTrace` 缓冲只有 300 条且会随
+  // iframe 重导航清空，console 这条流能补上「重导航之前」那段开局记录。
+  const logs = []
+  page.on('console', (m) => {
+    const t = m.text()
+    if (m.type() === 'error' || /\[(trace|net|match|relay|worker)\]/.test(t)) {
+      logs.push(`${m.type()}: ${t}`)
+      if (logs.length > 800) logs.shift()
+    }
+  })
+  page.on('pageerror', (e) => logs.push(`pageerror: ${e.message}`))
   await page.goto(PREVIEW, { waitUntil: 'domcontentloaded', timeout: 60000 })
   await page.waitForTimeout(5000)
   // 别用 `frames().find(f => f.url().includes('serveVersion'))`：宿主外壳的 URL
@@ -100,7 +120,41 @@ async function enter (browser, session) {
   }
   if (!closed) throw new Error(`登录门禁没关掉（gate=${gate}）：真实点击会被 #login-gate 吞掉`)
   frame = await shellFrame(page)
-  return { ctx, page, frame }
+  return { ctx, page, frame, logs }
+}
+
+/** 抓一端的完整黑匣子；iframe 可能正在重导航，坏句柄就重找几轮。 */
+async function grabTrace (entry) {
+  for (let i = 0; i < 6; i += 1) {
+    try {
+      const frame = await heal(entry)
+      return await frame.evaluate(() => {
+        const net = window.MetaShell && window.MetaShell.net
+        return {
+          trace: net && net.trace ? net.trace() : (window.MetaTrace ? window.MetaTrace.items() : []),
+          text: window.MetaTrace ? window.MetaTrace.text() : '',
+          status: net ? net.status() : null,
+          matchStatus: document.getElementById('fx-match-status')?.textContent || '',
+          inBattle: !!document.getElementById('fx-back') && !document.getElementById('fx-back').disabled,
+        }
+      })
+    } catch { await entry.page.waitForTimeout(500) }
+  }
+  return { trace: [], text: '', status: null, matchStatus: '', error: 'grabTrace 失败' }
+}
+
+function writeTraceReport (report) {
+  const dir = path.resolve('.game-builder', 'state')
+  mkdirSync(dir, { recursive: true })
+  const file = path.join(dir, `net-trace-${Date.now()}.json`)
+  writeFileSync(file, JSON.stringify(report, null, 2))
+  return file
+}
+
+/** 控制台摘要：只留开局链路与失败原因，别把 300 行全刷出来。 */
+const KEY_EVENT = /(deploy|seat|gate|cvm|loadout|match\.finish|frame\.first|relay|snapshot|abort|void)/i
+function traceDigest (text) {
+  return (text || '').split('\n').filter((line) => KEY_EVENT.test(line)).slice(-90).join('\n')
 }
 
 /** 旧 Frame 句柄可能在 iframe 重导航后失效；失效就重新找一帧，别直接判失败。 */
@@ -235,16 +289,62 @@ console.log('[入队] A / B 已点击「快速匹配」，等 60s 兜底成局�
 
 let seated = false
 const deadline = Date.now() + 110000
+const samples = []
+const t0 = Date.now()
 while (Date.now() < deadline) {
   await pa.page.waitForTimeout(3000)
   try {
     const a = await readShell(pa)
     const b = await readShell(pb)
+    if (TRACE_ONLY) {
+      const brief = (s) => ({
+        label: s?.label || '', status: s?.status || '', inBattle: !!s?.inBattle,
+        active: s?.net?.active ?? null, playerId: s?.net?.playerId ?? null,
+        peers: s?.net?.peers?.length ?? null,
+        cvm: s?.net?.cvmLoadouts ?? null,
+        snapshots: s?.net?.snapshotCount ?? null,
+        seats: s?.net?.seats ?? null,
+      })
+      samples.push({ t: Date.now() - t0, A: brief(a), B: brief(b) })
+    }
     if (a.inBattle && b.inBattle) { seated = true; break }
   } catch { /* iframe 可能在 reload */ }
 }
 
 const result = { seated, checks: [], before: null, after: null }
+
+/*
+ * 纯诊断模式：seated 之后再守 20 秒。门禁 301 帧 ≈ 12.5 秒才超时作废，
+ * 一进战斗就抓日志只会拿到「一切正常」的半截事件流。
+ */
+if (TRACE_ONLY) {
+  if (seated) await pa.page.waitForTimeout(20000)
+  const [ta, tb] = await Promise.all([grabTrace(pa), grabTrace(pb)])
+  const report = {
+    at: new Date().toISOString(), preview: PREVIEW, seated, samples,
+    A: { ...ta, console: pa.logs }, B: { ...tb, console: pb.logs },
+  }
+  const file = writeTraceReport(report)
+  console.log(`[日志] 完整事件流：${file}`)
+  console.log(`[日志] seated=${seated} · A ${ta.trace.length} 条 / B ${tb.trace.length} 条`)
+  for (const [name, t] of [['A', ta], ['B', tb]]) {
+    console.log(`\n===== ${name} · status =====`)
+    console.log(JSON.stringify({
+      active: t.status?.active, playerId: t.status?.playerId,
+      peers: t.status?.peers?.length, snapshots: t.status?.snapshotCount,
+      cvm: t.status?.cvmLoadouts, probe: t.status?.cvmProbe,
+      seats: t.status?.seats, matchStatus: t.matchStatus, inBattle: t.inBattle,
+    }))
+    console.log(`===== ${name} · 事件流摘要 =====\n${traceDigest(t.text) || '(空)'}`)
+  }
+  // 这个模式同时是回归测试：只要任何一端出现门禁超时，就算开局失败。
+  // 2026-11-24 用它抓到过「netSeat 分发漏转 self/seed/kind」那一类静默故障。
+  const gateFailed = [ta, tb].filter((t) => /worker\.gate\.timeout/.test(t.text)).length
+  console.log(`[日志] 门禁判定：${gateFailed === 0 ? 'PASS（两端均无 gate.timeout）' : 'FAIL（仍有开局作废）'}`)
+  await browser.close()
+  process.exit(gateFailed === 0 ? 0 : 1)
+}
+
 if (!seated) {
   await browser.close()
   console.log(JSON.stringify(result, null, 2))
@@ -307,6 +407,34 @@ result.after = {
   B: { net: shellBAfter.net, world: probeBAfter?.state?.playerWorld, remotes: probeBAfter?.state?.remotes },
 }
 
+/*
+ * **B 也要走一次**，不能只点 A。
+ *
+ * v2 的口径是「下行每 tick 必有空帧，上行没操作不发包」，而且 armTimeline
+ * 有意不发预热帧。所以只点 A 时 B 的 `sends` 恒为 0 —— 那是预期行为，
+ * 但「B 的上行链路到底通不通」就没被验证过。这里给 B 一次真实点击，
+ * 再复采 sends；判据用复采值，才算真的验了双向输入。
+ */
+let bSendsAfter = shellBAfter
+result.clickInfoB = []
+const startB = result.after?.B?.world
+for (const [x, y] of CANDIDATES) {
+  result.clickInfoB.push(await clickWorld(pb, x, y))
+  await pb.page.waitForTimeout(1200)
+  const snap = await probe(await heal(pb))
+  const w = snap?.state?.playerWorld
+  const moved = startB && w ? Math.hypot(w.x - startB.x, w.y - startB.y) : 0
+  result.clickInfoB.push({ probeAfter: [x, y], moved, worldAfter: w ?? null })
+  if (moved > 20) break
+}
+await pb.page.waitForTimeout(1500)
+bSendsAfter = await readShell(pb)
+result.afterB = {
+  net: bSendsAfter.net,
+  world: (await probe(await heal(pb)))?.state?.playerWorld,
+}
+console.log(`[双向] B 点击后 sends=${bSendsAfter.net?.sends ?? '?'}（点击前 ${shellBAfter.net?.sends ?? '?'}）`)
+
 // 3 分钟长跑：§7 的四个数要在时间拉长之后仍然成立，短跑全绿不能代替。
 if (HOLD_MS > 0) {
   console.log(`[长跑] 再守 ${Math.round(HOLD_MS / 1000)}s，按 §7 复采 tick / 分叉 / 补发…`)
@@ -360,7 +488,7 @@ const checks = [
   ['B 侧 relay 已接通（active 且拿到座号）', shellB.net?.active === true && Boolean(shellB.net?.playerId)],
   ['两边座号不同（不是自己在跟自己同步）', Boolean(idA) && Boolean(idB) && idA !== idB],
   ['A 真的把输入送出去了（sends > 0）', (shellAAfter.net?.sends || 0) > 0],
-  ['B 真的把输入送出去了（sends > 0）', (shellBAfter.net?.sends || 0) > 0],
+  ['B 真的把输入送出去了（点击后 sends > 0）', (bSendsAfter.net?.sends || 0) > 0],
   ['A 收到了 B 的输入包（packetsIn > 0）', (shellAAfter.net?.packetsIn || 0) > 0],
   ['B 收到了 A 的输入包（packetsIn > 0）', (shellBAfter.net?.packetsIn || 0) > 0],
   ['A 的锁步 tick 在涨（没卡在等齐上）', (shellAAfter.net?.engine?.tick || 0) > 60],
@@ -413,6 +541,8 @@ console.log(JSON.stringify({
   movedOfAOnB: movedBy(remoteAOnB0, remoteAOnB1),
   movedOfALocal: movedBy(result.before?.A?.world, result.after?.A?.world),
   clickInfo: result.clickInfo,
+  clickInfoB: result.clickInfoB,
+  afterB: result.afterB,
   longRun: result.longRun,
   tickDrift: result.tickDrift ?? null,
 }, null, 2))
