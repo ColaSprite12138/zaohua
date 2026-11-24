@@ -178,7 +178,7 @@ v2 的做法是把这两样东西的所有权收到服务器：**帧号归服务
 | 2 | 协议换 `seq`：`input-frame.ts` 去掉 `tick`，加 `seq` | 单测 + typecheck | ✅ 2026-11-22 |
 | 3 | 服务器 v2：帧钟、贴当前帧、全量 history、replay 分块、departed | `frame-log.test.ts` + `scripts/probe-frame-clock.mjs`（25 项全绿） | ✅ 2026-11-22 |
 | 4 | 客户端接线：`game.pack.ts` 的 `advanceLockstep` 整段替换 | 单机 `playthrough-swing` 39 步通过 | ✅ 2026-11-22 |
-| 5 | 双人长跑验收 | `HOLD_MS=180000`：零分叉、卡 5 s 能回来 | ✅ 2026-11-24（18/18，见 §6.1） |
+| 5 | 双人长跑验收 | `HOLD_MS=180000`：零分叉；断线重连用户真机实测能拉回最新状态 | ✅ 2026-11-24（18/18，见 §6.1） |
 | 6 | 单机 / 联机分帧率（60 / 24） | `verify-fixed-step.mjs`：`hz===60` 且实测 60.14 Hz；单机 playthrough 101 步 | ✅ 2026-11-22 |
 
 第 2–4 步是**同一批**落地的：协议、服务器、客户端三者是一套，单独改任何一半都会让联机不可用。
@@ -230,9 +230,10 @@ HOLD_MS=180000 MATCH_USER_A=.. MATCH_PASS_A=.. MATCH_USER_B=.. MATCH_PASS_B=.. \
 # 只取事件流：把 HOLD_MS=180000 换成 TRACE_ONLY=1
 ```
 
-**口径**：现在可以说「本机 58081 这一套联机链路可用」。线上平台
-version 5 跑的仍是旧前端 / 旧 relay，正式环境必须重新 build + upload +
-工作台发布后才成立；16 人满房帧钟与 `tickIntervalMs` 仍未实测（§8.6）。
+**口径**：现在可以说「本机 58081 这一套联机链路可用」，断线重连由用户真机实测
+能拉回最新状态。线上平台 version 5 跑的仍是旧前端 / 旧 relay，正式环境必须重新
+build + upload + 工作台发布后才成立；16 人满房帧钟与 `tickIntervalMs` 按用户拍板
+**不测**（§8.6 只留观测项，不作阻塞）。
 
 ## 7. 落地后的数据结构（对照用）
 
@@ -376,7 +377,7 @@ deploy 复用那一份。只预览不取走的话，玩家排队期间改一件�
 | `skeletons` / `destructibles` / `portals` / `events` | `reset()`：map + `makeRng(runSeed)` | ✅ 派生 |
 | `drops` / `dropSeq` / `lootLog` | `makeRng(runSeed)` 的消费序列 | ✅ 派生 |
 | `projectiles` / `zones` / `reactions` / `skillFx` | 帧推进（技能参数全是确定量） | ✅ 派生 |
-| `visionRadius` | **目前是常量**（天赋未接入） | ⚠️ 接天赋时必须改服务端下发 |
+| `visionRadius` | 常量 16 格；**服务器不下发，完全客户端本地算**（用户 2026-11-24 拍板） | ⚠️ 数值仍在 `SHARED_KEYS` 里进 hash ⇒ 接天赋 / buff 时必须照 `vitalsFrom` 的模式「同源 CVM 快照 + 同一份确定性公式」两端现算，不能各读本机存档；`inSight()` / 迷雾 / 小地图本身是 V 层，不进帧、不进广播、不进 hash |
 | 地图 `world` | 构建产物 `arena.generated.ts` | ⚠️ 靠 `PROTOCOL_RULESET` 兜底 |
 
 **明确不进 hash、也不许进判定的本机成分**：`camera`、`hoverEnemy`、`hoverDrop`、
@@ -512,6 +513,10 @@ setRate(stepClock, SOLO_HZ);                  // 回单机 / 新一局 PVE
 
 ### 8.6 这次对齐带来的两个待实测
 
+> **2026-11-24 用户拍板：16 人满房不测、跨网抖动不考虑。** 下面两条只是设计期留下的
+> 观测项，**不再是待办或上线阻塞**；`probe-bandwidth.mjs` 的 16 人数字是按公式外推，
+> 不是真机实测，别拿它当承载结论。
+
 1. **宿主能不能接受 `tickIntervalMs = 16.67`。** 若它内部有最小值（clamp 到 20–33 ms），
    广播就会低于 24 Hz，每轮带 1–2 帧。窗口 4 仍然够用，只是延迟略增 —— 不会坏，
    但要在 `stats.tickMs` 里确认 p50 真的是 16–17 ms。
@@ -602,7 +607,7 @@ setRate(stepClock, SOLO_HZ);                  // 回单机 / 新一局 PVE
 | 执行条件 | 不再等 `acc >= dt`，`canStep` 为真就执行（单帧仍 ≤ `MAX_CATCHUP_STEPS` 步） |
 | `addTime` / `takeStep` | 停跑；每步走 `forceStep`，末尾 `clearDebt` 归零 |
 | `renderAlpha` | 恒 0（已没有绘制路径依赖它，只剩单测） |
-| `lead` | 退化为「在途 + 未到帧数」，应在 **0~1**（待双人实测确认） |
+| `lead` | 退化为「在途 + 未到帧数」，应在 **0~1**；2026-11-24 用户判定「backlog 回落断言不做」，只保留角标观测，不补自动化用例 |
 | 视觉延迟 | **不变**：追随器仍落后一个逻辑步，因为必须知道下一步才有目标 |
 
 前提仍是 §9 的追随器：旧 `alpha` 插值下这一步会直接导致相机抽搐（§8.8.1）。

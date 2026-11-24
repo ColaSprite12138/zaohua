@@ -204,10 +204,10 @@
 | P0 撮合服务 | 完成（63 断言，线上 `api.colasprite.net/api/v1/match/*`） |
 | P1 快速匹配入口 | 完成（两人同房同 seed 开局，`stage=verified`） |
 | **P2 帧同步** | **完成**（固定步长 / 输入帧 / relay / 等齐 / hash 对账；双人真机 14/14） |
-| **P2.5 服务器定帧（v2）** | **代码已落地 2026-11-22，双人未验**：服务器 60 Hz 独立帧钟、意图不带帧号、全量 history + 分块 replay、客户端只执行广播帧（`docs/net-sync-v2.md`）。证据：`frame-log.test.ts` + `scripts/probe-frame-clock.mjs` 14 项 + 单机 playthrough。**缺 `MATCH_USER_A/B` 账号，双人长跑还没跑** |
+| **P2.5 服务器定帧（v2）** | **完成并已双人长跑验收（2026-11-24，18/18）**：服务器 **24 Hz** 独立帧钟、意图不带帧号、全量 history + 分块 replay、客户端只执行广播帧（`docs/net-sync-v2.md` §6.1）。证据：`HOLD_MS=180000` 两真账号零分叉（`mismatches=0` / `divergedTick=-1`）、tick 216→4606/4616、hashes 191/192、retx 0、↓12.2 KB/s；断线重连由用户真机实测能拉回最新状态。**线上 version 5 仍是旧前端 / 旧 relay，需重新 build + upload + 工作台发布** |
 | **P3a 远端输入作用于世界** | **完成（可破坏物）**：远端砸开的箱子两端一致、掉落同一批、进 hash 对账 |
-| **P3b 怪 / 掉落 / 互砍** | **待做**：要把 `GameState.player`（单数）改成按 `playerId` 分槽，波及渲染 / 输入 / 技能 / HUD |
-| P4 反作弊（`onCheckJoin`、视野裁剪、输入限幅） | 待做 |
+| **P3b 怪 / 掉落 / 互砍** | **完成**：`GameState.players` 全员实体化、`sortedPlayers(s)` 遍历、按 `playerId` 分槽的资源与结算、`damagePlayer(..., target)`、联机 PVP 当场爆装（`docs/net-sync-design.md` §8 第 2 步 10 条全 ✅） |
+| P4 反作弊（`onCheckJoin` / 服务端视野裁剪 / 输入限幅） | **明确不做（2026-11-24 用户拍板）**。`onCheckJoin` 属准入防搅局而非状态反作弊，一并归不做；视野完全客户端本地算、服务器不下发；输入帧只量化不 clamp（§10.9）。跨网抖动不考虑、16 人满房不测 |
 
 **联调铁律（今晚血泪换的，别省）**：
 
@@ -648,7 +648,7 @@ talent 22（talent 15 + starmap-data 7）、resource 17（tables 9 + map 8）、
 | 开局报「有队友未同步装备快照（1 人），本局已取消」 | 两条已修的原因，复现时先看角标 `快照 1/2 miss:xxxxxxxx`：① 入队上传的 `displayName` 曾经传的是**造化账号名**，而 relay 名单里的 `name` 是 `joinRoom(playerName)` 的**我们账号名** —— 两源不同 ⇒ 按名字兜底永远失败；现在两处统一用 `displayName()`（`meta-ui/match-flow.js`）。② relay 收到 `matchId` 时第二个玩家可能还没 `addPlayer`，旧实现一次拉取后就 `loadoutsRequested=true` 永不复位 ⇒ 后进房的人永远没有快照；现在把 CVM 响应缓存成 roster，`addPlayer()` 直接补填（探针 `scripts/probe-cvm-loadouts.mjs` 场景 4 有回归）。 |
 | 报错之后「两个人都进了一张 PVE 地图」/ 开局失败还站在战场上 | ① `deploy` 曾经只按 Worker 内的 `netActive` 判断联机，而它依赖 `netSeat` 先到 —— Worker 晚启动/消息丢失时 `netActive=false`，deploy 走单机分支，用本地 seed + 关卡类型起一局 PVE。现在主窗口在 deploy 里显式带 `online`（`host.onlineRun`），Worker 用 `pendingOnline` 冻结，**不看消息到达顺序**。② `match-flow.finish()` 以前只退房间，主窗口 `inRun` 仍是 true；现在调 `host.abortRun()`（扔世界 + 回大厅 + 装备原样归还，不按阵亡结算）。③ `relayOn=false` 且有对手时**不再出征**（旧行为是各起一局单机，属于假成功）。 |
 | 两个客户端 tick 差几格、hash 永远对不上 | v2 里 tick 差来自「执行指针落后服务器帧号」，看角标 `领先`：0~1 正常，>3 且不回落才是积压。`acc` 截断 / `droppedSeconds` 是 v1 的旧机制，已删。真落后靠补帧通道（`补` 计数持续增长 = 一直在丢包）。 |
-| 联机时本地输入像「慢半拍」才动 | 这是设计：本机输入也要等服务器贴帧、广播回来才执行（不做客户端预表现，`docs/net-sync-v2.md` §4）。延迟 ≈ RTT + `lookahead×41.7ms`。别改成「先动再发」—— 那等于把输入归属还给客户端。 |
+| 联机时本地输入像「慢半拍」才动 | 这是设计：本机输入也要等服务器贴帧、广播回来才执行（不做客户端预表现，`docs/net-sync-v2.md` §4）。延迟 ≈ RTT + 一个服务器回程；`IMMEDIATE_EXECUTION=true` 后执行不再等 `acc`、`lookahead=1`，旧写的 `lookahead×41.7ms` 已不准。别改成「先动再发」—— 那等于把输入归属还给客户端。 |
 | `state.remotes` 里有人，但屏幕上找不到他 | 影子角色也走 `sees()` 视野裁剪。对方在墙后 / 视野外本来就不该看见（反透视的一部分），不是 bug |
 | 冻结 / 眩晕的截图里看不到「冻住」的样子 | 硬控只有 1.2–1.5 秒，而 `play.screenshot` 从调用到成像有 1–2 秒延迟。画面证据看**冰面 / 状态条 / 霜痕**，硬控本身由投影里的 `skeletons[].statuses` 断言证明 |
 | 服务端只发一次 `game_init` 就再不推状态 | **`StateSyncGame.tick()` 返回 `true` 是「本局结束」**，不是「有变化」。恒 `true` 会立刻广播 `game_over` 并停掉 tick 循环，之后所有 `sendAction` 落进死房间。relay 必须恒返回 `false`；广播由 runtime 每轮取 `getDelta()` 完成 |
