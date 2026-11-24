@@ -196,6 +196,25 @@
     finish('有队友未同步装备快照（' + (missing || 1) + ' 人），本局已取消；重新匹配即可', true);
   };
 
+  /**
+   * 协议版本不一致：拒绝开局、把这局作废。
+   *
+   * 为什么不能"先打着看"：帧是定长二进制，版本不同就是字节布局不同。解出来的
+   * 输入会张冠李戴，画面上表现为"延迟/漂移"而不是报错 —— 这类分叉最难查。
+   * 正确做法是让玩家刷新页面（新构建），或重排一局。
+   */
+  host.onRulesetMismatch = function (local, remote) {
+    var mid = S.ticket && S.ticket.match ? S.ticket.match.id : null;
+    if (mid && S.client) {
+      try {
+        var p = S.client.abort(mid, 'ruleset_mismatch');
+        if (p && typeof p.catch === 'function') p.catch(function () { /* 服务端可能已关局 */ });
+      } catch (err) { /* 忽略：本地照样收尾 */ }
+    }
+    finish('双方客户端版本不一致（本机 ' + local + ' / 房间 ' + remote
+      + '），请刷新页面后重新匹配', true);
+  };
+
   function startPolling() {    stopTimer();
     S.timer = setInterval(function () { void poll(); }, POLL_MS);
     void poll();
@@ -589,7 +608,9 @@
       kind.dispatchEvent(new Event('change'));
     }
 
-    // seed 由服务端在配对时生成，两端拿到同一个值 —— 帧同步的第一前提。
+    // 服务端在配对时生成的种子：**只用于显示与验收**（`host.match.seed()`）。
+    // 世界参数（runSeed / runKind）由 relay 从 CVM 拉取后广播，见
+    // `game.pack.ts::tryDeployFromSeat` —— 客户端不再把它塞进 deployment 当来源。
     host.netSeed = seed;
     var total = view && view.match && view.match.members ? view.match.members.length : 0;
 

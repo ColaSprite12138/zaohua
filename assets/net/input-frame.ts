@@ -62,8 +62,24 @@ export type InputFrame = {
   readonly pointerOnHud: boolean;
 };
 
-/** 输入帧的字节数。改布局必须同时改 `RULESET_EXTRACT`。 */
+/** 输入帧的字节数。改布局必须同时改 `PROTOCOL_RULESET`。 */
 export const INPUT_FRAME_BYTES = 16;
+
+/**
+ * 协议版本标识：**同一条链路上两端必须完全一致**，否则帧会按错误的字节布局解码。
+ *
+ * 为什么它必须和 `INPUT_FRAME_BYTES` 住在同一个文件：改布局忘了改版本号，
+ * 新旧客户端就会配到同一局，relay 拿 16 字节的布局去解 12 字节的帧 ——
+ * 不报错、只是每个玩家的输入都错位成别人的，看起来像"操作延迟"。
+ *
+ * 它同时被三处使用：
+ *   - relay 广播（`state.ruleset`，客户端据此校验）；
+ *   - 撮合服务的排队键（不同版本不进同一局）；
+ *   - 客户端进局前的自检（不匹配就拒绝开局，而不是静默错位）。
+ *
+ * 规则：**只增不减**，每次改帧布局 / 改共享规则表都必须递增。
+ */
+export const PROTOCOL_RULESET = 'extract-v3';
 
 export const NO_SKILL = 255;
 export const NO_SWITCH = 255;

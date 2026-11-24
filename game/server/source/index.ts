@@ -1,7 +1,7 @@
 import { createPlatformStateSyncRuntime } from '@vibegame/state-sync-runtime/server'
 import { decodeBase64, encodeBase64 } from '../../../assets/net/base64.ts'
 import { createFrameLog, advanceFrame, forgetPlayer, sliceHistory, submitIntent, FRAME_HZ, FRAME_MS, type FrameLog } from '../../../assets/net/frame-log.ts'
-import { decodePacket, encodeBatch, type InputFrame } from '../../../assets/net/input-frame.ts'
+import { decodePacket, encodeBatch, PROTOCOL_RULESET, type InputFrame } from '../../../assets/net/input-frame.ts'
 
 /**
  * 搜打撤的房间服务 —— **帧钟 + 输入归属**（v2，2026-11-22）。
@@ -45,7 +45,7 @@ import { decodePacket, encodeBatch, type InputFrame } from '../../../assets/net/
  * v1 → v2：输入帧第一个字段从「客户端帧号」改成「意图序号」，语义不兼容。
  * v2 → v3：输入帧 12 → 16 字节，坐标 i16×4 → i32×4（大地图不再截断）。
  */
-const RULESET = 'extract-v3'
+const RULESET = PROTOCOL_RULESET
 
 /**
  * 广播里保留最近多少帧的输入。

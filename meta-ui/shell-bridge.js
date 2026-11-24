@@ -343,12 +343,19 @@
     if (newRunPanel) newRunPanel.hidden = true;
     host.enterRun(loadout);
     showBattle(true);
-    // 联机（搜打撤 PVP）的 seed 由撮合服务在配对瞬间生成并随票下发，两端必须同一个值
-    // —— 帧同步的第一前提。单机仍用固定 SEED，保证同一台机器上重进本的掉落序列可复现。
-    var seed = currentKind === 'pvpve' && Number.isFinite(host.netSeed) ? host.netSeed : SEED;
+    /*
+     * `seed` / `kind` 在**联机时会被 Worker 忽略** —— 它们进 hash
+     * （`SHARED_KEYS` 里的 `runSeed` / `runKind`），只能由 relay 从 CVM 拉取后
+     * 下发（见 `game.pack.ts::tryDeployFromSeat`）。这里给的值只对单机生效；
+     * 联机给一份只是为了让 `Deployment` 结构完整，不是数据来源。
+     *
+     * 以前这里是 `Number.isFinite(host.netSeed) ? host.netSeed : SEED` ——
+     * 那等于「客户端自己算全局种子」，拿不到就回落固定值。
+     */
+    var seed = SEED;
     var deployment = {
       seed: seed, loadout: loadout, kind: currentKind,
-      // 星图也必须用锁定时那一份：排队期间点星图会让两端乘区不同。
+      // 星图同理：联机以 relay 下发的快照为准，这里只是单机的来源。
       stars: locked ? locked.stars : starDeployment(),
     };
     // 副本遗物（设计 4）：只有「副本」把上一局掉落的东西摆回地图。

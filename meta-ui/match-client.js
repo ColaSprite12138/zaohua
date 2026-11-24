@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/match-client.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: e5ea359aaedc7f9f10f7afc440fa617bf711c547c2dca6ca1403c948ad001091
+ * Source SHA-256: 9698392d25b0f4eb39b224fae12335a16b4e9948c27b5bf26fdc1f3f4779bed4
  */
 (function (root) {
 "use strict";
@@ -43,7 +43,15 @@ exports.DEFAULT_BASE = 'https://api.colasprite.net';
  * **改了数值表 / 技能 / 怪物表就要递增这个值**（例如 `extract-v2`），
  * 否则新旧客户端会被配到一起。
  */
-exports.RULESET_EXTRACT = 'extract-v1';
+/**
+ * 排队键用的协议版本。**必须与 `assets/net/input-frame.ts::PROTOCOL_RULESET`
+ * 完全一致** —— 不同版本会被撮合到同一局，而 relay 用新布局去解旧帧不会报错，
+ * 只会让输入错位（看起来像延迟）。
+ *
+ * 本文件刻意「零 import」（可单独在浏览器里跑），所以这里只能写死字符串；
+ * 一致性由 `assets/net/__tests__/protocol-version.test.ts` 读源码比对守住。
+ */
+exports.RULESET_EXTRACT = 'extract-v3';
 /** 唯一支持联机的模式。主线 / 副本仍跑本地单机。 */
 exports.MODE_EXTRACT = 'extract';
 /** 轮询间隔：排队阶段的延迟预算就是秒级，不值得上 WebSocket。 */

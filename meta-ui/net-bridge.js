@@ -74,6 +74,16 @@
      * 这正是「当事人可以不在线」的关键：需要的是局号，不是那个人的连接。
      */
     matchId: '',
+    /**
+     * 本构建的协议版本（由 Worker 在 `ready` 里报上来）。
+     *
+     * relay 广播的 `state.ruleset` 必须与它一致 —— 帧是定长二进制，版本不同
+     * 意味着字节布局不同：拿新布局去解旧帧**不会报错**，只会把 A 的输入错位成
+     * B 的，表现得像"操作延迟/漂移"。所以这里一旦不符就拒收所有帧。
+     */
+    protocolRuleset: '',
+    /** 已经报过的版本不一致（只报一次，别刷屏）。 */
+    rulesetMismatch: '',
     /** Worker 每秒推一次的诊断（执行帧号 / 领先多少 / 补了几次）。 */
     lastStat: null,
     /** 兜底轮询的上一次 state 签名（不变就跳过）。 */
@@ -474,6 +484,8 @@
         return;
       }
       if (msg.type === 'ready') {
+        // 本构建的协议版本：用于校验 relay 广播（见 `protocolRuleset`）。
+        if (typeof msg.ruleset === 'string' && msg.ruleset) S.protocolRuleset = msg.ruleset;
         // Worker 是后启动的（它起来之前发的消息没人收）。握手时补一次座位信息，
         // 否则刷新页面后 Worker 不知道自己已经在联机局里。
         post({ type: 'netSeatRequest' });
@@ -543,6 +555,27 @@
       && !raw.inputs && !Array.isArray(raw.players);
     if (wrapped) state = raw.state;
     S.stats.updates += 1;
+    /*
+     * 协议自检：relay 广播的 ruleset 必须与本构建一致。
+     *
+     * 帧是定长二进制（16 字节、坐标 i32）。版本不同 ⇒ 字节布局不同 ⇒ 解码不报错
+     * 但字段错位 ⇒ 每个玩家的输入都变成别人的。这比"卡"更危险，因为它看起来
+     * 只是延迟。所以不一致时**一帧都不投递**。
+     */
+    if (S.protocolRuleset && typeof state.ruleset === 'string'
+      && state.ruleset !== S.protocolRuleset) {
+      if (S.rulesetMismatch !== state.ruleset) {
+        S.rulesetMismatch = state.ruleset;
+        console.error('[net] 协议版本不一致：relay=' + state.ruleset
+          + ' 本地=' + S.protocolRuleset + '（拒绝接收帧）');
+        if (typeof host.onRulesetMismatch === 'function') {
+          try {
+            host.onRulesetMismatch(S.protocolRuleset, state.ruleset);
+          } catch (err) { /* 收尾失败也不该让帧流继续 */ }
+        }
+      }
+      return;
+    }
     // relay 的 CVM 出网探测结果。它是「loadout 由 CVM 下发」这条路的前置条件，
     // 而 relay 的日志在云端看不到 —— 只有这个字段能把它带回我们眼前。
     if (state.stats && typeof state.stats.cvmProbe === 'string') {

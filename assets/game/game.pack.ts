@@ -44,7 +44,7 @@ import {
   addTime, clearDebt, createStepClock, forceStep, seekClock, setRate, takeStep,
 } from '../net/step-clock.ts';
 import {
-  NO_SKILL, NO_SWITCH, decodePacket, encodeBatch,
+  NO_SKILL, NO_SWITCH, PROTOCOL_RULESET, decodePacket, encodeBatch,
   toStepInput, type InputFrame,
 } from '../net/input-frame.ts';
 import { assembleInputs } from '../net/assemble-inputs.ts';
@@ -1325,7 +1325,9 @@ export const game: Plugin = {
           resultSent = false;
           publishRunState(true);
         } else if (msg.type === 'hello') {
-          channel?.postMessage({ type: 'ready' });
+          // 把本构建的协议版本告诉主窗口：它据此校验 relay 广播的 `ruleset`，
+          // 不匹配就拒绝开局 —— 别让「16 字节布局解 12 字节帧」静默发生。
+          channel?.postMessage({ type: 'ready', ruleset: PROTOCOL_RULESET });
         } else if (msg.type === 'netSeat') {
           applySeat({ active: msg.active, playerId: msg.playerId, peers: msg.peers });
         } else if (msg.type === 'netIn') {
@@ -1398,7 +1400,7 @@ export const game: Plugin = {
       // Worker boots. A `hello` sent at DOMContentLoaded is therefore lost,
       // and so is the overlay's initial `lock`. Proactively announce readiness
       // so the overlay can reassert the lock as soon as this channel exists.
-      channel?.postMessage({ type: 'ready' });
+      channel?.postMessage({ type: 'ready', ruleset: PROTOCOL_RULESET });
     }
 
     /**
