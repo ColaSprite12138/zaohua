@@ -361,6 +361,11 @@ export default async function monsterSkill(play) {
       tick += 1;
       await play.advance(chasing ? 1.2 : 0.1);
     }
+    // 2026-11-25：这一条是**既存的偶发用例**，同样的报错在父提交 66a96e9
+    // （不含任何 PVP 改动）上也能复现。失效形态有两种：法师被清掉 / 走散后
+    // `pickMage` 锁到远处睡着的另一只（`awake=false goal=none`），或禁魔弹
+    // `silence_orb` 直飞被墙吃掉（`blocked` 30+）。重跑一次即可，别据此改判定层
+    // 代码；断言「沉默真的挂上」一点没放宽。
     const sk = last === null ? null : pickMage(last);
     throw new Error(
       `没等到禁魔弹（d=${sk === null ? -1 : Math.round(LOGICAL(sk, last.player))}`
