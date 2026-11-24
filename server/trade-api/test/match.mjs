@@ -336,6 +336,69 @@ console.log('\n[T10] 数据不变量')
   ok(badState === 0, 'matches.state 没有越界取值', badState)
 }
 
+// ============ 开局装备快照（2026-11-24） ============
+// 规则：点匹配时上传 → 配对时固化 → relay 按 matchId 拉。
+// 关键场景是「先入座的人随后离线」：他的快照必须在**入队那一刻**就落到服务端，
+// 否则局照开、而他的属性只能靠默认值（两端分叉）。
+{
+  console.log('\n[开局装备快照]')
+  const T = T0 + 10 * 3600_000
+  const a = newUser()
+  const b = newUser()
+
+  // 一份「有内容」的 loadout：背包一件 + 穿戴两件。服务端只当字符串存。
+  const loadoutA = {
+    bag: [{ uid: 'i-1', defId: '10001', durability: 88, damage: 47, container: 'bag', col: 0, row: 0 }],
+    equipped: [
+      { uid: 'i-2', defId: '10003', durability: 60, damage: 55, affixes: [{ id: 'sharp', stat: 'atk_pct', value: 0.06 }] },
+      null, null, null, null, null, null, null, null,
+    ],
+    activeWeaponSlot: 0,
+    safe: [{ uid: 'i-3', defId: '30002', count: 3, container: 'safe', col: 0, row: 0 }],
+  }
+
+  match.enqueue({
+    userId: a, mode: MODE, ruleset: RULES, now: T,
+    loadout: loadoutA, platformId: 'plat-A', displayName: '甲',
+  })
+  // b 不带 loadout（模拟旧客户端）：不该拖累别人，也不该造出假数据。
+  // `now` 推到 61 秒后：不足 4 人时只有「等够 waitMs」才配对（limits.waitMs = 60s）。
+  match.enqueue({ userId: b, mode: MODE, ruleset: RULES, now: T + 61_000 })
+
+  const ta = match.currentTicket({ userId: a, now: T + 62_000 })
+  ok(ta.state === 'formed', '两人 60s 未满时靠「等够」配对成功', ta.state)
+  const matchId = ta.match.id
+
+  const got = match.loadoutsFor({ matchId })
+  ok(got.matchId === matchId, '按 matchId 拉到本局快照', got.matchId)
+  ok(got.members.length === 1, '只有上传过的人有快照（b 没有）', got.members.length)
+  const me = got.members[0]
+  ok(me.userId === a, '成员是上传者本人', me.userId)
+  ok(me.platformId === 'plat-A', '带上造化 playerId（relay 靠它对齐名单）', me.platformId)
+  ok(me.displayName === '甲', '带上显示名（id 对不上时的兜底）', me.displayName)
+  // 服务端**不解析** loadout：原样存取，逐字节相同。
+  ok(me.loadout === JSON.stringify(loadoutA), 'loadout 原样存取，没有被解析或重排')
+
+  // 排队期间改装备：再入队一次会覆盖**暂存**，但已固化的这局不受影响。
+  match.enqueue({
+    userId: a, mode: MODE, ruleset: RULES, now: T + 3000,
+    loadout: { bag: [], equipped: [null, null, null, null, null, null, null, null, null, null], activeWeaponSlot: 0, safe: [] },
+  })
+  const after = match.loadoutsFor({ matchId })
+  ok(after.members[0].loadout === JSON.stringify(loadoutA),
+    '配对后改装备不会改这一局的快照（锁定生效）', after.members[0].loadout.slice(0, 40))
+
+  expectErr(() => match.loadoutsFor({ matchId: 'm-nope' }), 'match_not_found', '不存在的局返回 404 语义')
+
+  // 超限：单份快照 40KB 上限，防止有人拿它当上传通道。
+  const huge = { bag: Array.from({ length: 400 }, (_, i) => ({ uid: 'u' + i, defId: '10001', blob: 'x'.repeat(200) })), equipped: [], activeWeaponSlot: 0 }
+  expectErr(
+    () => match.enqueue({ userId: newUser(), mode: MODE, ruleset: RULES, now: T + 4000, loadout: huge }),
+    'loadout_too_large',
+    '超大 loadout 被拒（413 语义）'
+  )
+}
+
 console.log(`\n=== ${pass} 通过, ${fails.length} 失败 ===`)
 if (fails.length) { fails.forEach((f) => console.log('  FAIL:', f)); process.exit(1) }
 process.exit(0)

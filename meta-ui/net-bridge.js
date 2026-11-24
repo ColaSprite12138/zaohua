@@ -70,6 +70,14 @@
      * 并在角标上露一眼。
      */
     cvmProbe: '',
+    /**
+     * 本局的撮合 matchId。
+     *
+     * 由 match-flow 在 `attach` 之后告诉这里，再上行给 relay —— relay 拿它去
+     * CVM 拉「全员开局装备快照」。**只要有一个还活着的客户端报过就够**，
+     * 这正是「当事人可以不在线」的关键：需要的是局号，不是那个人的连接。
+     */
+    matchId: '',
     /** Worker 每秒推一次的诊断（执行帧号 / 领先多少 / 补了几次）。 */
     lastStat: null,
     /** 兜底轮询的上一次 state 签名（不变就跳过）。 */
@@ -374,9 +382,9 @@
     // 静默 = 服务器的 tick 连续几拍没涨。它和「渲染慢」「逻辑慢」都不同：
     // 那两个至少还有数据在流，静默是**什么都没有**，只能等连接恢复或重进。
     var silent = diagLast.silentTicks >= 3;
-    // 开局门禁超时（被迫用空快照）：这局两端属性可能不同，hash 一定分叉。
-    // 它不该静默 —— 否则下次看到 mismatches 又要从头猜。
-    var voided = stat.loadoutVoided ? '⚠ 空快照开局 ' + stat.loadoutVoided + '  ' : '';
+    // 门禁判定：有人没交装备快照 → relay 已经**拒绝开局**（不再是空快照硬开）。
+    var voided = stat.loadoutVoided
+      ? '⚠ 快照缺 ' + stat.loadoutVoided + ' 人·本局作废  ' : '';
     // relay → CVM 的出网探测：通了只给一个对钩，没通把原因摊开。
     // 这是「房间里的 Node 进程到底能不能访问我们后端」的唯一可见证据。
     var cvm = S.cvmProbe
@@ -488,8 +496,19 @@
         if (sendUp({ snapshot: msg.snapshot })) S.stats.sends += 1;
         return;
       }
-      if (msg.type === 'netResync') {
-        // 引擎重建了执行指针（新一局）：这边也必须把「已投递水位」清掉，
+      if (msg.type === 'netLoadoutsMissing') {
+        // relay 判定「有人没交开局装备快照」：**不空快照硬开**，由主窗口把这局作废。
+        // 空快照会让两端属性从 tick 0 起就不同，那是最难查的一类分叉。
+        if (typeof host.onLoadoutsMissing === 'function') {
+          try {
+            host.onLoadoutsMissing(msg.missing || 0);
+          } catch (err) {
+            console.warn('[net] 处理「快照未齐」失败', err);
+          }
+        }
+        return;
+      }
+      if (msg.type === 'netResync') {        // 引擎重建了执行指针（新一局）：这边也必须把「已投递水位」清掉，
         // 否则窗口里还留着的旧帧会被当成「已经给过了」而永远不再投递。
         S.delivered = -1;
         S.replaySeq = -1;
@@ -787,8 +806,20 @@
     return S.session.isHost === true;
   }
 
-  function tryStartGame() {
-    if (!S.session || typeof S.session.startGame !== 'function') return;
+  /**
+   * 告诉 relay 本局的 matchId（它据此向 CVM 拉全员开局快照）。
+   *
+   * 为什么由一个客户端上报、而不是 relay 自己查：`createGame(players, match?)`
+   * 只给了 `reportLoading`，relay 拿不到自己的 roomId / matchId。而局号是
+   * **谁都可以报**的东西 —— 不需要那个人的连接还活着，只要还有一个客户端在。
+   */
+  function declareMatch(matchId) {
+    if (typeof matchId !== 'string' || !matchId) return;
+    S.matchId = matchId;
+    sendUp({ matchId: matchId });
+  }
+
+  function tryStartGame() {    if (!S.session || typeof S.session.startGame !== 'function') return;
     if (!isRoomOwner()) return;
     try {
       S.session.startGame();
@@ -961,6 +992,8 @@
       peers: S.peers,
       members: view && view.match && view.match.members ? view.match.members.length : 0,
     });
+    // 会话重建 = 可能是新的 relay 进程：局号得重报一次，它才能去 CVM 拉快照。
+    if (S.matchId) declareMatch(S.matchId);
     if (S.pollTimer) clearInterval(S.pollTimer);
     // 60ms 而不是 120ms：这段轮询是「对方输入从会话里到达引擎」的唯一通道之一，
     // 它的间隔直接叠加在链路延迟上。锁步的本地提前量只有 5 tick（约 83ms），
@@ -1142,5 +1175,6 @@
     detach: detach,
     status: status,
     onGameUpdate: onGameUpdate,
+    declareMatch: declareMatch,
   };
 })();

@@ -745,40 +745,27 @@ export const game: Plugin = {
     }
 
     /** 兜底：对方没上报（旧客户端 / 消息丢了）也不能永久冻结，用空快照开局。 */
-    function forceStartWithoutLoadouts(): void {
-      let filled = 0;
-      for (const id of netPeers) {
-        if (id === netPlayerId || netPeerSnapshots.has(id)) continue;
-        netPeerSnapshots.set(id, {
-          loadout: null,
-          hpMax: state.maxHp,
-          manaMax: state.maxMana,
-          starSkills: [...state.starSkills],
-        });
-        filled += 1;
-      }
-      /*
-       * **这是一条会产生分叉的兜底路径，正常网络永不触发。**
-       *
-       * 它只在「等 300 帧仍有人没上报装备快照」时走到。问题在于**两端各自计时**：
-       * 我先超时、用空快照开局，而你可能晚几帧才收到那份真实快照 —— 于是同一局
-       * 里你的 `hpMax / manaMax / starSkills` 与我不一样，从 tick 0 起就分叉。
-       *
-       * 正确修法是让服务器仲裁（收集齐 → 广播 ready；超时 → 广播 void，两端都
-       * 用空快照）。没做的原因写在 `docs/net-sync-design.md` §10.6：这条路径改的是
-       * 开局首帧，必须双人真机验收才能证明「没有把正常局面也改坏」，而当前没有
-       * 两个真账号环境。在那之前，至少让它**说出来**而不是静默分叉。
-       */
-      if (filled > 0) {
-        netStat.loadoutVoided = 1;
-        // 只走 console + netStat（后者每秒随诊断推到角标）：不为一条异常路径
-        // 新增一种上行消息，减少「发了没人管」的半成品。
-        console.warn(
-          `[net] 开局装备快照超时（${loadoutWaitFrames} 帧），${filled} 人按空快照开局 —— `
-          + '这条路径两端可能拿到不同属性，若 hash 分叉先查这里（net-sync-design §10.6）',
-        );
-      }
-      tryArmAfterLoadouts();
+    /**
+     * 有人没交开局装备快照：**拒绝开局**（用户 2026-11-24 拍板）。
+     *
+     * 旧实现在这里用空快照硬开：缺快照的人按默认属性建影子，从 tick 0 起他的
+     * `hpMax / manaMax / starSkills` 就和本机认知不同 —— 两端 hash **必然分叉**，
+     * 而且只在「有人中途掉线 / 从没上报」的局里出现，是最难查的一类。
+     *
+     * 现在改成：**不 armTimeline（不开局）**，上报原因，让主窗口把这局作废回大厅。
+     * 局没了，但世界是干净的 —— 分叉比"这局重排"难处理得多。
+     *
+     * 至于"当事人已经离线所以交不出装备"：那条路由 CVM 补（点匹配时上传，
+     * relay 按 matchId 拉，见 `game/server/source/index.ts::fetchCvmLoadouts`）。
+     * 走到这里的只剩「CVM 也没有」的兜底情况。
+     */
+    function abortForMissingLoadouts(missing: string[]): void {
+      netStat.loadoutVoided = Math.max(1, missing.length);
+      console.warn(
+        `[net] 开局装备快照超时（${loadoutWaitFrames} 帧），${missing.length} 人未交：`
+        + `${missing.join(',') || '未知'} —— 拒绝开局，本局作废（不空快照硬开）`,
+      );
+      channel?.postMessage({ type: 'netLoadoutsMissing', missing: missing.length });
     }
 
     function armTimeline(): void {
@@ -1492,7 +1479,14 @@ export const game: Plugin = {
                 // 名单/快照到达那一刻一次吐出几百步会让两端 tick 错开）。
                 if (awaitingLoadouts) {
                   loadoutWaitFrames += 1;
-                  if (loadoutWaitFrames > 300) forceStartWithoutLoadouts();
+                  // 只报一次（301 帧那一帧）：每帧都发只会刷屏，而且主窗口那边
+                  // 收到第一条就开始收尾了。注意**不置 `awaitingLoadouts = false`**
+                  // —— 保持冻结，`advanceNet` 不会执行，等于"不开局"。
+                  if (loadoutWaitFrames === 301) {
+                    abortForMissingLoadouts(
+                      [...netPeers].filter((id) => id !== netPlayerId && !netPeerSnapshots.has(id)),
+                    );
+                  }
                 }
                 if (netSeatSettled && !awaitingLoadouts) advanceNet(raw);
               } else advanceSolo(raw);

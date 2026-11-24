@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/match-client.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 8eaa4ef0b5c56982245770a4595bc5d2c9d0ea0f57a744f02c1b1290dce584c6
+ * Source SHA-256: e5ea359aaedc7f9f10f7afc440fa617bf711c547c2dca6ca1403c948ad001091
  */
 (function (root) {
 "use strict";
@@ -130,6 +130,10 @@ function createMatchClient(deps) {
             const data = await request(deps, 'POST', '/api/v1/match/queue', {
                 mode: (options && options.mode) || exports.MODE_EXTRACT,
                 ruleset: (options && options.ruleset) || exports.RULESET_EXTRACT,
+                // 三个都可选：旧客户端不带也能排队，只是那一局要退回「进房后各自上报」。
+                loadout: (options && options.loadout) || undefined,
+                platformId: (options && options.platformId) || undefined,
+                displayName: (options && options.displayName) || undefined,
             });
             return toTicket(data);
         },

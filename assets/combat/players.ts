@@ -13,6 +13,8 @@
  */
 import type { RunLoadout } from '../meta/inventory.ts';
 import { makeRunInventory } from './run-inventory.ts';
+import { createModifiers } from './modifiers.ts';
+import { vitalsFrom } from './vitals.ts';
 import { BODY_RADIUS, canStandAt, nearestWalkable, type World } from './world.ts';
 import {
   PLAYER_HP_MAX, PLAYER_MANA_MAX, PRE_EQUIPPED_SKILLS, SPAWN_FACE, createSkillBar,
@@ -143,18 +145,29 @@ const EMPTY_REMOTE_LOADOUT: RunLoadout = {
 };
 
 /**
- * 开局装备快照。由对方在 deploy 时上报、relay 原样转发。
+ * 开局装备快照。两条来源，**必须由 relay 选定一份后广播**（同一局只能一个值）。
  *
- * 带上「算好的 hpMax/manaMax/星图」而不只是 loadout：装备加成与星图乘区
- * 只在本机 `deployRun()` 里算过，远端没法重算一份一模一样的。少带一项，
- * 两端对同一个玩家的血量上限认知就不同，而玩家 hp 是进 hash 的。
+ * 1. 对方在 deploy 后上报：带算好的 `hpMax / manaMax / starSkills`。
+ * 2. 匹配服下发（2026-11-24，对付「入座后、出征前就关掉页面」的人）：
+ *    点匹配时客户端手里只有 `loadout` + 星图，**还没有 hpMax**（那要 deploy
+ *    跑完才知道）。所以这种快照只带 `stars`，上限由每个客户端用 `vitals.ts`
+ *    现算 —— 公式与 `applyStarMods` 是同一份，不会差。
+ *
+ * 两条路都不能少带信息：少带一项，两端对同一个玩家的血量上限认知就不同，
+ * 而玩家 hp 是进 hash 的。
  */
 export interface PeerSnapshot {
   /** null = 对方没带东西下场（或旧客户端没上报）。 */
   loadout: RunLoadout | null;
-  hpMax: number;
-  manaMax: number;
-  starSkills: readonly string[];
+  /** 算好的上限。缺省时由 `loadout + stars` 现算（见 `deriveRemoteVitals`）。 */
+  hpMax?: number;
+  manaMax?: number;
+  starSkills?: readonly string[];
+  /**
+   * 星图快照。匹配服下发的那份靠它算上限与技能栏 —— 点匹配那一刻客户端
+   * 只有这个，还没跑过 deploy。
+   */
+  stars?: { readonly nodes?: readonly string[]; readonly skills?: readonly string[] };
 }
 
 export function createRemotePlayer(
@@ -176,10 +189,22 @@ export function createRemotePlayer(
       const off = spawnOffset(id);
       return { x: spawn.x + off.dx, y: spawn.y + off.dy };
     })();
-  const hpMax = snapshot?.hpMax ?? PLAYER_HP_MAX;
-  const manaMax = snapshot?.manaMax ?? PLAYER_MANA_MAX;
-  const starSkills = snapshot?.starSkills ?? PRE_EQUIPPED_SKILLS;
   const runInventory = makeRunInventory(snapshot?.loadout ?? EMPTY_REMOTE_LOADOUT);
+  const starSkills = snapshot?.starSkills ?? snapshot?.stars?.skills ?? PRE_EQUIPPED_SKILLS;
+  /*
+   * 上限：**显式值优先**（本机 deploy 后上报的那种），否则用 loadout + 星图现算。
+   *
+   * 为什么要有「现算」这条：入座后、点出征前关掉页面的人，永远不会上报
+   * `hpMax` —— 匹配服手里只有他点匹配时的 `loadout + stars`。各端必须用
+   * **同一份公式**把这几个数算出来，公式在 `vitals.ts`，和 `applyStarMods`
+   * 共用，所以「本机算的」和「远端算的」逐位相同。
+   */
+  const derived = vitalsFrom(runInventory, createModifiers(snapshot?.stars?.nodes ?? []), {
+    hp: PLAYER_HP_MAX,
+    mana: PLAYER_MANA_MAX,
+  });
+  const hpMax = snapshot?.hpMax ?? derived.hpMax;
+  const manaMax = snapshot?.manaMax ?? derived.manaMax;
   return {
     id,
     name,

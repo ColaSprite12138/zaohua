@@ -195,6 +195,15 @@ type RelayState = {
      * 它是「loadout 由 CVM 下发给 relay」这条路的前置条件：不 ok 就不能走。
      */
     cvmProbe: string
+    /**
+     * 从 CVM 拉开局装备快照的结果（2026-11-24）。取值：
+     *   `skipped`           没走这条路（开关关掉 / 没人报 matchId）
+     *   `pending`           正在拉
+     *   `ok:2/2`            拉到 2 份，名单也是 2 人
+     *   `ok:1/2`            只匹配上 1 人（另一个只能靠客户端上报或门禁兜底）
+     *   `bad:404` / `fail:timeout` / `no-fetch`
+     */
+    cvmLoadouts: string
   }
 }
 
@@ -214,6 +223,7 @@ function emptyState(players: RelayPlayer[]): RelayState {
       mismatches: 0, retired: 0, replays: 0, catchup: 0, skipped: 0,
       snapshotResends: 0,
       cvmProbe: 'skipped',
+      cvmLoadouts: 'skipped',
     },
   }
 }
@@ -429,6 +439,105 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
       })
   }
 
+  /* ----------------------- CVM 开局快照拉取 ----------------------- */
+
+  /** 我们自己的后端。env 可覆盖（换环境 / 本地联调）。 */
+  const CVM_BASE = String(process.env.CVM_BASE || 'https://api.colasprite.net').replace(/\/+$/, '')
+  /** `LOADOUT_FROM_CVM=0` 一键回到「只靠客户端上报」。 */
+  const LOADOUT_FROM_CVM = process.env.LOADOUT_FROM_CVM !== '0'
+  /** 拉取超时。客户端门禁等 300 帧（12.5 秒），1.5 秒足够。 */
+  const CVM_LOADOUT_TIMEOUT_MS = 1500
+  /** 一局只拉一次：matchId 由任一客户端上报，谁先报都一样。 */
+  let loadoutsRequested = false
+
+  /**
+   * 按 matchId 从 CVM 拉本局全员的开局装备快照。
+   *
+   * **为什么需要它**：入座（`reportSeated`）只证明"报过到"，不证明连接还活着。
+   * 先入座的人在最后一个人入座前关掉页面，撮合服照样判定全员到齐、局照开，
+   * 而他的客户端永远不会再发 loadout —— 那一端只能用默认属性建影子，
+   * 两端玩家 hp 立刻不同 ⇒ 分叉。CVM 在点匹配那一刻就把数据存住了，与
+   * 当事人是否还在线无关。
+   *
+   * fire-and-forget：拉不到就退回「只靠客户端上报」，不影响出帧。
+   */
+  function fetchCvmLoadouts(matchId: string): void {
+    if (!LOADOUT_FROM_CVM || loadoutsRequested) return
+    if (!/^[A-Za-z0-9_-]{6,64}$/.test(matchId)) return
+    loadoutsRequested = true
+    const fetchFn = (globalThis as unknown as { fetch?: typeof fetch }).fetch
+    if (typeof fetchFn !== 'function') {
+      state.stats.cvmLoadouts = 'no-fetch'
+      return
+    }
+    state.stats.cvmLoadouts = 'pending'
+    const controller = typeof AbortController === 'function' ? new AbortController() : null
+    let settled = false
+    const finish = (value: string): void => {
+      if (settled) return
+      settled = true
+      state.stats.cvmLoadouts = value
+      clearTimeout(timer)
+    }
+    const timer = setTimeout(() => {
+      try { controller?.abort() } catch { /* 忽略 */ }
+      finish('fail:timeout')
+    }, CVM_LOADOUT_TIMEOUT_MS)
+    ;(timer as unknown as { unref?: () => void }).unref?.()
+    fetchFn(
+      `${CVM_BASE}/api/v1/match/${encodeURIComponent(matchId)}/loadouts`,
+      controller ? { signal: controller.signal } : undefined,
+    )
+      .then(async (res) => {
+        if (!res.ok) { finish(`bad:${res.status}`); return }
+        finish(applyCvmLoadouts(await res.json()))
+      })
+      .catch((err: unknown) => {
+        const name = err && typeof err === 'object' && 'name' in err
+          ? String((err as { name?: unknown }).name) : 'error'
+        finish(`fail:${name}`)
+      })
+  }
+
+  /**
+   * 把 CVM 的快照填进名单。
+   *
+   * **只在「这个人还没有快照」时填**：客户端 deploy 后上报的那份更准
+   * （带真 hpMax，且反映他实际带进局的装备），必须能覆盖这里。反过来不行 ——
+   * 覆盖顺序错一次，两端对同一个人的属性认知就不同。
+   *
+   * 对齐方式：先按造化 `playerId === platformId`，再按显示名。都对不上就不填，
+   * 那个人会走「客户端上报」或门禁兜底。
+   */
+  function applyCvmLoadouts(data: unknown): string {
+    const list = data && typeof data === 'object' && Array.isArray((data as { members?: unknown }).members)
+      ? (data as { members: unknown[] }).members
+      : []
+    const byId = new Map<string, string>()
+    const byName = new Map<string, string>()
+    for (const raw of list) {
+      if (!raw || typeof raw !== 'object') continue
+      const m = raw as { platformId?: unknown; displayName?: unknown; loadout?: unknown }
+      if (typeof m.loadout !== 'string') continue
+      if (typeof m.platformId === 'string' && m.platformId) byId.set(m.platformId, m.loadout)
+      if (typeof m.displayName === 'string' && m.displayName) byName.set(m.displayName, m.loadout)
+    }
+    let filled = 0
+    for (const player of state.players) {
+      if (player.snapshot !== undefined) continue
+      const payload = byId.get(player.id) ?? byName.get(player.name)
+      if (payload === undefined) continue
+      try {
+        player.snapshot = JSON.parse(payload)
+        // 和客户端上报走同一条广播窗口规则：不设这个，`snapshot()` 会认为
+        // 「窗口早就关了」，拉到的数据永远发不出去（本地探针抓到的就是这个）。
+        player.snapshotUntil = state.frame + SNAPSHOT_GRACE_FRAMES
+        filled += 1
+      } catch { /* 坏 JSON 当作没拉到 */ }
+    }
+    return `ok:${filled}/${state.players.length}`
+  }
+
   /**
    * 每次都给一份**新对象**。返回同一个可变 `state` 引用时，runtime 若按
    * 引用/序列化结果判断「这轮有没有变化」，会永远认为没变、一次都不广播
@@ -627,10 +736,28 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
         return
       }
 
+      /*
+       * 客户端报 matchId：relay 据此向 CVM 拉全员开局快照。
+       *
+       * 为什么让客户端报、而不是 relay 自己查：`createGame(players, match?)`
+       * 只给了 `reportLoading`，拿不到自己的 roomId / matchId。只要还有**一个**
+       * 活着的客户端报一次就行 —— 这正是「当事人可以不在线」的关键：
+       * 需要的是局号，不是那个人的连接。
+       */
+      const declared = input && typeof input === 'object'
+        ? (input as Record<string, unknown>).matchId
+        : null
+      if (typeof declared === 'string' && declared) {
+        fetchCvmLoadouts(declared)
+        return
+      }
+
       const snap = readPeerSnapshot(input)
       if (snap !== null) {
         const entry = state.players.find((p) => p.id === playerId)
         if (entry) {
+          // **客户端上报覆盖 CVM 那份**：deploy 后上报的才是他真正带进局的
+          // 装备与真 hpMax；CVM 的是"点匹配那一刻"，用于没机会上报的人。
           entry.snapshot = snap
           // 从这一刻起 10 秒内跟着广播下发，够所有人建好远端影子。
           entry.snapshotUntil = state.frame + SNAPSHOT_GRACE_FRAMES

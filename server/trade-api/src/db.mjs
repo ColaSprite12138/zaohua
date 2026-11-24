@@ -246,6 +246,37 @@ function migrateSchema () {
       close_reason TEXT                -- cancelled | timeout | failed:xxx
     );
     CREATE INDEX IF NOT EXISTS idx_matches_state ON matches(state, deadline);
+
+    -- ========== 开局装备快照（2026-11-24） ==========
+    -- 为什么需要它：帧同步要求「这一局每个人带进来的背包/星图」在两端逐位一致，
+    -- 而它不能靠进房后各自上报 —— reportSeated 只要求"报过到"，
+    -- **不要求连接还活着**。所以先入座的人可以在最后一个人入座前关掉页面：
+    -- 撮合服照样判定「全员到齐」，局照开，而那个人永远不会再上报 loadout。
+    --
+    -- 于是改成「点匹配那一刻就上传、由服务端存住」：
+    --   pending_loadouts  排队期的暂存（一人一份，重复入队覆盖）
+    --   match_loadouts    配对成功时固化（此后改装备不影响本局）
+    -- relay 进局后按 matchId 拉取，填 players[].snapshot。
+    CREATE TABLE IF NOT EXISTS pending_loadouts (
+      user_id      TEXT PRIMARY KEY,
+      platform_id  TEXT,               -- 造化 playerId（能拿到就存，用来和 relay 名单对齐）
+      display_name TEXT,
+      payload      TEXT NOT NULL,      -- 客户端 loadout 的 JSON
+      bytes        INTEGER NOT NULL,
+      updated_at   INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS match_loadouts (
+      match_id     TEXT NOT NULL,
+      user_id      TEXT NOT NULL,
+      platform_id  TEXT,
+      display_name TEXT,
+      payload      TEXT NOT NULL,
+      bytes        INTEGER NOT NULL,
+      created_at   INTEGER NOT NULL,
+      PRIMARY KEY (match_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_loadouts_match ON match_loadouts(match_id);
   `)
 }
 

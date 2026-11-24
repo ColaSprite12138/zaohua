@@ -237,6 +237,44 @@ detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到�
 这也正是它大（每人 5–6 KB）的原因 —— 所以「窗口内重复、窗口外归零 + 按需补发」
 比「砍字段」安全得多。
 
+### 7.2 开局快照的第二条来源：CVM（2026-11-24）
+
+**问题**：`reportSeated` 只证明"报过到"，**不证明连接还活着**。所以
+
+| 时刻 | 发生什么 |
+|---|---|
+| A 第 1 秒 seated | `pending = 1`，`deadline` 仍在走（45 s） |
+| A 第 10 秒关掉页面 | 撮合服**完全不知道**：它只看 `match_tickets.state`，没有连接心跳 |
+| B 第 20 秒 seated | `pending = 0` → 判定「全员到齐」→ `playing`，`deadline` 清空 |
+| 之后 | A 的名字还在房间名单里（掉线保留座位），但他的客户端永远不再上报 loadout |
+
+结果就是「局照开、有人永远没有快照」。所以快照有**两条来源**，由 relay 选定一份广播：
+
+| 来源 | 时机 | 内容 | 谁用 |
+|---|---|---|---|
+| 客户端上报 | deploy 之后 | `{loadout, hpMax, manaMax, starSkills}` | 在场者（**优先级更高**） |
+| CVM 下发 | 点匹配时 `POST /match/queue` 带上 | `{loadout, stars:{nodes,skills}}` | 没机会上报的人 |
+
+**为什么客户端上报能覆盖 CVM 那份**：它反映的是「他真正带进局的装备 + 真的跑过
+不 deploy 的属性」；CVM 那份是"点匹配那一刻"，只用于**没机会再说一次**的人。
+覆盖顺序写反一次，两端对同一个人的认知就分叉。
+
+**属性怎么算**：CVM 那份只有 `loadout + stars`，`hpMax/manaMax` 由各端用
+`assets/combat/vitals.ts::vitalsFrom` 现算 —— 和 `applyStarMods` 是**同一份代码**
+（`assets/combat/__tests__/vitals.test.ts` 守着），所以「本机算的」与「远端算的」逐位相同。
+
+**relay 怎么知道自己是哪一局**：`createGame(players, match?)` 只给 `reportLoading`，
+拿不到 roomId/matchId。所以由**任一还活着的客户端** `sendAction({matchId})` 上报
+（`net-bridge.js::declareMatch`）—— 需要的是局号，不是那个人的连接。
+
+**数据落点**：`match_loadouts(match_id, user_id, platform_id, display_name, payload)`，
+配对成功时从 `pending_loadouts` 固化，此后改装备不影响本局。读取接口
+`GET /api/v1/match/:id/loadouts`（relay 用，`matchId` 即凭证，见 `http.mjs`）。
+
+**门禁超时的新行为**：不再用空快照硬开，改为**拒绝开局 + 本局作废**
+（`game.pack.ts::abortForMissingLoadouts` → `netLoadoutsMissing` → match-flow abort）。
+空快照会让缺快照的人从 tick 0 起属性就不同，分叉比"重排一局"难处理得多。
+
 
 ## 8. 帧率与带宽：为什么逻辑帧率不能跟着广播频率走
 

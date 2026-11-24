@@ -166,8 +166,26 @@
     setStatus(text || '已退出匹配', bad ? 'bad' : '');
   }
 
-  function startPolling() {
-    stopTimer();
+  /**
+   * relay 报「有人没交开局装备快照」：按用户 2026-11-24 拍板**拒绝开局**，
+   * 把这局作废回大厅（不是空快照硬开）。
+   *
+   * 为什么宁可作废：空快照会让缺快照那人从 tick 0 起属性就与别人不同 ——
+   * 两端 hash 必然分叉，而这类分叉只在"有人掉线"的局里出现，事后极难定位。
+   * 局没了还能重排，世界分叉了每一份日志都是噪声。
+   */
+  host.onLoadoutsMissing = function (missing) {
+    var mid = S.ticket && S.ticket.match ? S.ticket.match.id : null;
+    if (mid && S.client) {
+      try {
+        var p = S.client.abort(mid, 'loadouts_missing');
+        if (p && typeof p.catch === 'function') p.catch(function () { /* 服务端可能已关局 */ });
+      } catch (err) { /* 忽略：本地照样收尾 */ }
+    }
+    finish('有队友未同步装备快照（' + (missing || 1) + ' 人），本局已取消；重新匹配即可', true);
+  };
+
+  function startPolling() {    stopTimer();
     S.timer = setInterval(function () { void poll(); }, POLL_MS);
     void poll();
   }
@@ -571,6 +589,15 @@
     if (host.net && typeof host.net.attach === 'function') {
       relayOn = host.net.attach(S.roomSession, view);
     }
+    /*
+     * 把局号告诉 relay：它据此向 CVM 拉**全员**的开局装备快照。
+     * 这一步不依赖"谁带装备"，只依赖"还有人在" —— 先入座随后离线的那个人，
+     * 他的快照在点匹配时就已经存进 CVM 了。
+     */
+    if (relayOn && host.net && typeof host.net.declareMatch === 'function'
+      && view && view.match && view.match.id) {
+      host.net.declareMatch(view.match.id);
+    }
     if (!relayOn && total > 1) {
       // 有对手但接不上 relay：说出来，别让玩家以为「对面在隐身」。
       setStatus('开局 · ' + total + ' 人 · seed ' + seed + ' · 输入未接通（看不到对方）', 'bad');
@@ -644,7 +671,38 @@
         }
         view = null;
       }
-      if (!view) view = await S.client.queue({ ruleset: MM.RULESET_EXTRACT });
+      if (!view) {
+        /*
+         * 入队时**顺带上交本局的装备快照**。
+         *
+         * 时间点很关键：必须在这里（人还在），不能等进房 —— `reportSeated`
+         * 只证明"报过到"，先入座的人可以在最后一个人入座前关掉页面，
+         * 而撮合服照样判定全员到齐、局照开。那时他再也交不出装备了。
+         *
+         * `lockDeployment()` 只读不写：匹配可能取消 / 等 60 秒，这期间背包
+         * 必须留在界面上。锁定之后 deploy 会用同一份（见 shell-bridge）。
+         */
+        var locked = null;
+        try {
+          if (host && typeof host.lockDeployment === 'function') locked = host.lockDeployment();
+        } catch (err) {
+          console.warn('[match] 锁定装备快照失败，本局退回「进房后各自上报」', err);
+        }
+        // 平台身份：用**造化**账号的 id/name，不是我们自家账号 ——
+        // relay 名单里的 id/name 就是造化那套，只有同源才对得上。
+        var platUser = null;
+        try {
+          var p = platform();
+          platUser = p && p.user && typeof p.user.getCurrent === 'function'
+            ? p.user.getCurrent() : null;
+        } catch (err) { /* 宿主没有这个能力：靠名字兜底 */ }
+        view = await S.client.queue({
+          ruleset: MM.RULESET_EXTRACT,
+          loadout: locked ? { loadout: locked.loadout, stars: locked.stars } : undefined,
+          platformId: platUser && platUser.id ? String(platUser.id) : null,
+          displayName: platUser && platUser.name ? String(platUser.name) : null,
+        });
+      }
       S.ticket = view;
       // 拿到服务器回包才算真的进了队列，这时候才允许出现「排队中」。
       S.pollFails = 0;

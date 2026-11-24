@@ -187,12 +187,34 @@ export function createApp ({ db, auth, wallet, market, save, match }) {
   // 这里只决定「谁建房、谁加入、什么时候开」，房间本身由客户端在造化平台创建。
   add('GET', '/api/v1/match/stats', () => ({ ok: true, ...match.stats() }))
 
+  // 入队时**顺带上交本局的装备快照**（2026-11-24）。
+  // 为什么不等进房再报：入座只证明"报过到"，先入座的人可以在最后一个人入座前
+  // 关掉页面 —— 那时他已经没有机会再上报了。所以在人还在的时候存下来。
   add('POST', '/api/v1/match/queue', async ({ user, body }) =>
     match.enqueue({
       userId: user.userId,
       mode: body.mode,
-      ruleset: body.ruleset
+      ruleset: body.ruleset,
+      // 可选：旧客户端不带也能排队，只是那一局的这份快照要退回「进房后上报」。
+      loadout: body.loadout ?? null,
+      platformId: typeof body.platformId === 'string' ? body.platformId : null,
+      displayName: typeof body.displayName === 'string' ? body.displayName : null
     }), true)
+
+  /**
+   * relay 拉取本局全员的开局装备快照（服务间调用，不用玩家 token）。
+   *
+   * 鉴权：**matchId 本身就是凭证** —— 它只通过 `view.match` 下发给本局成员，
+   * 且是 UUID v4（128 位随机）。想更强就配 `RELAY_KEY`，配了之后 relay 必须
+   * 带 `X-Relay-Key`；没配就是"知道局号即可读"，对好友房够用。
+   */
+  add('GET', '/api/v1/match/:id/loadouts', ({ req, params }) => {
+    const expected = process.env.RELAY_KEY
+    if (expected && req.headers['x-relay-key'] !== expected) {
+      throw new HttpError(403, 'relay_key_required', '缺少或错误的 X-Relay-Key')
+    }
+    return { ok: true, ...match.loadoutsFor({ matchId: params.id }) }
+  })
 
   // 页面刷新后恢复现场：没有活票就回 null，不等同于错误
   add('GET', '/api/v1/match/ticket', async ({ user }) => ({

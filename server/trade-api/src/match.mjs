@@ -129,9 +129,47 @@ function view (t, now = Date.now()) {
 // ============ 排队 ============
 
 /** 入队。同一账号重复调用返回同一张票（幂等），不会插两条。 */
-export function enqueue ({ userId, mode, ruleset, now = Date.now() }) {
+/** 单份装备快照的上限。实测一份「满背包 + 全穿戴」约 5–6KB，给 40KB 余量。 */
+const MAX_LOADOUT_BYTES = 40 * 1024
+
+/**
+ * 暂存「点匹配这一刻」的装备快照。
+ *
+ * 为什么在**入队**时存、而不是进房时：`reportSeated` 只要求"报过到"，
+ * 不要求连接还活着。先入座的人可以在最后一个人入座前关掉页面 ——
+ * 撮合服照样判定「全员到齐」，局照开，而那个人的客户端永远没机会再上报。
+ * 所以数据必须在他人还在的时候（点匹配）就交到服务端手里。
+ *
+ * 只存不校验内容：loadout 的语义归客户端（背包 / 穿戴 / 保险格），
+ * 服务端解析它就要跟着 meta 存档格式一起改，那是两处耦合。
+ */
+function storePendingLoadout ({ userId, loadout, platformId, displayName, now }) {
+  const payload = JSON.stringify(loadout)
+  const bytes = Buffer.byteLength(payload, 'utf8')
+  if (bytes > MAX_LOADOUT_BYTES) {
+    throw new HttpError(413, 'loadout_too_large', `装备快照过大（${bytes} 字节，上限 ${MAX_LOADOUT_BYTES}）`)
+  }
+  get().prepare(
+    `INSERT INTO pending_loadouts (user_id, platform_id, display_name, payload, bytes, updated_at)
+     VALUES (?,?,?,?,?,?)
+     ON CONFLICT(user_id) DO UPDATE SET
+       platform_id  = excluded.platform_id,
+       display_name = excluded.display_name,
+       payload      = excluded.payload,
+       bytes        = excluded.bytes,
+       updated_at   = excluded.updated_at`
+  ).run(userId, platformId ?? null, displayName ?? null, payload, bytes, now)
+}
+
+export function enqueue ({ userId, mode, ruleset, loadout = null, platformId = null, displayName = null, now = Date.now() }) {
   const m = checkMode(mode)
   const r = checkRuleset(ruleset)
+
+  // **先存快照，再判票**：即使下面因为「已在一局里」被拒，存下的那份也只是
+  // 下次排队的暂存，不会影响任何已开的局。
+  if (loadout && typeof loadout === 'object') {
+    storePendingLoadout({ userId, loadout, platformId, displayName, now })
+  }
 
   const existing = activeTicketOf(userId)
   if (existing) {
@@ -200,10 +238,25 @@ export function tryForm (mode, ruleset, now = Date.now()) {
           SET match_id = ?, role = ?, seed = ?, state = 'formed', updated_at = ?
         WHERE id = ?`
     )
+    /*
+     * 配对成功的那一刻**固化**装备快照：此后改装备不影响本局。
+     *
+     * 用 INSERT ... SELECT 而不是先读后写：`pending_loadouts` 里没有这份
+     * （旧客户端 / 没上传）时它会安静地一行都不插，不需要在 JS 里判空。
+     */
+    const freeze = d.prepare(
+      `INSERT INTO match_loadouts (match_id, user_id, platform_id, display_name, payload, bytes, created_at)
+       SELECT ?, user_id, platform_id, display_name, payload, bytes, ?
+         FROM pending_loadouts WHERE user_id = ?
+       ON CONFLICT(match_id, user_id) DO NOTHING`
+    )
     // 最久等待者建房：FIFO 是唯一不需要额外公平性机制的分法。
     // 并列时用 rowid（插入顺序）而不是 id（随机 hex），否则同一毫秒入队的两个人
     // 谁当建方是随机的 —— 同一张图不同的人建房，出问题无法复现。
-    picked.forEach((row, i) => upd.run(matchId, i === 0 ? 'host' : 'guest', seed, now, row.id))
+    picked.forEach((row, i) => {
+      upd.run(matchId, i === 0 ? 'host' : 'guest', seed, now, row.id)
+      freeze.run(matchId, now, row.user_id)
+    })
   })
   return matchId
 }
@@ -290,6 +343,40 @@ export function reportSeated ({ userId, matchId, now = Date.now() }) {
       .run(now, m.id)
   }
   return view(ticketRow(t.id), now)
+}
+
+/**
+ * relay 拉取本局全员的开局装备快照。
+ *
+ * **为什么这个接口必须存在**：入座（`reportSeated`）只证明"报过到"，
+ * 不证明连接还活着。先入座的人可能在最后一个人入座前关掉页面 ——
+ * 撮合服判定全员到齐、局照开，而那个人的客户端再也不会发 loadout。
+ * relay 从这里取，就不依赖任何当事人还在线。
+ *
+ * 鉴权口径：**知道 matchId 就等于有资格** —— 它只在 `view.match` 里下发给
+ * 本局成员，是 UUID v4（128 位随机，不可猜）。要更强就配 `RELAY_KEY`
+ * 环境变量，配了之后必须带 `X-Relay-Key`（见 http.mjs）。
+ *
+ * 返回的 `loadout` 是**客户端上传的 JSON 原文**，服务端不解析 —— 解析它就要
+ * 跟着 meta 存档格式改两处，格式一变就是两边同时坏。
+ */
+export function loadoutsFor ({ matchId, now = Date.now() }) {
+  const m = get().prepare('SELECT * FROM matches WHERE id = ?').get(String(matchId || ''))
+  if (!m) throw new HttpError(404, 'match_not_found', '没有这一局')
+  const rows = get().prepare(
+    'SELECT user_id, platform_id, display_name, payload FROM match_loadouts WHERE match_id = ?'
+  ).all(m.id)
+  return {
+    matchId: m.id,
+    state: m.state,
+    ruleset: m.ruleset,
+    members: rows.map((r) => ({
+      userId: r.user_id,
+      platformId: r.platform_id || null,
+      displayName: r.display_name || null,
+      loadout: r.payload,
+    })),
+  }
 }
 
 // ============ 失败与退出 ============

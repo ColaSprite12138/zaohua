@@ -22,6 +22,7 @@ import { makeRng } from './loot.ts';
 import { VISION_BASE_CELLS } from './sight.ts';
 import { seedFixturePotions } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
+import { vitalsFrom } from './vitals.ts';
 // 只 import 类型：`projectiles.ts` 是纯飞行逻辑，运行时不反向依赖战局状态。
 import type { Projectile } from './projectiles.ts';
 // 来源类型（`source.ts` 零依赖）：区域与持续性状态都必须记住「谁造成的」。
@@ -416,11 +417,16 @@ export interface CastState {
  * 而且「换装立即生效」本来只指武器伤害与射程。
  */
 export function applyStarMods(s: GameState, mods: CombatModifiers): void {
-  const hpGear = gearMultiplier(s.runInventory, 'hp_pct');
-  const manaGear = gearMultiplier(s.runInventory, 'mana_pct');
-  s.maxHp = Math.round(PLAYER_HP_MAX * mods.maxHpMultiplier() * hpGear);
+  // 公式本体在 `vitals.ts`：远端影子在「只有 loadout + 星图」时也要算出同一份
+  // 上限（服务端下发的开局快照，见 `players.ts::createRemotePlayer`）。两处复刻
+  // 就是分叉源，所以只留一份。
+  const vitals = vitalsFrom(s.runInventory, mods, {
+    hp: PLAYER_HP_MAX,
+    mana: PLAYER_MANA_MAX,
+  });
+  s.maxHp = vitals.hpMax;
   s.hp = s.maxHp;
-  s.maxMana = Math.round(PLAYER_MANA_MAX * mods.maxManaMultiplier() * manaGear);
+  s.maxMana = vitals.manaMax;
   s.mana = s.maxMana;
 }
 

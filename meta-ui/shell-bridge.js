@@ -115,6 +115,26 @@
     return { skills: T.unlockedSkills(p, starMap), nodes: T.effectsOf(p) };
   };
 
+  /**
+   * 锁定本局的装备快照（2026-11-24，联机专用）：点「快速匹配」时调用。
+   *
+   * 与 deploy 的区别只有一个：**不动 lobby**。匹配可能取消、可能等 60 秒，
+   * 这期间背包必须原样留在界面上 —— 直接 `takeIntoRun` 等于"排个队装备就没了"。
+   *
+   * 锁了之后 deploy 必须用**这一份**（而不是重新算）：匹配服把这份下发给了全场，
+   * 本机要是带另一份下场，别人眼里的我和真实的我就是两个人 ⇒ 帧同步分叉。
+   */
+  host.lockDeployment = function () {
+    var lobby = host.getLobbyState();
+    var locked = {
+      loadout: M.peekIntoRun(lobby),
+      stars: starDeployment(),
+      at: Date.now(),
+    };
+    host.lockedDeployment = locked;
+    return locked;
+  };
+
   var countItems = function (loadout) {
     if (!loadout) return 0;
     // 保险格里的东西也算「带下去的/带回来的」（它是独立容器，不在 bag 里）。
@@ -287,8 +307,15 @@
     // takeIntoRun() returns a copy and EMPTIES the lobby's bag + equipment.
     // Losing the run therefore loses everything carried except the insured
     // cells. The stash stays in the lobby and never crosses the heap boundary.
-    var loadout = M.takeIntoRun(lobby);
+    //
+    // 联机（pvpve）用**点匹配那一刻锁定**的那份（`host.lockDeployment`），
+    // 这里调 takeIntoRun 只是为了清空 lobby，返回值丢弃 —— 两份必须同一个，
+    // 否则远端看到的「我」和我真实带的装备不是一个东西。
+    var locked = currentKind === 'pvpve' && host.lockedDeployment ? host.lockedDeployment : null;
+    var taken = M.takeIntoRun(lobby);
+    var loadout = locked ? locked.loadout : taken;
     host.setState(lobby);
+    host.lockedDeployment = null;
     inRun = true;
     // 开新局必须收掉上一局可能残留的个人阵亡面板。
     pendingPvpResult = null;
@@ -300,7 +327,9 @@
     // —— 帧同步的第一前提。单机仍用固定 SEED，保证同一台机器上重进本的掉落序列可复现。
     var seed = currentKind === 'pvpve' && Number.isFinite(host.netSeed) ? host.netSeed : SEED;
     var deployment = {
-      seed: seed, loadout: loadout, kind: currentKind, stars: starDeployment(),
+      seed: seed, loadout: loadout, kind: currentKind,
+      // 星图也必须用锁定时那一份：排队期间点星图会让两端乘区不同。
+      stars: locked ? locked.stars : starDeployment(),
     };
     // 副本遗物（设计 4）：只有「副本」把上一局掉落的东西摆回地图。
     // 只有一张地图，所以不按 stage 过滤；多了分区之后这里要加 stage gate。

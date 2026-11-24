@@ -86,8 +86,21 @@ export interface MatchClientDeps {
 }
 
 export interface MatchClient {
-  /** 入队。幂等：同一账号重复调用返回同一张票。 */
-  queue(options?: { mode?: string; ruleset?: string }): Promise<TicketView>
+  /**
+   * 入队。幂等：同一账号重复调用返回同一张票。
+   *
+   * `loadout` 是**点匹配这一刻**的装备快照（`{ loadout, stars }`）：
+   * 帧同步需要全员属性一致，而"入座"并不要求连接还活着 —— 先入座的人可能
+   * 在最后一个人入座前关掉页面。数据只有在他人还在的时候交出来才存得住。
+   * 见 `docs/net-sync-v2.md` §7.1 与服务端 `match_loadouts`。
+   */
+  queue(options?: {
+    mode?: string
+    ruleset?: string
+    loadout?: unknown
+    platformId?: string | null
+    displayName?: string | null
+  }): Promise<TicketView>
   /** 当前活票（刷新页面后恢复现场）。没有票返回 null。 */
   current(): Promise<TicketView | null>
   get(ticketId: string): Promise<TicketView>
@@ -183,6 +196,10 @@ export function createMatchClient(deps: MatchClientDeps): MatchClient {
       const data = await request(deps, 'POST', '/api/v1/match/queue', {
         mode: (options && options.mode) || MODE_EXTRACT,
         ruleset: (options && options.ruleset) || RULESET_EXTRACT,
+        // 三个都可选：旧客户端不带也能排队，只是那一局要退回「进房后各自上报」。
+        loadout: (options && options.loadout) || undefined,
+        platformId: (options && options.platformId) || undefined,
+        displayName: (options && options.displayName) || undefined,
       })
       return toTicket(data)
     },
