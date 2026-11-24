@@ -22,6 +22,7 @@ import {
   EMPTY_STEP_INPUT, type GameState, type StepInput,
 } from '../../combat/simulation.ts';
 import { createRemotePlayer } from '../../combat/players.ts';
+import { fireProjectile } from '../../combat/projectile-runtime.ts';
 import { SMASH_RANGE, nextDropUid, nextZoneUid } from '../../combat/state.ts';
 import { hashGameState } from '../../net/state-hash.ts';
 import { NET_HZ } from '../../net/step-clock.ts';
@@ -280,6 +281,84 @@ describe('两座位：PVP 互砍的两端必须是同一个世界', () => {
 
     expect(hpOf(sa.state, B)).toBe(hpOf(sb.state, B));
     expect(hpOf(sa.state, B)).toBeLessThan(before);
+    expectSameWorld(sa, sb);
+  });
+
+  /**
+   * 下面三条补的是「判定发生在按玩家循环之外」的路径：弹道直击 / 溅射 /
+   * 火墙续状态 / 阵亡爆装都在 `updateProjectiles` / `updateZones` 里结算，
+   * 此时 `withPlayer()` 已经还原了 `s.player`。一旦有人图省事写 `?? s.player`
+   * 兜底，伤害就会落到各端自己的本机座位上 —— 同进程单测看不出来，只有
+   * 两个不同 `s.me` 跑同一张帧表才抓得住。
+   */
+  function fireSameShot(
+    a: GameState, b: GameState, spec: string, damage: number, aimRange?: number,
+  ): void {
+    const target = a.players.find((p) => p.id === B)!;
+    const aim = { x: target.x, y: target.y };
+    for (const st of [a, b] as const) {
+      const shooter = st.players.find((p) => p.id === A)!;
+      // 弹道实体属于 S：两端放的是同一发箭（同 ownerId / 同 aim / 同 seq）。
+      // `ownerId` 显式给 A，绝不让它退回 `s.player.id` 的兜底分支。
+      fireProjectile(st, {
+        owner: 'player', ownerId: A, projectileId: spec, damage,
+        from: { x: shooter.x, y: shooter.y }, sourceId: spec,
+        aim, targetIndex: null, ...(aimRange === undefined ? {} : { aimRange }),
+      });
+    }
+  }
+
+  it('A 的箭命中 B：弹道直击按被打身体 id 结算，两端同一份血', () => {
+    const sa = seat(A, B);
+    const sb = seat(B, A);
+    placeRivals(sa.state, sb.state);
+    const before = hpOf(sa.state, B);
+    fireSameShot(sa.state, sb.state, 'arrow', 14);
+
+    runTicks([sa, sb], 60, () => []);
+
+    expect(hpOf(sa.state, B)).toBeLessThan(before);
+    expect(hpOf(sa.state, B)).toBe(hpOf(sb.state, B));
+    expect(hpOf(sa.state, A)).toBe(hpOf(sb.state, A));
+    expectSameWorld(sa, sb);
+  });
+
+  it('A 的火球命中 B：溅射不双倍、火墙只烧别人，两端仍逐位一致', () => {
+    const sa = seat(A, B);
+    const sb = seat(B, A);
+    placeRivals(sa.state, sb.state);
+    const before = hpOf(sa.state, B);
+    const selfBefore = hpOf(sa.state, A);
+    fireSameShot(sa.state, sb.state, 'fireball', 9, 60);
+
+    // 命中后还有 4.5 秒火墙：必须让 `updateZones` 对全体玩家各判一次 hurts()。
+    runTicks([sa, sb], 120, () => []);
+
+    expect(hpOf(sa.state, B)).toBeLessThan(before);
+    // 自己铺的火不烧自己（fromPlayerId === A 被 hurts 拒掉）。
+    expect(hpOf(sa.state, A)).toBe(selfBefore);
+    expect(hpOf(sa.state, A)).toBe(hpOf(sb.state, A));
+    expectSameWorld(sa, sb);
+  });
+
+  it('B 被 A 砍倒：爆装掉落 uid / deathTimer 两端一致，谁都不置 gameOver', () => {
+    const sa = seat(A, B);
+    const sb = seat(B, A);
+    const foe = placeRivals(sa.state, sb.state);
+    for (const st of [sa.state, sb.state] as const) {
+      st.players.find((p) => p.id === B)!.hp = 1;
+    }
+
+    runTicks([sa, sb], TICKS, clicks({ x: foe.x, y: foe.y - 30 }, 0));
+
+    const deadA = sa.state.players.find((p) => p.id === B)!;
+    const deadB = sb.state.players.find((p) => p.id === B)!;
+    expect(deadA.hp).toBe(0);
+    expect(deadB.hp).toBe(0);
+    expect(deadA.deathTimer).toBe(deadB.deathTimer);
+    expect(sa.state.drops.map((d) => d.uid)).toEqual(sb.state.drops.map((d) => d.uid));
+    expect(sa.state.gameOver).toBe(false);
+    expect(sb.state.gameOver).toBe(false);
     expectSameWorld(sa, sb);
   });
 });
