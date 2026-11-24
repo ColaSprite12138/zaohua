@@ -14,7 +14,7 @@ import { updateDrops } from '../weapons.ts';
 import { monsterSource } from '../source.ts';
 import { hashGameState } from '../../net/state-hash.ts';
 import { stepAll, updateView } from '../simulation.ts';
-import { createRemotePlayer, playerById, spawnOffset, type PeerSnapshot } from '../players.ts';
+import { createRemotePlayer, nearestPlayer, playerById, spawnOffset, type PeerSnapshot } from '../players.ts';
 
 /** 造一个「我 + 一个远端」的双人状态，两者都在出生点附近。 */
 function twoPlayers(s: GameState): { me: Player; other: Player } {
@@ -556,5 +556,41 @@ describe('联机 PVP 阵亡：按玩家独立结算', () => {
     expect(a.gameOver).toBe(false);
     expect(b.gameOver).toBe(false);
     expect(playerById(a, 'seatB')!.x).not.toBe(bStart);   // B 没被冻结
+  });
+
+  it('A 阵亡后怪只盯活着的 B：两端选出同一个人，逐帧世界仍一致', () => {
+    const a = view('seatA', 'seatB');
+    const b = view('seatB', 'seatA');
+    // 把死者摆在怪正旁边、活人放远一点：旧的 nearestPlayer 会锁死这具尸体，
+    // 于是怪在两端都对着它一直挥刀 / 放箭，只是扣血被挡住。
+    for (const s of [a, b]) {
+      const sk = s.skeletons.find((x) => x.alive)!;
+      const dead = playerById(s, 'seatA')!;
+      const alive = playerById(s, 'seatB')!;
+      dead.x = sk.x + 10;
+      dead.y = sk.y;
+      alive.x = sk.x + 200;
+      alive.y = sk.y;
+    }
+    for (const s of [a, b]) {
+      damagePlayer(s, 999, { source: monsterSource('100001') }, playerById(s, 'seatA')!);
+    }
+
+    const skA = a.skeletons.find((x) => x.alive)!;
+    const skB = b.skeletons.find((x) => x.alive)!;
+    expect(nearestPlayer(a, skA.x, skA.y)!.id).toBe('seatB');
+    expect(nearestPlayer(b, skB.x, skB.y)!.id).toBe('seatB');
+
+    for (let tick = 0; tick < 120; tick += 1) {
+      const all = new Map<string, StepInput>([['seatA', idle], ['seatB', idle]]);
+      stepAll(a, DT, all, NO_MODIFIERS);
+      stepAll(b, DT, all, NO_MODIFIERS);
+      updateView(a, idle);
+      updateView(b, idle);
+      expect(hashGameState(a, tick + 1)).toBe(hashGameState(b, tick + 1));
+    }
+    // 尸体没被扣成负数，也没有被「打活」。
+    expect(playerById(a, 'seatA')!.hp).toBe(0);
+    expect(playerById(b, 'seatA')!.hp).toBe(0);
   });
 });

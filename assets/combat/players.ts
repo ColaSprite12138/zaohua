@@ -45,13 +45,25 @@ export function sortedPlayers(s: GameState): Player[] {
 }
 
 /**
- * 离 (x, y) 最近的玩家。距离用**平方**比较（省一次开方，且整数/浮点都是精确比较），
- * 完全等距时按 `id` 破平 —— 两端必须选出同一个人。
+ * 离 (x, y) 最近的**活着**的玩家。距离用**平方**比较（省一次开方，且整数/浮点
+ * 都是精确比较），完全等距时按 `id` 破平 —— 两端必须选出同一个人。
+ *
+ * 阵亡者是尸体，不是猎物：`stepAll` 用 `if (p.hp <= 0) continue` 停掉死者自己
+ * 的行动，但停不掉「别人把它当目标」。怪物索敌（`updateSkeletons`）走这里，
+ * 一旦选中 `hp<=0` 的人就会永远锁着这具不躲不走的身体：面朝它、寻路过去、
+ * 设 attackCd、播挥刀、朝它放箭 / 放技能，只是下游 `damagePlayer` 把实际扣血
+ * 挡住了 —— 画面上就是「血条不动但怪一直打尸体」（用户 2026-11-25 实测）。
+ *
+ * **判据只能是 `hp`**：`deathTimer` 是联机 PVP 独有的结算时钟，PVE 的远端
+ * 玩家阵亡后它恒为 -1；`hp` 进 `PLAYER_KEYS` / hash，两端逐位一致，且这里
+ * 不认识本机身份，所以过滤完两端仍然选中同一个活人。全员阵亡时返回 null，
+ * 调用方（`enemies.ts`）已有「不 `?? s.player` 兜底」的守卫，怪会直接停手。
  */
 export function nearestPlayer(s: GameState, x: number, y: number): Player | null {
   let best: Player | null = null;
   let bestD = 0;
   for (const p of sortedPlayers(s)) {
+    if (p.hp <= 0) continue;
     const dx = p.x - x;
     const dy = p.y - y;
     const d = dx * dx + dy * dy;

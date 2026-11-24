@@ -73,6 +73,7 @@ import {
   CORPSE,
   KNIGHT,
   KNIGHT_ARM,
+  KNIGHT_DOWN,
   PORTAL_FRAME,
   SHOULDER_X,
   SHOULDER_Y,
@@ -106,6 +107,9 @@ import {
 // 挥砍运动学是**纯数学**，单独成文件（`swing.ts`）并带单测：
 // 弧线必须围绕目标方向，而不是围绕"屏幕向下"。详见该文件头注释。
 import { bladeAngle, ease, handPose } from './swing.ts';
+// 阵亡姿态是纯 V 层派生（只读 hp / deathTimer）：倒地进度、要不要挂血条。
+// 判据收在单独的文件里，好让「死者不画血条」这件事有单测可守。
+import { downProgress, isDown, isDownHp, showsHealthBar } from './death-pose.ts';
 // 状态栏的布局 / 命中 / 进度也是纯函数（`status-bar.ts`）：画出来的矩形与命中判定
 // 必须是同一份数据，否则会出现「指着图标但提示不出来」。
 import {
@@ -866,6 +870,44 @@ function drawWeaponArm(
  */
 
 /**
+ * 阵亡玩家：横躺的甲胄 + 灰色名字，**不画血条**。
+ *
+ * 联机 PVP 阵亡按玩家独立结算、不置 `s.gameOver`（见 `attack.ts::damagePlayer`），
+ * 死者会一直留在场上等活人捡装备。以前绘制层只有站立 KNIGHT + 恒画的血条底框，
+ * 于是「血条 0/100 但人还站着」会一直挂着 —— PVE 被全屏结束遮罩盖住了，
+ * PVP 一按玩家结算就露出来（用户 2026-11-25 实测）。
+ *
+ * `deathTimer` 两端同一帧递减，前 0.28 秒是站立身体下沉 / 右倾 / 淡出、
+ * 躺姿淡入的倒下过程，之后保持躺姿。整段是纯 V 层表现，不写 `S`、不进 hash。
+ */
+function drawDownedKnight(g: Painter, p: Player, progress: number): void {
+  shadow(g, p.x, p.y + 2, 26, 9, 0.34);
+  if (progress < 1) {
+    drawVoxel(g, KNIGHT.poses[0]!, p.x, p.y + 2 + progress * 6, {
+      yaw: yawOf(p.face).yaw,
+      rotation: progress * 0.5,
+      alpha: 1 - progress,
+    });
+  }
+  drawVoxel(g, KNIGHT_DOWN, p.x, p.y + 2, { alpha: 0.55 + 0.4 * progress });
+}
+
+/** 尸体只留一个灰名字：认得出是谁，但不再冒充「还有血量的人」。 */
+function drawDownedName(g: Painter, p: Player): void {
+  const top = p.y - 20;
+  g.save();
+  g.font = '12px "Microsoft YaHei", "PingFang SC", sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'alphabetic';
+  g.lineWidth = 3;
+  g.strokeStyle = 'rgba(6, 10, 18, 0.88)';
+  g.strokeText(p.name ?? '', p.x, top);
+  g.fillStyle = '#8d9aa8';
+  g.fillText(p.name ?? '', p.x, top);
+  g.restore();
+}
+
+/**
  * 联机的远端玩家。
  *
  * 和 `drawPlayer` 共用同一份装备来源：`weaponSlots[activeWeaponSlot]` 由
@@ -875,6 +917,11 @@ function drawWeaponArm(
  * 除我之外的真玩家，装备外观也该跟着真人走。头顶名字仍用金色，与怪的白色名板分开。
  */
 function drawRemoteActor(g: Painter, actor: Player): void {
+  if (isDown(actor)) {
+    drawDownedKnight(g, actor, downProgress(actor));
+    drawDownedName(g, actor);
+    return;
+  }
   const frame = Math.floor(actor.stride);
   const moving = Math.abs(actor.vx) + Math.abs(actor.vy) > 12;
   const bob = moving && frame % 2 === 1 ? 1 : 0;
@@ -917,6 +964,7 @@ function drawRemoteActor(g: Painter, actor: Player): void {
   g.save();
   // 血条：远端不再是「没血量的影子」，`hp / maxHp` 来自共享状态、两端一致。
   // 打得到人却看不见掉血，是 PVP 里最难自查的一类假 bug。
+  // 阵亡者已在函数开头 return，这里只给活人画：绝不留一条 `0 / maxHp` 的空槽。
   const barW = 44;
   const barTop = Math.round(top - 18);
   const ratio = Math.max(0, Math.min(1, actor.hp / (actor.maxHp || 1)));
@@ -937,6 +985,12 @@ function drawRemoteActor(g: Painter, actor: Player): void {
 
 function drawPlayer(g: Painter, s: GameState): void {
   const p = s.player;
+  // 本机阵亡同样要倒地：PVP 里死者还留在场上，全屏结束遮罩只有 PVE 才有。
+  // 残影 / 无敌环 / 武器 / 施法球 / 状态标记全都不该跟着尸体走。
+  if (isDown(p)) {
+    drawDownedKnight(g, p, downProgress(p));
+    return;
+  }
   // `weaponSlots` holds authored item ids ("10006"), never the visual category,
   // so comparing against 'longsword' made an equipped weapon still draw as
   // bare hands (short grey sword). Any weapon in the active slot is armed.
@@ -1518,7 +1572,9 @@ function drawParticles(g: Painter, s: GameState): void {
 
 /** Ground marker for the active move order (click waypoint / held-cursor follow). */
 function drawMoveTarget(g: Painter, s: GameState): void {
-  if (s.moveMode === 'idle' || s.gameOver || s.cleared) return;
+  // 阵亡者已经不行动了（`stepAll` 跳过 hp<=0 的玩家），别再给尸体留一条
+  // 「目的地」引导线 —— PVP 不置 gameOver，光靠上面三个条件会一直挂着。
+  if (s.moveMode === 'idle' || s.gameOver || s.cleared || isDownHp(s.hp)) return;
   const follow = s.moveMode === 'follow';
   const color = follow ? '#ffd166' : '#67e8f9';
   const pulse = 0.5 + 0.5 * Math.sin(s.t * 8);
@@ -1580,7 +1636,7 @@ function drawTargetLock(g: Painter, s: GameState): void {
  * twice. Pure presentation -- it never orders anything.
  */
 function drawHoverMark(g: Painter, s: GameState): void {
-  if (s.hoverEnemy === null || s.gameOver || s.cleared) return;
+  if (s.hoverEnemy === null || s.gameOver || s.cleared || isDownHp(s.hp)) return;
   const sk = s.skeletons[s.hoverEnemy];
   if (sk === undefined || !sk.alive) return;
   // A locked target already owns the red ring + 「目标」 label; do not double up.
@@ -1637,9 +1693,22 @@ function drawVitalBars(g: Painter, s: GameState, x: number, y: number, w: number
     text(g, label, x + w / 2, ry + 8, 11, '#08131c', 'center', '800');
   };
 
-  const hp = cap(s.hp, s.maxHp);
-  row(y + 10, hp, hp > 0.5 ? '#4ade80' : hp > 0.25 ? '#fbbf24' : '#ff6b6b',
-    `${Math.round(s.hp)} / ${s.maxHp}`);
+  if (showsHealthBar(s.hp)) {
+    const hp = cap(s.hp, s.maxHp);
+    row(y + 10, hp, hp > 0.5 ? '#4ade80' : hp > 0.25 ? '#fbbf24' : '#ff6b6b',
+      `${Math.round(s.hp)} / ${s.maxHp}`);
+  } else {
+    // 阵亡：一条「0 / 100」的空血槽等于在说「还活着，只是没血了」。
+    // 血条整块撤掉，换成明确的阵亡标记；法力条与药水数量保持原位不动。
+    g.fillStyle = 'rgba(96, 26, 32, 0.72)';
+    roundRect(g, x + 16, y + 10, barW, 16, 8);
+    g.fill();
+    g.strokeStyle = 'rgba(255,107,107,0.55)';
+    g.lineWidth = 1;
+    roundRect(g, x + 16, y + 10, barW, 16, 8);
+    g.stroke();
+    text(g, '已阵亡', x + w / 2, y + 18, 11, '#ff9b9b', 'center', '800');
+  }
   row(y + 32, cap(s.mana, s.maxMana), s.manaSurge > 0 ? '#8be9fd' : '#60a5fa',
     `${Math.round(s.mana)} / ${s.maxMana}`);
   // 药：消耗品是背包物品（设计 8.3），所以数字直接读局内背包 —— 没有第二份计数器。
@@ -2500,7 +2569,11 @@ export function paint(
   // 所以「站在他身后」与「站在他身前」的遮挡关系和真人一样。
   for (const actor of s.remotes) {
     if (!sees(actor.x, actor.y)) continue;
-    items.push({ y: actor.y, draw: () => drawRemoteActor(g, actor) });
+    // 倒下的人是「贴地物」：同坐标时先画，让活人 / 掉落压在它上面（和 CORPSE 同理）。
+    items.push({
+      y: actor.y - (isDown(actor) ? 0.25 : 0),
+      draw: () => drawRemoteActor(g, actor),
+    });
   }
   // 传送门是「站在地上的建筑」：和角色共用一套深度排序，玩家走到门后会被门挡住。
   for (const portal of s.portals) {
@@ -2518,7 +2591,10 @@ export function paint(
     // standing south of it -- the same rule as any other ground object.
     items.push({ y: drop.y + 0.5, draw: () => drawDrop(g, drop, s.hoverDrop === drop.uid) });
   }
-  items.push({ y: s.player.y, draw: () => drawPlayer(g, s) });
+  items.push({
+    y: s.player.y - (isDownHp(s.hp) ? 0.25 : 0),
+    draw: () => drawPlayer(g, s),
+  });
   items.sort((a, b) => a.y - b.y);
   for (const item of items) item.draw();
 

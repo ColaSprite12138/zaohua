@@ -458,6 +458,38 @@ function corpse(): VoxelModel {
 }
 
 /**
+ * 阵亡的骑士：**横躺的甲胄**，不是 `CORPSE` 那堆骷髅骨头（那是给怪用的）。
+ *
+ * 站立 KNIGHT 是 7×14 格，这里换成 15×4 格：头在左、脚在右，只有 16px 高，
+ * 贴着地面画，和站立的人一眼分得开。护目镜从发光的 `C.glow` 换成 `C.plate`
+ * 的暗板 —— 眼睛灭了也是「这个人已经不在局里」的一部分。
+ *
+ * 2026-11-25：联机 PVP 阵亡不置 `s.gameOver`（其他人还要继续抢装备），所以
+ * 死者会一直留在场上。以前绘制层只画站立 KNIGHT，于是「血条 0 但人还站着」。
+ * 这个模型是纯 V 层资产，不进帧、不进 hash。
+ */
+function knightDown(): VoxelModel {
+  const b = new Builder('knight-down', 4);
+  // 两条腿错开一格高度（中间留缝），读作侧躺而不是一块板子。
+  b.box(3, 0, 0, 5, 1, 1, C.armorDark);
+  b.box(6, 0, 0, 2, 1, 1, C.boot);
+  b.box(3, 2, 0, 5, 1, 1, C.armorDark);
+  b.box(6, 2, 0, 2, 1, 1, C.boot);
+  // 腰 / 躯干 / 胸甲高光。
+  b.box(1, 0, 0, 2, 3, 1, C.plate);
+  b.box(-2, 0, 0, 3, 3, 1, C.armor);
+  b.box(-1, 2, 0, 2, 1, 1, C.armorHi);
+  // 摊开的手臂与垂下的手。
+  b.box(-2, 3, 0, 5, 1, 1, C.armorDark);
+  b.box(-3, 3, 0, 1, 1, 1, C.skin);
+  // 头盔（左端）：面甲熄灭，盔缨垂在最外侧。
+  b.box(-6, 0, 0, 4, 3, 1, C.armorHi);
+  b.box(-6, 1, 0, 3, 1, 1, C.plate);
+  b.box(-7, 0, 0, 1, 2, 1, C.plume);
+  return b.model();
+}
+
+/**
  * 传送门：**只有石框**（基座 + 两根柱子 + 顶拱，18×15 块 = 72×60px），
  * 门洞里不封体素 —— 光幕由绘制层用像素抖动光填。
  *
@@ -559,6 +591,7 @@ export const SKELETON: BodyModel = bodyOf('skeleton', 12, skeletonPose);
  */
 export const SKELETON_MAGE: BodyModel = bodyOf('skeleton-mage', 12, skeletonMagePose);
 export const CORPSE = corpse();
+export const KNIGHT_DOWN = knightDown();
 
 /** Shoulder joint, measured from the feet: 28px up (block 7 boundary). */
 export const SHOULDER_Y = 28;
@@ -851,6 +884,7 @@ export function destructibleModel(kind: string): VoxelModel | null {
 
 export const MODELS: Record<string, VoxelModel> = {
   corpse: CORPSE,
+  knightDown: KNIGHT_DOWN,
   sword: itemModel('blade:steel'),
   swordGold: itemModel('blade:gold'),
   greatsword: itemModel('greatsword:steel'),

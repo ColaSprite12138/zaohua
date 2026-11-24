@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { createState, type GameState, type Player } from '../state.ts';
 import { nearestPlayer, playerById, sortedPlayers, spawnPointFor } from '../players.ts';
+import { updateSkeletons } from '../enemies.ts';
 import { BODY_RADIUS, canStandAt, makeWorld } from '../world.ts';
 import { arena } from '../../resource/maps/arena.generated.ts';
 
@@ -99,6 +100,86 @@ describe('怪物索敌接上了实体容器', () => {
     ]);
     const picked = nearestPlayer(s, monster!.x, monster!.y);
     expect(picked!.id).toBe('p1');
+  });
+});
+
+/**
+ * 2026-11-25 用户 PVP 实测：「怪还在持续攻击已经死亡的角色」。
+ *
+ * `stepAll` 的 `if (p.hp <= 0) continue` 只停掉死者自己的行动，停不掉别人
+ * 把它当目标。`nearestPlayer` 曾是全项目唯一没过滤 `hp<=0` 的目标筛选函数，
+ * 于是怪锁着尸体一直追 / 挥刀 / 放箭，只是 `damagePlayer` 挡住了实际扣血。
+ */
+describe('索敌：阵亡者不再是猎物', () => {
+  const spots = [
+    { id: 'p0', x: 100, y: 100 },
+    { id: 'p1', x: 300, y: 100 },
+  ];
+
+  it('最近的玩家已阵亡时改选次近的活人，且与数组顺序无关', () => {
+    for (const list of [spots, [...spots].reverse()]) {
+      const s = createState();
+      withPlayers(s, list);
+      s.players.find((p) => p.id === 'p0')!.hp = 0;
+      expect(nearestPlayer(s, 110, 100)!.id).toBe('p1');
+    }
+  });
+
+  it('PVE 远端玩家阵亡（deathTimer 恒 -1）同样被排除', () => {
+    const s = createState();
+    withPlayers(s, spots);
+    const dead = s.players.find((p) => p.id === 'p0')!;
+    dead.hp = 0;
+    dead.deathTimer = -1;   // 判据只能是 hp：PVE 没有独立结算时钟
+    expect(nearestPlayer(s, 110, 100)!.id).toBe('p1');
+  });
+
+  it('活人复活回来之前的全员阵亡：返回 null，不许 ?? s.player 兜底', () => {
+    const s = createState();
+    withPlayers(s, spots);
+    for (const p of s.players) p.hp = 0;
+    expect(nearestPlayer(s, 110, 100)).toBeNull();
+  });
+
+  it('尸体贴在怪身边、活人在另一边：怪改朝活人，尸体不再挨打', () => {
+    const s = createState();
+    const sk = s.skeletons.find((x) => x.alive)!;
+    withPlayers(s, [
+      { id: 'p0', x: sk.x + 20, y: sk.y },   // 最近的，但已经死了
+      { id: 'p1', x: sk.x - 60, y: sk.y },   // 活人在左边
+    ]);
+    const dead = s.players.find((p) => p.id === 'p0')!;
+    dead.hp = 0;
+    sk.awake = true;
+
+    updateSkeletons(s, 1 / 60);
+
+    // `face` 是无条件对着被选中的目标算的：cos < 0 表示它看的是左边那个活人，
+    // 而不是右边那具尸体（旧的 nearestPlayer 会选到 p0，face 朝右）。
+    expect(Math.cos(sk.face)).toBeLessThan(0);
+    expect(dead.hp).toBe(0);
+  });
+
+  it('场上只剩尸体：怪收招站定，不追击、不挥刀、不占冷却', () => {
+    const s = createState();
+    const sk = s.skeletons.find((x) => x.alive)!;
+    withPlayers(s, [{ id: 'p0', x: sk.x + 20, y: sk.y }]);
+    s.players[0]!.hp = 0;
+    // 故意留一个「正要出手」的姿态：没有活人可打时必须被收干净。
+    sk.awake = true;
+    sk.swing = 0.3;
+    sk.attackCd = 0.5;
+    sk.moving = true;
+    const at = { x: sk.x, y: sk.y };
+
+    for (let i = 0; i < 40; i += 1) updateSkeletons(s, 1 / 60);
+
+    expect(sk.x).toBe(at.x);
+    expect(sk.y).toBe(at.y);
+    expect(sk.swing).toBe(0);
+    expect(sk.attackCd).toBe(0);
+    expect(sk.moving).toBe(false);
+    expect(sk.goal).toBe('none');
   });
 });
 

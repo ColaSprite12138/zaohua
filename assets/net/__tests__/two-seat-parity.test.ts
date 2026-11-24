@@ -21,7 +21,7 @@ import {
   createModifiers, createState, deployRun, setArena, stepAll, updateView,
   EMPTY_STEP_INPUT, type GameState, type StepInput,
 } from '../../combat/simulation.ts';
-import { createRemotePlayer } from '../../combat/players.ts';
+import { createRemotePlayer, nearestPlayer } from '../../combat/players.ts';
 import { fireProjectile } from '../../combat/projectile-runtime.ts';
 import { SMASH_RANGE, nextDropUid, nextZoneUid } from '../../combat/state.ts';
 import { hashGameState } from '../../net/state-hash.ts';
@@ -359,6 +359,11 @@ describe('两座位：PVP 互砍的两端必须是同一个世界', () => {
     expect(sa.state.drops.map((d) => d.uid)).toEqual(sb.state.drops.map((d) => d.uid));
     expect(sa.state.gameOver).toBe(false);
     expect(sb.state.gameOver).toBe(false);
+    // 尸体不再是猎物：阵亡后怪在两端都只能盯还活着的 A（2026-11-25 实测回归）。
+    const skA = sa.state.skeletons.find((x) => x.alive)!;
+    const skB = sb.state.skeletons.find((x) => x.alive)!;
+    expect(nearestPlayer(sa.state, skA.x, skA.y)!.id).toBe(A);
+    expect(nearestPlayer(sb.state, skB.x, skB.y)!.id).toBe(A);
     expectSameWorld(sa, sb);
   });
 });
