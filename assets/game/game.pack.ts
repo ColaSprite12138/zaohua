@@ -551,6 +551,10 @@ export const game: Plugin = {
      * 自己在匹配"，不依赖两条 BroadcastChannel 消息的到达顺序。
      */
     let pendingOnline = false;
+    /** 上一次写进黑匣子的座位组合键（避免每次 netSeat 重发都记一条）。 */
+    let lastSeatTrace = '';
+    /** 上一次记录的「建世界还在等什么」（`tryDeployFromSeat` 每帧都可能被调用）。 */
+    let lastDeployWait = '';
     /** 联机诊断：主窗口的 `host.net.status()` 只读这些数，不重复计数。 */
     const netStat = {
       /** 真正执行的帧数。只可能是服务器给过的帧。 */
@@ -768,6 +772,26 @@ export const game: Plugin = {
         }
       }
       if (list.length > 0) netSeatSettled = true;
+      /*
+       * 座位是开局链路的「上半场」：谁到了、自己那份快照有没有、世界参数
+       * 有没有下发。这三件事任缺一件，`tryDeployFromSeat` 都不会建世界。
+       * 消息会重复投递（签名变化 / Worker 重连会再问一次），所以按组合键去重。
+       */
+      const seatKey = `${list.length}|${msg.self ? 1 : 0}|${netSeed ?? 'n'}|${netKind ?? 'n'}|${netPeers.size}`;
+      if (seatKey !== lastSeatTrace) {
+        lastSeatTrace = seatKey;
+        trace('seat', {
+          peers: list.map((entry) => {
+            const id = typeof entry === 'string' ? entry : entry?.id;
+            return (id || '').slice(0, 8)
+              + (typeof entry !== 'string' && entry?.snapshot ? ':snap' : ':none');
+          }),
+          self: msg.self ? 'snap' : 'none',
+          seed: netSeed,
+          kind: netKind,
+          settled: netSeatSettled,
+        });
+      }
       // 联机局：自己的快照到了才建世界（`deploy` 只是把 seed/kind 挂起）。
       tryDeployFromSeat();
       // 世界还没建时不重建远端、不 arm 时间轴 —— 那时候 `spawnPointFor` 用的
@@ -823,6 +847,28 @@ export const game: Plugin = {
      * 而是这一局的参数）。
      */
     function tryDeployFromSeat(): void {
+      /*
+       * 「世界还没建」时把它在等什么记下来。这个函数被 applySeat 与 deploy
+       * 各调一次，本身不刷屏；但组合状态变化时必须留痕 —— 开局卡死时，
+       * 这一行能直接回答「是在等座位、等自己的快照，还是等 seed/kind」。
+       */
+      const waitKey = `${netActive ? 1 : 0}|${netDeployed ? 1 : 0}|${pendingDeployment ? 1 : 0}`
+        + `|${netSelfSnapshot ? 1 : 0}|${netSeed === null ? 'n' : netSeed}|${netKind ?? 'n'}`;
+      if (waitKey !== lastDeployWait) {
+        lastDeployWait = waitKey;
+        const waiting = !netDeployed
+          && (!netActive || !pendingDeployment || !netSelfSnapshot || netSeed === null || netKind === null);
+        if (waiting) {
+          trace('deploy.wait', {
+            netActive,
+            pendingOnline,
+            self: netSelfSnapshot ? 'snap' : 'none',
+            seed: netSeed,
+            kind: netKind,
+            pending: !!pendingDeployment,
+          });
+        }
+      }
       if (!netActive || netDeployed || !pendingDeployment || !netSelfSnapshot) return;
       // 世界参数没到就不部署：宁可等（门禁超时会把本局作废），也不能用本地
       // seed / kind 先把世界建出来 —— `runSeed` / `runKind` 都进 hash。
@@ -850,6 +896,12 @@ export const game: Plugin = {
       pendingDeployment = null;
       pendingOnline = false;
       netDeployed = true;
+      trace('deployed', {
+        seed: netSeed,
+        kind: netKind,
+        seedFromServer: true,
+        player: netPlayerId.slice(0, 8),
+      });
       // 出生点偏移必须对**所有玩家**用同一套规则，坐标进 hash。
       if (netPlayerId) {
         const at = spawnPointFor(state.world, netPlayerId);
@@ -902,10 +954,23 @@ export const game: Plugin = {
         missing: Math.max(1, missing.length),
         seatMissing,
       });
+      trace('gate.timeout', {
+        frames: loadoutWaitFrames,
+        missing: missing.length,
+        seatMissing,
+        peers: netPeers.size,
+        snapshots: netPeerSnapshots.size,
+        self: !!netSelfSnapshot,
+        seed: netSeed,
+        kind: netKind,
+      });
     }
 
     function armTimeline(): void {
       if (!netActive || !netPlayerId) return;
+      // `GameState` 没有 frame 字段：执行帧号在 netStat / stepClock 里，
+      // 这里只记「谁、和几个人」建起了时间轴（帧号随后由 frame.first 记录）。
+      trace('arm', { player: netPlayerId.slice(0, 8), peers: netPeers.size });
       // 切到**联机**帧率（24 Hz）：帧号从此由服务器推进。
       setRate(stepClock, NET_HZ);
       seekClock(stepClock, 0);
@@ -1237,6 +1302,21 @@ export const game: Plugin = {
     }
 
     let channel: BroadcastChannel | null = null;
+    /**
+     * Worker 侧黑匣子：开局判定的关键事实同时进控制台与主窗口的缓冲。
+     *
+     * 为什么需要：`deploy` 走单机还是联机、座位到没到、门禁在等谁 —— 这些
+     * 全发生在 Engine Worker 的独立 JS 堆里，主窗口只能看到结果（报错文案）。
+     * 没有这条通道，排查只能靠猜「netActive 那一刻是不是 false」。
+     *
+     * 只记**状态变化与失败原因**，不按帧记。
+     */
+    function trace(ev: string, data?: unknown): void {
+      try { console.info(`[trace] worker.${ev}`, data ?? ''); } catch { /* 控制台不可用 */ }
+      // `channel` 声明在这个函数之后（同一作用域），极早期调用会撞 TDZ；
+      // 那一段本来也没有可广播的事件，吞掉即可。
+      try { channel?.postMessage({ type: 'trace', src: 'worker', ev, data: data ?? null }); } catch { /* 早期 / 已关闭 */ }
+    }
     if (typeof BroadcastChannel !== 'undefined') {
       channel = new BroadcastChannel(RUN_CHANNEL);
       channel.onmessage = (event: MessageEvent) => {
@@ -1293,6 +1373,11 @@ export const game: Plugin = {
           if (online) {
             // 联机：先挂起，世界参数与装备都等 relay / CVM。
             // **不 setArena**：世界还没建，不能让画面先切到正式地图。
+            trace('deploy.online', {
+              fromShell: msg.online === true,
+              netActive,
+              kind: incoming.kind,
+            });
             pendingOnline = true;
             /*
              * **联机：不在这里 deployRun。**
@@ -1320,6 +1405,7 @@ export const game: Plugin = {
           }
           // 单机（PVE 副本 / 主线）：本地 deployment 就是唯一来源。
           // 只有这条路才立刻切正式地图 —— 联机要等世界真的建出来。
+          trace('deploy.solo', { netActive, pendingOnline, kind: incoming.kind });
           setArena(state, arena);
           clearPrevPositions();
           modifiers = createModifiers(incoming.stars?.nodes ?? []);

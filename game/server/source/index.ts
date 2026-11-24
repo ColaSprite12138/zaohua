@@ -219,6 +219,13 @@ type RelayState = {
      * 只为排障：> 0 说明还有旧版本在跑，而它们的装备不会被当成权威数据。
      */
     clientSnapshots: number
+    /**
+     * relay 侧开局事件流（2026-11-24）。房间进程跑在造化云端，它的 stdout
+     * 我们在开发中**看不到** —— 只能随 `state` 广播带回主窗口的黑匣子。
+     * 每行 `f<frame> <ev> <json>`；最多 12 行 / 2KB，且只在开局窗口下发
+     * （见 `snapshot()`），稳定期是空串，不占带宽。
+     */
+    relayTrace: string
   }
 }
 
@@ -243,6 +250,7 @@ function emptyState(players: RelayPlayer[]): RelayState {
       cvmProbe: 'skipped',
       cvmLoadouts: 'skipped',
       clientSnapshots: 0,
+      relayTrace: '',
     },
   }
 }
@@ -350,6 +358,31 @@ function encodeOne(intent: InputFrame): string {
 
 function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void }) {
   const state = emptyState(players)
+
+  /**
+   * 把 relay 这边发生的事写进 `state.stats.relayTrace`，随广播带回主窗口。
+   *
+   * 为什么必须做：房间进程跑在造化云端，它的 stdout 我们看不到；开局链路
+   * 跨四个进程，只靠读代码永远只能列「可能是 A 也可能是 B」。尤其 CVM 返回
+   * 404 时，**响应 body 才是答案** —— `code:not_found`（路由没部署）和
+   * `code:match_not_found`（局号查不到）是两种完全不同的故障。
+   *
+   * 只记状态变化与失败原因，绝不按帧记。
+   */
+  function relayLog(ev: string, data?: unknown): void {
+    let text = ''
+    try {
+      text = data === undefined ? '' : ` ${JSON.stringify(data)}`
+    } catch { text = ' [unserializable]' }
+    const lines = (state.stats.relayTrace ? state.stats.relayTrace.split('\n') : [])
+      .concat(`f${state.frame} ${ev}${text}`)
+    while (lines.length > 12) lines.shift()
+    let out = lines.join('\n')
+    if (out.length > 2048) out = out.slice(-2048)
+    state.stats.relayTrace = out
+    try { console.info(`[relay] ${ev}${text}`) } catch { /* stdout 可能不可用 */ }
+  }
+
   let log: FrameLog = createFrameLog()
   let replySeq = 0
   /** 帧钟定时器（`start()` 起，`stop()` 清）。 */
@@ -532,20 +565,37 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
     }
     const timer = setTimeout(() => {
       try { controller?.abort() } catch { /* 忽略 */ }
+      relayLog('cvm.timeout', { matchId })
       finish('fail:timeout')
     }, CVM_LOADOUT_TIMEOUT_MS)
     ;(timer as unknown as { unref?: () => void }).unref?.()
-    fetchFn(
-      `${CVM_BASE}/api/v1/match/${encodeURIComponent(matchId)}/loadouts`,
-      controller ? { signal: controller.signal } : undefined,
-    )
+    const url = `${CVM_BASE}/api/v1/match/${encodeURIComponent(matchId)}/loadouts`
+    relayLog('cvm.fetch', { matchId, attempt: loadoutsAttempts, url })
+    fetchFn(url, controller ? { signal: controller.signal } : undefined)
       .then(async (res) => {
-        if (!res.ok) { finish(`bad:${res.status}`); return }
-        finish(applyCvmLoadouts(await res.json()))
+        if (!res.ok) {
+          /*
+           * 404 的 **body 才是答案**：`{"code":"not_found","message":"没有这个接口"}`
+           * = 线上后端没部署这条路由；`match_not_found` = 局号在 matches 表里
+           * 查不到。只记 `bad:404` 会把这两种完全不同的故障写成同一个词，
+           * 于是只能继续猜。读 200 字就够区分，也不会把大响应塞进广播。
+           */
+          let body = ''
+          try { body = (await res.text()).slice(0, 200) } catch { /* body 读不到就算了 */ }
+          relayLog('cvm.bad', { status: res.status, url, body })
+          finish(`bad:${res.status}`)
+          return
+        }
+        const data = await res.json()
+        relayLog('cvm.ok', {
+          members: (data as { members?: unknown[] })?.members?.length ?? 0,
+        })
+        finish(applyCvmLoadouts(data))
       })
       .catch((err: unknown) => {
         const name = err && typeof err === 'object' && 'name' in err
           ? String((err as { name?: unknown }).name) : 'error'
+        relayLog('cvm.fail', { url, err: name })
         finish(`fail:${name}`)
       })
   }
@@ -593,6 +643,13 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
     const detail = missing.length > 0
       ? ` miss:${missing.map((p) => p.id.slice(0, 8)).join(',')}`
       : ''
+    // 「拉到了几份 / 对上了几个人 / 谁没对上」写进黑匣子：角标只有一行
+    // `ok:1/2`，日志能直接告诉你是 id 不匹配、名字重名，还是名单里少人。
+    relayLog('cvm.apply', {
+      seed: state.seed, kind: state.kind, roster: cvmMembers,
+      filled, players: state.players.length,
+      missing: missing.map((p) => p.id.slice(0, 8)),
+    })
     return `ok:${filled}/${Math.max(cvmMembers, state.players.length)}${detail}`
   }
 
@@ -687,6 +744,12 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
       reply: { ...state.reply },
       stats: {
         ...state.stats,
+        /*
+         * 开局事件流只在开局窗口内下发（门禁 300 帧 + 余量）。稳定期置空，
+         * 免得每帧广播都白扛最多 2KB 的日志文本。
+         */
+        relayTrace: state.frame <= SNAPSHOT_GRACE_FRAMES * 2
+          ? state.stats.relayTrace : '',
         tickMs: tickQuantiles(),
         /** 还有积压的玩家数（队列里攒着没贴的意图）。 */
         pending: [...log.pending.entries()].filter(([, q]) => q.length > 0).length,
@@ -858,6 +921,9 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
         ? (input as Record<string, unknown>).matchId
         : null
       if (typeof declared === 'string' && declared) {
+        // 记**完整**局号：404 时要拿它去 CVM 核对「哪一局查不到」，
+        // 截断成 8 位就没法查库了。
+        relayLog('declare', { matchId: declared })
         fetchCvmLoadouts(declared)
         return
       }
@@ -904,12 +970,20 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
       if (state.players.some((entry) => entry.id === player.id)) return
       state.players.push({ id: player.id, name: player.name })
       delete state.departed[player.id]
+      // 名单是「到底几个人进了同一个房」的唯一事实。截图里「名单 1」
+      // 只可能是这里只有一个人 —— 日志能区分「第二个人没进房」和
+      // 「他进了但 relay 没登记」。
+      relayLog('add', {
+        id: player.id.slice(0, 8), name: player.name,
+        players: state.players.length, roster: cvmMembers,
+      })
       /*
        * 新到的人先吃已经缓存下来的 CVM 名单 —— 这是「缺 1 人」的正解：
        * 第一次拉取常常发生在他 `addPlayer` 之前，响应里他那一行没人可填。
        * 缓存后补填完全不依赖网络时序。
        */
       const missing = fillFromCvmRoster()
+      relayLog('roster.fill', { missing, players: state.players.length, roster: cvmMembers })
       // 补填成功就把角标刷新成「全对上」：否则它会一直停在第一次拉取的
       // `ok:1/1`，看起来像还是缺人（实际已经补齐）。
       if (missing === 0 && cvmMembers > 0) {

@@ -22,6 +22,8 @@
   var host = window.MetaShell;
   var MM = window.MetaMatch;
   var AUTH = window.MetaAuth;
+  /** 黑匣子（shell-bridge 先加载，正常一定存在）。 */
+  var TRACE = window.MetaTrace ? window.MetaTrace.push : function () {};
   if (!host || !MM) {
     console.error('[match] MetaShell / MetaMatch 缺失，快速匹配不可用');
     return;
@@ -174,6 +176,7 @@
   }
 
   function finish(text, bad) {
+    TRACE('match', 'finish', { text: text || '', bad: !!bad, phase: S.phase });
     /*
      * 开局失败 / 匹配作废时，**如果已经点过出征**，必须先把这一局扔掉再回大厅。
      *
@@ -237,6 +240,12 @@
     var head = seatMissing
       ? '没收到队友的座位信息（房间名单为空或网络异常）'
       : '有队友未同步装备快照（' + (missing || 1) + ' 人' + netDiagText() + '）';
+    // 失败那一刻就把黑匣子打印出来：这句文案区分不了「CVM 接口没部署」
+    // 「局号查不到」「名单没到」，事件流能。用户只需复制控制台输出。
+    try {
+      console.warn('[match] 开局失败 · 完整事件流（也可执行 MetaShell.net.dumpTrace() 取纯文本）：\n'
+        + (window.MetaTrace ? window.MetaTrace.text() : '(无日志)'));
+    } catch (err) { /* 控制台不可用 */ }
     finish(head + '，本局已取消；重新匹配即可', true);
   };
 
@@ -756,6 +765,13 @@
     // false ⇒ deploy 走单机分支 ⇒ 用本地 seed / 关卡类型起一局 PVE。
     // 用户 2026-11-24 实测「两个人都进了 PVE 地图、互相看不见」就是这条。
     host.onlineRun = relayOn;
+    TRACE('match', 'start.run', {
+      seed: seed,
+      total: total,
+      relayOn: relayOn,
+      onlineRun: relayOn,
+      kind: kind && kind.value ? kind.value : null,
+    });
     var deploy = $('fx-deploy');
     if (deploy) deploy.click();
     else setStatus('找不到出征按钮，无法起局', 'bad');
@@ -853,6 +869,19 @@
           platUser = p && p.user && typeof p.user.getCurrent === 'function'
             ? p.user.getCurrent() : null;
         } catch (err) { /* 宿主没有这个能力：靠名字兜底 */ }
+        // 入队请求的三件事必须一起记：谁（platformId / displayName 是否为空）、
+        // 带了多少件（loadout 是否真的上传了）。「缺 1 人快照」两种根因
+        // （没上传 / 名字对不上）在这一行里能直接区分。
+        TRACE('match', 'queue.request', {
+          platformId: platUser && platUser.id ? String(platUser.id).slice(0, 8) : null,
+          displayName: displayName(),
+          items: locked && locked.loadout
+            ? (locked.loadout.bag || []).length
+              + (locked.loadout.equipped || []).filter(Boolean).length
+              + (locked.loadout.safe || []).length
+            : null,
+          stars: locked && locked.stars ? (locked.stars.nodes || []).length : 0,
+        });
         view = await S.client.queue({
           ruleset: MM.RULESET_EXTRACT,
           loadout: locked ? { loadout: locked.loadout, stars: locked.stars } : undefined,
@@ -861,6 +890,13 @@
         });
       }
       S.ticket = view;
+      TRACE('match', 'queue.ok', {
+        ticket: view && view.ticketId ? String(view.ticketId).slice(0, 8) : null,
+        state: view && view.state,
+        matchId: view && view.match && view.match.id ? String(view.match.id).slice(0, 8) : null,
+        seed: view && view.match ? view.match.seed : null,
+        members: view && view.match && view.match.members ? view.match.members.length : 0,
+      });
       // 拿到服务器回包才算真的进了队列，这时候才允许出现「排队中」。
       S.pollFails = 0;
       keepWrap.hidden = true;

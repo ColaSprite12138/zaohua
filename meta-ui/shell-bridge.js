@@ -20,6 +20,66 @@
 (function () {
   'use strict';
 
+  /*
+   * 联机开局「黑匣子」：谁在什么时刻看到了什么。
+   *
+   * 为什么需要它：开局是两条异步链路（撮合 HTTP + 平台房间广播）在四个
+   * 进程（主窗口 / Engine Worker / relay / CVM）里并行推进。任何一处时序
+   * 不同，玩家看到的都是同一句「队友没同步装备」—— 只靠读代码只能得出
+   * 「可能 A 也可能 B」，日志才能直接回答「那一刻 netActive 是不是 false」
+   * 「CVM 到底回了几份、对上了几个」。
+   *
+   * 规矩：
+   *  - 只记**状态变化**与**失败原因**，绝不按帧记（一局几万条没人看）；
+   *  - 环形缓冲 300 条，内存固定；
+   *  - 控制台 `MetaTrace.text()` 给一段可直接复制的纯文本。
+   *
+   * 定义在这里（而不是新文件）是因为它必须比 net-bridge / match-flow 先存在，
+   * 而 shell-bridge 是注入顺序里的第一个业务脚本。
+   */
+  if (!window.MetaTrace) {
+    var traceItems = [];
+    var traceT0 = Date.now();
+    window.MetaTrace = {
+      push: function (src, ev, data) {
+        var at = Date.now() - traceT0;
+        traceItems.push({ at: at, src: src, ev: ev, data: data === undefined ? null : data });
+        if (traceItems.length > 300) traceItems.shift();
+        try {
+          console.info('[trace] ' + (at / 1000).toFixed(3) + 's ' + src + '.' + ev,
+            data === undefined ? '' : data);
+        } catch (err) { /* 控制台被关掉也不影响缓冲 */ }
+      },
+      items: function () { return traceItems.slice(); },
+      text: function () {
+        return traceItems.map(function (it) {
+          var d = '';
+          try {
+            d = it.data === null ? '' : ' ' + JSON.stringify(it.data);
+          } catch (err) { d = ' [unserializable]'; }
+          return (it.at / 1000).toFixed(3) + 's ' + it.src + '.' + it.ev + d;
+        }).join('\n');
+      },
+      clear: function () { traceItems.length = 0; traceT0 = Date.now(); },
+      /**
+       * 一键复制：`MetaTrace.copy()`。拿不到剪贴板权限时返回纯文本，
+       * 控制台里照样能选中复制 —— 用户把这段发回来就能直接定位。
+       */
+      copy: function () {
+        var text = window.MetaTrace.text();
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text);
+            return 'copied';
+          }
+        } catch (err) { /* 退回返回文本 */ }
+        return text;
+      },
+    };
+  }
+  /** 内部简写：任何脚本都可以 `TRACE('net', 'seat.out', {...})`。 */
+  var TRACE = window.MetaTrace.push;
+
   var CHANNEL = 'forgeax-arena-run';
   var host = window.MetaShell;
   var M = window.MetaInventory;
@@ -383,6 +443,13 @@
     if (channel) channel.postMessage({ type: 'deploy', deployment: deployment, online: online });
     host.onlineRun = false;
     pendingAbortLoadout = loadout;
+    TRACE('shell', 'deploy.post', {
+      online: online,
+      kind: currentKind,
+      seed: seed,
+      items: countItems(loadout),
+      hasLocked: !!locked,
+    });
     var corpse = deployment.deathDrop ? '；上一局遗物 ' + deployment.deathDrop.items.length + ' 件掉在原地' : '';
     log('出征 · 带入 ' + countItems(loadout) + ' 件物品；' + KIND_TEXT[currentKind] + corpse);
   });
@@ -430,6 +497,7 @@
    */
   host.abortRun = function () {
     if (!inRun) return;
+    TRACE('shell', 'abortRun', { repaid: !!pendingAbortLoadout, hasChannel: !!channel });
     if (pendingAbortLoadout) {
       try {
         var lobby = host.getLobbyState();

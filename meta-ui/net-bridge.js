@@ -22,6 +22,8 @@
 
   var host = window.MetaShell ?? (window.MetaShell = {});
   var CHANNEL = 'forgeax-arena-run';
+  /** 黑匣子（定义在 shell-bridge，注入顺序保证它先存在）。 */
+  var TRACE = window.MetaTrace ? window.MetaTrace.push : function () {};
 
   var S = {
     channel: null,
@@ -52,6 +54,10 @@
      * 同一帧重复到达时没有任何新信息，直接跳过。
      */
     lastFrameApplied: -1,
+    /** 第一次收到服务器帧的帧号（-1 = 还没收到）。开局卡住时用它区分「没包」与「包到了没执行」。 */
+    firstFrameAt: -1,
+    /** 上一次写进黑匣子的名单/快照签名（只在变化时记，避免每帧刷）。 */
+    traceSig: '',
     /** 上一次把 `srv` 发给 Worker 时的帧号（否则重复回调会重复 post 空 netIn）。 */
     srvSent: -1,
     /** 上一次投递给 Worker 的补帧回包 seq（同一份不重复投）。 */
@@ -75,6 +81,8 @@
      * 看不到是映射问题还是出网问题。
      */
     cvmLoadouts: '',
+    /** relay 自己记录的开局事件流（开局窗口内随 stats 下发，去重用）。 */
+    relayTrace: '',
     /**
      * 本局的撮合 matchId。
      *
@@ -508,6 +516,12 @@
         renderDiag(S.lastStat);
         return;
       }
+      if (msg.type === 'trace') {
+        // Worker 里的开局事件（deploy 判定 / 座位 / 门禁 / 建世界）。
+        // 这些发生在另一个 JS 堆里，主窗口只能靠这条消息把它们并进同一个黑匣子。
+        TRACE('worker', msg.ev, msg.data);
+        return;
+      }
       if (msg.type === 'ready') {
         // 本构建的协议版本：用于校验 relay 广播（见 `protocolRuleset`）。
         if (typeof msg.ruleset === 'string' && msg.ruleset) S.protocolRuleset = msg.ruleset;
@@ -524,6 +538,12 @@
       if (msg.type === 'netLoadoutsMissing') {
         // relay 判定「有人没交开局装备快照」：**不空快照硬开**，由主窗口把这局作废。
         // 空快照会让两端属性从 tick 0 起就不同，那是最难查的一类分叉。
+        TRACE('worker', 'gate.timeout', {
+          missing: msg.missing || 1,
+          seatMissing: msg.seatMissing === true,
+          cvm: S.cvmLoadouts,
+          peers: S.peers.length,
+        });
         if (typeof host.onLoadoutsMissing === 'function') {
           try {
             host.onLoadoutsMissing(msg.missing || 0, {
@@ -610,8 +630,28 @@
     }
     // 快照拉取结果（`ok:2/2` = 两名成员都对上了）。同样只在终态更新，
     // `pending` 不该一直挂在角标上。
-    if (state.stats && typeof state.stats.cvmLoadouts === 'string') {
+    if (state.stats && typeof state.stats.cvmLoadouts === 'string'
+      && state.stats.cvmLoadouts !== S.cvmLoadouts) {
+      var prevCvm = S.cvmLoadouts;
       S.cvmLoadouts = state.stats.cvmLoadouts;
+      TRACE('relay', 'cvm.loadouts', { from: prevCvm, to: S.cvmLoadouts });
+    }
+    // relay 自己的开局事件流（只在开局窗口内下发，见 `stats.relayTrace`）。
+    // 它是云端进程唯一能把内部时序带出来的通道 —— pvp-host.log 里通常只有
+    // 宿主启动行，房间服务的 stdout 不一定被转发。
+    if (state.stats && typeof state.stats.relayTrace === 'string'
+      && state.stats.relayTrace !== S.relayTrace) {
+      var prev = S.relayTrace || '';
+      S.relayTrace = state.stats.relayTrace;
+      // 广播里带的是**全量**日志，整块记会每帧重复一整段。按公共前缀
+      // 只把新增的行并进黑匣子，输出才是一条按时间排好的事件流。
+      var lines = S.relayTrace.split('\n');
+      var old = prev.split('\n');
+      var start = 0;
+      while (start < lines.length && start < old.length && lines[start] === old[start]) start += 1;
+      for (var i = start; i < lines.length; i += 1) {
+        if (lines[i]) TRACE('relay', 'log', { text: lines[i] });
+      }
     }
 
     /*
@@ -628,6 +668,10 @@
      */
     var frameNow = serverFrameOf(state);
     if (frameNow >= 0) {
+      if (S.firstFrameAt < 0) {
+        S.firstFrameAt = frameNow;
+        TRACE('net', 'frame.first', { frame: frameNow, players: (state.players || []).length });
+      }
       if (frameNow === S.lastFrameApplied) {
         S.stats.dupUpdates += 1;
         return;
@@ -686,6 +730,29 @@
     // 签名必须包含 snapshot：名单没变但对方装备到齐了，也要重发一次 netSeat，
     // 否则 Worker 永远等不到「装备齐」这个信号，会一直停在门禁上。
     // （玩家自己不再上报快照 —— 单一数据源，权威数据在 CVM。）
+
+    /*
+     * 黑匣子：名单 / 快照 / 世界参数**变化时**记一条。
+     * 「缺 1 人」在这条里是一眼可见的：peers 里 `snap:none` 的那个 id
+     * 就是门禁不放行的人；`self:none` 则是本机自己没拿到，世界建不出来。
+     */
+    var traceSig = (state.seed === undefined ? 'null' : state.seed) + '|'
+      + (state.kind === undefined ? 'null' : state.kind) + '|'
+      + (selfSnapshot ? 1 : 0) + '|'
+      + peers.map(function (p) { return p.id + ':' + (p.snapshot ? 1 : 0); }).join(',');
+    if (traceSig !== S.traceSig) {
+      S.traceSig = traceSig;
+      TRACE('net', 'state', {
+        frame: state.frame,
+        self: selfSnapshot ? 'snap' : 'none',
+        peers: peers.map(function (p) {
+          return (p.id || '').slice(0, 8) + ':' + (p.snapshot ? 'snap' : 'none');
+        }),
+        seed: state.seed === undefined ? null : state.seed,
+        kind: state.kind === undefined ? null : state.kind,
+        cvm: state.stats ? state.stats.cvmLoadouts : null,
+      });
+    }
 
     /*
      * 兜底：名单里有人在**开局窗口关掉之后**才被我看到，我从没拿到过它的快照。
@@ -873,6 +940,9 @@
   function declareMatch(matchId) {
     if (typeof matchId !== 'string' || !matchId) return;
     S.matchId = matchId;
+    // 这一条上行是 relay 去 CVM 拉快照的唯一触发点。它没发出去，
+    // 后面就必然「全员缺快照」—— 所以必须留下发送记录。
+    TRACE('net', 'declare.match', { matchId: matchId.slice(0, 8) });
     sendUp({ matchId: matchId });
   }
 
@@ -977,6 +1047,7 @@
   function attach(session, view) {
     if (!session) {
       S.active = false;
+      TRACE('net', 'attach.fail', { reason: 'no-session' });
       return false;
     }
     S.session = session;
@@ -1047,6 +1118,12 @@
       playerId: S.playerId,
       peers: S.peers,
       members: view && view.match && view.match.members ? view.match.members.length : 0,
+    });
+    TRACE('net', 'attach.ok', {
+      playerId: S.playerId,
+      peers: S.peers.map(function (p) { return (p.id || '').slice(0, 8) + ':' + (p.name || '?'); }),
+      members: view && view.match && view.match.members ? view.match.members.length : 0,
+      matchId: view && view.match && view.match.id ? String(view.match.id).slice(0, 8) : null,
     });
     // 会话重建 = 可能是新的 relay 进程：局号得重报一次，它才能去 CVM 拉快照。
     if (S.matchId) declareMatch(S.matchId);
@@ -1234,5 +1311,19 @@
     status: status,
     onGameUpdate: onGameUpdate,
     declareMatch: declareMatch,
+    /**
+     * 开局黑匣子。控制台里 `MetaShell.net.trace()` 看数组，
+     * `MetaShell.net.dumpTrace()` 打印并可复制一段纯文本。
+     *
+     * 为什么必须有：开局链路跨四个进程、两条异步通道，任何一处时序不同都
+     * 表现为同一句「队友没同步装备」。日志能直接给答案（那一刻 peers 里谁
+     * 没有 snap、relay 拉到几份、Worker 有没有收到座位），不用再靠读代码猜。
+     */
+    trace: function () { return window.MetaTrace ? window.MetaTrace.items() : []; },
+    dumpTrace: function () {
+      var text = window.MetaTrace ? window.MetaTrace.text() : '';
+      try { console.log('[trace]\n' + text); } catch (err) { /* 控制台不可用 */ }
+      return text;
+    },
   };
 })();
