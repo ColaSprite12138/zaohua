@@ -93,6 +93,109 @@
     console.warn('[net] BroadcastChannel 不可用，联机输入无法进入引擎', err);
   }
 
+  /* ---------------------------- 实时带宽 ------------------------------ */
+
+  /**
+   * 上下行流量的实时统计（用户 2026-11-24 要求「实时看带宽」）。
+   *
+   * ## 口径（别拿它跟 NetLimiter 的数字对，差在这两处）
+   *
+   * - **上行**：每一次 `sendAction(payload)` 的 payload 序列化字节数。
+   *   平台自己还会套一层 JSON-RPC / WS 帧头，那部分我们看不到，所以这里是**下界**。
+   * - **下行**：只在**服务器帧号前进**时统计一次 `game_update` 的字节数。
+   *   平台会把同一轮广播回调 4~5 遍（`upd 113/s` vs 24 Hz，2026-11-22 实测），
+   *   那些重复投递在网络上同样占带宽，但在这里**不重复计** —— 否则每次回调都
+   *   要跑一遍 `JSON.stringify(整份快照)`，主线程白白多花几毫秒。
+   *   所以「下行」= 服务器这一秒真的产出了多少字节，不是链路层的字节。
+   * - 开局窗口内（装备快照还在广播里）下行会到几百 KB/s，10 秒后掉到十几 KB/s ——
+   *   这正是 `SNAPSHOT_GRACE_FRAMES` 的效果，角标上能直接看见它消失。
+   *
+   * 字节数按 UTF-8 编码算（玩家名 / 中文品质会占 3 字节），不用 `length`。
+   */
+  var traffic = {
+    /** 当前结算窗口内累计的字节。 */
+    up: 0, down: 0,
+    /** 上一个窗口的时间戳；0 = 还没开始第一个窗口。 */
+    at: 0,
+    /** 平滑后的每秒字节数。 */
+    upBps: 0, downBps: 0,
+    /** 累计字节（验收脚本 / 长跑对照用）。 */
+    upTotal: 0, downTotal: 0,
+  };
+  var utf8 = typeof TextEncoder === 'function' ? new TextEncoder() : null;
+
+  function byteLen(text) {
+    if (!text) return 0;
+    if (utf8) {
+      try { return utf8.encode(text).length; } catch (err) { /* 退回 length */ }
+    }
+    return text.length;
+  }
+
+  /** 收一个上行 payload 的账。**发送前**调用，发送失败也照计（它确实尝试上链路）。 */
+  function countUp(payload) {
+    var n = byteLen(JSON.stringify(payload));
+    traffic.up += n;
+    traffic.upTotal += n;
+  }
+
+  /**
+   * 一秒窗口结算 + 指数平滑。
+   *
+   * 窗口不能太短：24 Hz 下一帧只有 41 ms，按帧算出来的瞬时值会在 0 和几千之间跳。
+   * 也不能太长：用户要「实时」，3 秒以上的窗口会盖掉开局快照消失的那一刻。
+   * 1 秒 + 0.6/0.4 平滑，和角标上的帧率同一种手感。
+   */
+  function tickTraffic(now) {
+    if (traffic.at === 0) { traffic.at = now; return; }
+    var elapsed = now - traffic.at;
+    if (elapsed < 1000) return;
+    var up = traffic.up * 1000 / elapsed;
+    var down = traffic.down * 1000 / elapsed;
+    traffic.upBps = traffic.upBps === 0 ? up : traffic.upBps * 0.6 + up * 0.4;
+    traffic.downBps = traffic.downBps === 0 ? down : traffic.downBps * 0.6 + down * 0.4;
+    traffic.up = 0;
+    traffic.down = 0;
+    traffic.at = now;
+  }
+
+  function resetTraffic() {
+    traffic.up = 0;
+    traffic.down = 0;
+    traffic.at = 0;
+    traffic.upBps = 0;
+    traffic.downBps = 0;
+    traffic.upTotal = 0;
+    traffic.downTotal = 0;
+  }
+
+  /** 紧凑格式：`0.4KB/s` / `12B/s` / `2.3MB/s`。 */
+  function bpsText(value) {
+    if (!value || value < 0) return '0B/s';
+    if (value < 1024) return Math.round(value) + 'B/s';
+    if (value < 1024 * 1024) return (value / 1024).toFixed(1) + 'KB/s';
+    return (value / (1024 * 1024)).toFixed(1) + 'MB/s';
+  }
+
+  /**
+   * 所有上行的唯一出口：计量 + 发送。
+   *
+   * 为什么不各自 `try/catch S.session.sendAction(...)`：上行有 6 个调用点
+   * （意图 / hash / 快照 / replay / ack / needSnapshot），漏一个统计就少一路
+   * 流量。收成一个函数之后，新增消息类型也不会漏账。
+   */
+  function sendUp(payload) {
+    if (!S.active || !S.session) return false;
+    countUp(payload);
+    try {
+      S.session.sendAction(payload);
+      return true;
+    } catch (err) {
+      S.stats.errors += 1;
+      return false;
+    }
+  }
+
   function post(msg) {
     if (!S.channel) return;
     try {
@@ -266,9 +369,13 @@
     // 开局门禁超时（被迫用空快照）：这局两端属性可能不同，hash 一定分叉。
     // 它不该静默 —— 否则下次看到 mismatches 又要从头猜。
     var voided = stat.loadoutVoided ? '⚠ 空快照开局 ' + stat.loadoutVoided + '  ' : '';
+    // 实时带宽：↑ 上行 ↓ 下行。口径见 `traffic` 的注释 —— 下行只算新帧，
+    // 所以开局窗口关掉的那一刻会看到它从几百 KB/s 掉到十几 KB/s。
+    tickTraffic(now);
     el.textContent = voided
       + (silent ? '⚠ 静默 ' + diagLast.silentTicks + 's  ' : '')
-      + 'tick ' + stat.tick
+      + '↑' + bpsText(traffic.upBps) + ' ↓' + bpsText(traffic.downBps)
+      + '  tick ' + stat.tick
       + '  服务器 ' + fpsText(serverFps)
       + '  执行 ' + fpsText(execFps)
       + '  渲染 ' + fpsText(renderFps)
@@ -356,12 +463,7 @@
       }
       if (msg.type === 'netHash') {
         // 状态指纹：服务端只做比对，不裁决。分叉时它会把两边都记下来。
-        if (!S.active || !S.session) return;
-        try {
-          S.session.sendAction({ tick: msg.tick, hash: msg.hash, parts: msg.parts });
-        } catch (err) {
-          S.stats.errors += 1;
-        }
+        sendUp({ tick: msg.tick, hash: msg.hash, parts: msg.parts });
         return;
       }
       if (msg.type === 'netLoadout') {
@@ -369,12 +471,7 @@
         if (!S.active || !S.session) return;
         S.pendingSnapshot = msg.snapshot;
         S.pendingSnapshotAt = Date.now();
-        try {
-          S.session.sendAction({ snapshot: msg.snapshot });
-          S.stats.sends += 1;
-        } catch (err) {
-          S.stats.errors += 1;
-        }
+        if (sendUp({ snapshot: msg.snapshot })) S.stats.sends += 1;
         return;
       }
       if (msg.type === 'netResync') {
@@ -387,37 +484,23 @@
       }
       if (msg.type === 'netReplay') {
         // 缺口立刻补：客户端只描述区间，不解释原因（抖动 / 断线 / 重连同一条通道）。
-        if (!S.active || !S.session) return;
-        try {
-          S.session.sendAction({ replay: { from: msg.from, to: msg.to } });
+        if (sendUp({ replay: { from: msg.from, to: msg.to } })) {
           S.stats.replays = (S.stats.replays || 0) + 1;
-        } catch (err) {
-          S.stats.errors += 1;
         }
         return;
       }
       if (msg.type === 'netReplayAck') {
         // 取走了就让服务端删掉，不然每轮广播都会重带一份。
-        if (!S.active || !S.session) return;
-        try {
-          S.session.sendAction({ replayAck: msg.seq });
-        } catch (err) {
-          S.stats.errors += 1;
-        }
+        sendUp({ replayAck: msg.seq });
         return;
       }
       if (msg.type !== 'netOut') return;
       if (!S.active || !S.session) return;
       if (typeof msg.b !== 'string' || !msg.b) return;
-      try {
-        // 平台这条通道只收 JSON；帧本身是定长二进制，外面套 base64。
-        // **`s` 是意图序号，不是帧号** —— 落在哪一帧由服务器决定。
-        S.session.sendAction({ s: msg.s, b: msg.b });
-        S.stats.sends += 1;
-      } catch (err) {
-        S.stats.errors += 1;
-        // 发送失败不是致命错误：下一批还会再发，服务器那边那几帧就是空输入。
-      }
+      // 平台这条通道只收 JSON；帧本身是定长二进制，外面套 base64。
+      // **`s` 是意图序号，不是帧号** —— 落在哪一帧由服务器决定。
+      // 发送失败不是致命错误：下一批还会再发，服务器那边那几帧就是空输入。
+      if (sendUp({ s: msg.s, b: msg.b })) S.stats.sends += 1;
     };
   }
 
@@ -460,6 +543,23 @@
       }
       S.lastFrameApplied = frameNow;
     }
+
+    /*
+     * 下行计量：**只算真正的新帧**。
+     *
+     * 重复投递（同一轮广播被回调 4~5 次）在链路上同样占带宽，但每算一次都要
+     * `JSON.stringify(整份快照)` —— 开局窗口内那是 12 KB，113 次/秒会把主线程
+     * 吃掉。所以这里量的是「服务器这一秒产出了多少字节」，与 `probe-bandwidth`
+     * 的口径一致；要链路层真实字节得看 NetLimiter / DevTools，两者会差 4~5 倍。
+     */
+    try {
+      var downBytes = byteLen(JSON.stringify(state));
+      traffic.down += downBytes;
+      traffic.downTotal += downBytes;
+    } catch (err) {
+      // 序列化失败不影响玩法 —— 流量的数字少一份，别把整帧丢掉。
+      S.stats.errors += 1;
+    }
     S.sessionStateKeys = (wrapped ? ['(wrapped)'] : [])
       .concat(Object.keys(raw)).concat(wrapped ? Object.keys(state) : []).slice(0, 24);
 
@@ -498,7 +598,7 @@
       if (mine && mine.snapshot) {
         S.pendingSnapshot = null;
       } else if (Date.now() - S.pendingSnapshotAt < 3000) {
-        try { S.session.sendAction({ snapshot: S.pendingSnapshot }); } catch (err) { /* 下一轮再试 */ }
+        sendUp({ snapshot: S.pendingSnapshot });
       } else {
         S.pendingSnapshot = null;
       }
@@ -517,7 +617,7 @@
       var nowMs = Date.now();
       if (unseen > 0 && nowMs - S.snapshotAskedAt > 500) {
         S.snapshotAskedAt = nowMs;
-        try { S.session.sendAction({ needSnapshot: true }); } catch (err) { /* 下一轮再试 */ }
+        sendUp({ needSnapshot: true });
       }
     }
 
@@ -787,6 +887,8 @@
     S.seenSnapshots = {};
     S.snapshotAskedAt = 0;
     S.pendingSnapshotAt = 0;
+    // 流量从 0 起算：上一局的累计数会让「这局上行多少」看不出来。
+    resetTraffic();
     S.lastSignature = '';
     S.sessionStateKeys = [];
     S.roomEvents = [];
@@ -881,6 +983,7 @@
     // 新一局 = 新名单：上一局见过的快照不再算数（否则新队友会一直不请求补发）。
     S.seenSnapshots = {};
     S.snapshotAskedAt = 0;
+    resetTraffic();
     post({ type: 'netSeat', active: false, playerId: '', peers: [] });
   }
 
@@ -972,6 +1075,16 @@
       engine: S.lastStat,
       /** 状态广播的到达节奏：D 公式里的抖动量在这里。 */
       timing: timingSnapshot(),
+      /**
+       * 实时带宽（字节/秒）。`up` = 上行 payload，`down` = 服务器新帧的快照。
+       * 口径见 `traffic` 注释：下行不含平台重复投递，所以它是**下界**。
+       */
+      traffic: {
+        upBps: Math.round(traffic.upBps),
+        downBps: Math.round(traffic.downBps),
+        upTotal: traffic.upTotal,
+        downTotal: traffic.downTotal,
+      },
       /** 诊断：开局握手补了几次、会话 state 里到底有没有 inputs。 */
       startRetries: S.startRetries,
       sessionStateKeys: S.sessionStateKeys.slice(),

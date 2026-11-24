@@ -324,6 +324,8 @@ if (HOLD_MS > 0) {
     /** 第一次分叉时两端的分项指纹：定位是怪 / 掉落 / 玩家 / 破坏物哪项先不同。 */
     divergedParts: shell.net?.divergedParts ?? null,
     p90: shell.net?.timing?.p90 ?? null,
+    /** 实时带宽（字节/秒）。诊断用，**不进硬判据**：它随局面活跃度与开局窗口变化。 */
+    traffic: shell.net?.traffic ?? null,
     world: probeMsg?.state?.playerWorld,
     remotes: probeMsg?.state?.remotes,
   })
@@ -331,6 +333,11 @@ if (HOLD_MS > 0) {
     A: sample(longShellA, await probe(await heal(pa))),
     B: sample(longShellB, await probe(await heal(pb))),
   }
+  const trafficText = (t) => (t
+    ? `↑${(t.upBps / 1024).toFixed(1)}KB/s ↓${(t.downBps / 1024).toFixed(1)}KB/s`
+      + `（累计 ↑${(t.upTotal / 1024).toFixed(0)}KB ↓${(t.downTotal / 1024).toFixed(0)}KB）`
+    : '--')
+  console.log(`[长跑] 实时带宽 A ${trafficText(result.longRun.A.traffic)} · B ${trafficText(result.longRun.B.traffic)}`)
 }
 
 await browser.close()
