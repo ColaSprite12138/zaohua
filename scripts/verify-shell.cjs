@@ -247,6 +247,25 @@ const SELFTEST = `
       out.authoredRegistered = (function () {
         try { return M.itemDef('10006').name === '霜之哀伤'; } catch (e) { return false; }
       })();
+
+      // ---- 视图切换（用户 2026-11-25）：第一屏只有关卡卡片，其余面板点按钮才展开 ----
+      out.view = {
+        mainVisible: !document.getElementById('fx-main-panel').hidden,
+        stashHidden: document.getElementById('fx-bag-content').hidden,
+        starHidden: document.getElementById('star-panel').hidden,
+        shopHidden: document.getElementById('shop-panel').hidden,
+        kindSelectHidden: getComputedStyle(document.querySelector('.fx-kind-hidden')).display === 'none',
+        cards: document.querySelectorAll('.kind-card[data-kind]').length,
+      };
+      // 卡片改关卡走隐藏的 select + change，和验收脚本 / match-flow 同一条路径。
+      document.querySelector('.kind-card[data-kind="dungeon"]').click();
+      out.view.cardPick = document.getElementById('fx-kind').value;
+      out.view.cardDesc = /副本/.test(document.getElementById('fx-kind-desc').textContent || '');
+      document.querySelector('.kind-card[data-kind="pvpve"]').click();
+      document.getElementById('view-stash').click();
+      out.view.stashOpen = !document.getElementById('fx-bag-content').hidden
+        && document.getElementById('fx-main-panel').hidden;
+
       out.gridCells = {
         bag: document.querySelectorAll('#grid-bag .cell').length,
         stash: document.querySelectorAll('#grid-stash .cell').length,
@@ -259,11 +278,13 @@ const SELFTEST = `
       };
       out.equipSlots = document.querySelectorAll('.equip-slot').length;
 
-      // ---- 星图（设计 6.3 / 6.4）：局外可见、能点、能洗、出征带走 ----
+      // ---- 星图（设计 6.3 / 6.4）：点「星图」才展开，能点、能洗、出征带走 ----
       var T = window.MetaTalent;
       out.star = { defaultLevel: H.getProgress().level };
       var starPanel = document.getElementById('star-panel');
       var SM = H.starTree; // 只读诊断：星图对象本身
+      document.getElementById('view-star').click();
+      out.star.openedByButton = !starPanel.hidden && document.getElementById('fx-bag-content').hidden;
       out.star.panelVisible = !!starPanel && starPanel.hidden === false;
       out.star.nodes = starPanel ? starPanel.querySelectorAll('.star-chip').length : 0;
       out.star.constellations = starPanel ? starPanel.querySelectorAll('.constellation').length : 0;
@@ -310,9 +331,16 @@ const SELFTEST = `
           }, 0);
       };
       var shopBtn = document.getElementById('shop-toggle');
+      shopBtn.click(); // 主界面默认只有关卡卡片，点按钮才展开商店
       out.shop = {
-        // 面板默认展开（价目要第一眼看到）；按钮只负责收起 / 再打开。
+        // 点按钮展开；再点一次要能收起（按钮不能是摆设）。
         panelOpen: !document.getElementById('shop-panel').hidden,
+        toggleBack: (function () {
+          shopBtn.click();
+          var closed = document.getElementById('shop-panel').hidden;
+          shopBtn.click();
+          return closed && !document.getElementById('shop-panel').hidden;
+        })(),
         offers: document.querySelectorAll('.shop-offer').length,
         initialGold: H.wallet ? H.wallet.gold : -1,
         before: bagPots().length,
@@ -914,7 +942,17 @@ const checks = [
       && S.deployed.lobbyWorn === 0 && S.deployed.lobbyStash === 3, S.deployed],
   ['the run holds a DIFFERENT state object from the lobby',
     result.differentStates === true && S.deployed.isRun === true, result.differentStates],
-  ['星图面板在局外画出全部星座，且没有连线（定位样式没被注入层吞掉）',
+  ['主界面只有关卡卡片：仓库/星图/商店默认收起，select 藏起来但仍在',
+    result.view.mainVisible === true && result.view.stashHidden === true
+      && result.view.starHidden === true && result.view.shopHidden === true
+      && result.view.kindSelectHidden === true && result.view.cards === 3,
+    result.view],
+  ['卡片切关卡走隐藏 select + change，死亡规则说明跟着变',
+    result.view.cardPick === 'dungeon' && result.view.cardDesc === true, result.view],
+  ['点「仓库」只展开配装面板，点「星图」只展开星图',
+    result.view.stashOpen === true && result.star.openedByButton === true,
+    { view: result.view, star: result.star }],
+  ['星图面板点开后画出全部星座，且没有连线（定位样式没被注入层吞掉）',
     result.star.panelVisible === true && result.star.nodes >= 20
       && result.star.constellations >= 6 && result.star.noLines === 0
       && result.star.mapPosition === 'relative', result.star],
@@ -933,8 +971,8 @@ const checks = [
           && s.domBag === s.bag && s.domWorn === s.worn;
       }),
     result.switchSpam],
-  ['商店：金币够才买得到，买到的药按瓶合堆（2 红 = 1 格、3 蓝 = 1 格）',
-    result.shop.panelOpen === true && result.shop.offers >= 5
+  ['商店：点按钮展开 / 再点收起，金币够才买得到，药按瓶合堆（2 红 = 1 格、3 蓝 = 1 格）',
+    result.shop.panelOpen === true && result.shop.toggleBack === true && result.shop.offers >= 5
       && result.shop.initialGold === 120
       && result.shop.poorRefused === true && result.shop.before === 0
       && result.shop.redCells === 1 && result.shop.after === 2

@@ -322,6 +322,21 @@
     background: transparent; border-color: transparent; color: var(--muted);
   }
   #gate-close:hover { color: var(--text); }
+
+  /* ---- 主界面：关卡卡片；其余面板按需展开 ---- */
+  .kind-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 4px; }
+  .kind-card {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+    padding: 16px; min-height: 104px; text-align: left;
+  }
+  .kind-card b { font-size: 15px; color: var(--text); }
+  .kind-card span { font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .kind-card i { font-style: normal; font-size: 11px; color: var(--gold); }
+  .kind-card.selected { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(255,209,102,.22) inset; }
+  .fx-view-btn.active { border-color: var(--cyan); color: var(--cyan); }
+  #fx-main-panel[hidden], #fx-bag-content[hidden], #star-panel[hidden],
+  #shop-panel[hidden], #workshop-panel[hidden], #account-panel[hidden] { display: none !important; }
+  .fx-kind-hidden { display: none; }
 </style>
 </head>
 <body>
@@ -391,19 +406,48 @@
     </div>
   </div>
 
-  <h1>局外系统 · 背包 / 仓库 / 装备栏</h1>
+  <h1>局外 · 备战</h1>
   <div class="sub">
     独立页面，双击即可打开（不依赖游戏、不依赖服务器）。逻辑来自
     <code>assets/meta/inventory.ts</code>，由 <code>scripts/build-meta-ui.mjs</code> 生成
     <code>inventory.js</code>，与单元测试同一份源码。
   </div>
 
+  <!-- 主界面：局外只做一件事 —— 选关卡。仓库 / 星图 / 商店 / 工坊 / 账号
+       全部收进下面这排按钮，点开才显示（壳层里由 setView 统一控制）。 -->
+  <section class="panel fx-main-panel" id="fx-main-panel" hidden>
+    <div class="panel-title">
+      <h2>选择关卡</h2>
+      <small id="fx-kind-desc">搜打撤 · 阵亡全部丢失，没有第二次机会</small>
+    </div>
+    <div class="kind-cards">
+      <button class="kind-card selected" data-kind="pvpve" type="button" title="联机 PVP 只支持这一模式">
+        <b>搜打撤</b>
+        <span>阵亡全部丢失，没有第二次机会</span>
+        <i>可联机对战</i>
+      </button>
+      <button class="kind-card" data-kind="dungeon" type="button">
+        <b>副本</b>
+        <span>阵亡掉在原地，下次进本可捡回一次；再死就永久消失</span>
+        <i>单局回收</i>
+      </button>
+      <button class="kind-card" data-kind="story" type="button">
+        <b>主线</b>
+        <span>阵亡不掉落，身上和背包全部带回</span>
+        <i>新手友好</i>
+      </button>
+    </div>
+  </section>
+
   <div class="toolbar">
-    <button id="reset">重置演示数据</button>
-    <button id="shop-toggle" title="花金币补给：红蓝药、保险格扩容（价目表在 tables/shop.xlsx）">商店</button>
+    <button id="view-main" class="fx-view-btn active" data-view="main" type="button" title="回到关卡选择">关卡</button>
+    <button id="view-stash" class="fx-view-btn" data-view="stash" type="button" title="装备栏 / 保险格 / 背包 / 仓库：给角色配装">仓库</button>
+    <button id="view-star" class="fx-view-btn" data-view="star" type="button" title="星图 · 流派：局外加点">星图</button>
+    <button id="shop-toggle" class="fx-view-btn" data-view="shop" title="花金币补给：红蓝药、保险格扩容（价目表在 tables/shop.xlsx）">商店</button>
     <button id="sell" title="把背包 / 保险格 / 仓库里的收藏品换成金币（武器与药品不会动）">卖出收藏品</button>
-    <button id="workshop-toggle" title="工坊：金币重铸词条（每件一次、直接生效）/ 修武器耐久（回满，但上限永久下降）">工坊</button>
-    <button id="account-toggle" title="登录后存档跟账号走：换浏览器、换设备都能找回">账号</button>
+    <button id="workshop-toggle" class="fx-view-btn" data-view="workshop" title="工坊：金币重铸词条（每件一次、直接生效）/ 修武器耐久（回满，但上限永久下降）">工坊</button>
+    <button id="account-toggle" class="fx-view-btn" data-view="account" title="登录后存档跟账号走：换浏览器、换设备都能找回">账号</button>
+    <button id="reset" title="重置演示数据（开发用）">重置</button>
     <span class="acct-badge" id="acct-badge" title="当前身份：游客的存档只留在这个浏览器里">游客</span>
     <span class="coin" id="fx-gold" title="金币：收藏品换来的，用来在商店买补给与扩容">0 金</span>
     <span class="status" id="status"></span>
@@ -474,6 +518,16 @@
       </div>
     </section>
 
+    <!-- 仓库排第二：点「仓库」按钮第一眼就看得见 160 格；局内浮层里它会被
+         fx-run-mode 规则整块隐藏，顺序不影响战斗视图。 -->
+    <section class="panel" id="stash-panel">
+      <div class="panel-title"><h2>仓库</h2><small>16 × 10 = 160 格</small></div>
+      <div class="grid-wrap" id="wrap-stash">
+        <div class="grid" id="grid-stash"></div>
+        <div class="preview" id="preview-stash"></div>
+      </div>
+    </section>
+
     <section class="panel" id="safe-panel">
       <div class="panel-title"><h2>保险格</h2><small id="safe-size">2 格 · 阵亡不掉</small></div>
       <div class="grid-wrap" id="wrap-safe">
@@ -491,14 +545,6 @@
       <div class="grid-wrap" id="wrap-bag">
         <div class="grid" id="grid-bag"></div>
         <div class="preview" id="preview-bag"></div>
-      </div>
-    </section>
-
-    <section class="panel" id="stash-panel">
-      <div class="panel-title"><h2>仓库</h2><small>16 × 10 = 160 格</small></div>
-      <div class="grid-wrap" id="wrap-stash">
-        <div class="grid" id="grid-stash"></div>
-        <div class="preview" id="preview-stash"></div>
       </div>
     </section>
   </div>
@@ -552,6 +598,9 @@
   // to SHARE the very same InventoryState object (memory, not a copy). When
   // opened standalone via file:// the hook is absent and behaviour is unchanged.
   const host = window.MetaShell ?? (window.MetaShell = {});
+  // 壳层（游戏内）才做「主界面 / 仓库 / 星图」视图切换；独立双击页是开发验收页，
+  // 保持所有面板展开，历史验收脚本不必跟着改。
+  const shellMode = !!document.getElementById('fx-shell');
   // 词条规则（`assets/meta/affix.ts` → `meta-ui/affix.js`）与词条池（宿主注入）。
   // 页面只调用，不复制「同 stat 不重复 / 白装 0 条」这类规则。
   const AFFIX = window.MetaAffix ?? null;
@@ -1047,11 +1096,11 @@
     const panel = $('star-panel');
     if (!panel) return;
     // 独立双击页没有宿主注入表数据：藏掉面板，而不是显示一张空图。
+    // 面板显隐由 setView 统一管（局外只有点「星图」才展开），这里不再改 hidden。
     if (!starReady()) {
       panel.hidden = true;
       return;
     }
-    panel.hidden = false;
     const levels = host.levels;
     const rule = host.starRule;
     const cap = T.levelCap(levels);
@@ -1264,6 +1313,10 @@
   }
 
   $('shop-toggle').addEventListener('click', () => {
+    if (shellMode && host.setView) {
+      host.setView(currentView === 'shop' ? 'main' : 'shop');
+      return;
+    }
     const panel = $('shop-panel');
     if (!panel) return;
     panel.hidden = !panel.hidden;
@@ -1498,6 +1551,10 @@
   }
 
   $('workshop-toggle').addEventListener('click', () => {
+    if (shellMode && host.setView) {
+      host.setView(currentView === 'workshop' ? 'main' : 'workshop');
+      return;
+    }
     const panel = $('workshop-panel');
     if (!panel) return;
     panel.hidden = !panel.hidden;
@@ -2024,6 +2081,10 @@
   const acctToggle = $('account-toggle');
   if (acctToggle) {
     acctToggle.addEventListener('click', () => {
+      if (shellMode && host.setView) {
+        host.setView(currentView === 'account' ? 'main' : 'account');
+        return;
+      }
       const panel = $('account-panel');
       if (!panel) return;
       panel.hidden = !panel.hidden;
@@ -2095,6 +2156,54 @@
     showGate(false);
   })();
 
+  /* ---- 视图切换：主界面只选关卡，仓库 / 星图 / 商店 / 工坊 / 账号按需展开 ----
+     只在壳层启用：独立双击页是开发验收页，保持所有面板同时展开（历史脚本依赖）。 */
+  const VIEW_PANELS = {
+    main: 'fx-main-panel',
+    stash: 'fx-bag-content',
+    star: 'star-panel',
+    shop: 'shop-panel',
+    workshop: 'workshop-panel',
+    account: 'account-panel',
+  };
+  let currentView = 'main';
+  function setView(name) {
+    if (!Object.prototype.hasOwnProperty.call(VIEW_PANELS, name)) return;
+    // 局内只有顶栏背包浮层可开，切视图一律无效（host.isRun 由 shell-bridge 提供）。
+    if (host.isRun && host.isRun()) return;
+    currentView = name;
+    Object.keys(VIEW_PANELS).forEach(function (key) {
+      const el = $(VIEW_PANELS[key]);
+      if (el) el.hidden = key !== name;
+    });
+    document.querySelectorAll('.fx-view-btn').forEach(function (btn) {
+      btn.classList.toggle('active', btn.dataset.view === name);
+    });
+    // 面板隐藏时也会重画，展开那一帧直接是新数据，不会闪旧状态。
+    if (name === 'shop' && typeof renderShop === 'function') renderShop();
+    if (name === 'workshop' && typeof renderWorkshop === 'function') renderWorkshop();
+    if (name === 'account' && typeof renderAccount === 'function') renderAccount();
+    if (name === 'star' && typeof renderStar === 'function') renderStar();
+    const shell = document.getElementById('fx-shell');
+    if (shell) shell.dataset.view = name;
+  }
+  host.setView = setView;
+
+  if (shellMode) {
+    document.querySelectorAll('.fx-view-btn[data-view]').forEach(function (btn) {
+      const name = btn.dataset.view;
+      // 商店 / 工坊 / 账号的按钮上面各有 toggle 监听，这里只接三个新入口。
+      if (name === 'shop' || name === 'workshop' || name === 'account') return;
+      btn.addEventListener('click', function () { setView(name); });
+    });
+  } else {
+    // 独立页本来就是全展开的开发页，新按钮对它没有意义。
+    ['view-main', 'view-stash', 'view-star'].forEach(function (id) {
+      const el = $(id);
+      if (el) el.hidden = true;
+    });
+  }
+
   bindGrid('bag');
   bindGrid('safe');
   bindGrid('stash');
@@ -2102,6 +2211,8 @@
   if (sellBtn) sellBtn.addEventListener('click', sellTreasures);
   render();
   renderStar();
+  // 壳层第一屏是关卡卡片（登录门禁仍压在最上面）；独立页保持原来的全展开。
+  if (shellMode) setView('main');
   say('仓库是空的：出征去副本里捡装备（绿色预览＝可放，红色＝放不下）');
 })();
 </script>

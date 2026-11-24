@@ -143,12 +143,14 @@
     '<span class="fx-account">玩家 <b id="fx-account-name">—</b>' +
     '  <span id="fx-save-mode" class="fx-save-mode" style="display:none">平台云存档</span></span></div>' +
     '<div class="fx-controls">' +
-    '  <label for="fx-kind">关卡</label>' +
+    // 关卡选择已升级成主界面的三张卡片；保留这个 select 作为唯一的权威状态载体，
+    // 它同时是 match-flow / 各验收脚本改关卡的入口，不能删、不能换 id。
+    '  <span class="fx-kind-hidden"><label for="fx-kind">关卡</label>' +
     '  <select id="fx-kind" title="三条死亡规则不同：主线不掉、副本可捡回一次、搜打撤全丢">' +
     '    <option value="pvpve">搜打撤</option>' +
     '    <option value="dungeon">副本</option>' +
     '    <option value="story">主线</option>' +
-    '  </select>' +
+    '  </select></span>' +
     '  <button id="fx-deploy" type="button">出征 →</button>' +
     '  <button id="fx-back" type="button" disabled>← 返回局外</button>' +
     '  <button id="fx-bag" type="button" disabled>背包 B/I</button>' +
@@ -271,6 +273,8 @@
     // 关卡类型只能在出征前选：局内换类型等于中途改死亡规则。
     $('fx-kind').disabled = on;
     $('fx-phase').textContent = on ? '阶段：战斗' : '阶段：局外配装';
+    // 回大厅一律回到关卡主界面：上一局前开着仓库 / 星图不该把选关页藏住。
+    if (!on && host.setView) host.setView('main');
   }
 
   /**
@@ -381,11 +385,32 @@
   }
 
   /* ------------------------------ deploy ------------------------------- */
+  /** 主界面三张卡片只是 select 的操作入口；权威状态始终是 #fx-kind.value。 */
+  function syncKindCards() {
+    [].forEach.call(document.querySelectorAll('.kind-card[data-kind]'), function (card) {
+      card.classList.toggle('selected', card.dataset.kind === currentKind);
+    });
+    var desc = $('fx-kind-desc');
+    if (desc) desc.textContent = KIND_TEXT[currentKind] || '';
+  }
   $('fx-kind').addEventListener('change', function () {
     if (inRun) return;
     currentKind = $('fx-kind').value;
     log(KIND_TEXT[currentKind] || '');
+    syncKindCards();
   });
+  // 走 select + change 而不是直接写 currentKind：match-flow 强制 pvpve、验收脚本
+  // 切副本都从那条路径进，卡片必须与它们共用同一处状态更新。
+  [].forEach.call(document.querySelectorAll('.kind-card[data-kind]'), function (card) {
+    card.addEventListener('click', function () {
+      if (inRun) return;
+      var kind = card.dataset.kind;
+      if (!kind || kind === $('fx-kind').value) return;
+      $('fx-kind').value = kind;
+      $('fx-kind').dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+  syncKindCards();
 
   $('fx-deploy').addEventListener('click', function () {
     if (inRun) return;
