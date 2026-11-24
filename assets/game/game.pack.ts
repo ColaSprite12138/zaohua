@@ -736,9 +736,15 @@ export const game: Plugin = {
       // 座位消息到了：deploy 里挂起的「等座位」窗口结束，后续只看 netActive。
       pendingOnline = false;
       if (starting) {
-        // 新一局：上一局的自快照 / 待部署配置绝不能带过来，否则会拿旧装备建世界。
+        /* 新一局：上一局的自快照 / 世界参数绝不能带过来，否则会拿旧装备建世界。
+         *
+         * **刻意不清 `pendingDeployment`**：deploy 消息可能比第一条 netSeat 先到
+         * （Worker 晚启动、主窗口握手重发都会打乱顺序），它挂的是**本局**的
+         * deathDrop / stars。清掉后 `tryDeployFromSeat()` 因 `!pendingDeployment`
+         * 永远建不了世界 ⇒ `netDeployed=false` ⇒ 门禁不放行 ⇒ 301 帧作废整局。
+         * 上一局的残留由上面 `msg.active !== true` 那条分支负责清。
+         */
         netSelfSnapshot = null;
-        pendingDeployment = null;
         netDeployed = false;
         netSeed = null;
         netKind = null;
@@ -940,27 +946,36 @@ export const game: Plugin = {
      * relay 按 matchId 拉，见 `game/server/source/index.ts::fetchCvmLoadouts`）。
      * 走到这里的只剩「CVM 也没有」的兜底情况。
      */
-    function abortForMissingLoadouts(missing: string[], seatMissing = false): void {
+    function abortForMissingLoadouts(
+      missing: string[], why: string, seatMissing = false,
+    ): void {
       netStat.loadoutVoided = Math.max(1, missing.length);
       console.warn(
-        `[net] 开局门禁超时（${loadoutWaitFrames} 帧），`
-        + (seatMissing
-          ? '座位信息一直没到（netSeat 丢失 / 房间名单为空）'
-          : `${missing.length} 人未交装备快照：${missing.join(',') || '未知'}`)
+        `[net] 开局门禁超时（${loadoutWaitFrames} 帧）：${why}`
         + ' —— 拒绝开局，本局作废（不空快照硬开）',
       );
+      /*
+       * `missing` 用**真实人数**：以前 `Math.max(1, 0)` 会把「快照其实齐了、
+       * 卡的是世界没建 / 座位丢了」也写成「缺 1 人」，把完全不同的故障
+       * 压成同一句文案，只能继续猜。`why` 由调用处按真因分类。
+       */
       channel?.postMessage({
         type: 'netLoadoutsMissing',
-        missing: Math.max(1, missing.length),
+        missing: missing.length,
         seatMissing,
+        why,
       });
       trace('gate.timeout', {
         frames: loadoutWaitFrames,
         missing: missing.length,
+        why,
         seatMissing,
         peers: netPeers.size,
         snapshots: netPeerSnapshots.size,
         self: !!netSelfSnapshot,
+        deployed: netDeployed,
+        pending: !!pendingDeployment,
+        settled: netSeatSettled,
         seed: netSeed,
         kind: netKind,
       });
@@ -1473,13 +1488,11 @@ export const game: Plugin = {
         } else if (msg.type === 'netReplayData') {
           if (msg.replay && typeof msg.replay === 'object') applyReplay(msg.replay);
         } else if (msg.type === 'netSeatRequest') {
-          // 主窗口刚起来 / 刚刷新时不知道 Worker 在不在等座位信息。
-          channel?.postMessage({
-            type: 'netSeat',
-            active: netActive,
-            playerId: netPlayerId,
-            peers: [...netPeers],
-          });
+          /* 座位信息只在主窗口手里，Worker 没有能力"回补"一条完整的。
+           * 旧实现让 Worker 自己 post 一条不带 self/seed/kind 的空 netSeat，
+           * 主窗口收到也没用。改成向主窗口要：它缓存了最近一条完整 netSeat。
+           */
+          channel?.postMessage({ type: 'seatNeed' });
         } else if (msg.type === 'lock') {
           locked = true;
         } else if (msg.type === 'unlock') {
@@ -1729,15 +1742,31 @@ export const game: Plugin = {
                 // 名单/快照到达那一刻一次吐出几百步会让两端 tick 错开）。
                 if (awaitingLoadouts) {
                   loadoutWaitFrames += 1;
+                  /*
+                   * **条件齐了立刻放行，不等下一条 netSeat**。
+                   * 以前 `tryArmAfterLoadouts()` 只在 netSeat 到达 / deploy 时调，
+                   * 若快照和世界参数是在那之后分别到的，门禁会一直冻到超时，
+                   * 即使所有人都已经齐了（用户实测 `CVM ok:2/2 / 已收 2`
+                   * 仍报「缺 1 人」就是这条）。每帧试一次成本只有一个布尔判断。
+                   */
+                  tryArmAfterLoadouts();
                   // 只报一次（301 帧那一帧）：每帧都发只会刷屏，而且主窗口那边
                   // 收到第一条就开始收尾了。注意**不置 `awaitingLoadouts = false`**
                   // —— 保持冻结，`advanceNet` 不会执行，等于"不开局"。
-                  if (loadoutWaitFrames === 301) {
-                    abortForMissingLoadouts(
-                      [...netPeers].filter((id) => id !== netPlayerId && !netPeerSnapshots.has(id)),
-                      // 座位都没到（peers 为空）时，缺的不是快照而是名单本身。
-                      !netActive || netPeers.size === 0,
+                  if (awaitingLoadouts && loadoutWaitFrames === 301) {
+                    const gap = [...netPeers].filter(
+                      (id) => id !== netPlayerId && !netPeerSnapshots.has(id),
                     );
+                    const seatMissing = !netActive || !netSeatSettled || netPeers.size === 0;
+                    const why = seatMissing
+                      ? '座位名单一直没到（netSeat 丢失 / 房间名单为空）'
+                      : !netSelfSnapshot ? '自己的装备快照一直没到'
+                      : netSeed === null || netKind === null ? '服务器世界参数（seed / 关卡）一直没到'
+                      : !pendingDeployment ? '出征配置丢失（deploy 与 netSeat 时序）'
+                      : !netDeployed ? '世界没建成（见 deploy.wait）'
+                      : gap.length > 0 ? `${gap.length} 人未交装备快照：${gap.join(',')}`
+                      : '快照已齐但门禁未放行（arm 没被触发）';
+                    abortForMissingLoadouts(gap, why, seatMissing);
                   }
                 }
                 if (netActive && netSeatSettled && !awaitingLoadouts) advanceNet(raw);

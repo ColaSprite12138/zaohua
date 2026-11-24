@@ -245,6 +245,33 @@
     }
   }
 
+  /*
+   * **最近一次发给 Worker 的座位消息，原样缓存。**
+   *
+   * Worker 是后启动的：attach() 发出的 netSeat 常常没人接，而旧代码的回补
+   * 方向是反的 —— 主窗口收到 `ready` 后发 `netSeatRequest`，让**没有座位信息
+   * 的 Worker** 自己回一条空 netSeat。于是 Worker 永远 `netPeers.size===0`，
+   * 门禁 301 帧后报「没收到队友的座位信息」（2026-11-24 双开实测）。
+   *
+   * 座位信息只在主窗口手里，丢了只能由主窗口重发。缓存完整消息（含 self /
+   * seed / kind / peers[].snapshot），握手时原样再发一次即可，不依赖时序。
+   */
+  var lastSeatMsg = null;
+  function sendSeat(msg) {
+    lastSeatMsg = msg;
+    post(msg);
+  }
+  function resendSeat() {
+    if (!lastSeatMsg) return;
+    TRACE('net', 'seat.resend', {
+      peers: (lastSeatMsg.peers || []).length,
+      self: !!lastSeatMsg.self,
+      seed: lastSeatMsg.seed,
+      kind: lastSeatMsg.kind,
+    });
+    post(lastSeatMsg);
+  }
+
   /* ---------------------------- 诊断角标 ------------------------------ */
 
   // 为什么挂在 DOM 而不是画进 canvas：netStat 本来就每秒只推一次，改个文本
@@ -525,9 +552,14 @@
       if (msg.type === 'ready') {
         // 本构建的协议版本：用于校验 relay 广播（见 `protocolRuleset`）。
         if (typeof msg.ruleset === 'string' && msg.ruleset) S.protocolRuleset = msg.ruleset;
-        // Worker 是后启动的（它起来之前发的消息没人收）。握手时补一次座位信息，
-        // 否则刷新页面后 Worker 不知道自己已经在联机局里。
-        post({ type: 'netSeatRequest' });
+        // Worker 是后启动的（它起来之前发的消息没人收）。握手时**由主窗口**
+        // 重发缓存的完整座位消息，否则 Worker 不知道自己已经在联机局里。
+        resendSeat();
+        return;
+      }
+      if (msg.type === 'seatNeed') {
+        // Worker 中途重载 / 丢了座位：主动要，主窗口就补。
+        resendSeat();
         return;
       }
       if (msg.type === 'netHash') {
@@ -539,8 +571,9 @@
         // relay 判定「有人没交开局装备快照」：**不空快照硬开**，由主窗口把这局作废。
         // 空快照会让两端属性从 tick 0 起就不同，那是最难查的一类分叉。
         TRACE('worker', 'gate.timeout', {
-          missing: msg.missing || 1,
+          missing: msg.missing || 0,
           seatMissing: msg.seatMissing === true,
+          why: msg.why || '',
           cvm: S.cvmLoadouts,
           peers: S.peers.length,
         });
@@ -548,6 +581,7 @@
           try {
             host.onLoadoutsMissing(msg.missing || 0, {
               seatMissing: msg.seatMissing === true,
+              why: typeof msg.why === 'string' ? msg.why : '',
             });
           } catch (err) {
             console.warn('[net] 处理「快照未齐」失败', err);
@@ -667,6 +701,7 @@
      * （41 ms）才被看到，而它在服务端有 3 秒 TTL，不影响正确性。
      */
     var frameNow = serverFrameOf(state);
+    var seatOnly = false;
     if (frameNow >= 0) {
       if (S.firstFrameAt < 0) {
         S.firstFrameAt = frameNow;
@@ -674,9 +709,15 @@
       }
       if (frameNow === S.lastFrameApplied) {
         S.stats.dupUpdates += 1;
-        return;
+        /*
+         * **只跳过帧投递，不跳过座位检查**。名单 / 快照 / seed 可能在同一个
+         * 服务器帧内变化（relay 每轮给新对象），而 netSeat 是 Worker 建世界
+         * 的唯一输入。以前这里直接 return：服务器还没出帧时，后进房的人
+         * 永远拿不到名单 ⇒ 门禁超时报「没收到队友的座位信息」。
+         */
+        seatOnly = true;
       }
-      S.lastFrameApplied = frameNow;
+      if (!seatOnly) S.lastFrameApplied = frameNow;
     }
 
     /*
@@ -687,13 +728,17 @@
      * 吃掉。所以这里量的是「服务器这一秒产出了多少字节」，与 `probe-bandwidth`
      * 的口径一致；要链路层真实字节得看 NetLimiter / DevTools，两者会差 4~5 倍。
      */
-    try {
-      var downBytes = byteLen(JSON.stringify(state));
-      traffic.down += downBytes;
-      traffic.downTotal += downBytes;
-    } catch (err) {
-      // 序列化失败不影响玩法 —— 流量的数字少一份，别把整帧丢掉。
-      S.stats.errors += 1;
+    // 重复帧不再算下行字节：开局窗口内整份快照约 12KB，广播被平台回调
+    // 4~5 次/帧，每轮都 stringify 会把主线程吃掉（这正是原去重的理由）。
+    if (!seatOnly) {
+      try {
+        var downBytes = byteLen(JSON.stringify(state));
+        traffic.down += downBytes;
+        traffic.downTotal += downBytes;
+      } catch (err) {
+        // 序列化失败不影响玩法 —— 流量的数字少一份，别把整帧丢掉。
+        S.stats.errors += 1;
+      }
     }
     S.sessionStateKeys = (wrapped ? ['(wrapped)'] : [])
       .concat(Object.keys(raw)).concat(wrapped ? Object.keys(state) : []).slice(0, 24);
@@ -785,11 +830,15 @@
       S.seatSig = seatSig;
       S.peers = peers;
       S.stats.seats += 1;
-      post({
+      sendSeat({
         type: 'netSeat', active: true, playerId: S.playerId, peers: peers,
         self: selfSnapshot, seed: roundSeed, kind: roundKind,
       });
     }
+
+    // 同一帧的重复回调：座位检查已跑完（可能刚补发了一条 netSeat），
+    // 但帧投递不能重复 —— 重复投递会让 Worker 把同一 tick 执行两次。
+    if (seatOnly) return;
 
     /*
      * 帧投递：**一个 tick 一个批次，包含所有人的意图（含自己）**。
@@ -1034,7 +1083,16 @@
     var lastTick = keys.length > 0 ? keys[keys.length - 1] : 0;
     var signature = players + ':' + keys.length + ':' + lastTick + ':'
       + (state.serverTick || 0) + ':' + (state.stats ? state.stats.packets : 0);
-    if (signature === S.lastSignature) return;
+    if (signature === S.lastSignature) {
+      /*
+       * 签名不变（服务器还没出帧 / 一帧都没动）时，名单与快照仍可能已经
+       * 变了 —— relay 的 getState() 每轮都给新对象。座位检查必须照跑：
+       * onGameUpdate 里的 seatOnly 会挡掉帧投递，只留 netSeat 判断。
+       * 否则先进房的那个人永远等不到后进房者的名单（B 端 seatMissing）。
+       */
+      onGameUpdate(state);
+      return;
+    }
     S.lastSignature = signature;
     onGameUpdate(state);
   }
@@ -1112,7 +1170,9 @@
     }
     // 座位消息必须先发、且必须带完整名单，再开始轮询。反过来（先轮询后发）
     // 会让轮询里那条带名单的 netSeat 被这条空的覆盖掉。
-    post({
+    // 也走 sendSeat：Worker 若恰好在这条之后才 ready，至少要有一条可重发。
+    // 随后 onGameUpdate 发出的完整版（带 self / seed / kind / snapshot）会覆盖缓存。
+    sendSeat({
       type: 'netSeat',
       active: true,
       playerId: S.playerId,

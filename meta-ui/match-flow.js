@@ -237,16 +237,24 @@
     // `CVM fail:timeout` = relay 出网/接口问题；座位没到则是另一类
     // （房间名单为空 / netSeat 丢失）。三种的处理方式完全不同。
     var seatMissing = !!(info && info.seatMissing);
-    var head = seatMissing
-      ? '没收到队友的座位信息（房间名单为空或网络异常）'
-      : '有队友未同步装备快照（' + (missing || 1) + ' 人' + netDiagText() + '）';
+    var why = info && info.why ? info.why : '';
+    /*
+     * Worker 现在会把**真因**一起报上来（座位没到 / 自己快照没到 / seed 没到 /
+     * 出征配置被清 / 世界没建 / 确实缺人）。以前六种情况全写成「缺 1 人快照」，
+     * 截图里 `CVM ok:2/2 / 已收 2` 却报缺人就是这么来的。
+     */
+    var head = why
+      ? '开局未完成：' + why
+      : seatMissing
+        ? '没收到队友的座位信息（房间名单为空或网络异常）'
+        : '有队友未同步装备快照（' + (missing || 1) + ' 人）';
     // 失败那一刻就把黑匣子打印出来：这句文案区分不了「CVM 接口没部署」
     // 「局号查不到」「名单没到」，事件流能。用户只需复制控制台输出。
     try {
       console.warn('[match] 开局失败 · 完整事件流（也可执行 MetaShell.net.dumpTrace() 取纯文本）：\n'
         + (window.MetaTrace ? window.MetaTrace.text() : '(无日志)'));
     } catch (err) { /* 控制台不可用 */ }
-    finish(head + '，本局已取消；重新匹配即可', true);
+    finish(head + netDiagText() + '，本局已取消；重新匹配即可', true);
   };
 
   /**
