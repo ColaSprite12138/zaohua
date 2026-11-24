@@ -297,6 +297,36 @@ deploy 复用那一份。只预览不取走的话，玩家排队期间改一件�
 `abortForMissingLoadouts` 把本局作废回大厅。这是单数据源的必然代价 ——
 宁可不打，也不要一个从 tick 0 就分叉的世界。
 
+### 7.4 数据来源审计表（改开局路径前先过一遍这张表）
+
+判据只有一条：**这个字段进不进 `state-hash.ts`？** 进了就只能是「服务端下发」或
+「由服务端数据 + 同一条确定性代码推导」，不能有任何本机来源。
+
+| hash 字段 | 来源 | 状态 |
+|---|---|---|
+| `runSeed` | CVM `matches.seed` → relay `state.seed` | ✅ 曾是客户端 deployment |
+| `runKind` | CVM `mode` → relay `state.kind` | ✅ 曾是客户端 `fx-kind` |
+| `players[].runInventory` / `weaponSlots` / `activeWeaponSlot` | CVM 快照（含本机 self） | ✅ 曾是本地 lobby |
+| `players[].starSkills` / `skillBar` | CVM 快照 `stars.skills` | ✅ 曾是本地星图 |
+| `players[].hp` / `maxHp` / `mana` / `maxMana` | `vitals.ts::vitalsFrom`，输入是上面四项 | ✅ 两处共用一份公式 |
+| `players[].id` | relay 名单（座位 id） | ✅ |
+| `players[].x/y`（开局） | `spawnPointFor(world, id)`，对所有人同一规则 | ✅ |
+| `players[].intent` + 其余运行时字段 | 服务器广播的输入帧 + 帧推进 | ✅ |
+| `skeletons` / `destructibles` / `portals` / `events` | `reset()`：map + `makeRng(runSeed)` | ✅ 派生 |
+| `drops` / `dropSeq` / `lootLog` | `makeRng(runSeed)` 的消费序列 | ✅ 派生 |
+| `projectiles` / `zones` / `reactions` / `skillFx` | 帧推进（技能参数全是确定量） | ✅ 派生 |
+| `visionRadius` | **目前是常量**（天赋未接入） | ⚠️ 接天赋时必须改服务端下发 |
+| 地图 `world` | 构建产物 `arena.generated.ts` | ⚠️ 靠 `PROTOCOL_RULESET` 兜底 |
+
+**明确不进 hash、也不许进判定的本机成分**：`camera`、`hoverEnemy`、`hoverDrop`、
+`toast`、`particles`、`trail`（确定性豁免）、`name`、`me`、`online`。
+其中 `hover*` 只在渲染层读；点击命中（`hitTestEnemy` / `dropAtPoint`）是纯空间
+判定、不过滤视野，所以它们的输入只有「鼠标坐标」—— 而鼠标坐标走输入帧。
+
+**协议版本**：`PROTOCOL_RULESET` 决定「谁能和谁进同一局」。它必须和帧布局同文件
+（`input-frame.ts`），客户端进局时校验 relay 广播的 `state.ruleset`，不一致就
+**一帧都不收**并作废本局 —— 用错布局解帧不会报错，只会让输入张冠李戴。
+
 
 ## 8. 帧率与带宽：为什么逻辑帧率不能跟着广播频率走
 
