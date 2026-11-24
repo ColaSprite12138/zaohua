@@ -17,6 +17,7 @@
  * 那一条路上），打人走 `damagePlayer()`（和怪物出刀、DOT 共用一套无敌帧与耐久）。
  */
 
+import { atan2 } from '../net/trig.ts';
 import { projectile as projectileRows } from '../resource/generated/projectile.ts';
 import { countOf, takeOneFromBag } from '../meta/inventory.ts';
 import type { AttackOwner } from './attack-spec.ts';
@@ -169,9 +170,9 @@ export function fireProjectile(s: GameState, options: FireOptions): Projectile |
   const target = index === null ? undefined : s.skeletons[index];
   if (target !== undefined && target.alive) {
     targetId = monsterTargetId(index as number);
-    angle = Math.atan2(target.y - BODY_LIFT - from.y, target.x - from.x);
+    angle = atan2(target.y - BODY_LIFT - from.y, target.x - from.x);
   } else if (options.aim !== undefined && options.aim !== null) {
-    angle = Math.atan2(options.aim.y - BODY_LIFT - from.y, options.aim.x - from.x);
+    angle = atan2(options.aim.y - BODY_LIFT - from.y, options.aim.x - from.x);
   }
 
   s.projectileSeq += 1;
@@ -404,7 +405,7 @@ export function projectileSnapshot(s: GameState): {
     owner: p.owner,
     x: p.x,
     y: p.y,
-    angle: Math.atan2(p.vy, p.vx),
+    angle: atan2(p.vy, p.vx),
     travelled: Math.round(p.travelled),
     locked: p.targetId !== null,
   }));

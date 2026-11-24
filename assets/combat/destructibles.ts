@@ -17,6 +17,7 @@
  * 掉落物走同一份 `Drop` 结构，所以「砸出来的剑」和「打怪掉的剑」一模一样。
  */
 
+import { atan2, cos, sin } from '../net/trig.ts';
 import { destructible as destructibleRows } from '../resource/generated/destructible.ts';
 import { burst, pinPlayer, say, setTarget } from './effects.ts';
 import { wakeNoise } from './enemies.ts';
@@ -212,8 +213,8 @@ export function breakOpen(s: GameState, obj: DestructibleObj, fromRemote = false
     const angle = (Math.PI * 2 * i) / Math.max(1, def.drops) - Math.PI / 2;
     const spot = nearestWalkable(
       s.world,
-      obj.x + Math.cos(angle) * 34,
-      obj.y + Math.sin(angle) * 22,
+      obj.x + cos(angle) * 34,
+      obj.y + sin(angle) * 22,
     );
     const damage = rollWeaponDamage(loot.itemId, s.rng);
     s.drops.push({
@@ -304,7 +305,7 @@ export function updateDestructibles(s: GameState, dt: number): void {
   const swingPrev = Math.floor((smash.t - dt) / SMASH_SWING_SECONDS);
   if (swingAt > swingPrev) {
     s.player.attackFx = PLAYER_SWING_TIME;
-    s.player.face = Math.atan2(obj.y - s.player.y, obj.x - s.player.x);
+    s.player.face = atan2(obj.y - s.player.y, obj.x - s.player.x);
     burst(s, obj.x, obj.y - 24, '#c9b48a', 5, 90);
   }
 

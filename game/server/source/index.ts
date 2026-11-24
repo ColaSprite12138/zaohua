@@ -43,8 +43,9 @@ import { decodePacket, encodeBatch, type InputFrame } from '../../../assets/net/
  * 会被配进同一局。
  *
  * v1 → v2：输入帧第一个字段从「客户端帧号」改成「意图序号」，语义不兼容。
+ * v2 → v3：输入帧 12 → 16 字节，坐标 i16×4 → i32×4（大地图不再截断）。
  */
-const RULESET = 'extract-v2'
+const RULESET = 'extract-v3'
 
 /**
  * 广播里保留最近多少帧的输入。
@@ -75,6 +76,23 @@ const REPLAY_TTL_TICKS = 180
 
 /** 单个 base64 包的上限，防畸形包把内存吃光。 */
 const MAX_PACKET_CHARS = 4096
+
+/**
+ * 开局装备快照在广播里保留多少帧（10 秒）。
+ *
+ * 快照是**开局一次性**数据：远端影子建好之后，每轮再带一遍纯属浪费。
+ * 2026-11-24 实测（`scripts/probe-bandwidth.mjs`）：2 人局每轮 12.2 KB，
+ * 其中 11.4 KB（92.9%）就是这两份装备快照；16 人局每轮 95 KB ⇒ 2.3 MB/s。
+ * 所有输入帧加起来只占 3.7% —— 「帧同步只广播操作」这件事本身从来不贵。
+ *
+ * 10 秒足够覆盖开局握手（实测 1–2 秒）。超时之后如果还有客户端没拿到，
+ * 它会发 `{ needSnapshot: true }` 把窗口重开（见 `SNAPSHOT_RESEND_FRAMES`），
+ * 所以这不是「拿不到就永远拿不到」。
+ */
+const SNAPSHOT_GRACE_FRAMES = 240
+
+/** 按需补发时窗口重开多少帧（5 秒）—— 够做完一次次重试的往返。 */
+const SNAPSHOT_RESEND_FRAMES = 120
 
 /** 一次上行最多带多少条意图。客户端每 3 帧发一批，给突发留余量。 */
 const MAX_INTENTS_PER_PACKET = 24
@@ -118,7 +136,16 @@ type ReplayReply = {
   readonly data: [number, [string, string][]][]
 }
 
-type RelayPlayer = { id: string; name: string; snapshot?: unknown }
+type RelayPlayer = {
+  id: string
+  name: string
+  snapshot?: unknown
+  /**
+   * 到这个帧号之前，`snapshot` 才跟着每轮广播下发（见 `SNAPSHOT_GRACE_FRAMES`）。
+   * 0 / 缺省 = 不再下发；客户端发 `{ needSnapshot: true }` 会把它推到当前帧 + 120。
+   */
+  snapshotUntil?: number
+}
 
 type RelayState = {
   readonly ruleset: string
@@ -152,6 +179,8 @@ type RelayState = {
     catchup: number
     /** 因为停摆超过半秒而**放弃补算**的帧数（逻辑时间比墙钟短了这么多）。 */
     skipped: number
+    /** 客户端请求补发开局快照的次数（正常应为 0）。 */
+    snapshotResends: number
   }
 }
 
@@ -169,6 +198,7 @@ function emptyState(players: RelayPlayer[]): RelayState {
     stats: {
       packets: 0, intents: 0, badPackets: 0, hashReports: 0,
       mismatches: 0, retired: 0, replays: 0, catchup: 0, skipped: 0,
+      snapshotResends: 0,
     },
   }
 }
@@ -189,6 +219,18 @@ function readPeerSnapshot(input: unknown): unknown | null {
   const snap = (input as Record<string, unknown>).snapshot
   if (!snap || typeof snap !== 'object') return null
   return snap
+}
+
+/**
+ * 补发请求：`{ needSnapshot: true }`。
+ *
+ * 触发条件很窄 —— 客户端发现名单里有人**从来没拿到过**快照（不是「这轮没有」）。
+ * 正常对局 1–2 秒内全员就位，这条路径不该出现；它存在只是为了不让
+ * `SNAPSHOT_GRACE_FRAMES` 变成「慢一步就永远拿不到」。
+ */
+function readNeedSnapshot(input: unknown): boolean {
+  if (!input || typeof input !== 'object') return false
+  return (input as Record<string, unknown>).needSnapshot === true
 }
 
 function readReplay(input: unknown): { from: number; to: number } | null {
@@ -323,12 +365,35 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
    * 快照天然是新的。
    */
   function snapshot() {
+    /*
+     * 字段**逐个列出，不用 `...state`**。两个理由：
+     * 1. `snapshotUntil` 之类的内部调度字段不该跟着广播出门；
+     * 2. 以后往 `RelayState` 里加字段时，默认是「不广播」，而不是悄悄泄漏。
+     */
     return {
-      ...state,
-      players: state.players.map((player) => ({ ...player })),
+      ruleset: state.ruleset,
+      /*
+       * `players[]` 必须**显式**逐字段列出，不能 `{ ...player }`：
+       * `snapshotUntil` 是服务器的内部调度字段，spread 会把它一起广播出去。
+       *
+       * `snapshot` 只在开局窗口内带（见 `SNAPSHOT_GRACE_FRAMES`）。
+       * `undefined` 会被 JSON.stringify 直接省掉，客户端读到的就是「没有」。
+       */
+      players: state.players.map((player) => ({
+        id: player.id,
+        name: player.name,
+        snapshot: state.frame <= (player.snapshotUntil ?? 0) ? player.snapshot : undefined,
+      })),
       inputs: { ...state.inputs },
-      hashes: { ...state.hashes },
+      /*
+       * **`hashes` 不进广播**：它是服务器自己用来对账的（同 tick 比两端指纹），
+       * 客户端一个字段都不读。每轮带着 N 份 `parts` 等于白花带宽；分叉证据
+       * 只经 `diverged` 下发一次即可。
+       */
+      diverged: state.diverged,
       departed: { ...state.departed },
+      serverTick: state.serverTick,
+      frame: state.frame,
       reply: { ...state.reply },
       stats: {
         ...state.stats,
@@ -492,7 +557,21 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
       const snap = readPeerSnapshot(input)
       if (snap !== null) {
         const entry = state.players.find((p) => p.id === playerId)
-        if (entry) entry.snapshot = snap
+        if (entry) {
+          entry.snapshot = snap
+          // 从这一刻起 10 秒内跟着广播下发，够所有人建好远端影子。
+          entry.snapshotUntil = state.frame + SNAPSHOT_GRACE_FRAMES
+        }
+        return
+      }
+
+      // 客户端说「我名单里有人一直没拿到快照」：把所有窗口重开 5 秒。
+      // 这是异常兜底（正常局面 1–2 秒就都拿到了），不是常态流量。
+      if (readNeedSnapshot(input)) {
+        for (const entry of state.players) {
+          if (entry.snapshot !== undefined) entry.snapshotUntil = state.frame + SNAPSHOT_RESEND_FRAMES
+        }
+        state.stats.snapshotResends += 1
         return
       }
 

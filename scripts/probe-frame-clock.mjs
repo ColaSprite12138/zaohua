@@ -20,9 +20,9 @@ const ROOT = path.resolve(import.meta.dirname, '..')
 
 /* ---------------------------- 手工构造输入帧 ---------------------------- */
 
-const INPUT_FRAME_BYTES = 12
+const INPUT_FRAME_BYTES = 16
 
-/** 12 字节定长帧：seq(u32) flags(u8) skill(u8) switch(u8) aux(u8) mouseX(i16) mouseY(i16)。 */
+/** 16 字节定长帧：seq(u32) flags(u8) skill(u8) switch(u8) aux(u8) mouseX(i32) mouseY(i32)。 */
 function encodeFrame(seq, flags = 0) {
   const buf = new Uint8Array(INPUT_FRAME_BYTES)
   const view = new DataView(buf.buffer)
@@ -34,7 +34,7 @@ function encodeFrame(seq, flags = 0) {
   return buf
 }
 
-/** PACKET_BATCH 批量包：`[0x02][u16 count][12B × count]`。 */
+/** PACKET_BATCH 批量包：`[0x02][u16 count][16B × count]`。 */
 function encodeBatchBytes(frames) {
   const out = new Uint8Array(3 + frames.length * INPUT_FRAME_BYTES)
   out[0] = 0x02
@@ -245,9 +245,17 @@ console.log(`        其中固定开销 ${perBroadcast - inputChars} 字符/轮�
 // 各部分的贡献：降带宽要先知道钱花在哪。
 console.log('[带宽] 字段贡献（越靠前越值得削）：')
 console.log(`  stats      ${size({ ...snap, stats: {} })} → 省 ${perBroadcast - size({ ...snap, stats: {} })}`)
-console.log(`  hashes     ${size({ ...snap, hashes: {} })} → 省 ${perBroadcast - size({ ...snap, hashes: {} })}`)
+// `hashes` 2026-11-24 起不进广播（服务器内部对账用），这里只在真出现时才量。
+if (snap.hashes !== undefined) {
+  console.log(`  hashes     ${size({ ...snap, hashes: {} })} → 省 ${perBroadcast - size({ ...snap, hashes: {} })}`)
+} else {
+  console.log('  hashes     —（已移出广播，只服务器内部对账）')
+}
 console.log(`  tickMs     → 省 ${perBroadcast - size({ ...snap, stats: { ...snap.stats, tickMs: {} } })}`)
-console.log(`  players    → 省 ${perBroadcast - size({ ...snap, players: [] })}`)
+console.log(`  players    → 省 ${perBroadcast - size({ ...snap, players: [] })}`
+  + (snap.players.some((p) => p.snapshot !== undefined)
+    ? '（含开局装备快照：只在开局 10 s 窗口内下发）'
+    : '（快照窗口已关，稳态）'))
 const tickKeys = Object.keys(snap.inputs)
 console.log(`  inputs     → ${size(snap.inputs)} 字符 / ${tickKeys.length} 帧 [${tickKeys.join(',')}]`)
 

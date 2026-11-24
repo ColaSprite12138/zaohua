@@ -1,0 +1,60 @@
+<Slide style={{ padding: '60px', background: '#FFFFFF' }}>
+  <Box style={{ height: 62 }}>
+    <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#26282E', lineHeight: 1.25 }}>选帧同步不是保守，是把一致性做成了可证明的工程资产</Text>
+    <Box style={{ height: 1, width: '100%', background: '#D3DBE5', marginTop: 18 }} />
+  </Box>
+  <Box style={{ height: 470, marginTop: 24 }}>
+    <Box style={{ height: 60, background: '#1A3358', paddingLeft: 24, paddingRight: 24, justifyContent: 'center' }}>
+      <Text style={{ fontSize: 21, fontWeight: 'bold', color: '#FFFFFF' }}>主线判断：可证明一致性 ＞ 免确定性纪律，在 2–16 人好友房场景下</Text>
+    </Box>
+    <Box style={{ height: 320, marginTop: 18, flexDirection: 'row', gap: 60 }}>
+      <Box style={{ width: 660, justifyContent: 'space-between' }}>
+        <Box style={{ height: 140, flexDirection: 'row', gap: 16, padding: 16, background: '#F4F4F4', borderRadius: 8, borderLeft: '3px solid #234B80' }}>
+          <Box style={{ width: 44, height: 44, background: '#234B80', borderRadius: 4, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#FFFFFF' }}>1</Text>
+          </Box>
+          <Box style={{ flex: 1 }}>
+            <Text style={{ fontSize: 21, fontWeight: 'bold', color: '#234B80' }}>一致性可证明</Text>
+            <Text style={{ fontSize: 16, color: '#666666', lineHeight: 1.5, marginTop: 8 }}>全状态 hash + 双座位逐位对账，变成 CI 硬失败而非上线后的概率事件</Text>
+          </Box>
+        </Box>
+        <Box style={{ height: 140, flexDirection: 'row', gap: 16, padding: 16, background: '#F4F4F4', borderRadius: 8, borderLeft: '3px solid #234B80' }}>
+          <Box style={{ width: 44, height: 44, background: '#234B80', borderRadius: 4, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#FFFFFF' }}>2</Text>
+          </Box>
+          <Box style={{ flex: 1 }}>
+            <Text style={{ fontSize: 21, fontWeight: 'bold', color: '#234B80' }}>服务器保持薄</Text>
+            <Text style={{ fontSize: 16, color: '#666666', lineHeight: 1.5, marginTop: 8 }}>只做帧钟、贴帧、历史与转发；不跑规则，就不引入单点裁决和版本对齐</Text>
+          </Box>
+        </Box>
+      </Box>
+      <Box style={{ width: 440, justifyContent: 'space-between' }}>
+        <Box style={{ height: 140, flexDirection: 'row', gap: 16, padding: 16, background: '#F4F4F4', borderRadius: 8, borderLeft: '3px solid #4A73A8' }}>
+          <Box style={{ width: 44, height: 44, background: '#4A73A8', borderRadius: 4, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#FFFFFF' }}>3</Text>
+          </Box>
+          <Box style={{ flex: 1 }}>
+            <Text style={{ fontSize: 21, fontWeight: 'bold', color: '#234B80' }}>带宽恒定</Text>
+            <Text style={{ fontSize: 16, color: '#666666', lineHeight: 1.5, marginTop: 8 }}>上行只送输入定长帧，成本与怪物、掉落、弹幕数量解耦</Text>
+          </Box>
+        </Box>
+        <Box style={{ height: 140, flexDirection: 'row', gap: 16, padding: 16, background: '#F4F4F4', borderRadius: 8, borderLeft: '3px solid #4A73A8' }}>
+          <Box style={{ width: 44, height: 44, background: '#4A73A8', borderRadius: 4, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ fontSize: 22, fontWeight: 'bold', color: '#FFFFFF' }}>4</Text>
+          </Box>
+          <Box style={{ flex: 1 }}>
+            <Text style={{ fontSize: 21, fontWeight: 'bold', color: '#234B80' }}>回放与复用免费</Text>
+            <Text style={{ fontSize: 16, color: '#666666', lineHeight: 1.5, marginTop: 8 }}>全帧历史天然支持复盘与补帧；规则 F 只有一份，PVE/PVP 共用</Text>
+          </Box>
+        </Box>
+      </Box>
+    </Box>
+    <Box style={{ height: 44, marginTop: 18, background: '#E6EDF5', borderLeft: '4px solid #1A3358', paddingLeft: 20, justifyContent: 'center' }}>
+      <Text style={{ fontSize: 17, fontWeight: 'bold', color: '#1A3358' }}>所以：代价是已知且可局部修复的时间轴缺口，不是同步模型选错。</Text>
+    </Box>
+  </Box>
+  <Box style={{ position: 'absolute', bottom: 20, left: 60, right: 60, flexDirection: 'row', justifyContent: 'space-between' }}>
+    <Text style={{ fontSize: 14, color: '#666666' }}>结论先行 · 全篇主线</Text>
+    <Text style={{ fontSize: 14, color: '#666666' }}>04 / 13</Text>
+  </Box>
+</Slide>

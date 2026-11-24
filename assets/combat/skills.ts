@@ -15,6 +15,7 @@
  * 本模块不 import 引擎 / DOM，也不持有第二份状态。
  */
 
+import { atan2, cos, sin } from '../net/trig.ts';
 import { damageSkeleton, type SkeletonDamageOptions } from './attack.ts';
 import { weaponUsable, wearWeapon } from './durability.ts';
 import { burst, say } from './effects.ts';
@@ -277,14 +278,14 @@ export function beginSkill(
 
   const p = s.player;
   const point = aim ?? {
-    x: p.x + Math.cos(p.face) * (def.reach + 40),
-    y: p.y + Math.sin(p.face) * (def.reach + 40),
+    x: p.x + cos(p.face) * (def.reach + 40),
+    y: p.y + sin(p.face) * (def.reach + 40),
   };
 
   // 扣蓝 + 进冷却都发生在「起手」这一瞬间：读条被打断也不退还（见文件头）。
   s.mana = Math.max(0, s.mana - def.cost);
   entry.cooldown = def.cooldown;
-  p.face = Math.atan2(point.y - p.y, point.x - p.x);
+  p.face = atan2(point.y - p.y, point.x - p.x);
   // 起手要打断普攻的后摇指令，否则「普攻 → 技能」会两个动作一起结算。
   s.attackOrder = false;
   s.targetEnemy = null;
@@ -432,7 +433,7 @@ function sweep(s: GameState, def: SkillDef, damage: number): void {
   p.attackFx = 0.3;
   for (let a = 0; a < 10; a += 1) {
     const ang = p.face + (a / 9 - 0.5) * 2.2;
-    burst(s, p.x + Math.cos(ang) * 52, p.y + Math.sin(ang) * 34, '#ffd166', 3, 210);
+    burst(s, p.x + cos(ang) * 52, p.y + sin(ang) * 34, '#ffd166', 3, 210);
   }
   burst(s, p.x, p.y - 26, '#fff3c4', 12, 110);
   if (hits === 0) say(s, `「${def.name}」没有命中`);
@@ -454,7 +455,7 @@ function startDash(
   const dx = aim.x - p.x;
   const dy = aim.y - p.y;
   const d = Math.sqrt((dx) * (dx) + (dy) * (dy)) || 1;
-  p.face = Math.atan2(dy, dx);
+  p.face = atan2(dy, dx);
   p.dash = {
     travelled: 0,
     total: def.reach,
@@ -549,12 +550,12 @@ function bolt(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
     const side = Math.abs(rx * uy - ry * ux);
     if (side > def.width + 18) continue;
     hit(s, i, def, damage, { dirX: ux, dirY: uy, color: '#8be9fd', knockback: 0.6 });
-    spawnFx(s, 'impact', sk.x, sk.y, Math.atan2(uy, ux), 30, 0.45);
+    spawnFx(s, 'impact', sk.x, sk.y, atan2(uy, ux), 30, 0.45);
     burst(s, sk.x, sk.y - 20, '#8be9fd', 16, 190);
     hits += 1;
     farthest = Math.max(farthest, along);
   }
-  const angle = Math.atan2(uy, ux);
+  const angle = atan2(uy, ux);
   // 一条会「射出去」的冰锥（绘制层按角度铺晶体块），比原来的固定光点清楚得多。
   spawnFx(s, 'bolt', p.x, p.y, angle, def.reach, 0.85);
   // 霜痕：同一条走廊留一层结霜，走过去还看得出冰锥是朝哪打的。
@@ -577,7 +578,7 @@ function bolt(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
  */
 function cone(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage: number): void {
   const p = s.player;
-  const angle = Math.atan2(aim.y - p.y, aim.x - p.x);
+  const angle = atan2(aim.y - p.y, aim.x - p.x);
   let hits = 0;
   for (let i = 0; i < s.skeletons.length; i += 1) {
     const sk = s.skeletons[i];
@@ -587,11 +588,11 @@ function cone(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
     const along = Math.sqrt((rx) * (rx) + (ry) * (ry));
     if (along > def.reach + 20) continue;
     // 角度差取短弧：左后方和右后方的目标不能都被算进正面扇形。
-    let diff = Math.atan2(ry, rx) - angle;
+    let diff = atan2(ry, rx) - angle;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
     if (Math.abs(diff) > def.width) continue;
-    hit(s, i, def, damage, { dirX: Math.cos(angle), dirY: Math.sin(angle), color: '#60a5fa', knockback: 0.9 });
+    hit(s, i, def, damage, { dirX: cos(angle), dirY: sin(angle), color: '#60a5fa', knockback: 0.9 });
     spawnFx(s, 'impact', sk.x, sk.y, angle, 24, 0.45);
     hits += 1;
   }
@@ -657,7 +658,7 @@ function missile(
     dy = (dy / d) * def.reach;
   }
   const spot = { x: p.x + dx, y: p.y + dy };
-  const angle = Math.atan2(dy, dx);
+  const angle = atan2(dy, dx);
   p.face = angle;
   p.castPose = Math.max(p.castPose, 0.24);
   fireProjectile(s, {
@@ -693,7 +694,7 @@ function strike(s: GameState, def: SkillDef, aim: { x: number; y: number }, dama
     if (sk === undefined || !sk.alive) continue;
     if (Math.sqrt((sk.x - x) * (sk.x - x) + (sk.y - y) * (sk.y - y)) > def.width) continue;
     hit(s, i, def, damage, { color: '#c084fc', knockback: 1.1 });
-    spawnFx(s, 'impact', sk.x, sk.y, Math.atan2(sk.y - y, sk.x - x), 30, 0.45);
+    spawnFx(s, 'impact', sk.x, sk.y, atan2(sk.y - y, sk.x - x), 30, 0.45);
     burst(s, sk.x, sk.y - 26, '#c084fc', 16, 220);
     hits += 1;
   }

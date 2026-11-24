@@ -1,0 +1,49 @@
+<Slide style={{ padding: '60px', background: '#FFFFFF' }}>
+  <Box style={{ height: 62 }}>
+    <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#26282E', lineHeight: 1.25 }}>引擎给的是复制原语，玩法语义明确留给业务</Text>
+    <Box style={{ height: 1, width: '100%', background: '#D3DBE5', marginTop: 18 }} />
+  </Box>
+  <Box style={{ height: 470, marginTop: 24 }}>
+    <Box style={{ height: 384, flexDirection: 'row', gap: 56 }}>
+      <Box style={{ width: 620, justifyContent: 'space-between' }}>
+        <Box style={{ width: 250, height: 250, borderRadius: 125, background: '#234B80', alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 27, fontWeight: 'bold', color: '#FFFFFF', textAlign: 'center', lineHeight: 1.35 }}>引擎原生<br />engine-net</Text>
+          <Text style={{ fontSize: 15, color: '#B5D4F4', marginTop: 10 }}>传输 + 复制原语</Text>
+        </Box>
+        <Box style={{ height: 40, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Box style={{ width: 8, height: 8, borderRadius: 4, background: '#234B80' }} />
+          <Text style={{ fontSize: 16, color: '#26282E' }}>NetSession / 端点 / WebSocket，带 ACK 与恢复策略</Text>
+        </Box>
+        <Box style={{ height: 40, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Box style={{ width: 8, height: 8, borderRadius: 4, background: '#234B80' }} />
+          <Text style={{ fontSize: 16, color: '#26282E' }}>baseline / delta / 可见性，只搬字节，不跑规则</Text>
+        </Box>
+        <Box style={{ height: 40, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Box style={{ width: 8, height: 8, borderRadius: 4, background: '#234B80' }} />
+          <Text style={{ fontSize: 16, color: '#26282E' }}>README 原话：gameplay meaning belongs to the consumer</Text>
+        </Box>
+      </Box>
+      <Box style={{ width: 484, justifyContent: 'space-between' }}>
+        <Box style={{ width: 210, height: 210, borderRadius: 105, background: '#4A73A8', alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontSize: 25, fontWeight: 'bold', color: '#FFFFFF', textAlign: 'center', lineHeight: 1.35 }}>UE 玩法级<br />框架</Text>
+          <Text style={{ fontSize: 14, color: '#FFFFFF', marginTop: 8 }}>Actor 复制 · 预测校正 · RPC</Text>
+        </Box>
+        <Box style={{ height: 40, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Box style={{ width: 8, height: 8, borderRadius: 4, background: '#4A73A8' }} />
+          <Text style={{ fontSize: 16, color: '#26282E' }}>天工引擎没有这一层，引擎不提供预测与回滚</Text>
+        </Box>
+        <Box style={{ height: 40, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Box style={{ width: 8, height: 8, borderRadius: 4, background: '#4A73A8' }} />
+          <Text style={{ fontSize: 16, color: '#26282E' }}>照搬 UE 模型，等于自己补 CharacterMovement 级校正</Text>
+        </Box>
+      </Box>
+    </Box>
+    <Box style={{ height: 46, marginTop: 16, background: '#E6EDF5', borderLeft: '4px solid #1A3358', paddingLeft: 20, justifyContent: 'center' }}>
+      <Text style={{ fontSize: 17, fontWeight: 'bold', color: '#1A3358' }}>所以真实选项是：通用复制管道 vs 确定性层。用引擎省掉的是传输层，不是规则层。</Text>
+    </Box>
+  </Box>
+  <Box style={{ position: 'absolute', bottom: 20, left: 60, right: 60, flexDirection: 'row', justifyContent: 'space-between' }}>
+    <Text style={{ fontSize: 14, color: '#666666' }}>依据：engine-net README / feature-catalog</Text>
+    <Text style={{ fontSize: 14, color: '#666666' }}>05 / 13</Text>
+  </Box>
+</Slide>

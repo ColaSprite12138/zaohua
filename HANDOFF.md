@@ -640,10 +640,10 @@ talent 22（talent 15 + starmap-data 7）、resource 17（tables 9 + map 8）、
 | LDtk 报 `Cannot read properties of null (reading 'externalLevels')` | 这句是**假消息**：`ProjectLoader` 把 `Project.fromJson` 的异常吞了（`p` 变 null）再读 `p.externalLevels`。真因在生成器：① `tileRect` 缺 `tilesetUid`（`JsonTools.readTileRect` 直接 throw，编辑器报 "TileRect contains an invalid value"）；② 字段实例 `defUid: null` / `realEditorValues: []`（值全空）；③ `layerInstances` 与 `defs.layers` 不同序且缺 `iid`。现在 `python scripts/gen_arena_map.py --check` 会逐条报出来 |
 | `project play` 启动即报 `pack-source-revision-conflict` / `pack-malformed-meta` | 跑验收期间**改了源码**（`edit` 或生成器重写）→ 打包捕获的源与发布时不一致。等这次跑完再改，或直接重跑一次即可（不需要清缓存） |
 | 改了 `assets/game/voxel.ts` 后 `verify.sh` 在 meta-ui 步骤红，报的却是 `inventory.js` 不同步 | 实际漂移的是 `meta-ui/voxel.js`（三个生成物之一，报错文案会指向列表里第一条）。跑一次 `node scripts/build-meta-ui.mjs` 再提交，别只信那句文案 |
-| 帧同步里「某人的帧没到就按空输入继续跑」 | **这条一定会分叉**：A 拿空输入推进了 T，B 自己用真实输入推进了 T，此后两端状态永久不同。正确做法是**整局停在 T 等**；真要放行只能由服务端广播「谁从哪个 tick 起离场」，让所有客户端同时跳过。`assets/net/lockstep.ts::runnableTick()` 返回 null 就是在做这件事 |
+| 帧同步里「某人的帧没到就按空输入继续跑」 | **v2 起这就是正确做法，不是坑**：帧由服务器贴定（`advanceFrame` 不看谁的脸色），某人在某帧没意图 = 空输入，两端拿到的是同一份 `I_all`，不会分叉。真正会分叉的是 v1 的做法：客户端自己拿本地帧推进、又让别处按空输入跳过。`lockstep.ts` 已删；现在的护栏是 `assets/net/__tests__/two-seat-parity.test.ts`。 |
 | 改了 `game/server/source/` 之后联机行为没变 | 平台宿主跑的是 **`game/server/dist/index.js`**（esbuild 产物），不是源码。必须 `pnpm build:server`，再重开预览 |
-| 两个客户端 tick 差几格、hash 永远对不上 | `addTime()` 把单帧截断到 0.25s，卡过一次就永久落后（帧同步没有自动追帧）。看 `host.net.status().engine.stalls` / `droppedSeconds`；P4 之前只能重开一局 |
-| 联机时本地输入像「慢半拍」才动 | 这是设计：本地帧提前 3 tick 进队列（和远端走同一条延迟队列），恒定 50ms。别为了手感改成「先动再发」—— 那就等于放弃确定性 |
+| 两个客户端 tick 差几格、hash 永远对不上 | v2 里 tick 差来自「执行指针落后服务器帧号」，看角标 `领先`：0~1 正常，>3 且不回落才是积压。`acc` 截断 / `droppedSeconds` 是 v1 的旧机制，已删。真落后靠补帧通道（`补` 计数持续增长 = 一直在丢包）。 |
+| 联机时本地输入像「慢半拍」才动 | 这是设计：本机输入也要等服务器贴帧、广播回来才执行（不做客户端预表现，`docs/net-sync-v2.md` §4）。延迟 ≈ RTT + `lookahead×41.7ms`。别改成「先动再发」—— 那等于把输入归属还给客户端。 |
 | `state.remotes` 里有人，但屏幕上找不到他 | 影子角色也走 `sees()` 视野裁剪。对方在墙后 / 视野外本来就不该看见（反透视的一部分），不是 bug |
 | 冻结 / 眩晕的截图里看不到「冻住」的样子 | 硬控只有 1.2–1.5 秒，而 `play.screenshot` 从调用到成像有 1–2 秒延迟。画面证据看**冰面 / 状态条 / 霜痕**，硬控本身由投影里的 `skeletons[].statuses` 断言证明 |
 | 服务端只发一次 `game_init` 就再不推状态 | **`StateSyncGame.tick()` 返回 `true` 是「本局结束」**，不是「有变化」。恒 `true` 会立刻广播 `game_over` 并停掉 tick 循环，之后所有 `sendAction` 落进死房间。relay 必须恒返回 `false`；广播由 runtime 每轮取 `getDelta()` 完成 |
@@ -657,7 +657,7 @@ talent 22（talent 15 + starmap-data 7）、resource 17（tables 9 + map 8）、
 | 房间明明建好了，却报「建房失败」 | 建房后 `reportRoom` 失败也会掉进同一个 catch 并重试 `createRoom`，此时房间已存在 → 用 `ALREADY_EXISTS` 把真因盖掉。报座必须**单独重试**（4xx 立即抛），文案要写成「报座失败：…」 |
 | 造化发布报 `publish_confirmation_stale`（产物在确认后变化） | `build_and_upload` 走了全量 build 就会触发。要让它 `skip build`（日志出现 `Reusing the validated client/server output`）。可靠顺序：`inject-shell` → `preview_start(validate:true)`（必须**真执行**、有 job_id）→ `inject-shell`（幂等）→ `display_publish_check` → 取 `displayed_revision` → `build_and_upload{revision}`。另外 `display_publish_check` 读 dist 的壳层，dist 被 build 抹成 45KB 时会报「10 个问题」而不给明细 |
 | 两人同局「非常卡」，一人退出就都流畅 | 不是发包风暴也不是死锁：本地双人验收 `waiting=0`、满 60Hz。真因是正式环境链路更长（服务端 tick 50ms + 客户端轮询），超过本地输入提前量就停下来等，`acc` 持续累积，放行时一口气补十几步 → 尖峰。已改：`MAX_FRAME_DELTA` 0.25→0.1、`MAX_STEPS_PER_FRAME=4`（超出丢时间，计 `melted`）、`DEFAULT_LOCAL_DELAY` 3→5、轮询 120→60ms。还卡就看 `MetaShell.net.status().engine` 的 `waiting` / `melted` |
-| A 打掉的怪 / 破坏的可破坏物，B 那边还在 | **P2 的边界，不是 bug**：`GameState.destructibles` 虽有稳定 id，但 `advanceLockstep` 只 `step(state, FIXED_DT, toStepInput(inputs.local))`，远端帧仅 `stepRemoteActor` 推影子位置 —— 世界在两端各算各的。要共享必须 P3：多玩家实体进 `GameState` + 远端输入也进 `step` |
+| A 打掉的怪 / 破坏的可破坏物，B 那边还在 | **v1 时代的 P2 边界，早已不存在**：多玩家实体已进 `GameState.players`，远端输入也进 `step()`（`stepAll` + `assembleInputs`）。若现在还看到这类现象，先查 `mismatches` / `diverged.parts`（`players` 分项不同 = 输入归属或 hash 领域问题），不要往 `advanceLockstep` 上找 —— 那个函数没了。 |
 
 ## 可回滚基线（两层）
 

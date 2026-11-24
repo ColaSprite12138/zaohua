@@ -229,7 +229,7 @@ Engine Worker（无 DOM、无 PlatformClient）
 | 无墙钟依赖（`Date.now`/`performance.now`） | ✅ 模拟层没有 |
 | 视觉随机独立 | ⚠️ `effects.ts:11`、`movement.ts:206` 的 `Math.random` **必须保持独立**，绝不能改成 `s.rng` |
 | 固定 dt | ✅ `assets/net/step-clock.ts`，单机与联机都只吃 `FIXED_DT` |
-| 输入定长帧 | ✅ `assets/net/input-frame.ts`，12 字节/帧（tick + 位掩码 + 世界坐标 ×4 + 技能槽） |
+| 输入定长帧 | ✅ `assets/net/input-frame.ts`，16 字节/帧（seq + 位掩码 + 世界坐标 ×4（i32）+ 技能槽；2026-11-24 由 12 字节扩出） |
 | 状态 hash | ✅ `assets/net/state-hash.ts`，每 60 tick 一份 FNV-1a，坐标量化到 1/1024 像素 |
 | 超越函数 | ⚠️ 仍未动：98 处 `sin/cos/atan2/hypot`。`hypot → sqrt` 是零风险替换，但要先有「同一份操作两遍跑」的对照才能证明它值得换 —— 留给 P2 收尾的实测 |
 
@@ -243,7 +243,7 @@ Engine Worker（无 DOM、无 PlatformClient）
 自有的 `room` 成员在未连接时是空。文档里那套二进制接口属于 `useRoomService` 那一层，
 而 `createPlatformStateSyncRuntime` 没有透传。
 
-**结论：用 `sendAction` 搬运定长二进制帧。** 帧本身仍是 12 字节定长，外面套一层
+**结论：用 `sendAction` 搬运定长二进制帧。** 帧本身是 16 字节定长（2026-11-24 起），外面套一层
 `{ t, n, b: base64 }`（`assets/net/base64.ts` 是纯 JS 实现，两端算出的字节只由这段代码决定）。
 服务器**不解析帧内容**，只按 tick 归档转发 —— 「只转发」这条线没破。
 
@@ -252,7 +252,7 @@ Engine Worker（无 DOM、无 PlatformClient）
 | 文件 | 作用 |
 |:--|:--|
 | `assets/net/step-clock.ts` | 固定步长。`addTime` + `takeStep` 分离，联机才能做到「没推进就不扣时间」 |
-| `assets/net/input-frame.ts` | 12 字节定长帧 + 批量包编解码 |
+| `assets/net/input-frame.ts` | 16 字节定长帧（i32 坐标）+ 批量包编解码 |
 | `assets/net/input-latch.ts` | 一帧渲染的输入 → N 个逻辑步，边沿只给第一步（不然一帧跑 3 步 = 三连击） |
 | `assets/net/lockstep.ts` | 等齐队列：本地帧、远端帧、掉线、迟到、等待计时 |
 | `assets/net/state-hash.ts` | FNV-1a + 1/1024 量化（不量化会被 1e-13 的浮点差误判分叉） |
@@ -281,7 +281,7 @@ A 走位 586px，B 屏幕上 A 的影子同步移动 656px（`scripts/verify-two
 |:--|:--|:--|
 | 卡顿期间不追帧 | 缺帧时整局停在 T；若某一端因此丢了时间，tick 会永久落后 | 正常链路（可靠 WS + 3 tick 缓冲）不会触发；真触发时要 checkpoint 重放，那是 P4 |
 | 卡住超过 0.25s 截断 | 极长停顿会丢时间，两端 tick 错开 | 同上；`stalls` / `droppedSeconds` 已进诊断 |
-| base64 开销 | 每帧 12B → 16 字符，2 人局约 3KB/s | 16 人满房才会变成问题，P4 换二进制通道 |
+| base64 开销 | 每帧 16B → 22 字符，2 人局约 1KB/s（远小于每轮广播的世界快照，见 `net-sync-v2.md` §7.1） | 真正的大头是快照不是帧 |
 | `onCheckJoin` 还是空的 | 开局后理论上有人能挤进房间 | 房间号只发给本局成员；真锁门要等 P4 |
 | hash 是**弱对账** | 只比活怪 + 掉落 uid，不比玩家坐标、不比怪的位置精度 | P2 的 `GameState` 只有一个「本地玩家」，其余人在 `remotes` 里；两端 `s.player` 本来就该不同，怪的 AI 又追本地玩家。完整对账要等 P3 把玩家实体按 `playerId` 统一进 `GameState` |
 

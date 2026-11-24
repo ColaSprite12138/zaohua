@@ -1,0 +1,16 @@
+<Slide style={{ padding: '60px', background: '#FFFFFF' }}>
+  <Box style={{ height: 600, flexDirection: 'row', alignItems: 'center', gap: 60 }}>
+    <Box style={{ width: 230, height: 230, background: '#1A3358', alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ fontSize: 150, fontWeight: 'bold', color: '#FFFFFF', lineHeight: 1 }}>03</Text>
+    </Box>
+    <Box style={{ flex: 1 }}>
+      <Text style={{ fontSize: 46, fontWeight: 'bold', color: '#26282E' }}>边界与决议</Text>
+      <Box style={{ height: 1, width: '100%', background: '#D3DBE5', marginTop: 24, marginBottom: 24 }} />
+      <Text style={{ fontSize: 20, color: '#666666', lineHeight: 1.6 }}>把不利项摆上桌面，再给出切换触发条件</Text>
+    </Box>
+  </Box>
+  <Box style={{ position: 'absolute', bottom: 20, left: 60, right: 60, flexDirection: 'row', justifyContent: 'space-between' }}>
+    <Text style={{ fontSize: 14, color: '#666666' }}>第三章</Text>
+    <Text style={{ fontSize: 14, color: '#666666' }}>10 / 13</Text>
+  </Box>
+</Slide>

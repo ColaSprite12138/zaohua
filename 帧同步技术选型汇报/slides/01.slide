@@ -1,0 +1,22 @@
+<Slide style={{ padding: '60px', background: '#FFFFFF', flexDirection: 'row', gap: 60 }}>
+  <Box style={{ width: 760, height: 600, justifyContent: 'space-between' }}>
+    <Box>
+      <Text style={{ fontSize: 18, color: '#4A73A8', letterSpacing: 2 }}>技术选型汇报 · 项目评审</Text>
+    </Box>
+    <Box>
+      <Text style={{ fontSize: 56, fontWeight: 'bold', color: '#26282E', lineHeight: 1.18 }}>一致性可证，<br />是 PVP 的胜负手</Text>
+      <Text style={{ fontSize: 24, color: '#234B80', marginTop: 24 }}>自研帧同步 vs 天工引擎状态同步</Text>
+    </Box>
+    <Box>
+      <Box style={{ width: 48, height: 3, background: '#234B80', marginBottom: 18 }} />
+      <Text style={{ fontSize: 16, color: '#666666', lineHeight: 1.6 }}>汇报人：项目组<br />日期：2026-11-24</Text>
+    </Box>
+  </Box>
+  <Box style={{ width: 340, height: 600, background: '#234B80', padding: 40, justifyContent: 'space-between' }}>
+    <Text style={{ fontSize: 15, color: '#B5D4F4', letterSpacing: 3 }}>FRAME SYNC</Text>
+    <Box>
+      <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#FFFFFF', lineHeight: 1.4 }}>逐位一致<br />可证明</Text>
+    </Box>
+    <Text style={{ fontSize: 14, color: '#B5D4F4' }}>工程资产 · 非重复造轮子</Text>
+  </Box>
+</Slide>

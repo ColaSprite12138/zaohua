@@ -14,6 +14,7 @@
  *    否则玩家会以为「卡住了」。
  */
 
+import { atan2 } from '../net/trig.ts';
 import { ARROW_ID, weaponSpec, type AttackSpec } from './attack-spec.ts';
 import { gearAffixTotal } from '../meta/affix.ts';
 import { clearAttackOrder, swingAtTarget } from './attack.ts';
@@ -109,7 +110,7 @@ export function fireRangedAt(
   p.attackCd = spec.cooldown;
   // 拉弓也是一次「出手动作」：绘制层据此抬手，玩家看得出这一发真的放出去了。
   p.attackFx = PLAYER_SWING_TIME;
-  p.face = Math.atan2(sk.y - p.y, sk.x - p.x);
+  p.face = atan2(sk.y - p.y, sk.x - p.x);
   s.attacks += 1;
   fireProjectile(s, {
     owner: 'player',

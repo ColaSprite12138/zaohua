@@ -1,0 +1,59 @@
+<Slide style={{ padding: '60px', background: '#FFFFFF' }}>
+  <Box style={{ height: 62 }}>
+    <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#26282E', lineHeight: 1.25 }}>服务器只贴帧不跑规则，避免把裁决与版本一致性搬上服务端</Text>
+    <Box style={{ height: 1, width: '100%', background: '#D3DBE5', marginTop: 18 }} />
+  </Box>
+  <Box style={{ height: 470, marginTop: 24 }}>
+    <Box style={{ height: 400, flexDirection: 'row', gap: 28 }}>
+      <Box style={{ width: 440, justifyContent: 'space-between' }}>
+        <Box style={{ height: 88, background: '#F4F4F4', borderLeft: '3px solid #234B80', padding: 16, justifyContent: 'center' }}>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#234B80' }}>现在 · 帧同步服务器</Text>
+          <Text style={{ fontSize: 16, color: '#666666', lineHeight: 1.5, marginTop: 4 }}>按帧钟贴帧、定序，不下场比赛</Text>
+        </Box>
+        <Box style={{ height: 88, background: '#F4F4F4', borderLeft: '3px solid #234B80', padding: 16, justifyContent: 'center' }}>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#234B80' }}>全量 history 存档</Text>
+          <Text style={{ fontSize: 16, color: '#666666', lineHeight: 1.5, marginTop: 4 }}>补帧、回放、争议复盘直接读</Text>
+        </Box>
+        <Box style={{ height: 88, background: '#F4F4F4', borderLeft: '3px solid #234B80', padding: 16, justifyContent: 'center' }}>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#234B80' }}>转发输入与结果</Text>
+          <Text style={{ fontSize: 16, color: '#666666', lineHeight: 1.5, marginTop: 4 }}>规则在两端各自演算，无单点</Text>
+        </Box>
+        <Box style={{ height: 88, background: '#F4F4F4', borderLeft: '3px solid #234B80', padding: 16, justifyContent: 'center' }}>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#234B80' }}>一进程带多房</Text>
+          <Text style={{ fontSize: 16, color: '#666666', lineHeight: 1.5, marginTop: 4 }}>算力开销与房间数弱相关</Text>
+        </Box>
+      </Box>
+      <Box style={{ width: 100, justifyContent: 'space-around', alignItems: 'center' }}>
+        <Text style={{ fontSize: 26, color: '#234B80' }}>→</Text>
+        <Text style={{ fontSize: 26, color: '#234B80' }}>→</Text>
+        <Text style={{ fontSize: 26, color: '#234B80' }}>→</Text>
+        <Text style={{ fontSize: 26, color: '#234B80' }}>→</Text>
+      </Box>
+      <Box style={{ width: 480, justifyContent: 'space-between' }}>
+        <Box style={{ height: 88, background: '#E6EDF5', borderLeft: '3px solid #1A3358', padding: 16, justifyContent: 'center' }}>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1A3358' }}>状态同步服务器要持有 World</Text>
+          <Text style={{ fontSize: 16, color: '#26282E', lineHeight: 1.5, marginTop: 4 }}>权威端持有组件并算 delta</Text>
+        </Box>
+        <Box style={{ height: 88, background: '#E6EDF5', borderLeft: '3px solid #1A3358', padding: 16, justifyContent: 'center' }}>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1A3358' }}>必须跑全套规则 F</Text>
+          <Text style={{ fontSize: 16, color: '#26282E', lineHeight: 1.5, marginTop: 4 }}>算力随房间数线性增长</Text>
+        </Box>
+        <Box style={{ height: 88, background: '#E6EDF5', borderLeft: '3px solid #1A3358', padding: 16, justifyContent: 'center' }}>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1A3358' }}>ruleset 版本严格对齐</Text>
+          <Text style={{ fontSize: 16, color: '#26282E', lineHeight: 1.5, marginTop: 4 }}>服务端与客户端规则不一致即分叉</Text>
+        </Box>
+        <Box style={{ height: 88, background: '#E6EDF5', borderLeft: '3px solid #1A3358', padding: 16, justifyContent: 'center' }}>
+          <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#1A3358' }}>单点裁决上线</Text>
+          <Text style={{ fontSize: 16, color: '#26282E', lineHeight: 1.5, marginTop: 4 }}>裁决错误影响全部在场玩家</Text>
+        </Box>
+      </Box>
+    </Box>
+    <Box style={{ height: 46, marginTop: 16, background: '#E6EDF5', borderLeft: '4px solid #1A3358', paddingLeft: 20, justifyContent: 'center' }}>
+      <Text style={{ fontSize: 17, fontWeight: 'bold', color: '#1A3358' }}>所以：当前 2–16 人好友房不需要服务器裁决，新增职责是净负担。</Text>
+    </Box>
+  </Box>
+  <Box style={{ position: 'absolute', bottom: 20, left: 60, right: 60, flexDirection: 'row', justifyContent: 'space-between' }}>
+    <Text style={{ fontSize: 14, color: '#666666' }}>依据：game/server/source/index.ts · 房间制不撮合</Text>
+    <Text style={{ fontSize: 14, color: '#666666' }}>08 / 13</Text>
+  </Box>
+</Slide>

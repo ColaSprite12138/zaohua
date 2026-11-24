@@ -531,6 +531,13 @@ export const game: Plugin = {
       hashes: 0, flushes: 0, localEdges: 0, localMouse: 0,
       /** 补帧请求次数。持续增长 = 一直在丢包。 */
       replays: 0,
+      /**
+       * 开局门禁超时、被迫用空快照开局的次数（正常应恒为 0）。
+       *
+       * 一旦 > 0，这局两端可能带着不同属性开局 ⇒ hash 必然分叉。它只做诊断：
+       * 修法要服务器仲裁，见 `docs/net-sync-design.md` §10.6。
+       */
+      loadoutVoided: 0,
       /** 当前缺口大小（已经看到更高帧号但中间有洞的帧数）。 */
       gap: 0,
       /** 兼容旧诊断面板的字段：v2 不再「丢时间」，恒为 0。 */
@@ -739,6 +746,7 @@ export const game: Plugin = {
 
     /** 兜底：对方没上报（旧客户端 / 消息丢了）也不能永久冻结，用空快照开局。 */
     function forceStartWithoutLoadouts(): void {
+      let filled = 0;
       for (const id of netPeers) {
         if (id === netPlayerId || netPeerSnapshots.has(id)) continue;
         netPeerSnapshots.set(id, {
@@ -747,6 +755,28 @@ export const game: Plugin = {
           manaMax: state.maxMana,
           starSkills: [...state.starSkills],
         });
+        filled += 1;
+      }
+      /*
+       * **这是一条会产生分叉的兜底路径，正常网络永不触发。**
+       *
+       * 它只在「等 300 帧仍有人没上报装备快照」时走到。问题在于**两端各自计时**：
+       * 我先超时、用空快照开局，而你可能晚几帧才收到那份真实快照 —— 于是同一局
+       * 里你的 `hpMax / manaMax / starSkills` 与我不一样，从 tick 0 起就分叉。
+       *
+       * 正确修法是让服务器仲裁（收集齐 → 广播 ready；超时 → 广播 void，两端都
+       * 用空快照）。没做的原因写在 `docs/net-sync-design.md` §10.6：这条路径改的是
+       * 开局首帧，必须双人真机验收才能证明「没有把正常局面也改坏」，而当前没有
+       * 两个真账号环境。在那之前，至少让它**说出来**而不是静默分叉。
+       */
+      if (filled > 0) {
+        netStat.loadoutVoided = 1;
+        // 只走 console + netStat（后者每秒随诊断推到角标）：不为一条异常路径
+        // 新增一种上行消息，减少「发了没人管」的半成品。
+        console.warn(
+          `[net] 开局装备快照超时（${loadoutWaitFrames} 帧），${filled} 人按空快照开局 —— `
+          + '这条路径两端可能拿到不同属性，若 hash 分叉先查这里（net-sync-design §10.6）',
+        );
       }
       tryArmAfterLoadouts();
     }

@@ -10,6 +10,7 @@
  * 在 `enemies.ts`（那是 AI 的目标选择）。
  */
 
+import { cos, sin } from '../net/trig.ts';
 import { event as eventRows } from '../resource/generated/event.ts';
 import { destructibleDef } from './destructibles.ts';
 import { burst, say } from './effects.ts';
@@ -79,8 +80,8 @@ function fire(s: GameState, def: EventDef): void {
     const angle = (Math.PI * 2 * i) / Math.max(1, def.count) - Math.PI / 2;
     const spot = nearestWalkable(
       s.world,
-      base.x + Math.cos(angle) * 28,
-      base.y + Math.sin(angle) * 16,
+      base.x + cos(angle) * 28,
+      base.y + sin(angle) * 16,
     );
     // 序号挂在 S 上（`eventSeq`），两端跑同一串帧就得到同一个 uid。
     s.eventSeq += 1;

@@ -17,6 +17,7 @@
  * 表里的一列 —— 一支箭飞出 8000px 会让人觉得「游戏忘了删东西」，而不是「射得远」。
  */
 
+import { atan2, cos, sin } from '../net/trig.ts';
 import type { AttackOwner } from './attack-spec.ts';
 
 export interface Projectile {
@@ -132,8 +133,8 @@ export function makeProjectile(init: ProjectileInit): Projectile {
     damage: init.damage,
     x: init.x,
     y: init.y,
-    vx: Math.cos(init.angle) * init.speed,
-    vy: Math.sin(init.angle) * init.speed,
+    vx: cos(init.angle) * init.speed,
+    vy: sin(init.angle) * init.speed,
     alive: true,
     targetId: init.targetId ?? null,
     homing: Math.max(0, init.homing ?? 0),
@@ -154,14 +155,14 @@ function steer(
   p: Projectile, towardX: number, towardY: number, maxTurn: number,
 ): { vx: number; vy: number } {
   const speed = Math.sqrt((p.vx) * (p.vx) + (p.vy) * (p.vy)) || 1;
-  const current = Math.atan2(p.vy, p.vx);
-  const wanted = Math.atan2(towardY - p.y, towardX - p.x);
+  const current = atan2(p.vy, p.vx);
+  const wanted = atan2(towardY - p.y, towardX - p.x);
   let delta = wanted - current;
   while (delta > Math.PI) delta -= Math.PI * 2;
   while (delta < -Math.PI) delta += Math.PI * 2;
   const turn = Math.max(-maxTurn, Math.min(maxTurn, delta));
   const angle = current + turn;
-  return { vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed };
+  return { vx: cos(angle) * speed, vy: sin(angle) * speed };
 }
 
 /**

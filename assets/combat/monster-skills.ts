@@ -23,6 +23,7 @@
  * 数值全在表里，本文件不写数字。
  */
 
+import { atan2 } from '../net/trig.ts';
 import { monster_skill as monsterSkillRows } from '../resource/generated/monster_skill.ts';
 import { monster as monsterRows } from '../resource/generated/monster.ts';
 import { damagePlayer } from './attack.ts';
@@ -190,7 +191,7 @@ export function castMonsterSkill(s: GameState, sk: Skeleton, def: MonsterSkillDe
       from,
       // 非指向性：朝玩家**此刻**站的位置打，之后不修正。走位能躲是设计的一半。
       aim: { x: p.x, y: p.y },
-      angle: Math.atan2(p.y - sk.y, p.x - sk.x),
+      angle: atan2(p.y - sk.y, p.x - sk.x),
       sourceId: def.id,
     });
     sk.swing = MONSTER_SWING_TIME;

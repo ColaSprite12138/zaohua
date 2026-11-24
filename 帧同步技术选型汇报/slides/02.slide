@@ -1,0 +1,41 @@
+<Slide style={{ padding: '60px', background: '#FFFFFF' }}>
+  <Box style={{ height: 62 }}>
+    <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#26282E', lineHeight: 1.25 }}>三章讲清一个取舍</Text>
+    <Box style={{ height: 1, width: '100%', background: '#D3DBE5', marginTop: 18 }} />
+  </Box>
+  <Box style={{ height: 470, marginTop: 24, justifyContent: 'space-between' }}>
+    <Box style={{ height: 130, flexDirection: 'row', alignItems: 'center', gap: 32 }}>
+      <Box style={{ width: 90, height: 90, background: '#234B80', alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 40, fontWeight: 'bold', color: '#FFFFFF' }}>01</Text>
+      </Box>
+      <Box style={{ flex: 1 }}>
+        <Text style={{ fontSize: 27, fontWeight: 'bold', color: '#234B80' }}>先把问题框对</Text>
+        <Text style={{ fontSize: 18, color: '#666666', lineHeight: 1.6, marginTop: 10 }}>引擎给的是复制原语，UE 才是玩法级框架；真实选项不是「用不用现成的」</Text>
+      </Box>
+    </Box>
+    <Box style={{ height: 1, width: '100%', background: '#D3DBE5' }} />
+    <Box style={{ height: 130, flexDirection: 'row', alignItems: 'center', gap: 32 }}>
+      <Box style={{ width: 90, height: 90, background: '#4A73A8', alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 40, fontWeight: 'bold', color: '#FFFFFF' }}>02</Text>
+      </Box>
+      <Box style={{ flex: 1 }}>
+        <Text style={{ fontSize: 27, fontWeight: 'bold', color: '#234B80' }}>四项真收益</Text>
+        <Text style={{ fontSize: 18, color: '#666666', lineHeight: 1.6, marginTop: 10 }}>一致性可证 · 服务器薄 · 带宽恒定 · 回放与复用免费</Text>
+      </Box>
+    </Box>
+    <Box style={{ height: 1, width: '100%', background: '#D3DBE5' }} />
+    <Box style={{ height: 130, flexDirection: 'row', alignItems: 'center', gap: 32 }}>
+      <Box style={{ width: 90, height: 90, background: '#82A1C4', alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontSize: 40, fontWeight: 'bold', color: '#FFFFFF' }}>03</Text>
+      </Box>
+      <Box style={{ flex: 1 }}>
+        <Text style={{ fontSize: 27, fontWeight: 'bold', color: '#234B80' }}>边界与决议</Text>
+        <Text style={{ fontSize: 18, color: '#666666', lineHeight: 1.6, marginTop: 10 }}>主动交底两条已知边界，给出评委追问的应答与最终取舍</Text>
+      </Box>
+    </Box>
+  </Box>
+  <Box style={{ position: 'absolute', bottom: 20, left: 60, right: 60, flexDirection: 'row', justifyContent: 'space-between' }}>
+    <Text style={{ fontSize: 14, color: '#666666' }}>技术选型汇报 · 帧同步方案</Text>
+    <Text style={{ fontSize: 14, color: '#666666' }}>02 / 13</Text>
+  </Box>
+</Slide>

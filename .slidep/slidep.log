@@ -1,0 +1,41 @@
+=== boot pid=14016 ts=2026-11-24 19:44:04.216 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js create D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx ===
+[2026-11-24 19:44:04.215] [INFO ] [pid=14016] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+=== boot pid=25116 ts=2026-11-24 19:44:23.384 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js upsert-dsl D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx --dsl-file D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/slides/01.slide ===
+[2026-11-24 19:44:23.383] [INFO ] [pid=25116] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+[2026-11-24 19:44:23.410] [INFO ] [pid=25116] [slide-version] fileId=sid_mwum version=0 filePath=D:\tools\zaohua\forgeax-game\帧同步技术选型汇报\帧同步技术选型汇报.pptx
+=== boot pid=5908 ts=2026-11-24 19:44:41.449 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js upsert-dsl D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx --dsl-file D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/slides/02.slide ===
+[2026-11-24 19:44:41.448] [INFO ] [pid=5908] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+[2026-11-24 19:44:41.475] [INFO ] [pid=5908] [slide-version] fileId=sid_mwum version=1 filePath=D:\tools\zaohua\forgeax-game\帧同步技术选型汇报\帧同步技术选型汇报.pptx
+=== boot pid=32596 ts=2026-11-24 19:44:54.415 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js upsert-dsl D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx --dsl-file D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/slides/03.slide ===
+[2026-11-24 19:44:54.414] [INFO ] [pid=32596] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+[2026-11-24 19:44:54.443] [INFO ] [pid=32596] [slide-version] fileId=sid_mwum version=2 filePath=D:\tools\zaohua\forgeax-game\帧同步技术选型汇报\帧同步技术选型汇报.pptx
+=== boot pid=13300 ts=2026-11-24 19:45:16.847 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js upsert-dsl D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx --dsl-file D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/slides/04.slide ===
+[2026-11-24 19:45:16.846] [INFO ] [pid=13300] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+[2026-11-24 19:45:16.875] [INFO ] [pid=13300] [slide-version] fileId=sid_mwum version=3 filePath=D:\tools\zaohua\forgeax-game\帧同步技术选型汇报\帧同步技术选型汇报.pptx
+=== boot pid=16496 ts=2026-11-24 19:45:36.206 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js upsert-dsl D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx --dsl-file D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/slides/05.slide ===
+[2026-11-24 19:45:36.205] [INFO ] [pid=16496] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+[2026-11-24 19:45:36.236] [INFO ] [pid=16496] [slide-version] fileId=sid_mwum version=4 filePath=D:\tools\zaohua\forgeax-game\帧同步技术选型汇报\帧同步技术选型汇报.pptx
+=== boot pid=8348 ts=2026-11-24 19:45:49.208 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js upsert-dsl D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx --dsl-file D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/slides/06.slide ===
+[2026-11-24 19:45:49.207] [INFO ] [pid=8348] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+[2026-11-24 19:45:49.233] [INFO ] [pid=8348] [slide-version] fileId=sid_mwum version=5 filePath=D:\tools\zaohua\forgeax-game\帧同步技术选型汇报\帧同步技术选型汇报.pptx
+=== boot pid=33568 ts=2026-11-24 19:46:06.675 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js upsert-dsl D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx --dsl-file D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/slides/07.slide ===
+[2026-11-24 19:46:06.674] [INFO ] [pid=33568] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+[2026-11-24 19:46:06.706] [INFO ] [pid=33568] [slide-version] fileId=sid_mwum version=6 filePath=D:\tools\zaohua\forgeax-game\帧同步技术选型汇报\帧同步技术选型汇报.pptx
+=== boot pid=32524 ts=2026-11-24 19:46:26.058 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js upsert-dsl D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx --dsl-file D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/slides/08.slide ===
+[2026-11-24 19:46:26.057] [INFO ] [pid=32524] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+[2026-11-24 19:46:26.085] [INFO ] [pid=32524] [slide-version] fileId=sid_mwum version=7 filePath=D:\tools\zaohua\forgeax-game\帧同步技术选型汇报\帧同步技术选型汇报.pptx
+=== boot pid=17592 ts=2026-11-24 19:46:45.642 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js upsert-dsl D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx --dsl-file D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/slides/09.slide ===
+[2026-11-24 19:46:45.641] [INFO ] [pid=17592] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+[2026-11-24 19:46:45.669] [INFO ] [pid=17592] [slide-version] fileId=sid_mwum version=8 filePath=D:\tools\zaohua\forgeax-game\帧同步技术选型汇报\帧同步技术选型汇报.pptx
+=== boot pid=13856 ts=2026-11-24 19:46:59.393 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js upsert-dsl D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx --dsl-file D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/slides/10.slide ===
+[2026-11-24 19:46:59.392] [INFO ] [pid=13856] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+[2026-11-24 19:46:59.419] [INFO ] [pid=13856] [slide-version] fileId=sid_mwum version=9 filePath=D:\tools\zaohua\forgeax-game\帧同步技术选型汇报\帧同步技术选型汇报.pptx
+=== boot pid=31656 ts=2026-11-24 19:47:16.690 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js upsert-dsl D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx --dsl-file D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/slides/11.slide ===
+[2026-11-24 19:47:16.689] [INFO ] [pid=31656] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+[2026-11-24 19:47:16.716] [INFO ] [pid=31656] [slide-version] fileId=sid_mwum version=10 filePath=D:\tools\zaohua\forgeax-game\帧同步技术选型汇报\帧同步技术选型汇报.pptx
+=== boot pid=3840 ts=2026-11-24 19:47:36.393 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js upsert-dsl D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx --dsl-file D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/slides/12.slide ===
+[2026-11-24 19:47:36.390] [INFO ] [pid=3840] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+[2026-11-24 19:47:36.534] [INFO ] [pid=3840] [slide-version] fileId=sid_mwum version=11 filePath=D:\tools\zaohua\forgeax-game\帧同步技术选型汇报\帧同步技术选型汇报.pptx
+=== boot pid=16288 ts=2026-11-24 19:47:53.212 cwd=d:\tools\zaohua\forgeax-game argv=C:\Users\44763\.workbuddy\binaries\node\versions\22.22.2-6\node_modules\@tencent\slidep\dist\index.js upsert-dsl D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/帧同步技术选型汇报.pptx --dsl-file D:/tools/zaohua/forgeax-game/帧同步技术选型汇报/slides/13.slide ===
+[2026-11-24 19:47:53.211] [INFO ] [pid=16288] [server-url] baseUrl=http://127.0.0.1:39099 source=env
+[2026-11-24 19:47:53.238] [INFO ] [pid=16288] [slide-version] fileId=sid_mwum version=1 filePath=D:\tools\zaohua\forgeax-game\帧同步技术选型汇报\帧同步技术选型汇报.pptx

@@ -6,6 +6,7 @@
  * `ranged.ts::resolveAttackOrder()` —— 那里按当前武器槽分派近战 / 远程。
  */
 
+import { atan2, cos, sin } from '../net/trig.ts';
 import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { affix } from '../resource/generated/affix.ts';
 import { affix_slot } from '../resource/generated/affix_slot.ts';
@@ -292,7 +293,7 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   // `weapon.xlsx` owns the number. Unknown / demo ids fall back to the legacy
   // baseline rather than inventing a value; bare hands stay at 22.
   const baseline = !armed ? 22 : (weaponDamage(weaponId, s.runInventory) ?? 46);
-  const aim = Math.atan2(ddy, ddx);
+  const aim = atan2(ddy, ddx);
 
   p.attackCd = PLAYER_ATTACK_CD;
   p.attackFx = PLAYER_SWING_TIME;
@@ -305,7 +306,7 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   });
   // 造成伤害扣耐久（5.2 / 7.4）。损坏后的那一下不再磨损（已经到底了）。
   if (armed) wearWeapon(s, dealt, 0, p);
-  burst(s, p.x + Math.cos(aim) * 52, p.y + Math.sin(aim) * 52 - 22, '#cfe8ff', 5, 90);
+  burst(s, p.x + cos(aim) * 52, p.y + sin(aim) * 52 - 22, '#cfe8ff', 5, 90);
 }
 
 /* ------------------------------------------------- 玩家掉血（唯一入口） */

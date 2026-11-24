@@ -10,6 +10,7 @@
  * keep their screen-normalised contract.
  */
 
+import { cos, sin } from '../net/trig.ts';
 import { VIEW_H, VIEW_W } from '../shared/constants.ts';
 import { testArena } from '../resource/maps/arena-test.ts';
 import { combat_rule } from '../resource/generated/combat_rule.ts';
@@ -505,14 +506,14 @@ export function createPortals(w: World, count = PORTAL_COUNT): Portal[] {
       let picked: { x: number; y: number } | null = null;
       for (let attempt = 0; attempt < 8 && picked === null; attempt += 1) {
         const a = -Math.PI / 2 + (Math.PI * 2 * (i + attempt * 0.19)) / count;
-        const spot = nearestWalkable(w, cx + Math.cos(a) * rx, cy + Math.sin(a) * ry);
+        const spot = nearestWalkable(w, cx + cos(a) * rx, cy + sin(a) * ry);
         const clear = spots.every((q) => Math.sqrt((q.x - spot.x) * (q.x - spot.x) + (q.y - spot.y) * (q.y - spot.y)) >= w.grid * 2);
         if (clear) picked = spot;
       }
       // 八次都挤在一起也要留一扇门：宁可重叠，也不能让本局没有出口。
       const fallbackAngle = -Math.PI / 2 + (Math.PI * 2 * i) / count;
       const spot = picked ?? nearestWalkable(
-        w, cx + Math.cos(fallbackAngle) * rx, cy + Math.sin(fallbackAngle) * ry,
+        w, cx + cos(fallbackAngle) * rx, cy + sin(fallbackAngle) * ry,
       );
       spots.push(spot);
     }
@@ -732,7 +733,7 @@ export function dropFlightPose(drop: Drop): {
   const u = Math.max(0, stage) / flight.duration;
   const groundY = flight.fromY + (drop.y - flight.fromY) * u;
   const x = flight.fromX + (drop.x - flight.fromX) * u;
-  const lift = Math.sin(Math.PI * u) * flight.height;
+  const lift = sin(Math.PI * u) * flight.height;
   return { x, y: groundY - lift, groundY, airborne: stage >= 0 };
 }
 

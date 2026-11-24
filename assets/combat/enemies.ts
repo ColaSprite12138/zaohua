@@ -9,6 +9,7 @@
  * them -- it never guesses motion from a velocity it cannot see.
  */
 
+import { atan2 } from '../net/trig.ts';
 import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { monsterSpec } from './attack-spec.ts';
 import { damagePlayer } from './attack.ts';
@@ -128,7 +129,7 @@ export function updateSkeletons(s: GameState, dt: number): void {
     const sd = Math.sqrt((sdx) * (sdx) + (sdy) * (sdy));
     // A skeleton always looks at its prey, even while standing still: that is
     // what makes it read as a creature instead of a sliding billboard.
-    if (sd > 0.001) sk.face = Math.atan2(sdy, sdx);
+    if (sd > 0.001) sk.face = atan2(sdy, sdx);
     // 硬控 / 禁锢 / 减速：全部读状态注册表，AI 里不写第二套判定。
     const stats = combatOf(sk.monsterId);
 
@@ -238,7 +239,7 @@ export function updateSkeletons(s: GameState, dt: number): void {
               from: { x: sk.x, y: sk.y },
               targetIndex: spec.targeting === 'locked' ? 0 : null,
               aim: { x: p.x, y: p.y },
-              angle: Math.atan2(p.y - sk.y, p.x - sk.x),
+              angle: atan2(p.y - sk.y, p.x - sk.x),
               sourceId: sk.monsterId,
             });
           }

@@ -25,8 +25,14 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 /** 逻辑目录：会进两端模拟、必须确定的地方。渲染与 UI 不在这里。 */
 const SCAN_DIRS = ['assets/combat', 'assets/battle', 'assets/net', 'assets/talent', 'assets/resource']
-/** 超越函数当前预算 = 2026-11-21 清点值，只许降。 */
-const TRANSCENDENTAL_BUDGET = 47
+/** 超越函数当前预算 = 0，只许降不许升。
+ *
+ * 2026-11-24 收口：判定层全部换成 `assets/net/trig.ts` 的查表实现（只用
+ * + − × ÷ / floor / abs ⇒ IEEE 正确舍入 ⇒ 跨引擎逐位相同），只剩 `sight.ts`
+ * 的 4 处视野射线是 V 层（命中与 AI 都不读它），同行写了 `// determinism-ok:`。
+ * 新增任何一处未豁免的超越函数都会让这条守卫直接失败 —— 想留就必须解释
+ * 为什么它不影响两端一致性。 */
+const TRANSCENDENTAL_BUDGET = 0
 const verbose = process.argv.includes('--verbose')
 
 const FORBIDDEN = [

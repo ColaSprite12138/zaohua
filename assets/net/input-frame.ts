@@ -1,22 +1,22 @@
 /**
- * 输入帧：把一帧的操作意图压成定长 12 字节。
+ * 输入帧：把一帧的操作意图压成定长 16 字节。
  *
  * 为什么必须是定长的二进制而不是 JSON：
  * - JSON 每帧 100+ 字节，20 帧/秒 × 16 人 = 32KB/s 光是括号和字段名；定长帧
- *   12 字节，同样的量级降到 3.8KB/s，且解析不需要 `JSON.parse`（每帧都 parse
+ *   16 字节，同样的量级降到 5KB/s，且解析不需要 `JSON.parse`（每帧都 parse
  *   会在低端机上肉眼可见地掉帧）。
  * - 字段顺序一旦写死，两端就不可能出现「A 发的是 mouseX、B 读成 mouseY」这类
  *   只能靠日志猜的错位。
  *
- * 布局（小端，共 12 字节）：
+ * 布局（小端，共 16 字节）：
  * ```
  *   0  u32  seq               意图序号（客户端自增；**不是帧号**）
  *   4  u8   flags             见 FLAG_*
  *   5  u8   skill             技能槽 0..6；NO_SKILL=255 表示这一帧没按技能
  *   6  u8   switchWeapon      0/1；NO_SWITCH=255 表示没切枪
  *   7  u8   aux               见 AUX_*
- *   8  i16  mouseX * 4        世界坐标 × 4（1/4 像素精度，不是屏幕像素）
- *  10  i16  mouseY * 4
+ *   8  i32  mouseX * 4        世界坐标 × 4（1/4 像素精度，不是屏幕像素）
+ *  12  i32  mouseY * 4
  * ```
  *
  * **为什么是世界坐标而不是屏幕坐标**：点击落点最终要参与「打到哪只怪」的判定，
@@ -29,8 +29,16 @@
  * 把帧号归属又还给了客户端，v1 的分叉/卡死会原样复现。
  *
  * **为什么 ×4 而不是直接取整**：1 像素误差会让 `hitTestEnemy` 在半径边界上
- * 给出不同结果（我砍到了 / 我没砍到）。1/4 像素的误差远小于任何判定半径，
- * 而 int16 在 ×4 精度下仍能表示 ±8191 像素，比最宽的地图还宽一倍。
+ * 给出不同结果（我砍到了 / 我没砍到）。1/4 像素的误差远小于任何判定半径。
+ *
+ * **为什么坐标是 i32 而不是 i16（2026-11-24 改）**：i16 在 ×4 精度下只能表示
+ * ±8191.75 px，而 worldmap 大地图的路点就会到 `x = 8192`。联机一旦跑大地图，
+ * 超界的本机帧会被 `clampCoord` 截断、远端帧却按未截断的值模拟 ⇒ 同一玩家
+ * 两端坐标不同 ⇒ `players` 分项必然分叉。i32×4 的上限是 ±5.36 亿 px，
+ * 这辈子用不到；代价每帧只多 4 字节 —— base64 后 5.3 个字符，16 人满房 ×
+ * 24 Hz 约 +8KB/s，相对每轮广播的整份世界快照（数十 KB）可以忽略。
+ * 这笔账 2026-11-24 算过：用 4 字节换掉「联机永远不能跑大地图」这条硬限制，
+ * 值。
  */
 
 /** 一帧的操作意图。字段与 `StepInput` 一一对应，唯独坐标是世界空间。 */
@@ -55,7 +63,7 @@ export type InputFrame = {
 };
 
 /** 输入帧的字节数。改布局必须同时改 `RULESET_EXTRACT`。 */
-export const INPUT_FRAME_BYTES = 12;
+export const INPUT_FRAME_BYTES = 16;
 
 export const NO_SKILL = 255;
 export const NO_SWITCH = 255;
@@ -92,11 +100,16 @@ export function emptyInputFrame(seq: number): InputFrame {
   };
 }
 
-/** 把坐标夹进 int16 的表示范围（×4 之后）。越界说明地图尺寸变了，不是玩家的错。 */
+/** i32 的表示范围（×4 之后）。超界只可能来自坏数据，不是地图变大。 */
+const COORD_MAX = 2147483647;
+const COORD_MIN = -2147483648;
+
+/** 把坐标夹进 i32 的表示范围（×4 之后）。非有限值归 0 —— NaN 进帧会毁掉整局。 */
 function clampCoord(value: number): number {
+  if (!Number.isFinite(value)) return 0;
   const scaled = Math.round(value * MOUSE_SCALE);
-  if (scaled > 32767) return 32767;
-  if (scaled < -32768) return -32768;
+  if (scaled > COORD_MAX) return COORD_MAX;
+  if (scaled < COORD_MIN) return COORD_MIN;
   return scaled;
 }
 
@@ -129,8 +142,8 @@ export function encodeInputFrame(frame: InputFrame, out?: DataView): DataView {
   view.setUint8(5, frame.skill & 0xff);
   view.setUint8(6, frame.switchWeapon & 0xff);
   view.setUint8(7, aux);
-  view.setInt16(8, frame.mouse ? clampCoord(frame.mouse.x) : 0, true);
-  view.setInt16(10, frame.mouse ? clampCoord(frame.mouse.y) : 0, true);
+  view.setInt32(8, frame.mouse ? clampCoord(frame.mouse.x) : 0, true);
+  view.setInt32(12, frame.mouse ? clampCoord(frame.mouse.y) : 0, true);
   return view;
 }
 
@@ -153,16 +166,16 @@ export function decodeInputFrame(bytes: Uint8Array, offset = 0): InputFrame {
     skill: skill === NO_SKILL ? NO_SKILL : skill,
     switchWeapon: switchWeapon === NO_SWITCH ? NO_SWITCH : switchWeapon,
     mouse: hasMouse
-      ? { x: view.getInt16(8, true) / MOUSE_SCALE, y: view.getInt16(10, true) / MOUSE_SCALE }
+      ? { x: view.getInt32(8, true) / MOUSE_SCALE, y: view.getInt32(12, true) / MOUSE_SCALE }
       : null,
     pointerOnHud: (aux & AUX_POINTER_ON_HUD) !== 0,
   };
 }
 
-/** 单帧包：`[0x01][12B frame]`。只在「一帧一个包」的稀疏输入下用（技能/切枪）。 */
+/** 单帧包：`[0x01][16B frame]`。只在「一帧一个包」的稀疏输入下用（技能/切枪）。 */
 export const PACKET_FRAME = 0x01;
 /**
- * 批量包：`[0x02][u16 count][12B × count]`。常态走这个 —— 网络栈按包收
+ * 批量包：`[0x02][u16 count][16B × count]`。常态走这个 —— 网络栈按包收
  * 50 个小包的开销远大于 1 个 600 字节的大包，尤其在有丢包重传的链路上。
  */
 export const PACKET_BATCH = 0x02;
@@ -198,8 +211,8 @@ function encodeInto(frame: InputFrame, view: DataView, offset: number): void {
   view.setUint8(offset + 5, frame.skill & 0xff);
   view.setUint8(offset + 6, frame.switchWeapon & 0xff);
   view.setUint8(offset + 7, aux);
-  view.setInt16(offset + 8, frame.mouse ? clampCoord(frame.mouse.x) : 0, true);
-  view.setInt16(offset + 10, frame.mouse ? clampCoord(frame.mouse.y) : 0, true);
+  view.setInt32(offset + 8, frame.mouse ? clampCoord(frame.mouse.x) : 0, true);
+  view.setInt32(offset + 12, frame.mouse ? clampCoord(frame.mouse.y) : 0, true);
 }
 
 export type DecodedPacket =
@@ -248,9 +261,11 @@ export function toStepInput(frame: InputFrame): {
     // 轨迹两端差出 1e-5~0.1px，hash 里只有 players 分项分叉（2026-11-21
     // 真机 divergedTick=600 的分项指纹实测）。统一精度后两端逐位一致。
     //
-    // 只做量化，**不做 clampCoord 的 int16 截断**：那是编码层的溢出保护，
-    // 而 worldmap 大地图的路点会到 x=8192（> 8191.75 上限）。在转换层截断
-    // 会把它挪到相邻格、直接把寻路打断（verify-all 的 worldmap 实测）。
+    // 只做量化，**不做 clampCoord 的 i32 截断**：那是编码层的坏数据保护。
+    // 2026-11-24 之前坐标是 i16×4（上限 8191.75 px），worldmap 的路点会到
+    // x=8192 —— 在转换层截断会把它挪到相邻格、直接打断寻路（verify-all 的
+    // worldmap 实测）。现在编码层是 i32×4（上限 5.36 亿 px），大地图不再撞界，
+    // 这条「只量化不截断」的规矩仍然保留：截断属于编码层，不属于转换层。
     mouse: frame.mouse
       ? {
           x: Math.round(frame.mouse.x * MOUSE_SCALE) / MOUSE_SCALE,

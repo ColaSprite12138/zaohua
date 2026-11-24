@@ -33,6 +33,18 @@
     seatSig: '',
     /** 还没被服务端确认收下的开局装备快照（会重发，直到 game_update 里看到自己）。 */
     pendingSnapshot: null,
+    /** 第一次发 pendingSnapshot 的时间（毫秒）。超过 3 秒就放弃，别无限重发。 */
+    pendingSnapshotAt: 0,
+    /**
+     * 已经拿到过开局快照的 peer id。
+     *
+     * 服务器只在开局窗口内广播 `players[].snapshot`（10 秒，之后归零 —— 那是
+     * 每轮快照里 92% 的字节）。这里记「谁拿过」，于是「有没有人从来没拿到」
+     * 可以精确判断，而不是把「这一轮没有」当成「丢了」去无脑重请。
+     */
+    seenSnapshots: {},
+    /** 上一次请求补发快照的时间（500 ms 节流）。 */
+    snapshotAskedAt: 0,
     /** 已经交付给 Worker 的最大服务器帧号（去重用）。 */
     delivered: -1,
     /**
@@ -251,7 +263,11 @@
     // 静默 = 服务器的 tick 连续几拍没涨。它和「渲染慢」「逻辑慢」都不同：
     // 那两个至少还有数据在流，静默是**什么都没有**，只能等连接恢复或重进。
     var silent = diagLast.silentTicks >= 3;
-    el.textContent = (silent ? '⚠ 静默 ' + diagLast.silentTicks + 's  ' : '')
+    // 开局门禁超时（被迫用空快照）：这局两端属性可能不同，hash 一定分叉。
+    // 它不该静默 —— 否则下次看到 mismatches 又要从头猜。
+    var voided = stat.loadoutVoided ? '⚠ 空快照开局 ' + stat.loadoutVoided + '  ' : '';
+    el.textContent = voided
+      + (silent ? '⚠ 静默 ' + diagLast.silentTicks + 's  ' : '')
       + 'tick ' + stat.tick
       + '  服务器 ' + fpsText(serverFps)
       + '  执行 ' + fpsText(execFps)
@@ -352,6 +368,7 @@
         // 开局装备快照上行。relay 只转发、不解析，随下一次 game_update 广播给所有人。
         if (!S.active || !S.session) return;
         S.pendingSnapshot = msg.snapshot;
+        S.pendingSnapshotAt = Date.now();
         try {
           S.session.sendAction({ snapshot: msg.snapshot });
           S.stats.sends += 1;
@@ -463,6 +480,7 @@
     for (i = 0; i < players.length; i += 1) {
       var entry = players[i];
       if (!entry || !entry.id || entry.id === S.playerId) continue;
+      if (entry.snapshot) S.seenSnapshots[entry.id] = true;
       peers.push({ id: entry.id, name: entry.name || '', snapshot: entry.snapshot || null });
     }
     // 签名必须包含 snapshot：名单没变但对方装备到齐了，也要重发一次 netSeat，
@@ -474,10 +492,32 @@
       for (i = 0; i < players.length; i += 1) {
         if (players[i] && players[i].id === S.playerId) { mine = players[i]; break; }
       }
+      // 服务器只在开局窗口内下发 `snapshot`（之后归零），所以「广播里没有我」
+      // 不再等于「没落地」。用 3 秒兜底：足够十几次往返，超时就认为已经落过，
+      // 否则这里会永远每轮重发，把上行打满。
       if (mine && mine.snapshot) {
         S.pendingSnapshot = null;
-      } else {
+      } else if (Date.now() - S.pendingSnapshotAt < 3000) {
         try { S.session.sendAction({ snapshot: S.pendingSnapshot }); } catch (err) { /* 下一轮再试 */ }
+      } else {
+        S.pendingSnapshot = null;
+      }
+    }
+
+    /*
+     * 兜底：名单里有人在**开局窗口关掉之后**才被我看到，我从没拿到过它的快照。
+     * 不补的话远端影子会按默认属性建出来（hpMax / 星图不对）⇒ 从第一帧起分叉。
+     * 只在「从未见过」时请求，拿到即停；500 ms 节流，最多让服务器重开 5 秒窗口。
+     */
+    if (S.session) {
+      var unseen = 0;
+      for (i = 0; i < peers.length; i += 1) {
+        if (peers[i].snapshot === null && !S.seenSnapshots[peers[i].id]) unseen += 1;
+      }
+      var nowMs = Date.now();
+      if (unseen > 0 && nowMs - S.snapshotAskedAt > 500) {
+        S.snapshotAskedAt = nowMs;
+        try { S.session.sendAction({ needSnapshot: true }); } catch (err) { /* 下一轮再试 */ }
       }
     }
 
@@ -743,6 +783,10 @@
     S.delivered = -1;
     S.replaySeq = -1;
     S.divergedTick = -1;
+    // 新房间 = 新名单：上一次房间见过的快照不算数。
+    S.seenSnapshots = {};
+    S.snapshotAskedAt = 0;
+    S.pendingSnapshotAt = 0;
     S.lastSignature = '';
     S.sessionStateKeys = [];
     S.roomEvents = [];
@@ -833,6 +877,10 @@
     S.seatSig = '';
     S.peers = [];
     S.pendingSnapshot = null;
+    S.pendingSnapshotAt = 0;
+    // 新一局 = 新名单：上一局见过的快照不再算数（否则新队友会一直不请求补发）。
+    S.seenSnapshots = {};
+    S.snapshotAskedAt = 0;
     post({ type: 'netSeat', active: false, playerId: '', peers: [] });
   }
 

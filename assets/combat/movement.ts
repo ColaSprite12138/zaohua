@@ -13,6 +13,7 @@
  * attack -- see the 2026-11-13 entry in docs/feedback.md.
  */
 
+import { atan2, cos, sin } from '../net/trig.ts';
 import { burst, setTarget } from './effects.ts';
 import { gearAffixTotal } from '../meta/affix.ts';
 import {
@@ -129,8 +130,8 @@ export function applyDodge(s: GameState, dodge: boolean): void {
   p.invuln = 0.36;
   // 闪避冷却词条（设计 7.1 `dodge_cd_pct`）：只减自己的 CD，不改无敌帧与距离。
   p.dodgeCd = PLAYER_DODGE_CD * Math.max(0.2, 1 - gearAffixTotal(s.runInventory, 'dodge_cd_pct'));
-  const dir = Math.sqrt((p.vx) * (p.vx) + (p.vy) * (p.vy)) > 4 ? Math.atan2(p.vy, p.vx) : p.face;
-  setTarget(s, p.x + Math.cos(dir) * 185, p.y + Math.sin(dir) * 130);
+  const dir = Math.sqrt((p.vx) * (p.vx) + (p.vy) * (p.vy)) > 4 ? atan2(p.vy, p.vx) : p.face;
+  setTarget(s, p.x + cos(dir) * 185, p.y + sin(dir) * 130);
   s.moveMode = 'point';
   p.trail.push({ x: p.x, y: p.y, life: 0.42 });
   burst(s, p.x, p.y, '#67e8f9', 12, 130);
@@ -191,8 +192,8 @@ export function walk(s: GameState, dt: number): void {
     // **朝向平滑过渡，不是直接赋值。** 直接 `p.face = atan2(...)` 会让转弯在
     // 一帧内跳 90°，持械手臂（离身体中心 14px）跟着瞬移 —— 用户 2026-11-17 报的
     // 「武器转向不连贯、会瞬移」。移动方向仍然立即生效，只有"看哪边"在追。
-    const want = Math.atan2(ny, nx);
-    const turn = Math.atan2(Math.sin(want - p.face), Math.cos(want - p.face));
+    const want = atan2(ny, nx);
+    const turn = atan2(sin(want - p.face), cos(want - p.face));
     p.face += turn * Math.min(1, dt * TURN_RATE);
     const fromX = p.x;
     const fromY = p.y;

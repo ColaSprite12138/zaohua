@@ -1,5 +1,6 @@
 /** Visual feedback, waypoint clamping and particle ticking. Pure state helpers. */
 
+import { cos, sin } from '../net/trig.ts';
 import { clamp } from '../shared/constants.ts';
 import type { GameState } from './state.ts';
 import { BODY_RADIUS, findPath, nearestWalkable } from './world.ts';
@@ -15,8 +16,8 @@ export function burst(
     s.particles.push({
       x,
       y,
-      vx: Math.cos(a) * speed,
-      vy: Math.sin(a) * speed - 30,
+      vx: cos(a) * speed,
+      vy: sin(a) * speed - 30,
       // determinism-ok: 粒子寿命，纯表现
       life: 0.45 + Math.random() * 0.35,
       max: 0.8,

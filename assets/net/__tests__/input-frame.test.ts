@@ -11,9 +11,9 @@ function frame(overrides: Partial<InputFrame> = {}): InputFrame {
 }
 
 describe('输入帧编解码', () => {
-  it('帧长固定 12 字节', () => {
-    expect(INPUT_FRAME_BYTES).toBe(12);
-    expect(encodeInputFrame(frame()).byteLength).toBe(12);
+  it('帧长固定 16 字节', () => {
+    expect(INPUT_FRAME_BYTES).toBe(16);
+    expect(encodeInputFrame(frame()).byteLength).toBe(16);
   });
 
   /**
@@ -71,10 +71,21 @@ describe('输入帧编解码', () => {
 
   it('越界坐标被夹住，不会回绕成负数', () => {
     const back = decodeInputFrame(new Uint8Array(
-      encodeInputFrame(frame({ mouse: { x: 1e9, y: -1e9 } })).buffer,
+      encodeInputFrame(frame({ mouse: { x: 1e12, y: -1e12 } })).buffer,
     ));
-    expect(back.mouse!.x).toBeCloseTo(32767 / 4, 5);
-    expect(back.mouse!.y).toBeCloseTo(-32768 / 4, 5);
+    expect(back.mouse!.x).toBeCloseTo(2147483647 / 4, 0);
+    expect(back.mouse!.y).toBeCloseTo(-2147483648 / 4, 0);
+  });
+
+  /**
+   * 2026-11-24：i16 在 ×4 精度下只能到 ±8191.75 px，而 worldmap 大地图的路点
+   * 就会到 8192 —— 联机跑大地图时本机帧被截断、远端帧没被截断，必然分叉。
+   * 这条用例把「大地图坐标能原样往返」钉死。
+   */
+  it('大地图坐标（8192 以上）也能原样往返', () => {
+    const far = frame({ mouse: { x: 8192.25, y: -8192.5 } });
+    const back = decodeInputFrame(new Uint8Array(encodeInputFrame(far).buffer));
+    expect(back.mouse).toEqual({ x: 8192.25, y: -8192.5 });
   });
 
   it('R 重开 / M 大地图不是帧字段：局外动作与纯本地视图都不进帧', () => {

@@ -58,8 +58,12 @@ export function sightPolygon(
   const out = new Float64Array(rays * 2);
   for (let i = 0; i < rays; i += 1) {
     const a = (i / rays) * Math.PI * 2;
-    out[i * 2] = x + Math.cos(a) * len[i]!;
-    out[i * 2 + 1] = y + Math.sin(a) * len[i]!;
+    // 视野多边形是 V 层：命中判定与 AI 都不读它，且每帧 360 条射线，
+    // 保留原生实现比查表快；两端不要求逐位一致。
+    const ca = Math.cos(a); // determinism-ok: V 层视野，见上
+    const sa = Math.sin(a); // determinism-ok: V 层视野，见上
+    out[i * 2] = x + ca * len[i]!;
+    out[i * 2 + 1] = y + sa * len[i]!;
   }
   return out;
 }
@@ -72,8 +76,8 @@ function rayLengths(w: World, x: number, y: number, radius: number, rays: number
   const reach = Math.max(step, radius);
   for (let i = 0; i < rays; i += 1) {
     const a = (i / rays) * Math.PI * 2;
-    const dx = Math.cos(a);
-    const dy = Math.sin(a);
+    const dx = Math.cos(a); // determinism-ok: V 层视野，见 sightPolygon
+    const dy = Math.sin(a); // determinism-ok: V 层视野，见 sightPolygon
     let hit = reach;
     for (let d = step; d < reach; d += step) {
       if (blocks(w, x + dx * d, y + dy * d)) {
