@@ -602,10 +602,19 @@
 
     var players = Array.isArray(state.players) ? state.players : [];
     var peers = [];
+    var selfSnapshot = null;
     var i;
     for (i = 0; i < players.length; i += 1) {
       var entry = players[i];
-      if (!entry || !entry.id || entry.id === S.playerId) continue;
+      if (!entry || !entry.id) continue;
+      if (entry.id === S.playerId) {
+        // **本机自己那份快照**：PVP 铁律是「本机不能用自己的东西影响世界」，
+        // 所以本机的 runInventory / 星图也必须来自 relay 下发的这一份
+        // （CVM 权威），而不是本地 deployment。Worker 靠它建自己。
+        selfSnapshot = entry.snapshot || null;
+        if (selfSnapshot) S.seenSnapshots[entry.id] = true;
+        continue;
+      }
       if (entry.snapshot) S.seenSnapshots[entry.id] = true;
       peers.push({ id: entry.id, name: entry.name || '', snapshot: entry.snapshot || null });
     }
@@ -616,10 +625,11 @@
     /*
      * 兜底：名单里有人在**开局窗口关掉之后**才被我看到，我从没拿到过它的快照。
      * 不补的话远端影子会按默认属性建出来（hpMax / 星图不对）⇒ 从第一帧起分叉。
+     * **自己那份也算在内**：本机没快照就建不了世界。
      * 只在「从未见过」时请求，拿到即停；500 ms 节流，最多让服务器重开 5 秒窗口。
      */
     if (S.session) {
-      var unseen = 0;
+      var unseen = selfSnapshot === null && !S.seenSnapshots[S.playerId] ? 1 : 0;
       for (i = 0; i < peers.length; i += 1) {
         if (peers[i].snapshot === null && !S.seenSnapshots[peers[i].id]) unseen += 1;
       }
@@ -630,12 +640,16 @@
       }
     }
 
-    var seatSig = JSON.stringify(peers);
+    // 自己的快照只按「有没有」进签名：一局一份，内容不会变，没必要每帧
+    // stringify 那 5–6KB。
+    var seatSig = JSON.stringify(peers) + '|self:' + (selfSnapshot ? 1 : 0);
     if (seatSig !== S.seatSig) {
       S.seatSig = seatSig;
       S.peers = peers;
       S.stats.seats += 1;
-      post({ type: 'netSeat', active: true, playerId: S.playerId, peers: peers });
+      post({
+        type: 'netSeat', active: true, playerId: S.playerId, peers: peers, self: selfSnapshot,
+      });
     }
 
     /*

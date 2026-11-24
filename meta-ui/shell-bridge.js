@@ -326,8 +326,12 @@
     // cells. The stash stays in the lobby and never crosses the heap boundary.
     //
     // 联机（pvpve）：装备在**点匹配那一刻**就已经取走了（`host.lockDeployment`），
-    // 这里必须复用那一份 —— 上传到 CVM 的就是它，换一份就等于「别人眼里的我」
-    // 和「真实的我」不是一个东西。
+    // 这里必须复用那一份 —— 上传到 CVM 的就是它，换一份就意味着「别人眼里的我」
+    // 不是「真实的我」。
+    //
+    // ⚠️ 但联机时 Worker **不会用这份 loadout 建世界**：装备是帧同步数据
+    // （`runInventory` 进 hash），本机必须由 relay 下发的自己那份快照构造。
+    // 这份只用于①单机、②局外界面显示。见 `game.pack.ts::tryDeployFromSeat`。
     var locked = currentKind === 'pvpve' && host.lockedDeployment ? host.lockedDeployment : null;
     var loadout = locked ? locked.loadout : M.takeIntoRun(lobby);
     host.setState(lobby);

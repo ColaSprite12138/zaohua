@@ -509,6 +509,24 @@ export const game: Plugin = {
     let netSeatSettled = false;
     /** 对端上报的开局装备快照（id -> 快照）。收齐之前不许开时间轴。 */
     const netPeerSnapshots = new Map<string, PeerSnapshot>();
+    /**
+     * **本机自己那份**开局快照（relay 下发，来源是 CVM）。
+     *
+     * PVP 铁律：本机不能拿「自己的东西」影响世界。`runInventory` / `starSkills`
+     * / `maxHp` 全在 `state-hash.ts::PLAYER_KEYS` 里，本机若用本地 deployment 建，
+     * 就等于两端各有一个「我」—— 第一帧 hash 就在 `players` 分项上分叉。
+     * 所以本机也由这一份构造，本地 deployment 只贡献 seed / 关卡类型 / 遗物。
+     */
+    let netSelfSnapshot: PeerSnapshot | null = null;
+    /** 联机局待部署的配置（seed / kind / deathDrop），等自己的快照到了才 deployRun。 */
+    let pendingDeployment: {
+      seed?: Deployment['seed'];
+      kind?: Deployment['kind'];
+      deathDrop?: Deployment['deathDrop'];
+      stars?: Deployment['stars'];
+    } | null = null;
+    /** 本局是否已经 `deployRun()`（世界建好）。没有它就不重建远端、不放行门禁。 */
+    let netDeployed = false;
     /** deploy 已执行、正在等全员快照；这段时间冻结推进。 */
     let awaitingLoadouts = false;
     let loadoutWaitFrames = 0;
@@ -653,6 +671,8 @@ export const game: Plugin = {
     function applySeat(msg: {
       active?: boolean; playerId?: string;
       peers?: ({ id: string; name?: string; snapshot?: PeerSnapshot } | string)[];
+      /** 本机自己那份快照（relay 下发，来源 CVM）。 */
+      self?: PeerSnapshot | null;
     }): void {
       if (msg.active !== true) {
         netActive = false;
@@ -665,6 +685,10 @@ export const game: Plugin = {
         netPeers.clear();
         netPeerNames.clear();
         netPeerSnapshots.clear();
+        // 本机那份快照、待部署配置、部署标志都是**这一局**的，一并清掉。
+        netSelfSnapshot = null;
+        pendingDeployment = null;
+        netDeployed = false;
         awaitingLoadouts = false;
         netOutbox = [];
         intentAcc = 0;
@@ -677,6 +701,12 @@ export const game: Plugin = {
       }
       const starting = !netActive;
       netActive = true;
+      if (starting) {
+        // 新一局：上一局的自快照 / 待部署配置绝不能带过来，否则会拿旧装备建世界。
+        netSelfSnapshot = null;
+        pendingDeployment = null;
+        netDeployed = false;
+      }
       state.online = true;
       netPlayerId = msg.playerId || netPlayerId;
       // **本机玩家也必须用座位 id**。以前本机恒为 'p0'、远端用真实座位 id，
@@ -687,6 +717,10 @@ export const game: Plugin = {
         state.me = netPlayerId;
       }
       const list = Array.isArray(msg.peers) ? msg.peers : [];
+      // **自己那份快照**（relay 下发，来源 CVM）：本机的装备/星图只能来自它。
+      if (msg.self && typeof msg.self === 'object') {
+        netSelfSnapshot = msg.self as PeerSnapshot;
+      }
       netPeers = new Set<string>();
       netPeerNames.clear();
       for (const entry of list) {
@@ -699,12 +733,18 @@ export const game: Plugin = {
         }
       }
       if (list.length > 0) netSeatSettled = true;
-      if (starting) armTimeline();
-      rebuildPeers();
-      // 有意不发任何「预热帧」：v2 里本机输入要等服务器贴帧再广播回来，本地
-      // 没有需要预热的东西。硬发只会往服务器队列里灌几条开局空意图。
-      // 名单没变、但这一轮带回了装备快照，也要试着放行门禁。
-      tryArmAfterLoadouts();
+      // 联机局：自己的快照到了才建世界（`deploy` 只是把 seed/kind 挂起）。
+      tryDeployFromSeat();
+      // 世界还没建时不重建远端、不 arm 时间轴 —— 那时候 `spawnPointFor` 用的
+      // 还是夹具地图，建出来的影子会在错误的位置上。
+      if (!netActive || netDeployed) {
+        if (starting) armTimeline();
+        rebuildPeers();
+        // 有意不发任何「预热帧」：v2 里本机输入要等服务器贴帧再广播回来，本地
+        // 没有需要预热的东西。硬发只会往服务器队列里灌几条开局空意图。
+        // 名单没变、但这一轮带回了装备快照，也要试着放行门禁。
+        tryArmAfterLoadouts();
+      }
     }
 
     /**
@@ -734,6 +774,49 @@ export const game: Plugin = {
         if (!netPeerSnapshots.has(id)) return false;
       }
       return true;
+    }
+
+    /**
+     * 联机局：用**自己的那份快照**建世界（relay 下发，来源是 CVM）。
+     *
+     * 为什么不能用本地 deployment 的装备：`runInventory` / `weaponSlots` /
+     * `starSkills` / `maxHp` 全在 `state-hash.ts::PLAYER_KEYS` 里。本机要是用
+     * 本地副本建自己，就等于「我这端有个我、你那端有个我」—— 第一帧 hash 就在
+     * `players` 分项上对不上。PVP 铁律：本机不许有自己的东西影响世界。
+     *
+     * 本地 deployment 只贡献 seed / 关卡类型 / 遗物（它们不是「我的装备」，
+     * 而是这一局的参数）。
+     */
+    function tryDeployFromSeat(): void {
+      if (!netActive || netDeployed || !pendingDeployment || !netSelfSnapshot) return;
+      const pending = pendingDeployment;
+      const self = netSelfSnapshot;
+      const stars = {
+        nodes: self.stars?.nodes ?? pending.stars?.nodes ?? [],
+        skills: self.stars?.skills ?? pending.stars?.skills ?? [],
+      };
+      const config: Deployment = {
+        seed: pending.seed,
+        kind: pending.kind,
+        deathDrop: pending.deathDrop,
+        loadout: self.loadout ?? undefined,
+        stars,
+      };
+      modifiers = createModifiers(stars.nodes);
+      deployRun(state, config);
+      pendingDeployment = null;
+      netDeployed = true;
+      // 出生点偏移必须对**所有玩家**用同一套规则，坐标进 hash。
+      if (netPlayerId) {
+        const at = spawnPointFor(state.world, netPlayerId);
+        state.player.x = at.x;
+        state.player.y = at.y;
+        state.player.intent.target = { x: at.x, y: at.y };
+      }
+      lastResult = null;
+      resultSent = false;
+      publishRunState(true);
+      channel?.postMessage({ type: 'deployed', loadout: snapshotRun(state.runInventory) });
     }
 
     function tryArmAfterLoadouts(): void {
@@ -1113,6 +1196,8 @@ export const game: Plugin = {
           active?: boolean;
           playerId?: string;
           peers?: ({ id: string; name?: string } | string)[];
+          /** netSeat：**本机自己那份**开局快照（relay 下发，来源 CVM）。 */
+          self?: unknown;
           /** netIn：服务器广播的帧批次（一个 tick 一个包，含每个玩家的意图）。 */
           batches?: { tick: number; frames: { from: string; b: string }[] }[];
           /**
@@ -1132,42 +1217,46 @@ export const game: Plugin = {
           // this is the single switch from the acceptance fixture to arena.ldtk.
           // The shell has ALREADY emptied its own bag + equipment; `loadout`
           // is the structured-cloned copy this Worker now owns exclusively.
+          // （联机时这份 loadout 被忽略：装备必须来自 relay 下发的自己那份快照。）
           setArena(state, arena);
           clearPrevPositions();
-          modifiers = createModifiers(msg.deployment?.stars?.nodes ?? []);
-          deployRun(state, msg.deployment ?? {});
-          // 出生点偏移必须**对所有玩家**用同一套规则：`createRemotePlayer` 按 id
-          // 给远端算了，本机如果还杵在裸 spawn 上，两端对同一个人的坐标认知就
-          // 不同（A 看 A 在中心、B 看 A 在旁边），而坐标进 hash。
-          if (netActive && netPlayerId) {
-            // 和远端走**同一个** `spawnPointFor`：它会在四个候选方向里挑第一个
-            // 站得下的。早先这里直接用 `spawnOffset` 的位移，而 arena 出生点左边
-            // 两格是墙 —— 抽到 -x 的玩家一出生就卡在墙里（2026-11-22 实测）。
-            const at = spawnPointFor(state.world, netPlayerId);
-            state.player.x = at.x;
-            state.player.y = at.y;
-            state.player.intent.target = { x: at.x, y: at.y };
+          const incoming = msg.deployment ?? {};
+          if (netActive) {
+            /*
+             * **联机：不在这里 deployRun。**
+             *
+             * 装备与星图必须来自 relay 下发的「自己那份」快照（来源是 CVM）：
+             * `runInventory / weaponSlots / starSkills / maxHp` 全在
+             * `state-hash.ts::PLAYER_KEYS` 里，本机若用本地副本建自己，
+             * 就等于两端各有一个「我」，第一帧 hash 就在 `players` 上分叉。
+             *
+             * 本地 deployment 只留 seed / 关卡类型 / 遗物 —— 它们是「这一局的参数」，
+             * 不是「我的装备」。快照没到就挂起，到了由 `applySeat` 调
+             * `tryDeployFromSeat()` 建世界。
+             */
+            pendingDeployment = {
+              seed: incoming.seed,
+              kind: incoming.kind,
+              deathDrop: incoming.deathDrop,
+              stars: incoming.stars,
+            };
+            netDeployed = false;
+            awaitingLoadouts = true;
+            loadoutWaitFrames = 0;
+            tryDeployFromSeat();
+            if (!netDeployed) return;
+            tryArmAfterLoadouts();
+            return;
           }
+          // 单机（PVE 副本 / 主线）：本地 deployment 就是唯一来源。
+          modifiers = createModifiers(incoming.stars?.nodes ?? []);
+          deployRun(state, incoming);
           lastResult = null;
           resultSent = false;
           publishRunState(true);
           channel?.postMessage({ type: 'deployed', loadout: snapshotRun(state.runInventory) });
-
-          if (netActive) {
-            /*
-             * 开局门禁：等**所有人**的开局快照到齐。
-             *
-             * 单一数据源（用户 2026-11-24 拍板）：快照只来自 CVM，由 relay 在
-             * 进局时按 matchId 拉取后随名单下发。所以这里**不需要上报自己的**
-             * ——以前那句 `netLoadout` 就是为了补「服务器不知道别人带了什么」，
-             * 现在服务器从 CVM 拿，客户端再报一份只会制造第二个来源。
-             */
-            awaitingLoadouts = true;
-            loadoutWaitFrames = 0;
-            // 收齐之后由 applySeat 触发 tryArmAfterLoadouts() → armTimeline()。
-            tryArmAfterLoadouts();
-          } else {
-            // 单机（PVE 副本 / 主线）：纯本地逻辑，锁 60 Hz。
+          {
+            // 单机逻辑，锁 60 Hz。
             setRate(stepClock, SOLO_HZ);
             seekClock(stepClock, 0);
           }

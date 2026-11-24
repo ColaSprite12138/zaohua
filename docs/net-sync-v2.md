@@ -261,22 +261,30 @@ detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到�
 | 进局 | 任一活着的客户端 | `sendAction({matchId})`（只需局号，不需要"他"还在） |
 | 拉取 | relay | `GET /api/v1/match/:id/loadouts` → `players[].snapshot` |
 | 属性 | **每个客户端各自** | `vitalsFrom(loadout, createModifiers(stars.nodes))` |
-| 本机装备 | 客户端 | 点匹配时 `lockDeployment()` **真正取走**，deploy 用同一份 |
+| **本机世界** | **relay 下发的「自己那份」快照** | `tryDeployFromSeat()`：本机也由 CVM 数据构造 |
+| 本机 lobby | 客户端 | 点匹配时 `lockDeployment()` **真正取走**，deploy 只用来清空 |
 
 三条必须同时成立的约束：
 
 1. **不能有第二个来源**。以前客户端 deploy 后也上报一份，于是"谁先到用谁"——
    覆盖顺序只要和别的端不一致，同一局里两个人对同一玩家的装备认知就不同 ⇒ 分叉。
    现在那条上行仍然被接收，但**只计数不采用**（`stats.clientSnapshots`，排障用）。
-2. **属性必须现算，不能传**。CVM 那份只有 `loadout + stars`（点匹配时还没有 hpMax）。
+2. **本机也不能用本地数据**（PVP 铁律，2026-11-24 用户纠了两次）。
+   `runInventory / weaponSlots / starSkills / maxHp` 全在 `state-hash.ts::PLAYER_KEYS` 里，
+   本机若用本地 deployment 建自己，就等于两端各有一个「我」，第一帧 hash 就在
+   `players` 分项上分叉。所以联机 `deploy` **只挂起** seed / 关卡类型 / 遗物，
+   等 relay 把自己那份快照送回来再 `deployRun`（`tryDeployFromSeat`）。
+3. **属性必须现算，不能传**。CVM 那份只有 `loadout + stars`（点匹配时还没有 hpMax）。
    各端用 `assets/combat/vitals.ts::vitalsFrom` 现算，它和 `applyStarMods` 是**同一份
    代码**（`vitals.test.ts` 守着），所以"本机算的"与"远端算的"逐位相同。
-3. **锁定必须是真取走**。`lockDeployment()` 调 `takeIntoRun`（清空 lobby），
-   deploy 复用那一份。只预览不取走的话，玩家排队期间改一件装备，本机实际带的
-   就和上传给 CVM 的不是一个东西了。代价是排队期间背包不在界面上 ——
-   所以任何"没进局就退出"的路径都要调 `releaseLockedDeployment()` 还回去。
 
-**失败即拒绝开局**：CVM 拉不到 / 某人没有快照 ⇒ 门禁等 300 帧 ⇒
+**锁定为什么仍是「真取走」**：`lockDeployment()` 调 `takeIntoRun`（清空 lobby），
+deploy 复用那一份。只预览不取走的话，玩家排队期间改一件装备，CVM 里那份和
+本机实际带的就是两个东西 —— 而 CVM 是权威，本机没资格改它。
+代价是排队期间背包不在界面上，所以"没进局就退出"的路径都要
+`releaseLockedDeployment()` 还回去。
+
+**失败即拒绝开局**：CVM 拉不到 / 某人没有快照 / 自己那份没到 ⇒ 门禁等 300 帧 ⇒
 `abortForMissingLoadouts` 把本局作废回大厅。这是单数据源的必然代价 ——
 宁可不打，也不要一个从 tick 0 就分叉的世界。
 
