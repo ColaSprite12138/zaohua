@@ -181,6 +181,20 @@ type RelayState = {
     skipped: number
     /** 客户端请求补发开局快照的次数（正常应为 0）。 */
     snapshotResends: number
+    /**
+     * CVM（我们自己后端）出网探测结果（2026-11-24）。
+     *
+     * 房间进程跑在造化云端，**它的日志我们看不到** —— 所以把答案写进 stats，
+     * 随每轮广播带回客户端角标。取值：
+     *   `pending`        还在探测
+     *   `ok:200:1234ms`  通了
+     *   `bad:503`        通了但响应异常
+     *   `fail:TimeoutError` / `fail:TypeError`  没通（DNS / 出网被拦 / 证书）
+     *   `no-fetch`       这个 Node 没有 global fetch（太老）
+     *
+     * 它是「loadout 由 CVM 下发给 relay」这条路的前置条件：不 ok 就不能走。
+     */
+    cvmProbe: string
   }
 }
 
@@ -199,6 +213,7 @@ function emptyState(players: RelayPlayer[]): RelayState {
       packets: 0, intents: 0, badPackets: 0, hashReports: 0,
       mismatches: 0, retired: 0, replays: 0, catchup: 0, skipped: 0,
       snapshotResends: 0,
+      cvmProbe: 'skipped',
     },
   }
 }
@@ -358,6 +373,62 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
     pruneWindow(state)
   }
 
+  /* --------------------------- CVM 出网探测 --------------------------- */
+
+  /** 我们自己的后端。只探这一个，够回答「relay 这个 Node 进程能不能出网」。 */
+  const CVM_HEALTH_URL = 'https://api.colasprite.net/api/v1/health'
+  /** 探测超时。DNS + TLS 冷启动本机实测 1.0 s，给 5 s 余量。 */
+  const CVM_PROBE_TIMEOUT_MS = 5000
+
+  /**
+   * 探一次 CVM 可达性，结果写进 `state.stats.cvmProbe`，随每轮广播带回客户端。
+   *
+   * 为什么必须把答案带回客户端：relay 跑在造化云端的房间进程里，**它的 stdout
+   * 我们看不到**，只有 `state` 这条通道是我们能读的。
+   *
+   * 为什么不用 `AbortSignal.timeout`：平台 Node 版本未知（`fetch` 本身要 18+）。
+   * 用 `AbortController` + `setTimeout` 更兼容，而且**无论 fetch 是否真被中断**，
+   * 定时器都会把状态从 `pending` 挪走 —— 不能让它永远挂在「探测中」。
+   *
+   * fire-and-forget：不阻塞开局，失败也不影响出帧。
+   */
+  function probeCvm(): void {
+    const fetchFn = (globalThis as unknown as { fetch?: typeof fetch }).fetch
+    if (typeof fetchFn !== 'function') {
+      state.stats.cvmProbe = 'no-fetch'
+      return
+    }
+    state.stats.cvmProbe = 'pending'
+    const started = Date.now()
+    let settled = false
+    const controller = typeof AbortController === 'function' ? new AbortController() : null
+    const finish = (value: string): void => {
+      if (settled) return
+      settled = true
+      state.stats.cvmProbe = value
+      clearTimeout(timer)
+    }
+    const timer = setTimeout(() => {
+      try { controller?.abort() } catch { /* 忽略 */ }
+      finish('fail:timeout')
+    }, CVM_PROBE_TIMEOUT_MS)
+    // 别让它把进程钉住（只有 5 秒，但 Node 会因为有活定时器而延迟退出）。
+    ;(timer as unknown as { unref?: () => void }).unref?.()
+    fetchFn(CVM_HEALTH_URL, controller ? { signal: controller.signal } : undefined)
+      .then(async (res) => {
+        if (!res.ok) { finish(`bad:${res.status}`); return }
+        // 读完 body 才算真的通了：有些代理先给响应头、body 才挂住。
+        await res.text()
+        finish(`ok:${res.status}:${Date.now() - started}ms`)
+      })
+      .catch((err: unknown) => {
+        const name = err && typeof err === 'object' && 'name' in err
+          ? String((err as { name?: unknown }).name)
+          : 'error'
+        finish(`fail:${name}`)
+      })
+  }
+
   /**
    * 每次都给一份**新对象**。返回同一个可变 `state` 引用时，runtime 若按
    * 引用/序列化结果判断「这轮有没有变化」，会永远认为没变、一次都不广播
@@ -411,6 +482,8 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
   return {
     start() {
       match?.reportLoading?.()
+      // 开局时探一次自己的后端能不能出网。结果随 stats 广播，客户端角标可读。
+      probeCvm()
       // 帧钟：**独立**于宿主 42 ms 的 tick()。半周期轮询 + 累加补偿比
       // setInterval(16.67) 稳（后者在 Node 上会慢慢漂到 17~18 ms）。
       const period = FRAME_MS

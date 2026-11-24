@@ -62,6 +62,14 @@
     replaySeq: -1,
     /** 服务端观测到的分叉 tick（只提示一次）。 */
     divergedTick: -1,
+    /**
+     * relay 的 CVM 出网探测结果（`ok:200:1234ms` / `fail:timeout` / …）。
+     *
+     * relay 跑在云端，它的日志我们看不到 —— 这个值是唯一能证明「房间里那个
+     * Node 进程能不能访问我们自己后端」的证据，所以要从 `state.stats` 带出来
+     * 并在角标上露一眼。
+     */
+    cvmProbe: '',
     /** Worker 每秒推一次的诊断（执行帧号 / 领先多少 / 补了几次）。 */
     lastStat: null,
     /** 兜底轮询的上一次 state 签名（不变就跳过）。 */
@@ -369,10 +377,16 @@
     // 开局门禁超时（被迫用空快照）：这局两端属性可能不同，hash 一定分叉。
     // 它不该静默 —— 否则下次看到 mismatches 又要从头猜。
     var voided = stat.loadoutVoided ? '⚠ 空快照开局 ' + stat.loadoutVoided + '  ' : '';
+    // relay → CVM 的出网探测：通了只给一个对钩，没通把原因摊开。
+    // 这是「房间里的 Node 进程到底能不能访问我们后端」的唯一可见证据。
+    var cvm = S.cvmProbe
+      ? (S.cvmProbe.indexOf('ok:') === 0 ? 'cvm✓  ' : '⚠ cvm ' + S.cvmProbe + '  ')
+      : '';
     // 实时带宽：↑ 上行 ↓ 下行。口径见 `traffic` 的注释 —— 下行只算新帧，
     // 所以开局窗口关掉的那一刻会看到它从几百 KB/s 掉到十几 KB/s。
     tickTraffic(now);
     el.textContent = voided
+      + cvm
       + (silent ? '⚠ 静默 ' + diagLast.silentTicks + 's  ' : '')
       + '↑' + bpsText(traffic.upBps) + ' ↓' + bpsText(traffic.downBps)
       + '  tick ' + stat.tick
@@ -522,6 +536,11 @@
       && !raw.inputs && !Array.isArray(raw.players);
     if (wrapped) state = raw.state;
     S.stats.updates += 1;
+    // relay 的 CVM 出网探测结果。它是「loadout 由 CVM 下发」这条路的前置条件，
+    // 而 relay 的日志在云端看不到 —— 只有这个字段能把它带回我们眼前。
+    if (state.stats && typeof state.stats.cvmProbe === 'string') {
+      S.cvmProbe = state.stats.cvmProbe;
+    }
 
     /*
      * **同一帧只处理一次。**
@@ -1070,6 +1089,11 @@
       updates: S.stats.updates,
       seats: S.stats.seats,
       divergedTick: S.divergedTick,
+      /**
+       * relay 的 CVM 出网探测结果（`ok:200:1234ms` / `fail:timeout` / `no-fetch`）。
+       * 空字符串 = 还没收到任何一帧。
+       */
+      cvmProbe: S.cvmProbe,
       /** 第一次分叉时两端的分项 hash（怪 / 掉落 / 玩家 / 破坏物）。 */
       divergedParts: S.divergedParts || null,
       engine: S.lastStat,
