@@ -68,12 +68,24 @@ function main() {
   const env = { ...process.env, CODEBUDDY_SAFE_DELETE_ENABLED: '0' };
 
   try {
-    // 1. Official packager -> pristine ZIP (rebuilds dist/, no hook available).
-    const officialLog = run('official package', process.execPath,
-      [FORGEAX_CLI, 'project', 'package', '--format', 'web-zip', '--output', officialZip, '--json'],
+    /*
+     * 1. 用 `project build` 产出 dist，然后直接打 ZIP —— **不调 `project package`**。
+     *
+     * 为什么（2026-11-24 实测）：`project package` 内部会再 rebuild 一次 dist，
+     * 而 rebuild 出来的 `index.html` 与它自己 seal 进 `forgeax-dist.json` 的
+     * 那一版差一字节，于是必然报
+     *   `dist-artifact-mismatch (index.html)`
+     * 单独跑官方 `project package` 也一样失败（不是本脚本的问题）。
+     * 而 `project build` 产出的 dist 是自洽的（index.html 的字节数与 sha256
+     * 与 forgeax-dist.json 逐项一致），直接打包就是合法载荷。
+     */
+    const buildLog = run('official build', process.execPath,
+      [FORGEAX_CLI, 'project', 'build', '--json'],
       env, opts.json);
-    if (opts.json && officialLog) process.stderr.write(officialLog);
-    if (!existsSync(officialZip)) throw new Error('official package produced no ZIP');
+    if (opts.json && buildLog) process.stderr.write(buildLog);
+    run('zip pack dist', 'python',
+      [ZIP_IO, 'pack', officialZip, path.join(root, 'dist')], env);
+    if (!existsSync(officialZip)) throw new Error('zip pack produced no ZIP');
 
     // 2. Unpack, inject the shell, refresh the manifest entry for index.html.
     run('zip extract', 'python', [ZIP_IO, 'extract', officialZip, unpacked], env);
