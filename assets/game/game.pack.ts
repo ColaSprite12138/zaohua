@@ -518,15 +518,27 @@ export const game: Plugin = {
      * 所以本机也由这一份构造，本地 deployment 只贡献 seed / 关卡类型 / 遗物。
      */
     let netSelfSnapshot: PeerSnapshot | null = null;
-    /** 联机局待部署的配置（seed / kind / deathDrop），等自己的快照到了才 deployRun。 */
+    /**
+     * 联机局待部署的配置，等自己的快照 + 服务端种子到了才 deployRun。
+     *
+     * **只留「不属于世界参数」的东西**：seed / kind 由 relay 下发（见 `netSeed`
+     * / `netKind`），装备与星图在快照里。`deathDrop` 是副本遗物，PVP 不传
+     * （`shell-bridge` 只在 dungeon 才带，否则把自己掉的遗物摆进地图会让两端
+     * 世界不同）。
+     */
     let pendingDeployment: {
-      seed?: Deployment['seed'];
-      kind?: Deployment['kind'];
       deathDrop?: Deployment['deathDrop'];
       stars?: Deployment['stars'];
     } | null = null;
     /** 本局是否已经 `deployRun()`（世界建好）。没有它就不重建远端、不放行门禁。 */
     let netDeployed = false;
+    /**
+     * 全局种子 / 关卡类型：**服务端下发**（relay 从 CVM 的 `matches.seed` / `mode`
+     * 取的）。两者都在 `state-hash.ts::SHARED_KEYS` 里 —— 客户端自己带一份
+     * deployment 就等于每台机器算自己的世界。`null` = 还没到，不许开局。
+     */
+    let netSeed: number | null = null;
+    let netKind: string | null = null;
     /** deploy 已执行、正在等全员快照；这段时间冻结推进。 */
     let awaitingLoadouts = false;
     let loadoutWaitFrames = 0;
@@ -673,6 +685,10 @@ export const game: Plugin = {
       peers?: ({ id: string; name?: string; snapshot?: PeerSnapshot } | string)[];
       /** 本机自己那份快照（relay 下发，来源 CVM）。 */
       self?: PeerSnapshot | null;
+      /** 全局种子（服务端权威）。 */
+      seed?: number | null;
+      /** 关卡类型（服务端权威，由匹配模式推导）。 */
+      kind?: string | null;
     }): void {
       if (msg.active !== true) {
         netActive = false;
@@ -689,6 +705,8 @@ export const game: Plugin = {
         netSelfSnapshot = null;
         pendingDeployment = null;
         netDeployed = false;
+        netSeed = null;
+        netKind = null;
         awaitingLoadouts = false;
         netOutbox = [];
         intentAcc = 0;
@@ -706,6 +724,8 @@ export const game: Plugin = {
         netSelfSnapshot = null;
         pendingDeployment = null;
         netDeployed = false;
+        netSeed = null;
+        netKind = null;
       }
       state.online = true;
       netPlayerId = msg.playerId || netPlayerId;
@@ -721,6 +741,9 @@ export const game: Plugin = {
       if (msg.self && typeof msg.self === 'object') {
         netSelfSnapshot = msg.self as PeerSnapshot;
       }
+      // 世界参数同理：种子与关卡类型只能听服务端的。
+      if (typeof msg.seed === 'number' && Number.isFinite(msg.seed)) netSeed = msg.seed;
+      if (typeof msg.kind === 'string' && msg.kind) netKind = msg.kind;
       netPeers = new Set<string>();
       netPeerNames.clear();
       for (const entry of list) {
@@ -789,6 +812,9 @@ export const game: Plugin = {
      */
     function tryDeployFromSeat(): void {
       if (!netActive || netDeployed || !pendingDeployment || !netSelfSnapshot) return;
+      // 世界参数没到就不部署：宁可等（门禁超时会把本局作废），也不能用本地
+      // seed / kind 先把世界建出来 —— `runSeed` / `runKind` 都进 hash。
+      if (netSeed === null || netKind === null) return;
       const pending = pendingDeployment;
       const self = netSelfSnapshot;
       const stars = {
@@ -796,8 +822,9 @@ export const game: Plugin = {
         skills: self.stars?.skills ?? pending.stars?.skills ?? [],
       };
       const config: Deployment = {
-        seed: pending.seed,
-        kind: pending.kind,
+        seed: netSeed,
+        kind: netKind as Deployment['kind'],
+        // 遗物是「上一局掉在副本里的东西」，只对自己有意义，且不进 hash 的共享区。
         deathDrop: pending.deathDrop,
         loadout: self.loadout ?? undefined,
         stars,
@@ -820,7 +847,9 @@ export const game: Plugin = {
     }
 
     function tryArmAfterLoadouts(): void {
-      if (!netActive || !awaitingLoadouts || !loadoutsReady()) return;
+      // `netDeployed` 也是必要条件：世界还没建（自己那份快照 / 服务端种子没到）
+      // 就 arm 时间轴，等于在夹具地图上开跑，`runSeed` / `runKind` 还都是本地值。
+      if (!netActive || !awaitingLoadouts || !netDeployed || !loadoutsReady()) return;
       awaitingLoadouts = false;
       // armTimeline 末尾 rebuildPeers() → syncRemotes()，那时快照已齐，
       // 远端玩家会带着**真实装备**被创建（而不是空背包占位）。
@@ -1235,8 +1264,6 @@ export const game: Plugin = {
              * `tryDeployFromSeat()` 建世界。
              */
             pendingDeployment = {
-              seed: incoming.seed,
-              kind: incoming.kind,
               deathDrop: incoming.deathDrop,
               stars: incoming.stars,
             };

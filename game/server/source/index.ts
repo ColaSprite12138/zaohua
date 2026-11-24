@@ -149,6 +149,16 @@ type RelayPlayer = {
 
 type RelayState = {
   readonly ruleset: string
+  /**
+   * 本局的全局种子与关卡类型，**从 CVM 拉来之后由 relay 广播**。
+   *
+   * 为什么不能让客户端通过 deployment 带：`runSeed` / `runKind` 都在
+   * `state-hash.ts::SHARED_KEYS` 里。种子不同 ⇒ 掉落序列与刷怪全不同；
+   * kind 不同 ⇒ 结束条件不同。两者都是「世界参数」，只能有服务端一个来源。
+   * `null` = 还没拉到，客户端不许开局（门禁会等）。
+   */
+  seed: number | null
+  kind: string | null
   players: RelayPlayer[]
   /** 广播窗口：tick -> playerId -> 单帧包。只保留最近 RECENT_FRAMES 帧。 */
   inputs: Record<string, Record<string, InputPacket>>
@@ -215,6 +225,9 @@ type RelayState = {
 function emptyState(players: RelayPlayer[]): RelayState {
   return {
     ruleset: RULESET,
+    /** 还没从 CVM 拉到就是 null；客户端据此继续等（不许用本地 seed 开局）。 */
+    seed: null,
+    kind: null,
     players: players.map((player) => ({ id: player.id, name: player.name })),
     inputs: {},
     hashes: {},
@@ -516,9 +529,14 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
    * 那个人会走「客户端上报」或门禁兜底。
    */
   function applyCvmLoadouts(data: unknown): string {
-    const list = data && typeof data === 'object' && Array.isArray((data as { members?: unknown }).members)
-      ? (data as { members: unknown[] }).members
-      : []
+    const payload = (data ?? {}) as { seed?: unknown; mode?: unknown; members?: unknown }
+    /*
+     * 世界参数只认这里：种子与关卡类型都进 hash（`SHARED_KEYS`），
+     * 客户端通过 deployment 带一份就等于"每台机器自己算自己的世界"。
+     */
+    if (Number.isFinite(payload.seed)) state.seed = Number(payload.seed)
+    state.kind = payload.mode === 'extract' ? 'pvpve' : null
+    const list = Array.isArray(payload.members) ? payload.members : []
     const byId = new Map<string, string>()
     const byName = new Map<string, string>()
     for (const raw of list) {
@@ -558,6 +576,12 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
      */
     return {
       ruleset: state.ruleset,
+      /**
+       * 全局种子与关卡类型由 relay 下发（来源：CVM 的 `matches.seed` / `mode`）。
+       * 客户端**不许**用本地 deployment 里的 seed —— `runSeed` 进 hash。
+       */
+      seed: state.seed,
+      kind: state.kind,
       /*
        * `players[]` 必须**显式**逐字段列出，不能 `{ ...player }`：
        * `snapshotUntil` 是服务器的内部调度字段，spread 会把它一起广播出去。

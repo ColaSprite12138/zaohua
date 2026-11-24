@@ -378,6 +378,10 @@ console.log('\n[T10] 数据不变量')
   ok(me.displayName === '甲', '带上显示名（id 对不上时的兜底）', me.displayName)
   // 服务端**不解析** loadout：原样存取，逐字节相同。
   ok(me.loadout === JSON.stringify(loadoutA), 'loadout 原样存取，没有被解析或重排')
+  // 世界参数也必须由服务端下发：runSeed / runKind 都进 hash。
+  const mRow = D().prepare('SELECT seed, mode FROM matches WHERE id = ?').get(matchId)
+  ok(got.seed === mRow.seed, '种子随快照一起下发（客户端不许自己算）', got.seed)
+  ok(got.mode === mRow.mode, '模式随快照一起下发（relay 据此定 runKind）', got.mode)
 
   // 排队期间改装备：再入队一次会覆盖**暂存**，但已固化的这局不受影响。
   match.enqueue({

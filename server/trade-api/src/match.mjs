@@ -370,6 +370,15 @@ export function loadoutsFor ({ matchId, now = Date.now() }) {
     matchId: m.id,
     state: m.state,
     ruleset: m.ruleset,
+    /**
+     * 全局种子。**由这里下发，客户端不许自己定** —— `runSeed` 在
+     * `state-hash.ts::SHARED_KEYS` 里，两端种子不同 ⇒ 掉落序列、刷怪位置
+     * 全不同 ⇒ 第一帧就分叉。以前它跟着客户端的 deployment 走，等于让
+     * 客户端携带世界参数。
+     */
+    seed: m.seed,
+    /** 匹配模式。relay 据此定 `runKind`（同样进 hash）。 */
+    mode: m.mode,
     members: rows.map((r) => ({
       userId: r.user_id,
       platformId: r.platform_id || null,

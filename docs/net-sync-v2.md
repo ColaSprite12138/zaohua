@@ -261,8 +261,17 @@ detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到�
 | 进局 | 任一活着的客户端 | `sendAction({matchId})`（只需局号，不需要"他"还在） |
 | 拉取 | relay | `GET /api/v1/match/:id/loadouts` → `players[].snapshot` |
 | 属性 | **每个客户端各自** | `vitalsFrom(loadout, createModifiers(stars.nodes))` |
-| **本机世界** | **relay 下发的「自己那份」快照** | `tryDeployFromSeat()`：本机也由 CVM 数据构造 |
+| **本机世界** | **relay 下发的「自己那份」快照 + 服务端种子** | `tryDeployFromSeat()`：本机也由 CVM 数据构造 |
 | 本机 lobby | 客户端 | 点匹配时 `lockDeployment()` **真正取走**，deploy 只用来清空 |
+
+**世界参数（`runSeed` / `runKind`）也只能来自服务端。** 两者都在
+`state-hash.ts::SHARED_KEYS` 里：种子不同 ⇒ 掉落序列与刷怪全不同，kind 不同 ⇒
+结束条件不同。以前它们跟着客户端的 `deployment` 走（`host.netSeed` 拿不到还
+回落到固定 `SEED`），等于让客户端携带世界参数。现在由
+`GET /match/:id/loadouts` 一并返回 `seed` / `mode`，relay 存进 `state.seed` /
+`state.kind` 随广播下发；客户端 `tryDeployFromSeat()` 拿不到就**不部署**
+（`seed === null || kind === null` → 等），门禁也不会放行（`tryArmAfterLoadouts`
+把 `netDeployed` 也当必要条件）。
 
 三条必须同时成立的约束：
 

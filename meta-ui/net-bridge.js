@@ -640,15 +640,22 @@
       }
     }
 
+    // 世界参数（种子 / 关卡类型）也只认服务端：两者都进 hash（SHARED_KEYS），
+    // 客户端自己带一份就等于"每台机器算自己的世界"。还没拉到就是 null。
+    var roundSeed = typeof state.seed === 'number' ? state.seed : null;
+    var roundKind = typeof state.kind === 'string' ? state.kind : null;
+
     // 自己的快照只按「有没有」进签名：一局一份，内容不会变，没必要每帧
     // stringify 那 5–6KB。
-    var seatSig = JSON.stringify(peers) + '|self:' + (selfSnapshot ? 1 : 0);
+    var seatSig = JSON.stringify(peers) + '|self:' + (selfSnapshot ? 1 : 0)
+      + '|s:' + roundSeed + ':' + roundKind;
     if (seatSig !== S.seatSig) {
       S.seatSig = seatSig;
       S.peers = peers;
       S.stats.seats += 1;
       post({
-        type: 'netSeat', active: true, playerId: S.playerId, peers: peers, self: selfSnapshot,
+        type: 'netSeat', active: true, playerId: S.playerId, peers: peers,
+        self: selfSnapshot, seed: roundSeed, kind: roundKind,
       });
     }
 

@@ -39,6 +39,9 @@ const stub = createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       matchId: 'm-test-1234',
+      // 世界参数：种子与模式必须由服务端下发（runSeed / runKind 进 hash）。
+      seed: 12345,
+      mode: 'extract',
       members: [
         // A 用 platformId 对齐；B 只给名字，走兜底。
         { userId: 'u-a', platformId: 'seat-a', displayName: '甲', loadout: JSON.stringify(loadoutA) },
@@ -74,6 +77,8 @@ let game = null
   const before = game.getState()
   check('还没报 matchId 时 cvmLoadouts = skipped', before.stats.cvmLoadouts === 'skipped',
     before.stats.cvmLoadouts)
+  check('种子/关卡类型在拉到之前是 null（客户端不许自己定）',
+    before.seed === null && before.kind === null, `${before.seed}/${before.kind}`)
 
   game.applyAction('seat-a', { matchId: 'm-test-1234' })
   for (let i = 0; i < 40 && game.getState().stats.cvmLoadouts === 'pending'; i += 1) await sleep(50)
@@ -86,6 +91,8 @@ let game = null
     JSON.stringify(after.players[1].snapshot) === JSON.stringify(loadoutB))
   check('快照随广播下发（有 snapshotUntil 窗口内）',
     after.players.every((p) => p.snapshot !== undefined))
+  check('种子与关卡类型由服务端下发（runSeed / runKind 进 hash）',
+    after.seed === 12345 && after.kind === 'pvpve', `${after.seed}/${after.kind}`)
   game.stop?.()
 }
 
