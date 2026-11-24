@@ -483,6 +483,17 @@
       // 平台侧状态问题（未激活 / 无权限 / 配额）：重试只会重复撞墙，
       // 立刻停手并说清怎么解（见 `isFatalCreateError`）。
       if (isFatalCreateError(err)) {
+        // 平台错误对象带 code / hint / detail，setStatus 只显示一句人话，
+        // 诊断信息只能进控制台 —— 不然排障时又只能看到 "ACTIVATION_REQUIRED"。
+        console.error('[match] 建房被平台拒绝', {
+          code: err && err.code,
+          errorCode: err && err.errorCode,
+          message: err && err.message,
+          hint: err && err.hint,
+          expected: err && err.expected,
+          detail: err && err.detail,
+          status: err && err.status,
+        });
         await fail('建房失败：' + fatalCreateText(err), matchId);
         return;
       }
