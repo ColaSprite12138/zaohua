@@ -228,6 +228,74 @@ function drawGround(g: Painter, s: GameState): void {
 }
 
 /**
+ * 像素化火光：在香炉 / 墙根投一圈暖光，让暗石地面有光源层次。
+ *
+ * art-style.md 禁 createRadialGradient / shadowBlur / 半透明模糊层，所以这里用
+ * **同心方块环 + 递减 globalAlpha**：逐层 fillRect，边缘天然是台阶状体素，
+ * 和 32px 地砖同一套网格语言。纯 V 层绘制，只读 s.map.props，不进 hash。
+ */
+function drawTorchGlow(g: Painter, s: GameState): void {
+  const grid = s.world.grid;
+  const cam = s.camera;
+  const w = s.world;
+  const sources: { x: number; y: number }[] = [];
+  for (const prop of s.map.props ?? []) {
+    if (prop.kind !== 'censer') continue;
+    // 和 drawAtlasProp 的锚点一致：占地 2×1，光打在香炉底座（占地底边）上。
+    const fp = propFootprint(prop.kind);
+    sources.push({ x: (prop.col + fp.w / 2) * grid, y: (prop.row + fp.h) * grid });
+  }
+  // 测试夹具没有香炉：在视口内按 6×6 格网格摆虚拟火盆，哈希挑选位置。
+  // 不挂墙格 —— 夹具里"墙"是 props 不是 IntGrid，挂墙会一个都找不到。
+  if (sources.length === 0) {
+    const c0 = Math.max(0, Math.floor(cam.x / grid));
+    const c1 = Math.min(w.cols - 1, Math.floor((cam.x + VIEW_W) / grid));
+    const r0 = Math.max(0, Math.floor(cam.y / grid));
+    const r1 = Math.min(w.rows - 1, Math.floor((cam.y + VIEW_H) / grid));
+    for (let r = r0 + 1; r <= r1 - 1; r += 4) {
+      for (let c = c0 + 1; c <= c1 - 1; c += 4) {
+        if (((c * 73856093) ^ (r * 19349663)) % 3 !== 0) continue;
+        const tile = w.tiles[r * w.cols + c];
+        if (tile !== 0 && tile !== 2) continue;
+        sources.push({ x: (c + 0.5) * grid, y: (r + 0.5) * grid });
+      }
+    }
+  }
+  g.save();
+  for (const src of sources) {
+    if (src.x < cam.x - 96 || src.x > cam.x + VIEW_W + 96) continue;
+    if (src.y < cam.y - 96 || src.y > cam.y + VIEW_H + 96) continue;
+    // 5 层同心方块，越外越淡。半径按 grid 取整，保持体素台阶。
+    for (let layer = 5; layer >= 1; layer -= 1) {
+      const rad = layer * 10;
+      g.globalAlpha = 0.06 * (6 - layer);
+      g.fillStyle = '#ffb45a';
+      g.fillRect(
+        Math.round(src.x - rad), Math.round(src.y - rad * 0.7),
+        rad * 2, Math.round(rad * 1.4),
+      );
+    }
+    // 火盆底座：三层深色石块，让光有实体来源而不是凭空发光。
+    const bx = Math.round(src.x);
+    const by = Math.round(src.y);
+    g.globalAlpha = 1;
+    g.fillStyle = '#1a1c1c';
+    g.fillRect(bx - 8, by + 3, 16, 6);
+    g.fillStyle = '#3a3630';
+    g.fillRect(bx - 6, by + 1, 12, 4);
+    g.fillStyle = '#514a3c';
+    g.fillRect(bx - 4, by - 1, 8, 3);
+    // 火芯：纯色亮块，不模糊。
+    g.fillStyle = '#ffd98a';
+    g.fillRect(bx - 4, by - 9, 8, 9);
+    g.globalAlpha = 0.9;
+    g.fillStyle = '#ff8c3a';
+    g.fillRect(bx - 3, by - 4, 6, 5);
+  }
+  g.restore();
+}
+
+/**
  * 地面区域（火墙 / 毒池 / 冰面 / 水洼）—— 设计 8.4 的「状态必须看得见」。
  *
  * 画在**地板之上、所有实体之下**：区域是地面的东西，站在里面的人必须压住它。
@@ -2520,6 +2588,8 @@ export function paint(
   g.save();
   g.translate(-Math.round(s.camera.x), -Math.round(s.camera.y));
   drawGround(g, s);
+  // 火光压在地板上、区域与实体之下：先铺暖光，再让火墙/毒池盖住它。
+  drawTorchGlow(g, s);
   // 地面区域（火墙 / 毒池 / 冰面）压在地板上、所有实体之下。
   drawZones(g, s);
   drawMoveTarget(g, s);

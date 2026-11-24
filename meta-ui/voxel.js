@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/game/voxel.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 897b108cab8ebe4e9fd2c941e8295e19f6915b2947ef42887c00523796121f19
+ * Source SHA-256: 3b1ab5854b2f6c7a6f5576e91d5692fc8be4777231db49c445c1ca6f27be8d65
  */
 (function (root) {
 "use strict";
@@ -1254,16 +1254,21 @@ drawTop) {
         g.drawImage(tileTexture(1), X, Y - exports.WALL_LIFT);
     }
     // Front face: the exposed strip between the lifted top and the tile bottom.
-    g.fillStyle = '#33424e';
+    // 暗黑奇幻石墙：暖褐色立面 + 深色砖缝 + 顶部受光边缘，和冷灰地板形成层次。
+    g.fillStyle = '#3a352c';
     g.fillRect(X, Y + 32 - exports.WALL_LIFT, 32, exports.WALL_LIFT);
     // Horizontal courses + a lit top lip: reads as stacked blocks, not a slab.
-    g.fillStyle = '#243139';
+    g.fillStyle = '#24231d';
     for (let fy = Y + 32 - exports.WALL_LIFT; fy < Y + 32; fy += 6) {
         g.fillRect(X, fy, 32, 1);
     }
-    g.fillStyle = '#46596a';
+    g.fillStyle = '#5c5442';
     g.fillRect(X, Y + 32 - exports.WALL_LIFT, 32, 2);
-    g.fillStyle = '#1b262e';
+    // 零星的苔痕：纯色块，呼应地面图集里的深苔绿。
+    g.fillStyle = '#31453a';
+    g.fillRect(X + 3, Y + 32 - exports.WALL_LIFT + 4, 5, 2);
+    g.fillRect(X + 22, Y + 32 - exports.WALL_LIFT + 7, 4, 2);
+    g.fillStyle = '#191912';
     g.fillRect(X, Y - exports.WALL_LIFT, 1, 32 + exports.WALL_LIFT);
     g.fillRect(X + 31, Y - exports.WALL_LIFT, 1, 32 + exports.WALL_LIFT);
 }

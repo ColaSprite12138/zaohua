@@ -202,6 +202,34 @@ function scaleColor(rgb, f) {
 }
 
 /**
+ * 暗黑奇幻调色：素材库原色是亮米石 (182,175,155)，铺满屏幕就成了"办公室地砖"。
+ * 这里把它压暗、去饱和、往冷灰石偏，但保留三件事：
+ *   1) 原始明暗关系（亮石仍比棕土亮）；
+ *   2) 苔绿的绿相（仍能一眼看出哪块长了苔）；
+ *   3) 每一个体素格仍是纯色 —— art-style.md 禁渐变/模糊，这里只用整数盒混色。
+ * 映射是逐格纯函数，不引入随机，bake 结果可复现。
+ */
+function dungeonTone(rgb) {
+  const [r, g, b] = rgb;
+  const lum = (r * 299 + g * 587 + b * 114) / 1000; // 感知亮度，决定深浅
+  const greenness = g - (r + b) / 2;                 // >0 说明偏绿（苔）
+  const warmth = r - b;                             // >0 说明偏暖（土）
+  // 基底：冷灰石，亮度区间压到 38~86（原来是 113~182）
+  const t = Math.max(0, Math.min(1, (lum - 90) / 100));
+  let out = [40 + t * 40, 50 + t * 40, 54 + t * 38];
+  if (greenness > 6) {
+    // 苔：保留绿相，压暗到"潮湿墙根的深苔"
+    const m = Math.min(1, greenness / 60);
+    out = [out[0] - m * 8, out[1] + m * 18, out[2] - m * 4];
+  } else if (warmth > 25) {
+    // 暖土/锈：偏暗褐，给地面一点色温变化
+    const m = Math.min(1, (warmth - 25) / 70);
+    out = [out[0] + m * 12, out[1] + m * 2, out[2] - m * 10];
+  }
+  return out.map((v) => Math.max(0, Math.min(255, Math.round(v))));
+}
+
+/**
  * 斜俯视光栅化：一格里画「顶面亮条 + 正面本色 + 右下暗边」，和 voxel.ts 的烘焙
  * 完全同一套公式；高度是往上长的，所以锚点落在底部中央。
  */
@@ -277,18 +305,25 @@ function rasterizeFloorTile(top, ox, oz) {
       const sx = ox + cx * CELLS_PER_VOXEL + Math.floor(CELLS_PER_VOXEL / 2);
       const sz = oz + cz * CELLS_PER_VOXEL + Math.floor(CELLS_PER_VOXEL / 2);
       const hex = top.map.get(`${sx},${sz}`);
-      const base = hex ? parseHex(hex) : [32, 51, 61];
+      // 先按素材原色算出明暗层次，再整体迁移到暗黑奇幻冷石调色板。
+      const raw = hex ? parseHex(hex) : [32, 51, 61];
       const noise = (grain(cx, 0, cz) - 0.5) * 0.08;
-      const body = scaleColor(base, 1 + noise);
-      const edge = scaleColor(base, 0.86);
-      const light = scaleColor(base, 1.12);
+      const base = dungeonTone(scaleColor(raw, 1 + noise));
+      const body = base;
+      const edge = scaleColor(base, 0.78);
+      const light = scaleColor(base, 1.1);
+      // 裂纹：小概率让整条体素格变暗半档，模拟石缝里的阴影（纯色块，不描边）。
+      const cracked = grain(cx + ox, 7, cz + oz) > 0.93;
+      const crack = scaleColor(base, 0.62);
       for (let j = 0; j < CELLS_PER_VOXEL; j += 1) {
         for (let i = 0; i < CELLS_PER_VOXEL; i += 1) {
           const px = cx * CELLS_PER_VOXEL + i;
           const py = cz * CELLS_PER_VOXEL + j;
           const isSeam = i === CELLS_PER_VOXEL - 1 || j === CELLS_PER_VOXEL - 1;
           const isHighlight = j === 0;
-          blit(rgba, size, px, py, isSeam ? edge : isHighlight ? light : body);
+          const color = cracked && !isHighlight ? crack
+            : isSeam ? edge : isHighlight ? light : body;
+          blit(rgba, size, px, py, color);
         }
       }
     }
