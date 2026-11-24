@@ -65,6 +65,7 @@ export function pinPlayer(s: GameState): void {
   s.target = { x: s.player.x, y: s.player.y };
   s.attackOrder = false;
   s.targetEnemy = null;
+  s.targetPlayerId = null;
   s.pickupTarget = null;
   s.player.vx = 0;
   s.player.vy = 0;

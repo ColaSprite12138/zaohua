@@ -276,7 +276,11 @@ function resolveHit(s: GameState, hit: ProjectileHit): void {
       }
     }
   }
-  explode(s, profile, hit.projectile, hit.x, hit.y, hit.target.kind === 'monster' ? monsterIndexOf(hit.target.id) : null);
+  explode(
+    s, profile, hit.projectile, hit.x, hit.y,
+    hit.target.kind === 'monster' ? monsterIndexOf(hit.target.id) : null,
+    hit.target.kind === 'player' ? hit.target.id : null,
+  );
 }
 
 /**
@@ -287,14 +291,14 @@ function resolveHit(s: GameState, hit: ProjectileHit): void {
  */
 function sourceOf(p: Projectile, profile: ProjectileProfile): DamageSource {
   return p.owner === 'player'
-    ? playerSource(profile.id, profile.name)
+    ? playerSource(profile.id, profile.name, p.ownerId ?? undefined)
     : monsterSource(profile.id, profile.name);
 }
 
 function resolveImpact(s: GameState, impact: ProjectileImpact): void {
   const profile = projectileProfile(impact.projectile.specId);
   if (profile.zoneRadius > 0 || profile.splashRadius > 0) {
-    explode(s, profile, impact.projectile, impact.x, impact.y, null);
+    explode(s, profile, impact.projectile, impact.x, impact.y, null, null);
     return;
   }
   // 一支箭钉在墙上 / 飞满射程：只有一点点碎屑，不需要保留。
@@ -342,8 +346,8 @@ function damageMonster(
 /**
  * 爆炸 / 落地的统一收尾：溅射（同一份伤害，不衰减）+ 地面区域 + 表现。
  *
- * `skipIndex` 是刚刚被直击的那一只 —— 它已经吃过一次，溅射不能再打它，
- * 否则「命中 + 溅射」会变成双倍伤害而没人看得出来。
+ * `skipIndex` 是刚刚被直击的那一只怪，`skipPlayerId` 是刚被直击的那个玩家：
+ * 它们已经吃过一次伤害，溅射不能再打一遍，否则「命中 + 溅射」变成双倍。
  */
 function explode(
   s: GameState,
@@ -352,6 +356,7 @@ function explode(
   x: number,
   y: number,
   skipIndex: number | null,
+  skipPlayerId: string | null,
 ): void {
   if (profile.splashRadius > 0) {
     for (let i = 0; i < s.skeletons.length; i += 1) {
@@ -360,6 +365,16 @@ function explode(
       if (sk === undefined || !sk.alive) continue;
       if (Math.sqrt((sk.x - x) * (sk.x - x) + ((sk.y - BODY_LIFT) - y) * ((sk.y - BODY_LIFT) - y)) > profile.splashRadius) continue;
       damageMonster(s, i, source.damage, source, profile, 1.4);
+    }
+    // 溅射同样打其他玩家。按 id 排序遍历、不读本机座位；`damagePlayer` 里的
+    // `hurts()` 会拒绝「发射者自己」，所以这里不需要再写一份友军判断。
+    const src = sourceOf(source, profile);
+    for (const p of sortedPlayers(s)) {
+      if (p.hp <= 0 || p.id === skipPlayerId) continue;
+      if (Math.sqrt((p.x - x) * (p.x - x) + ((p.y - BODY_LIFT) - y) * ((p.y - BODY_LIFT) - y)) > profile.splashRadius) continue;
+      damagePlayer(s, source.damage, {
+        color: profile.element === 'fire' ? '#fb923c' : '#cfe8ff', source: src,
+      }, p);
     }
     s.projectileStats.splashes += 1;
     burst(s, x, y, profile.element === 'fire' ? '#fb923c' : '#cfe8ff', 18, 220);

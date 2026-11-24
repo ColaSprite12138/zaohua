@@ -126,6 +126,7 @@ export function orderSmash(s: GameState, obj: DestructibleObj): void {
   s.smashTarget = obj.uid;
   s.attackOrder = false;
   s.targetEnemy = null;
+  s.targetPlayerId = null;
   s.pickupTarget = null;
   if (dist <= SMASH_RANGE) {
     beginSmash(s, obj);

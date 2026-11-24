@@ -117,7 +117,13 @@ export default async function facing(play) {
     await play.mouse.click([armed.player.x, armed.player.y - 0.16]);
     await play.advance(0.5);
     const up = await play.state('game.state');
-    assert.ok(up.playerFace < -0.9, `应该朝上走（face=${up.playerFace.toFixed(2)}）`);
+    // `playerFace` 是**累加**出来的（movement.ts 每帧 `face += turn * ...`），
+    // 不保证落在 (−π, π]：180° 转身时可能停在 4.71 ≡ −1.57。判定层换成
+    // `assets/net/trig.ts` 查表后这个平局方向固定走 +π，于是「朝上」会读到
+    // 4.71。渲染层的 sin/cos 自带角度归约，画面没问题 —— 断言必须比角度差，
+    // 不能直接比数值符号（2026-11-25 修，与 PVP 改动无关）。
+    const upOff = Math.abs(angleDiff(up.playerFace, -Math.PI / 2));
+    assert.ok(upOff < 0.25, `应该朝上走（face=${up.playerFace.toFixed(2)}，偏离 ${upOff.toFixed(2)}）`);
     await play.screenshot('weapon-behind-body-up');
 
     // 背对再往右偏一点：剑**应该还留在身后**，不能瞬移到身侧。
@@ -125,9 +131,10 @@ export default async function facing(play) {
     await play.mouse.click([up.player.x + 0.07, up.player.y - 0.14]);
     await play.advance(0.5);
     const tilted = await play.state('game.state');
+    const tiltOff = Math.abs(angleDiff(tilted.playerFace, -Math.PI / 2));
     assert.ok(
-      tilted.playerFace < -0.7,
-      `应该仍朝上半圈（face=${tilted.playerFace.toFixed(2)}）`,
+      tiltOff < 0.9,
+      `应该仍朝上半圈（face=${tilted.playerFace.toFixed(2)}，偏离 ${tiltOff.toFixed(2)}）`,
     );
     await play.screenshot('weapon-behind-body-tilted');
 
@@ -141,14 +148,16 @@ export default async function facing(play) {
     await play.mouse.click([front.player.x + 0.18, front.player.y]);
     await play.advance(0.5);
     const side = await play.state('game.state');
-    assert.ok(Math.abs(side.playerFace) < 0.35, `应该朝右（face=${side.playerFace.toFixed(2)}）`);
+    const sideOff = Math.abs(angleDiff(side.playerFace, 0));
+    assert.ok(sideOff < 0.35, `应该朝右（face=${side.playerFace.toFixed(2)}，偏离 ${sideOff.toFixed(2)}）`);
     await play.screenshot('weapon-facing-right');
 
     // 朝右下：右手在屏幕右下（近侧），剑应该看得见，不该躲到身后。
     await play.mouse.click([side.player.x + 0.13, side.player.y + 0.13]);
     await play.advance(0.5);
     const dr = await play.state('game.state');
-    assert.ok(dr.playerFace > 0.4 && dr.playerFace < 1.2, `应该朝右下（face=${dr.playerFace.toFixed(2)}）`);
+    const drOff = Math.abs(angleDiff(dr.playerFace, Math.PI / 4));
+    assert.ok(drOff < 0.4, `应该朝右下（face=${dr.playerFace.toFixed(2)}，偏离 ${drOff.toFixed(2)}）`);
     await play.screenshot('weapon-facing-down-right');
 
     // 朝左：右手绕到屏幕**上方**（远离镜头），整个人挡在它前面 ——
@@ -156,7 +165,8 @@ export default async function facing(play) {
     await play.mouse.click([dr.player.x - 0.18, dr.player.y]);
     await play.advance(0.5);
     const left = await play.state('game.state');
-    assert.ok(Math.abs(Math.abs(left.playerFace) - Math.PI) < 0.35, `应该朝左（face=${left.playerFace.toFixed(2)}）`);
+    const leftOff = Math.abs(angleDiff(left.playerFace, Math.PI));
+    assert.ok(leftOff < 0.35, `应该朝左（face=${left.playerFace.toFixed(2)}，偏离 ${leftOff.toFixed(2)}）`);
     await play.screenshot('weapon-facing-left-hidden');
   });
 

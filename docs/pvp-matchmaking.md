@@ -20,7 +20,7 @@
 | 9 | 掉线 | 10s 后自动托管（站着可被击杀），**不踢**（踢了就丢装备） |
 | 10 | 失败方向 | 网络差的人自己的输入被吞，不拖累全场 |
 | 11 | 结算 | 撤离制：死亡全丢；**只显示自己的带出价值，不做排名、不做对比** |
-| 12 | 伤害阵营 | 现在没有队友（1 人 = 1 队），所有人之间都能互打；**队友伤害默认关闭**，等组队上线看反馈再定。自己造成的伤害**永远打不到自己**（含自己铺的火墙 / 毒池等地形伤害），这条已由 `hurts()` 保证，不是开关 |
+| 12 | 伤害阵营 | 现在没有队友（1 人 = 1 队），所有人之间都能互打；**队友伤害默认关闭**，等组队上线看反馈再定。自己造成的伤害**永远打不到自己**（含自己铺的火墙 / 毒池 / 溅射 / 自己的箭），由 `hurts(source, victim, victimPlayerId)` + `DamageSource.fromPlayerId` 保证，不是开关。**2026-11-24 代码已补齐，双人真机未验** |
 | 13 | 掉落归属 | **不做归属**：地上的东西所有人可捡，先到先得，无保护期 |
 | 14 | 怪量 | **不随人数缩放**，也不做动态调整：按地图里配的来（4 人和 16 人是同一份怪表） |
 | 15 | 死亡掉落进交易行 | **暂不**。等反作弊跑稳再放开 |
@@ -30,9 +30,9 @@
 
 | 规则 | 落点 | 现状 |
 |:--|:--|:--|
-| 自己打不到自己（含自铺地形） | `assets/combat/source.ts::hurts(source, victim)` | ✅ 已有。`hurts` 比较的是**阵营**，不是"名字牌"，所以自铺火墙/毒池天然不伤自己，且对怪物是对称规则 |
-| 玩家互打 | 同上。P3 要把 `DamageSource` 扩成带 `fromPlayerId` + `teamId`，`hurts` 变成「同一身体不打、同队不打、其余都打」 | ⚠️ 待做。**注意**：现在 `playerSource()` 的 owner 都是 `'player'`，`hurts(playerSource(...), 'player')` 恒为 `false` —— 不扩这一层，PVP 伤害一条都进不去 |
-| 队友伤害关闭 | 同一处：`teamId` 相同即 `return false`。**不要**在技能/弹道里各写 `if` | 待 P3；开关收敛在 `hurts()` 一个函数里 |
+| 自己打不到自己（含自铺地形） | `assets/combat/source.ts::hurts(source, victim, victimPlayerId)` | ✅ 已有（2026-11-24 细化到「哪个玩家」）：`fromPlayerId === 被打者 id` 直接返回 false，且在无敌帧 / 耐久 / 闪红之前 |
+| 玩家互打 | 同上 + `PlayerIntent.targetPlayerId` + `projectiles.ts::isHostile()` | ✅ 代码已补齐（2026-11-24，`combat/__tests__/pvp-combat.test.ts` 7 条 + 两座位闭环 2 条）：点击锁定、普攻 / 远程 / 技能 / 弹道 / 溅射 / 区域全部走 `damagePlayer(..., target)`；`hurts()` 判「同一身体不打、其余都打」。**双人真机未验** |
+| 队友伤害关闭 | 同一处：以后加 `teamId`，相同即 `return false`。**不要**在技能/弹道里各写 `if` | 待组队上线；当前 1 人 1 队，不存在同队身体 |
 | 结算只显示自己的带出价值 | `assets/combat/extraction.ts` 撤离结算 → 结果回传服务端只做存档/记录，不下发他人数据 | 待 P3 |
 | 怪量固定 | `GameState` 初始化时 `map.monsters` 逐条建（`state.ts:1165` 写明"**数量唯一权威是 `map.monsters`**，无硬编码坐标"） | ✅ 无需改，本来就没有按人数分叉的入口 |
 | 掉落所有人可捡 | `Drop` 结构里**根本没有归属字段**（`uid/x/y/kind/itemId/…`，无 `droppedBy`/`killerId`），拾取只看距离与点击 | ✅ 无需改，加归属反而要新增字段 |
@@ -270,12 +270,15 @@ Engine Worker（无 DOM、无 PlatformClient）
 
 **当前的可视范围（诚实记录）**：P2 双人真机已证明「对方在自己屏幕上走动」——
 A 走位 586px，B 屏幕上 A 的影子同步移动 656px（`scripts/verify-two-player-net.mjs`）。
-但**打不到对方、看不到对方血量**，怪也不共享（各打各的）。这些是 P3：
-玩家实体进 `GameState` + `hurts()` 扩 `fromPlayerId`/`teamId`。
+P3 之后远端已经是 `GameState.players` 里的真玩家（不是影子），怪 / 掉落 / 血量共享。
 
-**影子角色故意偷的懒**（P3 一并还）：不寻路、不碰撞（会穿墙）、不吃速度加成、
-不画武器、没有血量。它的位置只用 `+ - * /` 和 `sqrt`（IEEE 精确），所以两端算出同一个坐标；
-朝向平滑用了 `atan2`，只影响绘制，且**不进 hash**。
+**2026-11-24 用户真机又报了两件**：看不到对方穿戴的武器（砸箱时却突然冒一把白剑）、
+打不到对方玩家。前者是 `paint.ts::drawRemoteActor()` 不读 `weaponSlots`、只在
+`attackFx > 0` 时硬编码 `blade:steel`；后者是 PVE 时代留下的三道封堵
+（弹道 `hostileKind`、`hurts()` 只到阵营、目标集合只有 `s.skeletons`）。
+两者都已在代码层修复：远端按各自装备画武器 + 常驻血条，互砍走完整伤害链路，
+并补了 `pvp-combat.test.ts` 与两座位闭环用例。**这些是代码 / 单测证据，
+不是双人真机证据 —— 必须用常驻宿主 + 两真账号再验一次。**
 
 ### 4.6 P2 已知限制（P4 再补）
 
@@ -380,7 +383,7 @@ MATCH_USER_A=.. MATCH_PASS_A=.. MATCH_USER_B=.. MATCH_PASS_B=.. \
 | **P1** | 局外大厅「快速匹配」按钮 + 排队 UI + 建房/join 接线 | **已完成并在真宿主验收**：`multiplayer_integration.stage=verified`，两人同房同 seed 开局（§3.10） |
 | **P2** | 固定步长 + 输入流 + relay server + hash 对账 | **已完成并在双人真机验收（14/14）**：输入双向互通、锁步稳定推进、A 走位后 B 的影子同步移动、18 次 hash 对账零分叉（§4.7） |
 | **P3a** | 远端输入也作用于世界（**可破坏物**） | **已完成（2026-11-20）**：`assets/net/remote-world.ts`。远端玩家砸重的箱子在两端同时碎、掉落用同一个 `s.rng` 所以是同一批；「已砸开的 uid 集合」已进 hash，可自动对账（§4.9） |
-| **P3b** | 玩家实体进 `GameState`：**怪的血量/掉落归属/互砍**、`hurts()` 扩 `fromPlayerId`/`teamId`（友伤关闭）、撤离判定、结算（只给自己看带出价值） | **待做（下一块）**。难点在 `GameState.player` 是单数、`s.smash` 等状态也是单份，要改成按 `playerId` 分槽；会波及渲染、输入、技能、HUD |
+| **P3b** | 玩家实体进 `GameState`：**怪的血量/掉落归属/互砍**、`hurts()` 扩 `fromPlayerId`/`teamId`（友伤关闭）、撤离判定、结算（只给自己看带出价值） | **代码完成（2026-11-24），双人真机未验**：全员实体化与按 `playerId` 分槽先于本轮完成；本轮补齐 `fromPlayerId` / `targetPlayerId` / 弹道敌对过滤 / 点击与技能命中玩家 / 远端装备与血条。`teamId` 等组队上线再加，当前 1 人 1 队无同队身体 |
 | **P4** | relay 的 `onCheckJoin`（挡插队）+ 服务端视野裁剪 + 输入限幅 | **明确不做（2026-11-24 用户拍板）**。反作弊明确不做；视野服务器不下发、完全客户端本地算；输入帧只量化不 clamp。详见 `docs/net-sync-design.md` §9 |
 | **P5** | 组队 PVPVE（`teamId`） | 远期 |
 

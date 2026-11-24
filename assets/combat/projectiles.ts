@@ -146,8 +146,19 @@ export function makeProjectile(init: ProjectileInit): Projectile {
   };
 }
 
-function hostileKind(owner: AttackOwner): HitTarget['kind'] {
-  return owner === 'player' ? 'monster' : 'player';
+/**
+ * 这一发能撞上哪个身体（PVE + PVP 共用的唯一敌对过滤）。
+ *
+ * - 怪发的：打玩家。
+ * - 玩家发的：打怪，**也打除发射者之外的其他玩家**（1 人 = 1 队，所有人互敌）。
+ *   `ownerId` 来自共享状态里的发射者 id，不是本机座位；缺它时保守不打玩家，
+ *   免得一支箭在 A 端打 A、B 端打 B，两端当场分叉。
+ * 「自己发的箭不打自己」在这里挡一次，`hurts()` 在扣血前再挡一次。
+ */
+function isHostile(p: Projectile, t: HitTarget): boolean {
+  if (p.owner !== 'player') return t.kind === 'player';
+  if (t.kind === 'monster') return true;
+  return p.ownerId !== null && t.id !== p.ownerId;
 }
 
 /** 朝目标转一小步（弧度钳制，取最短弧），返回新的速度分量。 */
@@ -188,7 +199,7 @@ export function advanceProjectiles(
   for (const source of projectiles) {
     if (!source.alive) continue;
     const p: Projectile = { ...source, struck: [...source.struck] };
-    const hostileTargets = targets.filter((t) => t.kind === hostileKind(p.owner));
+    const hostileTargets = targets.filter((t) => isHostile(p, t));
     const speed = Math.sqrt((p.vx) * (p.vx) + (p.vy) * (p.vy));
     const steps = Math.max(1, Math.ceil((speed * dt) / SUB_STEP));
     const stepDt = dt / steps;

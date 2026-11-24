@@ -249,6 +249,7 @@ export function createRemotePlayer(
       target: { x: at.x, y: at.y },
       moveMode: 'idle',
       targetEnemy: null,
+      targetPlayerId: null,
       attackOrder: false,
       press: null,
       path: [],

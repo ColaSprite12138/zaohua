@@ -866,36 +866,41 @@ function drawWeaponArm(
  */
 
 /**
- * 联机的远端玩家（P2 影子角色）。
+ * 联机的远端玩家。
  *
- * 刻意比 `drawPlayer` 少很多东西：没有武器手臂、没有挥砍姿态、没有血条、
- * 没有闪避残影。P2 只要玩家能看见「对面真的在动」，多画一样就多一处
- * 需要跟 P3 的实体化对齐的地方。头顶名字用金色，一眼能和怪的白色名板分开。
+ * 和 `drawPlayer` 共用同一份装备来源：`weaponSlots[activeWeaponSlot]` 由
+ * `createRemotePlayer()` 从 CVM 装备快照展开、进帧同步 hash，两端一模一样。
+ * 这里直接读它画武器，不再「挥的那一下凭空塞一把 blade:steel」。
+ * 以前远端是 P2 影子角色，只有位置；现在 `s.remotes` 就是 `s.players` 里
+ * 除我之外的真玩家，装备外观也该跟着真人走。头顶名字仍用金色，与怪的白色名板分开。
  */
 function drawRemoteActor(g: Painter, actor: Player): void {
   const frame = Math.floor(actor.stride);
   const moving = Math.abs(actor.vx) + Math.abs(actor.vy) > 12;
   const bob = moving && frame % 2 === 1 ? 1 : 0;
   shadow(g, actor.x, actor.y + 2, 24, 9, 0.45);
-  // 挥砍：远端也在砸箱子时必须读得出来（否则 B 只看到进度条在涨、人一动不动）。
-  // 只在挥的那一下给刀 —— 平时不凭空给远端配一把武器，那是存档里才有的东西。
+  // 挥砍进度由 `attackFx` 派生（砸箱 / 出手都会写它），绘制层只负责读数。
   const swing = actor.attackFx > 0 ? 1 - actor.attackFx / PLAYER_SWING_TIME : 0;
+  // 空槽 = 徒手：不画刀，也不因为一次挥砍就凭空长出来一把钢剑。
+  const weaponId = actor.weaponSlots?.[actor.activeWeaponSlot] ?? null;
+  const armed = weaponId !== null;
   const paintBody = (): void => {
     drawBody(g, KNIGHT, actor.x, actor.y - bob, {
       frame: moving ? frame : 0,
       face: actor.face,
+      flash: actor.hurt > 0,
     });
   };
   const paintArm = (): void => {
     drawWeaponArm(
       g,
       KNIGHT_ARM,
-      swing > 0 ? itemModel('blade:steel') : null,
+      armed ? itemModel(itemArtOf(weaponId)) : null,
       actor.x,
       actor.y - bob,
       actor.face,
       swing,
-      false,
+      actor.hurt > 0,
       1,
       true,
     );
@@ -910,6 +915,15 @@ function drawRemoteActor(g: Painter, actor: Player): void {
   }
   const top = actor.y - bodyHeight(KNIGHT) - 12;
   g.save();
+  // 血条：远端不再是「没血量的影子」，`hp / maxHp` 来自共享状态、两端一致。
+  // 打得到人却看不见掉血，是 PVP 里最难自查的一类假 bug。
+  const barW = 44;
+  const barTop = Math.round(top - 18);
+  const ratio = Math.max(0, Math.min(1, actor.hp / (actor.maxHp || 1)));
+  g.fillStyle = 'rgba(6,12,18,0.85)';
+  g.fillRect(Math.round(actor.x) - barW / 2 - 2, barTop, barW + 4, 8);
+  g.fillStyle = '#ff6b6b';
+  g.fillRect(Math.round(actor.x) - barW / 2, barTop + 2, barW * ratio, 4);
   g.font = '12px "Microsoft YaHei", "PingFang SC", sans-serif';
   g.textAlign = 'center';
   g.textBaseline = 'alphabetic';
@@ -1538,12 +1552,22 @@ function drawMoveTarget(g: Painter, s: GameState): void {
   g.restore();
 }
 
-/** Highlight the single enemy locked by a pending attack order. */
+/** Highlight the single enemy OR rival player locked by a pending attack order. */
 function drawTargetLock(g: Painter, s: GameState): void {
-  if (!s.attackOrder || s.targetEnemy === null) return;
+  if (!s.attackOrder) return;
+  const pulse = 0.5 + 0.5 * Math.sin(s.t * 9);
+  // PVP：锁的是另一个玩家。用与怪同一个红环，玩家一眼知道这一刀会落在谁身上。
+  if (s.targetPlayerId !== null) {
+    const foe = s.remotes.find((p) => p.id === s.targetPlayerId);
+    if (foe === undefined || foe.hp <= 0) return;
+    drawPixelRing(g, foe.x, foe.y + 2, 28 + pulse * 3, 11 + pulse, '#ff6b6b', { alpha: 0.85, lineWidth: 3 });
+    drawPixelRing(g, foe.x, foe.y + 2, 36 + pulse * 4, 15 + pulse * 1.5, '#ff6b6b', { alpha: 0.5, lineWidth: 2 });
+    text(g, '目标', foe.x, foe.y - bodyHeight(KNIGHT) - 22, 11, '#ff9b9b', 'center', '700');
+    return;
+  }
+  if (s.targetEnemy === null) return;
   const sk = s.skeletons[s.targetEnemy];
   if (sk === undefined || !sk.alive) return;
-  const pulse = 0.5 + 0.5 * Math.sin(s.t * 9);
   drawPixelRing(g, sk.x, sk.y + 2, 28 + pulse * 3, 11 + pulse, '#ff6b6b', { alpha: 0.85, lineWidth: 3 });
   drawPixelRing(g, sk.x, sk.y + 2, 36 + pulse * 4, 15 + pulse * 1.5, '#ff6b6b', { alpha: 0.5, lineWidth: 2 });
   text(g, '目标', sk.x, sk.y - bodyHeight(skeletonBody(sk)) - 22, 11, '#ff9b9b', 'center', '700');

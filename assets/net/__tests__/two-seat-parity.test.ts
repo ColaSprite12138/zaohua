@@ -227,3 +227,59 @@ describe('两座位：A 的操作必须在 B 的世界里生效', () => {
     expectSameWorld(sa, sb);
   });
 });
+
+/**
+ * PVP 互砍（2026-11-24）：新增 `intent.targetPlayerId`、`DamageSource.fromPlayerId`、
+ * 弹道敌对过滤、技能/区域对玩家的结算，全都是进 `S` 的新字段与新规则。
+ * 按工程铁律，任何新判定都必须有「两个不同本机身份 + 安静帧」的闭环用例，
+ * 断言两端 `hashGameState` 相同；同进程单测与单机 playthrough 测不到这类分叉。
+ */
+describe('两座位：PVP 互砍的两端必须是同一个世界', () => {
+  /** 两人贴身站，清掉会抢点击的箱子 / 掉落；怪留着，免得 checkCleared 冻结全场。 */
+  function placeRivals(a: GameState, b: GameState): Spot {
+    const anchor = a.destructibles[0]!;
+    const foe = { x: anchor.x, y: anchor.y };
+    placeBoth(a, b, { [A]: { x: anchor.x - 60, y: anchor.y }, [B]: foe });
+    for (const s of [a, b]) {
+      s.destructibles = [];
+      s.drops = [];
+    }
+    return foe;
+  }
+
+  function hpOf(s: GameState, id: string): number {
+    return s.players.find((p) => p.id === id)!.hp;
+  }
+
+  it('A 点击并砍中 B：之后一个包都不发，两端仍逐位一致', () => {
+    const sa = seat(A, B);
+    const sb = seat(B, A);
+    const foe = placeRivals(sa.state, sb.state);
+    const before = hpOf(sa.state, B);
+
+    // 短按点的是对方的躯干（世界坐标），不是箱子 / 怪；此后 A 完全静默。
+    runTicks([sa, sb], TICKS, clicks({ x: foe.x, y: foe.y - 30 }, 0));
+
+    expect(sa.state.attacks).toBeGreaterThan(0);
+    expect(sb.state.attacks).toBe(sa.state.attacks);
+    expect(hpOf(sa.state, B)).toBe(hpOf(sb.state, B));
+    expect(hpOf(sa.state, B)).toBeLessThan(before);
+    expectSameWorld(sa, sb);
+  });
+
+  it('A 起手横扫，命中落在静默帧：技能打人的伤害来源也必须两端一致', () => {
+    const sa = seat(A, B);
+    const sb = seat(B, A);
+    const foe = placeRivals(sa.state, sb.state);
+    const before = hpOf(sa.state, B);
+
+    // 只有 tick 0 发一个技能键，之后 90 帧全员空输入。
+    runTicks([sa, sb], 90, (tick) => tick === 0
+      ? [{ id: A, frame: frameAt({ skill: 0, mouse: { x: foe.x, y: foe.y } }) }]
+      : []);
+
+    expect(hpOf(sa.state, B)).toBe(hpOf(sb.state, B));
+    expect(hpOf(sa.state, B)).toBeLessThan(before);
+    expectSameWorld(sa, sb);
+  });
+});

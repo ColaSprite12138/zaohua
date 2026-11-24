@@ -16,11 +16,12 @@
  */
 
 import { atan2, cos, sin } from '../net/trig.ts';
-import { damageSkeleton, type SkeletonDamageOptions } from './attack.ts';
+import { damagePlayer, damageSkeleton, type SkeletonDamageOptions } from './attack.ts';
 import { weaponUsable, wearWeapon } from './durability.ts';
 import { burst, say } from './effects.ts';
 import { canStand } from './movement.ts';
 import type { CombatModifiers } from './modifiers.ts';
+import { sortedPlayers } from './players.ts';
 import { playerSource } from './source.ts';
 import { POTION_MANA, POTION_SECONDS } from './consumables.ts';
 // 蓝药已经是背包物品（`consumables.ts`），这里只做转出，历史 import 路径不变。
@@ -32,7 +33,7 @@ import { applyElement, spawnZone } from './reactions.ts';
 import { applyStatus, lockedFlags } from './status.ts';
 import {
   DASH_SPEED, SKILL_SLOTS, STRIDE_PIXELS,
-  type CastState, type ElementId, type GameState, type SkillFx, type SkillFxKind,
+  type CastState, type ElementId, type GameState, type Player, type SkillFx, type SkillFxKind,
   type SkillSlot, type StatusId,
 } from './state.ts';
 
@@ -289,6 +290,7 @@ export function beginSkill(
   // 起手要打断普攻的后摇指令，否则「普攻 → 技能」会两个动作一起结算。
   s.attackOrder = false;
   s.targetEnemy = null;
+  s.targetPlayerId = null;
 
   if (def.castTime <= 0) {
     resolveSkill(s, def, point, mods);
@@ -313,6 +315,7 @@ function pinPlayer(s: GameState): void {
   s.target = { x: s.player.x, y: s.player.y };
   s.attackOrder = false;
   s.targetEnemy = null;
+  s.targetPlayerId = null;
   s.player.vx = 0;
   s.player.vy = 0;
 }
@@ -384,16 +387,37 @@ function hit(
   options: Omit<SkeletonDamageOptions, 'source'> = {},
 ): void {
   const aliveBefore = s.skeletons[index]?.alive === true;
-  // 技能伤害的来源恒为「玩家 + 这个技能」：阵营判定、以后的伤害归属统计都读它。
-  const source = playerSource(def.id, def.name);
+  // 技能伤害的来源恒为「玩家 + 这个技能」，带上施法者 id 才能区分自伤与互砍。
+  const actor = s.player;
+  const source = playerSource(def.id, def.name, actor.id);
   damageSkeleton(s, index, damage, { ...options, source });
   // 技能也磨损武器（7.4：三类武器都有耐久，造成为主、速率低）。落空不算。
-  // 技能结算在 `withPlayer()` 上下文里，`s.player` 就是这一发的施法者。
-  if (aliveBefore) wearWeapon(s, damage, 0, s.player);
+  // 技能结算在 `withPlayer()` 上下文里，`actor` 就是这一发的施法者。
+  if (aliveBefore) wearWeapon(s, damage, 0, actor);
   const sk = s.skeletons[index];
   if (sk === undefined || !sk.alive) return;
   if (def.status !== undefined) applyStatus(sk, def.status, { source });
   if (def.element !== undefined) applyElement(s, index, def.element, { source });
+}
+
+/**
+ * 技能的「打人」出口（PVP 互砍）。与 `hit()` 同一份技能伤害 / 来源规则，只把
+ * 结算从 `damageSkeleton` 换成 `damagePlayer(..., target)`；`hurts()` 会在扣血前
+ * 拒绝「施法者自己」，这里再挡一次是为了不给自己刷命中特效与 `hits` 计数。
+ *
+ * `actor` / `target` 都由调用方从共享状态显式传入，不读本机座位；目标一律按
+ * `sortedPlayers()` 遍历，两端顺序逐位一致。
+ */
+function hitPlayer(
+  s: GameState, actor: Player, target: Player,
+  def: SkillDef, damage: number, color: string,
+): boolean {
+  if (target.id === actor.id || target.hp <= 0) return false;
+  const before = target.hp;
+  damagePlayer(s, damage, {
+    color, source: playerSource(def.id, def.name, actor.id),
+  }, target);
+  return target.hp < before;
 }
 
 /** 记一条视觉事件。特效只是「这一帧发生了什么」的记录，逻辑从不去读它。 */
@@ -425,6 +449,15 @@ function sweep(s: GameState, def: SkillDef, damage: number): void {
     hit(s, i, def, damage, { color: '#ffd166', knockback: 1.4 });
     spawnFx(s, 'impact', sk.x, sk.y, p.face, 26, 0.45);
     hits += 1;
+  }
+  // 同一刀也砍范围内的其他玩家：按 id 排序遍历，两端命中顺序一致。
+  for (const foe of sortedPlayers(s)) {
+    if (foe.id === p.id || foe.hp <= 0) continue;
+    if (Math.sqrt((foe.x - p.x) * (foe.x - p.x) + (foe.y - p.y) * (foe.y - p.y)) > def.reach + 20) continue;
+    if (hitPlayer(s, p, foe, def, damage, '#ffd166')) {
+      spawnFx(s, 'impact', foe.x, foe.y, p.face, 26, 0.45);
+      hits += 1;
+    }
   }
   spawnFx(s, 'sweep', p.x, p.y, p.face, def.reach, 0.85);
   // 地面灼痕：闪光只有 0.3 秒，但「刚才往哪边扫了一刀」要能留在地面上。
@@ -463,6 +496,7 @@ function startDash(
     uy: dy / d,
     damage,
     hit: [],
+    hitPlayers: [],
     skillId: def.id,
   };
   spawnFx(s, 'dash', p.x, p.y, p.face, def.reach, 0.35);
@@ -513,11 +547,30 @@ export function updateDash(s: GameState, dt: number, _mods: CombatModifiers): vo
     } else {
       damageSkeleton(s, i, dash.damage, {
         dirX: dash.ux, dirY: dash.uy, color: '#8be9fd', knockback: 1.7,
-        source: playerSource(dash.skillId, dash.skillId),
+        source: playerSource(dash.skillId, dash.skillId, p.id),
       });
     }
     spawnFx(s, 'impact', sk.x, sk.y, p.face, 30, 0.45);
     burst(s, sk.x, sk.y - 20, '#cfe8ff', 14, 200);
+  }
+
+  // 冲锋沿途也撞其他玩家：和怪一样「同一个人只挨一次」，命中表存在 `dash`
+  // 里（进 hash），所以两端不会一个人挨两下、另一个人没挨。
+  for (const foe of sortedPlayers(s)) {
+    if (foe.id === p.id || foe.hp <= 0 || dash.hitPlayers.includes(foe.id)) continue;
+    if (Math.sqrt((foe.x - p.x) * (foe.x - p.x) + (foe.y - p.y) * (foe.y - p.y)) > 44) continue;
+    dash.hitPlayers.push(foe.id);
+    const def = skillDef(dash.skillId);
+    if (def !== null) {
+      hitPlayer(s, p, foe, def, dash.damage, '#8be9fd');
+    } else {
+      damagePlayer(s, dash.damage, {
+        color: '#8be9fd',
+        source: playerSource(dash.skillId, dash.skillId, p.id),
+      }, foe);
+    }
+    spawnFx(s, 'impact', foe.x, foe.y, p.face, 30, 0.45);
+    burst(s, foe.x, foe.y - 20, '#cfe8ff', 14, 200);
   }
 
   // 「想走但一步都没走成」才算撞墙；走满距离也算结束。
@@ -555,6 +608,21 @@ function bolt(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
     hits += 1;
     farthest = Math.max(farthest, along);
   }
+  // 走廊上的其他玩家同样吃这一发（PVP）。`farthest` 按「走廊命中」推进，
+  // 不按是否真的扣血 —— 它决定冰面落点，是共享状态，两端必须逐位一致。
+  for (const foe of sortedPlayers(s)) {
+    if (foe.id === p.id || foe.hp <= 0) continue;
+    const rx = foe.x - p.x;
+    const ry = foe.y - p.y;
+    const along = rx * ux + ry * uy;
+    if (along < 0 || along > def.reach) continue;
+    if (Math.abs(rx * uy - ry * ux) > def.width + 18) continue;
+    hitPlayer(s, p, foe, def, damage, '#8be9fd');
+    spawnFx(s, 'impact', foe.x, foe.y, atan2(uy, ux), 30, 0.45);
+    burst(s, foe.x, foe.y - 20, '#8be9fd', 16, 190);
+    hits += 1;
+    farthest = Math.max(farthest, along);
+  }
   const angle = atan2(uy, ux);
   // 一条会「射出去」的冰锥（绘制层按角度铺晶体块），比原来的固定光点清楚得多。
   spawnFx(s, 'bolt', p.x, p.y, angle, def.reach, 0.85);
@@ -564,7 +632,7 @@ function bolt(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
   if (def.zone !== undefined) {
     const at = Math.min(def.reach, farthest > 0 ? farthest : def.reach * 0.7);
     spawnZone(s, def.zone.element, p.x + ux * at, p.y + uy * at, def.zone.radius, def.zone.life,
-      playerSource(def.id, def.name));
+      playerSource(def.id, def.name, p.id));
   }
   if (hits === 0) say(s, `「${def.name}」没有命中`);
 }
@@ -594,6 +662,20 @@ function cone(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
     if (Math.abs(diff) > def.width) continue;
     hit(s, i, def, damage, { dirX: cos(angle), dirY: sin(angle), color: '#60a5fa', knockback: 0.9 });
     spawnFx(s, 'impact', sk.x, sk.y, angle, 24, 0.45);
+    hits += 1;
+  }
+  // 扇形里的其他玩家同样吃这一发（和怪用同一份角度 / 距离判据）。
+  for (const foe of sortedPlayers(s)) {
+    if (foe.id === p.id || foe.hp <= 0) continue;
+    const rx = foe.x - p.x;
+    const ry = foe.y - p.y;
+    if (Math.sqrt(rx * rx + ry * ry) > def.reach + 20) continue;
+    let diff = atan2(ry, rx) - angle;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    if (Math.abs(diff) > def.width) continue;
+    hitPlayer(s, p, foe, def, damage, '#60a5fa');
+    spawnFx(s, 'impact', foe.x, foe.y, angle, 24, 0.45);
     hits += 1;
   }
   spawnFx(s, 'tide', p.x, p.y, angle, def.reach, 0.85);
@@ -629,7 +711,17 @@ function zone(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
     spawnFx(s, 'impact', sk.x, sk.y, p.face, 22, 0.45);
     hits += 1;
   }
-  spawnZone(s, def.zone.element, x, y, radius, def.zone.life, playerSource(def.id, def.name));
+  for (const foe of sortedPlayers(s)) {
+    if (foe.id === p.id || foe.hp <= 0) continue;
+    if (Math.sqrt((foe.x - x) * (foe.x - x) + (foe.y - y) * (foe.y - y)) > radius + 16) continue;
+    hitPlayer(s, p, foe, def, damage, def.zone.element === 'fire' ? '#fb923c' : '#4ade80');
+    spawnFx(s, 'impact', foe.x, foe.y, p.face, 22, 0.45);
+    hits += 1;
+  }
+  // 区域来源带施法者 id：`updateZones()` 才能做到「自己的火墙不烧自己、
+  // 别人的火墙会烧我」，而不是把全体玩家当成一个阵营一刀切。
+  spawnZone(s, def.zone.element, x, y, radius, def.zone.life,
+    playerSource(def.id, def.name, p.id));
   spawnFx(s, def.zone.element === 'fire' ? 'fire' : 'venom', x, y, p.face, radius, 0.85);
   say(s, `「${def.name}」铺开 · ${hits > 0 ? `命中 ${hits} 个目标` : '地面已点燃'}`);
 }
@@ -696,6 +788,14 @@ function strike(s: GameState, def: SkillDef, aim: { x: number; y: number }, dama
     hit(s, i, def, damage, { color: '#c084fc', knockback: 1.1 });
     spawnFx(s, 'impact', sk.x, sk.y, atan2(sk.y - y, sk.x - x), 30, 0.45);
     burst(s, sk.x, sk.y - 26, '#c084fc', 16, 220);
+    hits += 1;
+  }
+  for (const foe of sortedPlayers(s)) {
+    if (foe.id === p.id || foe.hp <= 0) continue;
+    if (Math.sqrt((foe.x - x) * (foe.x - x) + (foe.y - y) * (foe.y - y)) > def.width) continue;
+    hitPlayer(s, p, foe, def, damage, '#c084fc');
+    spawnFx(s, 'impact', foe.x, foe.y, atan2(foe.y - y, foe.x - x), 30, 0.45);
+    burst(s, foe.x, foe.y - 26, '#c084fc', 16, 220);
     hits += 1;
   }
   spawnFx(s, 'shock', x, y, -Math.PI / 2, def.width, 0.85);

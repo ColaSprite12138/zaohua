@@ -36,6 +36,7 @@ function twoPlayers(s: GameState): { me: Player; other: Player } {
       target: { x: me.x + 60, y: me.y },
       moveMode: 'idle',
       targetEnemy: null,
+      targetPlayerId: null,
       attackOrder: false,
       press: null,
       path: [],

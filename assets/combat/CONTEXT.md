@@ -42,6 +42,7 @@
 | 悬停鼠标 | 完全不产生指令；**悬停在存活敌人身上时光标变长剑、该骷髅脚下亮白环**（指针在小地图上时由 `pointerOnHud` 抑制）；**悬停在掉落物的名字牌 / 小模型上时不算悬停敌人**：`hoverEnemy` 置空、`hoverDrop` 记该 uid，页面光标回到移动指针，名字牌高亮 |
 | 单击地面 | 设落点走过去停下，`attacks` 不增加 |
 | 单击敌人 | 锁定该敌人 + 压入一条攻击指令；距离不够先接近，**进距离才挥砍一次**，只扣这一只 |
+| 单击另一个玩家（PVP） | `hitTestPlayer()` 精确身体盒 → `intent.targetPlayerId`（与 `targetEnemy` 互斥）+ 压入攻击指令；近战走 `swingAtPlayer()`、远程走 `fireRangedAtPlayer()`，伤害出口都是 `damagePlayer(..., target)`。排在怪之前，不被怪的 46px 容错吃掉；自己不能成为自己的目标 |
 | 长按左键（拖动） | 落点实时跟随光标；松开按最后落点走完停下；**全程不攻击** |
 | 单击掉落物 | **显式拾取指令**：点中**名字牌矩形**（展开后的牌面，或距小模型中心 ≤12px）→ 走过去、到达 `<50px` 才拾取（走过不拾取）；优先空武器槽 → 局内背包占 2×3 格 → 都不行则留在地上 |
 | **1 / 2** | 切换激活武器槽；只有激活槽参与攻击，空槽＝徒手（22 伤害 / `combat_rule.xlsx::melee_range_bare`=58 范围）；有武器取 `weapon.xlsx` 的伤害中值与 `range` 行值（当前 88），无表行回落 46 / 88 |
@@ -188,16 +189,16 @@ DOT / 地面区域）。**注册表只有一份**：AI、输入、普攻、技�
 
 | 项 | 契约 |
 |:--|:--|
-| 形状 | `DamageSource { owner: 'player' \| 'monster' \| 'world'; id; label }`。`id` 是技能 / 武器 / 怪物 / 弹道 / 元素 id，`label` 只给人看 |
-| 工厂 | `playerSource(id,label)` / `monsterSource(monsterId)` / `WORLD_SOURCE`（地图自带伤害，如毒池、岩浆、陷阱） |
-| **唯一判定** | `hurts(source, victim)`：`undefined` / `world` → 打所有人；`source.owner === victim` → **打不到**；否则打到。**禁止**在技能 / 区域 / 弹道里另写一份 `if (owner === 'player')` |
-| 玩家伤害 | `damagePlayer()` 在**无敌帧、耐久、闪红之前**判 `hurts(source,'player')`。自伤不是「挨了一下被免疫」，而是**根本没打到**（不亮无敌帧、不扣耐久、不闪红） |
+| 形状 | `DamageSource { owner: 'player' \| 'monster' \| 'world'; id; label; fromPlayerId? }`。`id` 是技能 / 武器 / 怪物 / 弹道 / 元素 id，`label` 只给人看；`fromPlayerId` = 施法玩家 id（2026-11-24 补，区分「谁打谁」） |
+| 工厂 | `playerSource(id,label,fromPlayerId?)` / `monsterSource(monsterId)` / `WORLD_SOURCE`（地图自带伤害，如毒池、岩浆、陷阱）。**玩家造成的伤害一律带上施法者 id**；缺省只存在于旧夹具，保守不打任何玩家 |
+| **唯一判定** | `hurts(source, victim, victimPlayerId?)`：`undefined` / `world` → 打所有人；怪→怪不打、怪→玩家打；玩家→怪打；**玩家→玩家：同一个身体不打，不同玩家互打**（1 人 = 1 队，所有人互敌）。任一侧缺 id 时保守不打。**禁止**在技能 / 区域 / 弹道里另写一份 `if (owner === 'player')` |
+| 玩家伤害 | `damagePlayer()` 在**无敌帧、耐久、闪红之前**判 `hurts(source,'player', p.id)`，`p` 是**被打的那个身体**（不是本机座位）。自伤不是「挨了一下被免疫」，而是**根本没打到** |
 | 怪伤害 | `damageSkeleton()` 在扣血前判 `hurts(source,'monster')`，所以同阵营连**击退 / 撞墙 / 惊醒 / 击杀计数 / 掉落**都不会发生 |
-| 区域 | `Zone.source: DamageSource`（原来只是给人看的字符串）。`updateZones()` 跳过同阵营宿主：自己的火墙不给自己挂点燃；怪的火墙也不烧放火的怪（对称规则，不是给玩家开后门） |
+| 区域 | `Zone.source: DamageSource`（原来只是给人看的字符串）。`updateZones()` 对**圈内每个玩家**各问一次 `hurts(..., p.id)`：自己的火墙不给自己挂点燃、别人的火墙会；怪的火墙也不烧放火的怪（对称规则） |
 | 状态 | `StatusInstance.source?`：DOT 跳伤时把它交给伤害入口。`applyStatus()` 续状态时，**谁把 DOT 抬高就算谁的**（弱来源不会抢走强来源的账） |
 | 反应 | 元素附着的 `source` 一路透传：区域续的附着 → 反应引爆的伤害，也算这片地的主人打的 |
-| 弹道 | `sourceOf(projectile, profile)`：阵营来自 `owner`，id 用弹道原型。火球落地留下的火 = 玩家来源，所以烧不到自己 |
-| 队友怎么接 | 把 `owner` 扩成队伍 id（或给 `DamageSource` 加 `team`），让「同阵营覆盖多个身体」即可 —— `hurts()` 一行不用改。**本轮按用户要求没有队友实体**，只有阵营判定就位 |
+| 弹道 | `sourceOf(projectile, profile)`：阵营来自 `owner`、身份来自 `p.ownerId`。`projectiles.ts::isHostile()` 放行「怪 + 除发射者外的其他玩家」；火球落地留下的火 = 发射者来源，所以烧不到发射者本人 |
+| 队友怎么接 | `fromPlayerId` 已就位；真要做组队时给 `DamageSource` 加 `teamId`，只在 `hurts()` 加一条比较，**技能 / 区域 / 弹道一行都不用改**。本轮按用户口径没有队友实体（友伤默认关闭 = 同队不打，当前 1 人 1 队） |
 | 投影 | `zones[].source`（id 字符串，兼容旧断言）+ `zones[].owner`（`player` / `monster` / `world`，验收脚本可直接断言「这片火是我的」） |
 
 **为什么来源必须在建模层而不是判定层**：只要有一处「自己写 `if (source === 'fire_wall') continue`」，
@@ -525,6 +526,17 @@ Mulberry32 固定种子 `0x5eed1234` 保证可复现（`reset()` 重建 rng）�
     「自伤把怪推走」「自伤点亮无敌帧」这类只在一帧里出现、事后查不出的 bug。
 66. **区域按 `Zone.source` 分阵营，不是按元素**：同一片火，玩家铺的不烧玩家、怪铺的烧玩家。
     别再引入「某元素对所有人生效」的特例 —— 那是把 2026-11-16 修掉的 bug 换个形态放回来。
+67. **PVP 互砍的判定只认 `fromPlayerId` + 被打身体的 id**（2026-11-24）：`s.players` 里
+    第二个真人出现后，「玩家阵营」不再能回答「这一下能不能打」。所有新伤害路径
+    （普攻 / 技能 / 弹道 / 溅射 / 区域 / DOT）都必须带施法者 id，并且把目标对象
+    显式传给 `damagePlayer(..., target)`；**绝不 `?? s.player` 兜底**，那会把伤害
+    落到各端本机座位上。
+68. **互砍目标住在 `PlayerIntent.targetPlayerId`**：与 `targetEnemy` 互斥，按玩家隔离、
+    随 `intent` 自动进 hash。清 `targetEnemy` 的每一处（`clearAttackOrder` / `pinPlayer` /
+    `orderSmash` / `beginSkill` / `reset`）都必须同时清它，否则「砸箱 + 打人」会并排结算。
+69. **新目标集合按 `sortedPlayers(s)` 遍历**：点击命中、技能范围、弹道溅射、区域续状态
+    都不许依赖数组下标或本机身份。每条新规则都要有「两个不同本机座位 + 安静帧」
+    的闭环用例断言两端 `hashGameState` 相同（`net/__tests__/two-seat-parity.test.ts`）。
 
 67. **寻路必须拉直**：`findPath()` 返回前必须过 `straightenPath()`。A* 跑在格子图上、
     8 邻接，原样返回的折线**只有八个方向** —— 那就是「移动不灵活、只有八方向」的真正
@@ -758,7 +770,7 @@ combat/simulation.ts       ← 编排 step/projection/deployRun/setArena，唯�
 | 数据 | `tables/destructible.xlsx`：`smash_seconds / loot_pool_id / drops / alarm_radius / guard_radius / name / hint`。**形状在代码**（`voxel.ts::DESTRUCTIBLE_MODELS`），数字在表 |
 | 三档 | `crate` 木箱 2s / 池 3 / 抽 1 次 / 声响 260；`coffer` 铜箱 3s / 池 3 / 抽 2 次 / 声响 320；`reliquary` 舍利匣 4s / 池 4 / 抽 2 次 / 声响 380 / **守卫 240** |
 | 位置 | **地图是权威**：LDtk 的 `Destructible` 实体（字段 `kind`）→ `ArenaMap.destructibles`。正式图 8 个（两座厢房各 2、中庭 4，两个舍利匣故意摆在怪的警戒圈里）；夹具 3 个 |
-| 交互 | 点它 → 走过去（`smashTarget`）→ 进 `SMASH_RANGE`=72px **自动起手**。点击优先级：掉落物名字牌 → 可破坏物（精确矩形 26×44）→ 敌人（命中盒 + 46px 容错）→ 地面。箱子排在敌人前面：它的盒子是精确矩形，而怪的命中带容错，反过来「指向箱子」会被容错吃掉 |
+| 交互 | 点它 → 走过去（`smashTarget`）→ 进 `SMASH_RANGE`=72px **自动起手**。点击优先级：掉落物名字牌 → 可破坏物（精确矩形 26×44）→ 其他玩家（PVP，精确身体盒）→ 敌人（命中盒 + 46px 容错）→ 地面。箱子排在敌人前面：它的盒子是精确矩形，而怪的命中带容错，反过来「指向箱子」会被容错吃掉；玩家排在怪之前同理，免得 near-miss 把「点在人身上」读成打怪 |
 | 站桩 | 起手即 `pinPlayer()`（和引导门、读条共用 `effects.ts::pinPlayer`），`step()` 的 `pinned` 加上 `s.smash !== null`，所以点击移动 / 攻击指令都不生效 |
 | 打断 | 受击（`player.hurt > 0`）/ 闪避 / 走出 108px → **只清进度**，不给硬直（同门引导的 v4 规矩）；闪避是唯一主动退出方式 |
 | 机关 | `guard_radius > 0` 的（舍利匣）在圈内还有活怪时**起不了手**，并清掉 `smashTarget`（否则每帧重试刷屏）。「先清场再破坏」是可执行的规则，不是提示文案 |

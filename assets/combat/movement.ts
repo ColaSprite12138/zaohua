@@ -17,7 +17,7 @@ import { atan2, cos, sin } from '../net/trig.ts';
 import { burst, setTarget } from './effects.ts';
 import { gearAffixTotal } from '../meta/affix.ts';
 import {
-  clearAttackOrder, dropAtPoint, hitTestEnemy,
+  clearAttackOrder, dropAtPoint, hitTestEnemy, hitTestPlayer,
 } from './attack.ts';
 import { destructibleAtPoint, orderSmash } from './destructibles.ts';
 import { CLICK_DRAG_PIXELS, PLAYER_DODGE_CD, STRIDE_PIXELS, type GameState, type StepInput } from './state.ts';
@@ -26,7 +26,10 @@ import { sortedPlayers } from './players.ts';
 import { BODY_RADIUS, cameraFor, canStandAt, walkable, type World } from './world.ts';
 
 export function classifyPointer(s: GameState, input: StepInput): void {
-  if (s.player.dodge > 0) return;
+  // 当前按 id 迭代的玩家（`withPlayer()` 绑定）：点击分类、相机换算、排除自己
+  // 全用它一个对象，不引入任何「本机座位」概念。
+  const self = s.player;
+  if (self.dodge > 0) return;
   /**
    * 视图原点按**当前迭代玩家**的位置现算，不读 `s.camera`。
    *
@@ -34,7 +37,7 @@ export function classifyPointer(s: GameState, input: StepInput): void {
    * B 模拟 A 的点击就会用 B 的视角去算拖拽，两端必然分叉。这里改成纯函数
    * `cameraFor(world, p.x, p.y)`，同一玩家在两端算出完全相同的值。
    */
-  const cam = cameraFor(s.world, s.player.x, s.player.y);
+  const cam = cameraFor(s.world, self.x, self.y);
   // View space = world minus camera. Deriving it HERE (instead of trusting an
   // extra screen-space input) keeps the engine contract at "world coordinates
   // only" and makes the "did the pointer move?" test camera-independent: while
@@ -89,13 +92,25 @@ export function classifyPointer(s: GameState, input: StepInput): void {
         // 命中盒带 46px 容错。箱子旁边站着一只怪时，指向箱子的那一下必须是
         // 「砸」，不能被容错吃掉。
         const crate = drop ? null : destructibleAtPoint(s, cx, cy);
-        const enemy = drop !== null || crate !== null ? null : hitTestEnemy(s, cx, cy);
+        // 对方玩家排在敌人之前：它只认精确身体盒，不该被怪的 46px near-miss
+        // 容错吃掉（否则「明明点在人身上」却锁了一只旁边的怪）。
+        const foe = drop !== null || crate !== null
+          ? null
+          : hitTestPlayer(s, cx, cy, self.id);
+        const enemy = drop !== null || crate !== null || foe !== null
+          ? null
+          : hitTestEnemy(s, cx, cy);
         clearAttackOrder(s);
         // A short click ON a drop (its name plate or small model) is the ONLY
         // thing that orders a pickup; walking past a drop never collects it.
         s.pickupTarget = drop ? drop.uid : null;
         if (crate !== null) {
           orderSmash(s, crate);
+        } else if (foe !== null) {
+          s.smashTarget = null;
+          s.targetPlayerId = foe.id;
+          s.attackOrder = true;
+          setTarget(s, foe.x, foe.y);
         } else if (enemy !== null) {
           s.smashTarget = null;
           s.targetEnemy = enemy;

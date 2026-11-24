@@ -206,7 +206,7 @@
 | **P2 帧同步** | **完成**（固定步长 / 输入帧 / relay / 等齐 / hash 对账；双人真机 14/14） |
 | **P2.5 服务器定帧（v2）** | **完成并已双人长跑验收（2026-11-24，18/18）**：服务器 **24 Hz** 独立帧钟、意图不带帧号、全量 history + 分块 replay、客户端只执行广播帧（`docs/net-sync-v2.md` §6.1）。证据：`HOLD_MS=180000` 两真账号零分叉（`mismatches=0` / `divergedTick=-1`）、tick 216→4606/4616、hashes 191/192、retx 0、↓12.2 KB/s；断线重连由用户真机实测能拉回最新状态。**线上 version 5 仍是旧前端 / 旧 relay，需重新 build + upload + 工作台发布** |
 | **P3a 远端输入作用于世界** | **完成（可破坏物）**：远端砸开的箱子两端一致、掉落同一批、进 hash 对账 |
-| **P3b 怪 / 掉落 / 互砍** | **完成**：`GameState.players` 全员实体化、`sortedPlayers(s)` 遍历、按 `playerId` 分槽的资源与结算、`damagePlayer(..., target)`、联机 PVP 当场爆装（`docs/net-sync-design.md` §8 第 2 步 10 条全 ✅） |
+| **P3b 怪 / 掉落 / 互砍** | **完成**：`GameState.players` 全员实体化、`sortedPlayers(s)` 遍历、按 `playerId` 分槽的资源与结算、`damagePlayer(..., target)`、联机 PVP 当场爆装（`docs/net-sync-design.md` §8 第 2 步 10 条全 ✅）。**2026-11-24 补齐互砍**：`DamageSource.fromPlayerId` + `hurts(source,victim,victimPlayerId)`、`PlayerIntent.targetPlayerId`、点击 / 普攻 / 远程 / 技能 / 弹道 / 溅射 / 区域对玩家的命中（代码 + 两座位闭环用例已落地，**双人真机未验**） |
 | P4 反作弊（`onCheckJoin` / 服务端视野裁剪 / 输入限幅） | **明确不做（2026-11-24 用户拍板）**。`onCheckJoin` 属准入防搅局而非状态反作弊，一并归不做；视野完全客户端本地算、服务器不下发；输入帧只量化不 clamp（§10.9）。跨网抖动不考虑、16 人满房不测 |
 
 **联调铁律（今晚血泪换的，别省）**：
@@ -407,11 +407,13 @@
     ② **开局阈值是「满 4 支队伍」，不是 4 人**（现在 1 票 = 1 队 = 1 人，所以恰好等价）。
        组队上线后要改成「数队伍」而不是「数票」，`server/trade-api/src/match.mjs::limits.formAt` 的注释钉着这件事。
     ③ **结算只显示自己的带出价值**：不做排名、不做对比、不下发他人数据。
-    ④ **友伤默认关闭**（等组队上线看反馈）。「自己打不到自己」——含自己铺的火墙 / 毒池等地形伤害——
-       由 `assets/combat/source.ts::hurts()` 保证，是**既有事实不是开关**。
-       **P3 必须给 `DamageSource` 加 `fromPlayerId` / `teamId`**：现在 `playerSource()` 的 owner 恒为 `'player'`，
-       `hurts(playerSource(..), 'player')` 恒为 `false` —— 不扩这一层，PVP 伤害一条都进不去。
-       判定只许留在 `hurts()` 一处，**不要在技能 / 弹道里各写一份 `if`**（`source.ts` 文件头立的就是这条规矩）。
+    ④ **友伤默认关闭**（等组队上线看反馈）。「自己打不到自己」——含自己铺的火墙 / 毒池 /
+       自己技能的溅射 / 自己射出的箭——由 `assets/combat/source.ts::hurts()` 保证，
+       是**既有事实不是开关**。当前 1 人 = 1 队，所以「不同玩家之间互打」是既定口径。
+       **2026-11-24 已补齐（代码 + 两座位闭环用例）**：`playerSource(id,label,fromPlayerId)`、
+       `hurts(source, victim, victimPlayerId)` 按「同一身体不打、不同玩家互打」判定；
+       判定仍只收敛在 `hurts()` 一处，禁止在技能 / 弹道里各写一份 `if`。
+       真机双人互砍（常驻宿主 + 两真账号）**尚未验收**，见本节末尾交付说明。
     ⑤ **怪量不随人数缩放**：`map.monsters` 是数量唯一权威（`state.ts:1165` 明写），4 人与 16 人是同一份怪表。
     ⑥ **掉落不做归属**：`Drop` 结构里根本没有 `droppedBy` / `killerId`，地上的东西所有人可捡。
        加归属反而是新增字段 + 新增规则，别顺手加。

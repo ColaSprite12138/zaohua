@@ -287,6 +287,11 @@ export interface PlayerIntent {
   moveMode: MoveMode;
   /** 点中的怪（`skeletons` 下标）；null = 没锁定。 */
   targetEnemy: number | null;
+  /**
+   * 点中的**另一个玩家** id（PVP 互砍目标）；null = 没锁定。
+   * 和 `targetEnemy` 互斥，两者都进 `intent` ⇒ 自动逐玩家隔离 + 进状态 hash。
+   */
+  targetPlayerId: string | null;
   /** 正在执行的普攻指令。 */
   attackOrder: boolean;
   /** 按住不放的那次点击（用来区分单击与拖拽），视角空间 + 世界空间各存一份。 */
@@ -370,6 +375,8 @@ export interface DashState {
   readonly damage: number;
   /** 本次位移已经打过的怪下标，同一只只挨一次。 */
   hit: number[];
+  /** 本次位移已经打过的**玩家 id**，同一个身体只挨一次（PVP 互砍）。 */
+  hitPlayers: string[];
   /** 来源技能 id：位移沿途要挂的元素 / 状态从技能定义里取，不另存一份。 */
   readonly skillId: string;
 }
@@ -1081,6 +1088,8 @@ export interface GameState {
   target: { x: number; y: number };
   moveMode: MoveMode;
   targetEnemy: number | null;
+  /** 点中的另一个玩家 id；与 `targetEnemy` 互斥，见 `PlayerIntent`。 */
+  targetPlayerId: string | null;
   /**
    * Enemy index under the free cursor this frame, using the SAME hit test as a
    * click. Pure feedback: the painter rings it and the page turns the pointer
@@ -1266,6 +1275,7 @@ export function createState(config: RunConfig = {}): GameState {
         target: { x, y },
         moveMode: 'idle',
         targetEnemy: null,
+        targetPlayerId: null,
         attackOrder: false,
         press: null,
         path: [],
@@ -1290,6 +1300,8 @@ export function createState(config: RunConfig = {}): GameState {
     set moveMode(v) { this.player.intent.moveMode = v; },
     get targetEnemy() { return this.player.intent.targetEnemy; },
     set targetEnemy(v) { this.player.intent.targetEnemy = v; },
+    get targetPlayerId() { return this.player.intent.targetPlayerId; },
+    set targetPlayerId(v) { this.player.intent.targetPlayerId = v; },
     get attackOrder() { return this.player.intent.attackOrder; },
     set attackOrder(v) { this.player.intent.attackOrder = v; },
     get press() { return this.player.intent.press; },
@@ -1472,6 +1484,7 @@ export function reset(s: GameState): void {
   s.firedEvents.length = 0;
   s.moveMode = 'idle';
   s.targetEnemy = null;
+  s.targetPlayerId = null;
   s.hoverEnemy = null;
   s.hoverDrop = null;
   s.hoverDestructible = null;

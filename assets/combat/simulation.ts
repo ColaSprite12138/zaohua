@@ -428,6 +428,8 @@ export function projection(s: GameState) {
       };
     }),
     attackTarget: s.targetEnemy,
+    /** PVP：本次普攻锁定的另一个玩家 id；与 `attackTarget` 互斥。 */
+    attackTargetPlayer: s.targetPlayerId,
     attackOrder: s.attackOrder,
     /** Enemy under the free cursor; drives the sword cursor and the hover ring. */
     hoverEnemy: s.hoverEnemy,

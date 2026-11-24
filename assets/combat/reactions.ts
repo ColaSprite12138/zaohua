@@ -266,11 +266,12 @@ export function updateZones(s: GameState, dt: number): void {
       // 来源一路带下去：反应伤害也算这片地的主人打的。
       applyElement(s, i, zone.element, { duration, source: zone.source });
     }
-    // 阵营过滤与「谁」无关，先判一次；圈内**每个玩家**都要续状态。
-    // 只判 `s.player` 会让「B 站在火里」在 A 的机器上完全不发生 —— 同一个
-    // zone 一边续了状态一边没续，是典型的两端分叉。
-    if (!hurts(zone.source, 'player')) continue;
+    // 圈内**每个玩家**都要各问一次 `hurts()`：判定从「玩家阵营」细化到
+    // 「哪个玩家」，所以自己的火墙不烧自己、别人铺的会烧我（PVP 互砍）。
+    // 只判一次 `s.player` 会让「B 站在 A 的火里」在 A 的机器上完全不发生 ——
+    // 同一个 zone 一边续了状态一边没续，是典型的两端分叉。
     for (const p of sortedPlayers(s)) {
+      if (!hurts(zone.source, 'player', p.id)) continue;
       if (Math.sqrt((p.x - zone.x) * (p.x - zone.x) + (p.y - zone.y) * (p.y - zone.y)) > zone.radius) continue;
       applyStatus(p, zone.status, { duration, source: zone.source });
     }

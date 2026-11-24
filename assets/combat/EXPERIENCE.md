@@ -544,3 +544,40 @@
   用户一句「T-pose 时左手在 -90°、右手在 +90°」就把几何说清了 —— 缺的是
   纵向分量，不是层级策略。遇到"某个东西位置不对"反复修不好时，先确认
   *那个东西在哪个坐标系里、它的位置公式是什么*，而不是继续调阈值。
+
+## 2026-11-24 · PVP 互砍：三条「PVE 时代正确」的假设同时失效
+
+用户真机两句话：「看不到对方穿戴的武器，但对方砸可破坏物时突然冒一把白色长剑」、
+「我也无法攻击对方玩家」。**这两件事不同层，别混成一个 bug 修**：
+
+- 前者是纯 V 层：`game/paint.ts::drawRemoteActor()` 只吃裸 `Player`，从不读
+  `weaponSlots`；非挥砍时 `blade = null`，只在 `attackFx > 0` 那一瞬硬编码
+  `itemModel('blade:steel')`（冷白钢色 + 12 格长条 = 用户看到的白剑）。砸箱每
+  0.45s 补一次 `attackFx`、持续数秒，是 PVP 无怪场景里唯一能反复点亮它的动作。
+  **数据从来不缺**：`createRemotePlayer()` 早已从 CVM 装备快照展开 `weaponSlots`
+  并进 hash，缺的是绘制层去消费它。修法 = 按 `actor.weaponSlots[activeWeaponSlot]`
+  常驻画真实武器、空槽就徒手，顺手补常驻血条与受击闪红。
+- 后者是机制缺口，三条 PVE 假设各堵一道，单机 / 同进程单测天然测不到：
+  ① `projectiles.ts::hostileKind()` 把「玩家弹」写成「只找怪」；
+  ② `source.ts::hurts()` 只比阵营，`playerSource()` 的 owner 恒 `'player'` ⇒
+     `player→player` 恒 false；
+  ③ 点击 / 普攻 / 技能的目标集合只有 `s.skeletons`。
+  `HANDOFF.md` 与 `docs/pvp-matchmaking.md` 早把 ② 登记成「P3 待做」，
+  但「箱子能砸开」会骗人：**可破坏物走独立的站桩引导，压根不过伤害系统**。
+- **正确修法不是加开关，是把「谁」补进建模层**：`DamageSource.fromPlayerId`
+  + `hurts(source, victim, victimPlayerId)`（同一身体不打、不同玩家互打、
+  缺 id 保守不打以兼容旧夹具）；目标身份住进 `PlayerIntent.targetPlayerId`
+  （按玩家隔离、`intent` 自动进 hash、与 `targetEnemy` 互斥）。
+  判定仍然只有 `hurts()` 一处，**没在技能 / 弹道里各写一份 `if`**。
+- **清目标要成对**：新增一个 `targetPlayerId` 后，`clearAttackOrder` / `pinPlayer` /
+  `orderSmash` / `beginSkill` / `reset` 五处清 `targetEnemy` 的地方全都要一起清，
+  否则「砸箱 + 打人」会并排结算。这类漏网比主链路更容易留下脏意图。
+- **`s.player` 预算是硬约束**：`check-local-context.mjs` 的 combat 预算是
+  「只降不升」，动手前正好 113/113 用满。所以新代码全部走显式 `Player` 参数，
+  并把 `ranged.ts` / `movement.ts` 里已有的 `s.player.xxx` 收敛成一个局部 `p`，
+  改完反而降到 101/113。**先跑一次守卫看余量，比写完再返工省事**。
+- **验收分层，别拿单测冒充真机**：`pvp-combat.test.ts`（7 条）逐条钉语义，
+  `two-seat-parity.test.ts`（+2 条）用两个不同本机座位 + 真静默帧断言
+  `hashGameState` 相同；但「两人真账号在造化宿主里互砍」只能由用户起常驻宿主验，
+  报告里必须写**未验**，不能只写「测试全绿」。
+

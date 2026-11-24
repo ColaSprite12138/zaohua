@@ -16,9 +16,10 @@ import type { Player } from './state.ts';
 import { burstEquipmentOnDeath } from './death-drop.ts';
 import { burst, say } from './effects.ts';
 import { authoredItem, monsterXp, rollLoot, rollWeaponDamage } from './loot.ts';
+import { sortedPlayers } from './players.ts';
 import { weaponDamage } from './run-inventory.ts';
 import type { CombatModifiers } from './modifiers.ts';
-import { hurts, type DamageSource } from './source.ts';
+import { hurts, playerSource, type DamageSource } from './source.ts';
 import { applyStatus, clearStatus, damageTakenMultiplier, lockedFlags, statusOf } from './status.ts';
 import { walkable, type World } from './world.ts';
 import {
@@ -68,6 +69,34 @@ export function hitTestEnemy(s: GameState, x: number, y: number): number | null 
     }
   }
   return boxHit ?? nearHit;
+}
+
+/**
+ * Which OTHER PLAYER is under this point (PVP 互砍的点击命中权威)。
+ *
+ * 只认精确身体盒，不带 `ENEMY_NEAR_MISS_PX` 容错：容错会把「点空地」也读成
+ * 打人，而玩家角色是会走位的，点得准才有资格锁定。`selfId` 是**当前迭代的
+ * 施法者**（`withPlayer()` 上下文），不是本机座位 —— 两端算出的集合完全一致。
+ * 排序按 `sortedPlayers` + 距离破平，不依赖远端插入顺序。
+ */
+export function hitTestPlayer(
+  s: GameState, x: number, y: number, selfId: string,
+): Player | null {
+  let hit: Player | null = null;
+  let best = Infinity;
+  for (const p of sortedPlayers(s)) {
+    if (p.id === selfId || p.hp <= 0) continue;
+    const dx = x - p.x;
+    if (Math.abs(dx) > ENEMY_BODY_HALF_WIDTH
+      || y < p.y + ENEMY_BODY_TOP || y > p.y + ENEMY_BODY_BOTTOM) continue;
+    const dy = y - (p.y + ENEMY_TORSO_Y);
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < best) {
+      best = d;
+      hit = p;
+    }
+  }
+  return hit;
 }
 
 /**
@@ -146,6 +175,7 @@ function monsterCanStand(w: World, x: number, y: number): boolean {
 export function clearAttackOrder(s: GameState): void {
   s.attackOrder = false;
   s.targetEnemy = null;
+  s.targetPlayerId = null;
 }
 
 /**
@@ -309,13 +339,49 @@ export function swingAtTarget(s: GameState, index: number, mods: CombatModifiers
   burst(s, p.x + cos(aim) * 52, p.y + sin(aim) * 52 - 22, '#cfe8ff', 5, 90);
 }
 
+/**
+ * 普攻**打另一个玩家**（PVP 互砍的近战出口）。
+ *
+ * 与 `swingAtTarget` 共用同一份伤害白值 / 星图乘区 / 耐久规则，只把结算出口
+ * 从 `damageSkeleton` 换成 `damagePlayer(..., target)`。`attacker` 由调用方显式
+ * 传入（`withPlayer()` 正在迭代的那个人），不读「本机」；伤害来源带上
+ * `fromPlayerId`，`hurts()` 才能区分「别人打我」和「我自己打自己」。
+ */
+export function swingAtPlayer(
+  s: GameState, attacker: Player, target: Player, mods: CombatModifiers,
+): void {
+  if (lockedFlags(attacker).noAttack || target.hp <= 0) return;
+  const ddx = target.x - attacker.x;
+  const ddy = target.y - attacker.y;
+  const d = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+  const weaponId = activeWeapon(s);
+  const broken = activeWeaponBroken(s);
+  const armed = weaponId !== null && !broken;
+  const baseline = !armed ? 22 : (weaponDamage(weaponId, s.runInventory) ?? 46);
+  const aim = atan2(ddy, ddx);
+
+  attacker.attackCd = PLAYER_ATTACK_CD;
+  attacker.attackFx = PLAYER_SWING_TIME;
+  attacker.face = aim;
+  s.attacks += 1;
+
+  const dealt = mods.damageMultiplier(baseline);
+  damagePlayer(s, dealt, {
+    color: armed ? '#ffd166' : '#ffb454',
+    source: playerSource(weaponId ?? 'melee', '普攻', attacker.id),
+  }, target);
+  if (armed) wearWeapon(s, dealt, 0, attacker);
+  burst(s, attacker.x + cos(aim) * 52, attacker.y + sin(aim) * 52 - 22, '#cfe8ff', 5, 90);
+}
+
 /* ------------------------------------------------- 玩家掉血（唯一入口） */
 
 export interface PlayerDamageOptions {
   readonly color?: string;
   /**
-   * 谁造成的。**同阵营打不到玩家**（`hurts()`）：自己火墙的 DOT、自己铺的毒池、
-   * 自己技能的溅射都不会扣自己的血。省略 = 环境，照常生效。
+   * 谁造成的。**自己打不到自己**（`hurts()`）：自己火墙的 DOT、自己铺的毒池、
+   * 自己技能的溅射都不会扣自己的血；**别人造成的会**（PVP 互砍）。
+   * 省略 = 环境，照常生效。
    */
   readonly source?: DamageSource;
   /**
@@ -350,10 +416,11 @@ export function damagePlayer(
 ): boolean {
   if (s.gameOver || s.extracted || s.timedOut || s.cleared) return false;
   if (amount <= 0) return false;
-  // **自己的东西打不到自己**：在无敌帧、耐久、闪红之前就返回，
-  // 所以自伤连"看起来挨了一下"的效果都不会有（用户 2026-11-16 报的问题）。
-  if (!hurts(options.source, 'player')) return false;
   const p = target ?? s.player;
+  // **自己的东西打不到自己、别人的东西能打到自己**：在无敌帧、耐久、闪红之前
+  // 就返回。第三个参数必须是「被打的那个身体」的 id，不能是本机座位 id ——
+  // 区域 / DOT / 弹道会对每个玩家各结算一次，两端必须问出同一个答案。
+  if (!hurts(options.source, 'player', p.id)) return false;
   if (p.hp <= 0) return false;
   if ((options.invuln ?? true) && p.invuln > 0) return false;
   // 易伤（软控）对**所有**打向玩家的伤害生效：和怪物打怪走同一条倍率表。
