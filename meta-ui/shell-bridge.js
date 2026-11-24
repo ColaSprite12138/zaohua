@@ -118,21 +118,38 @@
   /**
    * 锁定本局的装备快照（2026-11-24，联机专用）：点「快速匹配」时调用。
    *
-   * 与 deploy 的区别只有一个：**不动 lobby**。匹配可能取消、可能等 60 秒，
-   * 这期间背包必须原样留在界面上 —— 直接 `takeIntoRun` 等于"排个队装备就没了"。
+   * **是真正取走（`takeIntoRun`），不是预览。** 因为定下了「开局装备以 CVM
+   * 为准」这一条：上传到 CVM 的那份必须与本机实际带进局的那份逐件相同。
+   * 如果只预览、deploy 时再按当时的 lobby 取，玩家排队期间改一件装备，本机
+   * 与别人眼里的我就不是一个东西了。
    *
-   * 锁了之后 deploy 必须用**这一份**（而不是重新算）：匹配服把这份下发给了全场，
-   * 本机要是带另一份下场，别人眼里的我和真实的我就是两个人 ⇒ 帧同步分叉。
+   * 代价是排队期间背包不在界面上 —— 所以任何「没进局就退出」的路径都必须调
+   * `host.releaseLockedDeployment()` 还回去（匹配取消、本局作废、断线回大厅）。
    */
   host.lockDeployment = function () {
     var lobby = host.getLobbyState();
-    var locked = {
-      loadout: M.peekIntoRun(lobby),
-      stars: starDeployment(),
-      at: Date.now(),
-    };
+    var loadout = M.takeIntoRun(lobby);
+    // 先记账再刷界面：`takeIntoRun` 已经把装备从 lobby 取走了，万一后面
+    // `setState` 抛错，没有 `lockedDeployment` 的话这份装备就悬空了（还不了）。
+    var locked = { loadout: loadout, stars: starDeployment(), at: Date.now() };
     host.lockedDeployment = locked;
+    host.setState(lobby);
     return locked;
+  };
+
+  /**
+   * 把锁定那份还回界面（没进局就退出时调用）。
+   *
+   * 不还与「排个队装备就没了」等价 —— 锁定已经把 lobby 取空了。
+   * 返回是否真的还了（进局后 `lockedDeployment` 已被清空，不会重复还）。
+   */
+  host.releaseLockedDeployment = function () {
+    if (!host.lockedDeployment) return false;
+    var lobby = host.getLobbyState();
+    M.bringBack(lobby, host.lockedDeployment.loadout);
+    host.setState(lobby);
+    host.lockedDeployment = null;
+    return true;
   };
 
   var countItems = function (loadout) {
@@ -308,12 +325,11 @@
     // Losing the run therefore loses everything carried except the insured
     // cells. The stash stays in the lobby and never crosses the heap boundary.
     //
-    // 联机（pvpve）用**点匹配那一刻锁定**的那份（`host.lockDeployment`），
-    // 这里调 takeIntoRun 只是为了清空 lobby，返回值丢弃 —— 两份必须同一个，
-    // 否则远端看到的「我」和我真实带的装备不是一个东西。
+    // 联机（pvpve）：装备在**点匹配那一刻**就已经取走了（`host.lockDeployment`），
+    // 这里必须复用那一份 —— 上传到 CVM 的就是它，换一份就等于「别人眼里的我」
+    // 和「真实的我」不是一个东西。
     var locked = currentKind === 'pvpve' && host.lockedDeployment ? host.lockedDeployment : null;
-    var taken = M.takeIntoRun(lobby);
-    var loadout = locked ? locked.loadout : taken;
+    var loadout = locked ? locked.loadout : M.takeIntoRun(lobby);
     host.setState(lobby);
     host.lockedDeployment = null;
     inRun = true;

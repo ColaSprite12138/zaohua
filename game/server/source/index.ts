@@ -204,6 +204,11 @@ type RelayState = {
      *   `bad:404` / `fail:timeout` / `no-fetch`
      */
     cvmLoadouts: string
+    /**
+     * 旧客户端还会发的 `{snapshot}` 上行次数（单一数据源之后一律不采用）。
+     * 只为排障：> 0 说明还有旧版本在跑，而它们的装备不会被当成权威数据。
+     */
+    clientSnapshots: number
   }
 }
 
@@ -224,6 +229,7 @@ function emptyState(players: RelayPlayer[]): RelayState {
       snapshotResends: 0,
       cvmProbe: 'skipped',
       cvmLoadouts: 'skipped',
+      clientSnapshots: 0,
     },
   }
 }
@@ -754,14 +760,17 @@ function createGame(players: RelayPlayer[], match?: { reportLoading?: () => void
 
       const snap = readPeerSnapshot(input)
       if (snap !== null) {
-        const entry = state.players.find((p) => p.id === playerId)
-        if (entry) {
-          // **客户端上报覆盖 CVM 那份**：deploy 后上报的才是他真正带进局的
-          // 装备与真 hpMax；CVM 的是"点匹配那一刻"，用于没机会上报的人。
-          entry.snapshot = snap
-          // 从这一刻起 10 秒内跟着广播下发，够所有人建好远端影子。
-          entry.snapshotUntil = state.frame + SNAPSHOT_GRACE_FRAMES
-        }
+        /*
+         * **开局快照只有一个来源：CVM**（用户 2026-11-24 拍板）。
+         *
+         * 以前这里会把客户端 deploy 后上报的那份写进名单，于是「谁先到用谁」——
+         * 而覆盖顺序只要和别的端不一致，同一局里两个人对同一个玩家的装备认知
+         * 就不同 ⇒ hash 分叉。既然 CVM 在点匹配时就把数据存住了（当事人离线也
+         * 拿得到），客户端这条路就没有存在价值，只需要它别再影响世界。
+         *
+         * 这里只计数，供排障确认「旧客户端还在发」。
+         */
+        state.stats.clientSnapshots += 1
         return
       }
 

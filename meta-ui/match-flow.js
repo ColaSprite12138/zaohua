@@ -152,6 +152,17 @@
   }
 
   function finish(text, bad) {
+    /*
+     * 没进局就退出（取消 / 本局作废 / 断线）：把锁定那份装备还回界面。
+     * `lockDeployment` 是真正把装备从 lobby 取走（保证「本机带的」与
+     * 「上传给 CVM 的」逐件相同），所以不退就是「排个队装备没了」。
+     * 进过局的话 `lockedDeployment` 已被 deploy 清空，这里什么都不做。
+     */
+    try {
+      if (host && typeof host.releaseLockedDeployment === 'function') host.releaseLockedDeployment();
+    } catch (err) {
+      console.warn('[match] 归还锁定装备失败', err);
+    }
     stopTimer();
     leaveRoom();
     S.phase = 'stopped';
@@ -686,7 +697,11 @@
         try {
           if (host && typeof host.lockDeployment === 'function') locked = host.lockDeployment();
         } catch (err) {
-          console.warn('[match] 锁定装备快照失败，本局退回「进房后各自上报」', err);
+          // 锁不住就不能进去：本机带的装备与上传给 CVM 的那份必须逐件相同，
+          // 否则别人眼里的我和真实的我不是一个东西。这一局宁可不排。
+          console.warn('[match] 锁定装备快照失败，取消本次匹配', err);
+          finish('无法锁定本局装备，请重试', true);
+          return;
         }
         // 平台身份：用**造化**账号的 id/name，不是我们自家账号 ——
         // relay 名单里的 id/name 就是造化那套，只有同源才对得上。

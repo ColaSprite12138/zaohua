@@ -89,7 +89,7 @@ let game = null
   game.stop?.()
 }
 
-// ---- 场景 2：客户端随后自己上报，必须覆盖 CVM 那份 ----
+// ---- 场景 2：客户端再上报自己的快照，必须被忽略（单一数据源）----
 {
   game = captured.createGame([{ id: 'seat-a', name: '甲' }])
   game.start()
@@ -97,12 +97,17 @@ let game = null
   game.applyAction('seat-a', { matchId: 'm-test-1234' })
   for (let i = 0; i < 40 && game.getState().stats.cvmLoadouts === 'pending'; i += 1) await sleep(50)
 
-  const own = { loadout: { bag: [], equipped: [null, null, null, null, null, null, null, null, null, null], activeWeaponSlot: 0, safe: [] }, hpMax: 132, manaMax: 80, starSkills: ['x'] }
+  const own = {
+    loadout: { bag: [], equipped: [null, null, null, null, null, null, null, null, null, null], activeWeaponSlot: 0, safe: [] },
+    hpMax: 132, manaMax: 80, starSkills: ['x'],
+  }
   game.applyAction('seat-a', { snapshot: own })
   const after = game.getState()
-  check('客户端 deploy 上报覆盖 CVM 那份（在场者以真实上报为准）',
-    JSON.stringify(after.players[0].snapshot) === JSON.stringify(own),
+  check('客户端上报**不覆盖** CVM 那份（单一数据源，用户 2026-11-24 拍板）',
+    JSON.stringify(after.players[0].snapshot) === JSON.stringify(loadoutA),
     JSON.stringify(after.players[0].snapshot).slice(0, 60))
+  check('旧上报只计数，供排障确认还剩多少旧客户端', after.stats.clientSnapshots === 1,
+    after.stats.clientSnapshots)
   game.stop?.()
 }
 

@@ -1018,32 +1018,17 @@ function cloneEquipped(
 }
 
 /**
- * 只读预览：**和 `takeIntoRun` 得到同一份结构，但不动 lobby**。
- *
- * 存在的理由（2026-11-24）：联机匹配要在**点「快速匹配」那一刻**把本局的装备
- * 锁定并上传到匹配服 —— 匹配可能取消、可能失败、可能等 60 秒，这期间玩家的
- * 背包必须原样留在界面上。直接调 `takeIntoRun` 会把 lobby 清空，等于"排个队
- * 装备就没了"。
- *
- * 两份必须逐字段一致：`takeIntoRun` 就是「peek 完再清空」，所以它复用这里 ——
- * 将来加字段只改一处，不会出现"预览的 loadout 和真进局的不一样"这种分叉源。
- */
-export function peekIntoRun(lobby: InventoryState): RunLoadout {
-  return {
-    bag: clonePlaced(lobby.bag),
-    equipped: cloneEquipped(lobby.equipped),
-    activeWeaponSlot: lobby.activeWeaponSlot === 1 ? 1 : 0,
-    safe: clonePlaced(lobby.safe ?? []),
-  };
-}
-
-/**
  * Deploy: hand the lobby's bag + equipment to the run and EMPTY the lobby.
  * Losing the run therefore loses every carried item; only a clear brings them
  * back. `lobby.stash` stays exactly as it was.
  */
 export function takeIntoRun(lobby: InventoryState): RunLoadout {
-  const loadout = peekIntoRun(lobby);
+  const loadout: RunLoadout = {
+    bag: clonePlaced(lobby.bag),
+    equipped: cloneEquipped(lobby.equipped),
+    activeWeaponSlot: lobby.activeWeaponSlot === 1 ? 1 : 0,
+    safe: clonePlaced(lobby.safe ?? []),
+  };
   lobby.bag = [];
   lobby.safe = [];
   lobby.equipped = EQUIP_SLOTS.map(() => null);

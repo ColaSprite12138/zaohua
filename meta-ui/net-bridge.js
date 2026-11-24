@@ -31,10 +31,6 @@
     peers: [],
     /** 上一次发给 Worker 的座位签名（含装备快照，快照变了也要重发）。 */
     seatSig: '',
-    /** 还没被服务端确认收下的开局装备快照（会重发，直到 game_update 里看到自己）。 */
-    pendingSnapshot: null,
-    /** 第一次发 pendingSnapshot 的时间（毫秒）。超过 3 秒就放弃，别无限重发。 */
-    pendingSnapshotAt: 0,
     /**
      * 已经拿到过开局快照的 peer id。
      *
@@ -488,14 +484,6 @@
         sendUp({ tick: msg.tick, hash: msg.hash, parts: msg.parts });
         return;
       }
-      if (msg.type === 'netLoadout') {
-        // 开局装备快照上行。relay 只转发、不解析，随下一次 game_update 广播给所有人。
-        if (!S.active || !S.session) return;
-        S.pendingSnapshot = msg.snapshot;
-        S.pendingSnapshotAt = Date.now();
-        if (sendUp({ snapshot: msg.snapshot })) S.stats.sends += 1;
-        return;
-      }
       if (msg.type === 'netLoadoutsMissing') {
         // relay 判定「有人没交开局装备快照」：**不空快照硬开**，由主窗口把这局作废。
         // 空快照会让两端属性从 tick 0 起就不同，那是最难查的一类分叉。
@@ -623,24 +611,7 @@
     }
     // 签名必须包含 snapshot：名单没变但对方装备到齐了，也要重发一次 netSeat，
     // 否则 Worker 永远等不到「装备齐」这个信号，会一直停在门禁上。
-    // 开局快照上行可能在 game 实例创建之前发出而被静默丢掉：只要服务端
-    // 名单里还没看到自己的 snapshot，就每轮重发一次，直到落地为止。
-    if (S.pendingSnapshot) {
-      var mine = null;
-      for (i = 0; i < players.length; i += 1) {
-        if (players[i] && players[i].id === S.playerId) { mine = players[i]; break; }
-      }
-      // 服务器只在开局窗口内下发 `snapshot`（之后归零），所以「广播里没有我」
-      // 不再等于「没落地」。用 3 秒兜底：足够十几次往返，超时就认为已经落过，
-      // 否则这里会永远每轮重发，把上行打满。
-      if (mine && mine.snapshot) {
-        S.pendingSnapshot = null;
-      } else if (Date.now() - S.pendingSnapshotAt < 3000) {
-        sendUp({ snapshot: S.pendingSnapshot });
-      } else {
-        S.pendingSnapshot = null;
-      }
-    }
+    // （玩家自己不再上报快照 —— 单一数据源，权威数据在 CVM。）
 
     /*
      * 兜底：名单里有人在**开局窗口关掉之后**才被我看到，我从没拿到过它的快照。
@@ -936,7 +907,6 @@
     // 新房间 = 新名单：上一次房间见过的快照不算数。
     S.seenSnapshots = {};
     S.snapshotAskedAt = 0;
-    S.pendingSnapshotAt = 0;
     // 流量从 0 起算：上一局的累计数会让「这局上行多少」看不出来。
     resetTraffic();
     S.lastSignature = '';
@@ -1030,8 +1000,6 @@
     }
     S.seatSig = '';
     S.peers = [];
-    S.pendingSnapshot = null;
-    S.pendingSnapshotAt = 0;
     // 新一局 = 新名单：上一局见过的快照不再算数（否则新队友会一直不请求补发）。
     S.seenSnapshots = {};
     S.snapshotAskedAt = 0;

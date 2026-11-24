@@ -1154,19 +1154,16 @@ export const game: Plugin = {
           channel?.postMessage({ type: 'deployed', loadout: snapshotRun(state.runInventory) });
 
           if (netActive) {
-            // 上报自己的开局快照：装备 + **算好的**属性 + 星图技能。
-            // 属性必须等 deployRun() 跑完才有（装备/星图乘区在那里结算）。
+            /*
+             * 开局门禁：等**所有人**的开局快照到齐。
+             *
+             * 单一数据源（用户 2026-11-24 拍板）：快照只来自 CVM，由 relay 在
+             * 进局时按 matchId 拉取后随名单下发。所以这里**不需要上报自己的**
+             * ——以前那句 `netLoadout` 就是为了补「服务器不知道别人带了什么」，
+             * 现在服务器从 CVM 拿，客户端再报一份只会制造第二个来源。
+             */
             awaitingLoadouts = true;
             loadoutWaitFrames = 0;
-            channel?.postMessage({
-              type: 'netLoadout',
-              snapshot: {
-                loadout: msg.deployment?.loadout ?? null,
-                hpMax: state.maxHp,
-                manaMax: state.maxMana,
-                starSkills: [...state.starSkills],
-              },
-            });
             // 收齐之后由 applySeat 触发 tryArmAfterLoadouts() → armTimeline()。
             tryArmAfterLoadouts();
           } else {

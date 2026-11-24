@@ -248,32 +248,37 @@ detached 宿主，本机没有这两个账号，**跑不了**。所以在拿到�
 | B 第 20 秒 seated | `pending = 0` → 判定「全员到齐」→ `playing`，`deadline` 清空 |
 | 之后 | A 的名字还在房间名单里（掉线保留座位），但他的客户端永远不再上报 loadout |
 
-结果就是「局照开、有人永远没有快照」。所以快照有**两条来源**，由 relay 选定一份广播：
+结果就是「局照开、有人永远没有快照」。
 
-| 来源 | 时机 | 内容 | 谁用 |
-|---|---|---|---|
-| 客户端上报 | deploy 之后 | `{loadout, hpMax, manaMax, starSkills}` | 在场者（**优先级更高**） |
-| CVM 下发 | 点匹配时 `POST /match/queue` 带上 | `{loadout, stars:{nodes,skills}}` | 没机会上报的人 |
+### 7.3 单一数据源：开局快照只认 CVM（2026-11-24 拍板）
 
-**为什么客户端上报能覆盖 CVM 那份**：它反映的是「他真正带进局的装备 + 真的跑过
-不 deploy 的属性」；CVM 那份是"点匹配那一刻"，只用于**没机会再说一次**的人。
-覆盖顺序写反一次，两端对同一个人的认知就分叉。
+**只有一个来源**，客户端不再上报自己的快照：
 
-**属性怎么算**：CVM 那份只有 `loadout + stars`，`hpMax/manaMax` 由各端用
-`assets/combat/vitals.ts::vitalsFrom` 现算 —— 和 `applyStarMods` 是**同一份代码**
-（`assets/combat/__tests__/vitals.test.ts` 守着），所以「本机算的」与「远端算的」逐位相同。
+| 环节 | 谁做 | 内容 |
+|---|---|---|
+| 点匹配 | 客户端 `POST /match/queue` | `{loadout, stars, platformId, displayName}` |
+| 配对 | 撮合服 | 固化进 `match_loadouts`（此后改装备不影响本局） |
+| 进局 | 任一活着的客户端 | `sendAction({matchId})`（只需局号，不需要"他"还在） |
+| 拉取 | relay | `GET /api/v1/match/:id/loadouts` → `players[].snapshot` |
+| 属性 | **每个客户端各自** | `vitalsFrom(loadout, createModifiers(stars.nodes))` |
+| 本机装备 | 客户端 | 点匹配时 `lockDeployment()` **真正取走**，deploy 用同一份 |
 
-**relay 怎么知道自己是哪一局**：`createGame(players, match?)` 只给 `reportLoading`，
-拿不到 roomId/matchId。所以由**任一还活着的客户端** `sendAction({matchId})` 上报
-（`net-bridge.js::declareMatch`）—— 需要的是局号，不是那个人的连接。
+三条必须同时成立的约束：
 
-**数据落点**：`match_loadouts(match_id, user_id, platform_id, display_name, payload)`，
-配对成功时从 `pending_loadouts` 固化，此后改装备不影响本局。读取接口
-`GET /api/v1/match/:id/loadouts`（relay 用，`matchId` 即凭证，见 `http.mjs`）。
+1. **不能有第二个来源**。以前客户端 deploy 后也上报一份，于是"谁先到用谁"——
+   覆盖顺序只要和别的端不一致，同一局里两个人对同一玩家的装备认知就不同 ⇒ 分叉。
+   现在那条上行仍然被接收，但**只计数不采用**（`stats.clientSnapshots`，排障用）。
+2. **属性必须现算，不能传**。CVM 那份只有 `loadout + stars`（点匹配时还没有 hpMax）。
+   各端用 `assets/combat/vitals.ts::vitalsFrom` 现算，它和 `applyStarMods` 是**同一份
+   代码**（`vitals.test.ts` 守着），所以"本机算的"与"远端算的"逐位相同。
+3. **锁定必须是真取走**。`lockDeployment()` 调 `takeIntoRun`（清空 lobby），
+   deploy 复用那一份。只预览不取走的话，玩家排队期间改一件装备，本机实际带的
+   就和上传给 CVM 的不是一个东西了。代价是排队期间背包不在界面上 ——
+   所以任何"没进局就退出"的路径都要调 `releaseLockedDeployment()` 还回去。
 
-**门禁超时的新行为**：不再用空快照硬开，改为**拒绝开局 + 本局作废**
-（`game.pack.ts::abortForMissingLoadouts` → `netLoadoutsMissing` → match-flow abort）。
-空快照会让缺快照的人从 tick 0 起属性就不同，分叉比"重排一局"难处理得多。
+**失败即拒绝开局**：CVM 拉不到 / 某人没有快照 ⇒ 门禁等 300 帧 ⇒
+`abortForMissingLoadouts` 把本局作废回大厅。这是单数据源的必然代价 ——
+宁可不打，也不要一个从 tick 0 就分叉的世界。
 
 
 ## 8. 帧率与带宽：为什么逻辑帧率不能跟着广播频率走
