@@ -76,14 +76,26 @@
 **两种书写尺度（2026-11-25 起）**：新模型一律用 `new Builder(name, VOXEL_UNIT)`
 按 2px 原生书写（格数按屏幕高度 ÷ 2 算），这样才真正获得加倍细节；仍按 4px 老
 尺度书写的旧模型交给 `Builder.model()` 自动展开成 2×2 个 2px 格，**屏幕尺寸不变但
-造型细节不会增加**。`z` 是深度层，展开时不动。步态参数 `leftLift/rightLift/offLift`
-仍是旧尺度的 0/1，2px 原生模型内部要 ×2（见 `knightPose` 的 `greave`）。
+造型细节不会增加**。`z` 是深度层，展开时不动。
+
+**主角是例外，走真 3D 骨架（同日第二次改造）**：`KNIGHT` 不再由 `bodyOf()` 的
+front/back 两张平面 + `volumeOf()` 复制 4 层生成（那样侧身只有 3px，是纸片人），
+而是 `KNIGHT_PARTS` 里每个部件都有 xyz 厚度的体素网格，由 `assembleRig(pose)`
+按关节参数装配成一份 3D 网格，再交给现有 `bake(yaw)` 真投影、`spriteOf()` 按
+7.5° 帧档缓存。骨架层级：`pelvis → torso → neck → head`、
+`hip → thigh → shin → foot`、`shoulder → upperArm → forearm → hand`。
+左右肢体共用同一份部件、只换装配偏移，宽度天然对称；躯干用薄壳而非实心盒，
+免得方块数把 `bake` 撑爆。头/颈/肩/腰/靴尖都有收放，侧影深约 14px。
+`RIG_STAND / RIG_STEP_LEFT / RIG_STEP_RIGHT` 是三个步态；后续挥剑 / 拉弓 /
+施法只要加新的 `RigPose`，不用重画方块。持械手臂 `KNIGHT_ARM` 也由同一套臂部件
+`assembleArm()` 生成（6px 宽），`drawLimb` 的挥砍契约不变。
+**骷髅 / 骷髅法师仍是 front/back 平面契约**，两套并存，别混。
 
 `voxel.ts` 里有三类模型，先选对类型再写：
 
 | 类型 | 接口 | 用途 |
 |:--|:--|:--|
-| `BodyModel` | `bodyOf(name, blocks, pose)`，每方向 3 个姿势 | 角色 / 怪物。**必须同时有 `front` 与 `back`**，`pose(back, leftLift, rightLift, offLift)` 用抬腿一格做走路帧（帧 0/2 同一站姿，1 抬左脚，3 抬右脚） |
+| `BodyModel` | `bodyOf(name, blocks, pose)` / `rigBodyOf(name, blocks, poses)`，3 个步态 | 角色 / 怪物。**非主角角色**（骷髅 / 法师）必须同时有 `front` 与 `back`，`pose(back, leftLift, rightLift, offLift)` 用抬腿一格做走路帧（帧 0/2 同一站姿，1 抬左脚，3 抬右脚）；主角走上面的 3D 骨架 |
 | `Limb` | `armModel(name, sleeve, fist)`，从肩关节向上摆 | 持械手臂。`drawLimb(g, limb, 肩x, 肩y, 角度)`，角度 0=右、+π/2=下；剑柄落在拳头上 |
 | `VoxelModel` | 普通工厂函数 + `itemModel(key)` | 道具（剑 / 弓 / 箭 / 戒指 / **药瓶** …）。键是 `"形状:配色"`，配色按品质取；药瓶例外 —— 红药固定 `potion:hp`、蓝药 `potion:mana`（不跟品质走，见 `inventory.ts::POTION_ACCENT`） |
 

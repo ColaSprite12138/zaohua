@@ -48,11 +48,16 @@ describe('character rigs', () => {
       expect(body.poses).toHaveLength(3);
       for (const pose of body.poses) {
         expect(pose.voxels.length).toBeGreaterThan(60);
-        // 厚度：任意高度上都有 BODY_DEPTH 层（头 / 躯干 / 腿的 z 基准不同，
-        // 所以总的 z 取值会比 BODY_DEPTH 多 —— 那正是"站姿轮廓"）。
         const head = pose.voxels.filter((v) => v.y === 10);
-        expect(new Set(head.map((v) => v.z)).size).toBe(BODY_DEPTH);
         expect(new Set(pose.voxels.map((v) => v.z)).size).toBeGreaterThanOrEqual(BODY_DEPTH);
+        if (body === KNIGHT) {
+          // 主角是真 3D 体素：侧影 z 取值远多于平面契约的 4 层，腿本身也有厚度。
+          expect(new Set(pose.voxels.map((v) => v.z)).size).toBeGreaterThanOrEqual(7);
+          expect(new Set(head.map((v) => v.z)).size).toBeGreaterThanOrEqual(4);
+        } else {
+          // 骷髅仍是 front/back 平面 + volumeOf 复制 BODY_DEPTH 层的契约。
+          expect(new Set(head.map((v) => v.z)).size).toBe(BODY_DEPTH);
+        }
       }
     }
   });
@@ -87,17 +92,16 @@ describe('character rigs', () => {
     expect(ACCENTS.gem).toBeTruthy();
   });
 
-  it('the volume carries BOTH faces: visor in front, nape at the back', () => {
-    // 正面层（z = 0）必须有发光的眼；最背层（z = -(D-1)）必须是后脑的暗色，
-    // 否则转过 180° 会看到一张"暗掉的正脸"。
-    // 同一高度（面部 y=10）比较最前层与最背层：眼睛只该出现在最前层。
-    // 2px 规格：主角面甲旧 y=10 → 新 y=18（正面发光眼所在行）。
-    const head = KNIGHT.poses[0]!.voxels.filter((v) => v.y === 18);
-    const maxZ = Math.max(...head.map((v) => v.z));
-    const minZ = Math.min(...head.map((v) => v.z));
-    const frontLayer = head.filter((v) => v.z === maxZ);
-    const backLayer = head.filter((v) => v.z === minZ);
-    expect(frontLayer.some((v) => v.c === '#67e8f9')).toBe(true);
+  it('the 3D volume carries BOTH faces: visor in front, nape at the back', () => {
+    // 主角改真 3D 后不能再用固定 y 行定位脸：面甲在 y=23、后脑在 z 最背层。
+    // 语义不变 —— 发光眼只在最前的面甲上，最背层是后脑、不能有眼睛。
+    const pose = KNIGHT.poses[0]!;
+    const eyes = pose.voxels.filter((v) => v.c === '#67e8f9');
+    expect(eyes.length).toBeGreaterThan(0);
+    const maxZ = Math.max(...pose.voxels.map((v) => v.z));
+    const minZ = Math.min(...pose.voxels.map((v) => v.z));
+    expect(eyes.every((v) => v.z >= maxZ - 1)).toBe(true);
+    const backLayer = pose.voxels.filter((v) => v.z === minZ);
     expect(backLayer.some((v) => v.c === '#67e8f9')).toBe(false);
     expect(backLayer.length).toBeGreaterThan(0);
   });

@@ -367,93 +367,205 @@ function leg(b: Builder, x: number, width: number, lift: number, upper: string, 
   b.box(x, lift + 1, 0, width, 3 - lift, 1, upper);
 }
 
-/**
- * 装甲决斗者，28 格 @ 2px = 56px（2026-11-25 重设计，方案 B）。
+/* ------------------------------------------------------------------------ *
+ * 主角：真 3D 体素部件 + 关节骨架（2026-11-25 第二次改造）
  *
- * 参考 Dungeonborne 的**设计语言**而非写实质感：板甲分片、外扩肩甲、腰裙、
- * 护胫、面甲窄缝与盔缨。层次全部靠调色板的 4 档明度差（armorHi / armor /
- * armorDark / plate）读出来，没有渐变、圆角、抗锯齿，也没有位图贴图。
+ * 旧做法是 front/back 两张**平面**模型，由 volumeOf() 把正面轮廓复制 4 层
+ * 冒充体积 —— 侧面没有独立几何，转过去就是纸片。这里改成每个部件都有
+ * xyz 厚度的体素网格，局部坐标以自身中心为 0，左右肢体共用同一份 voxels、
+ * 只换装配偏移；「右手比左手肿一圈」从结构上不可能再发生。
  *
- * 只画**正面 / 背面**两套平面模型 —— 中间角度不靠手绘：`volumeOf()` 合成一块
- * 有厚度的体积，`bake(..., yaw)` 真投影。
+ * 躯干用薄壳（前/后/左/右四面板）而不是实心盒，方块数才不会把 bake 撑爆。
+ * 比例（28 格 @ 2px = 56px）：脚 0..2 / 小腿 3..7 / 大腿 8..12 /
+ * 胯腰 13..15 / 胸 16..20 / 颈 21 / 头+缨 22..27。
+ * 头宽 8px、颈宽 4px、肩宽 20px、腰宽 12px、侧影深 14px —— 有人体起伏。
  *
- * 比例（旧 14 格 × 2）：腿 8、腰 2、胸 6、颈 2、面甲 2、盔 4、盔缨 4 = 28 格。
- * 步态参数仍是旧尺度的 0/1，函数内部 ×2，所以抬腿幅度视觉上等价于旧的 4px。
- */
-function knightPose(
-  back: boolean,
-  leftLift: number,
-  rightLift: number,
-  offLift: number,
-  name: string,
-): VoxelModel {
+ * 只有主角走这套骨架；骷髅 / 法师仍是 bodyOf 的 front/back 平面契约。
+ * ------------------------------------------------------------------------ */
+
+interface KnightParts {
+  readonly head: readonly Voxel[];
+  readonly neck: readonly Voxel[];
+  readonly torso: readonly Voxel[];
+  readonly pelvis: readonly Voxel[];
+  readonly thigh: readonly Voxel[];
+  readonly shin: readonly Voxel[];
+  readonly foot: readonly Voxel[];
+  readonly upperArm: readonly Voxel[];
+  readonly forearm: readonly Voxel[];
+  readonly hand: readonly Voxel[];
+  readonly fist: readonly Voxel[];
+}
+
+function makePart(name: string, draw: (b: Builder) => void): readonly Voxel[] {
   const b = new Builder(name, VOXEL_UNIT);
+  draw(b);
+  return b.model().voxels;
+}
 
-  // 腿（8 格）：靴 / 护胫 / 膝甲三层。抬腿 = 脚离地 2 格、腿身缩短 2 格，
-  // 总高恒为 8 格，不会出现「腿变长」或半格缝隙。
-  const greave = (x: number, lift: number): void => {
-    const L = lift * 2;
-    b.box(x, L, 0, 4, 2, 1, C.boot);
-    b.box(x, L, 0, 4, 1, 1, C.iron);
-    b.box(x, L + 2, 0, 4, 6 - L, 1, C.armorDark);
-    b.box(x + 1, L + 2, 0, 1, 6 - L, 1, C.armor);
-    b.box(x, 6, 0, 4, 2, 1, C.armorHi);
-    b.box(x, 6, 0, 4, 1, 1, C.armorDark);
+const KNIGHT_PARTS: KnightParts = {
+  // 头盔：盔壳 4×4×5，后脑压暗，面甲前突到 z=3，正面窄视缝 + 两只发光眼。
+  head: makePart('knight.part.head', (b) => {
+    b.box(-2, 0, -2, 4, 4, 5, C.armorHi);
+    b.box(-2, 1, -2, 4, 3, 1, C.armorDark);
+    b.box(-2, 0, -2, 4, 1, 5, C.plate);
+    b.box(-2, 1, 3, 4, 2, 1, C.plate);
+    b.box(-2, 2, 3, 4, 1, 1, C.armorDark);
+    b.sym(1, 1, 3, 1, 1, 1, C.glow);
+    b.box(0, 0, 3, 1, 3, 1, C.armorDark);
+    b.box(-1, 3, -1, 3, 1, 3, C.steel);
+    b.box(-1, 4, -1, 3, 1, 2, C.goldDark);
+    b.box(0, 5, 0, 1, 1, 1, C.plume);
+  }),
+  // 颈：2 格宽，是「像个人」最关键的一处收窄。
+  neck: makePart('knight.part.neck', (b) => {
+    b.box(-1, 0, -1, 2, 1, 3, C.plate);
+  }),
+  // 胸廓薄壳 + 中央胸板 + 两道板缝 + 领口 + 外扩的 3D 肩甲。
+  torso: makePart('knight.part.torso', (b) => {
+    b.box(-5, 0, 3, 10, 5, 1, C.armor);
+    b.box(-5, 0, -3, 10, 5, 1, C.armorDark);
+    b.box(-5, 0, -2, 1, 5, 5, C.armor);
+    b.box(4, 0, -2, 1, 5, 5, C.armor);
+    b.box(-2, 1, 3, 5, 4, 1, C.armorHi);
+    b.box(-2, 1, 3, 1, 4, 1, C.armorDark);
+    b.box(2, 1, 3, 1, 4, 1, C.armorDark);
+    b.box(-2, 4, -2, 5, 1, 5, C.plate);
+    b.sym(4, 3, -2, 2, 2, 5, C.armorHi);
+  }),
+  // 胯腰：比胸窄，带金扣，把上下身切开。
+  pelvis: makePart('knight.part.pelvis', (b) => {
+    b.box(-3, 0, -2, 6, 3, 5, C.armorDark);
+    b.box(-3, 2, -2, 6, 1, 5, C.plate);
+    b.box(-1, 1, 2, 2, 2, 1, C.goldDark);
+    b.box(0, 2, 2, 1, 1, 1, C.gold);
+  }),
+  thigh: makePart('knight.part.thigh', (b) => {
+    b.box(-1, 0, -2, 3, 5, 4, C.armorDark);
+    b.box(0, 0, 1, 1, 5, 1, C.armor);
+    b.box(-1, 4, -2, 3, 1, 4, C.armorHi);
+  }),
+  shin: makePart('knight.part.shin', (b) => {
+    b.box(-1, 0, -1, 3, 5, 3, C.armorDark);
+    b.box(0, 0, 1, 1, 5, 1, C.armor);
+    b.box(-1, 4, -1, 3, 1, 3, C.armorHi);
+  }),
+  // 靴尖前突 z=2，侧影里能读出脚，不是一根柱子。
+  foot: makePart('knight.part.foot', (b) => {
+    b.box(-1, 0, -2, 3, 2, 5, C.boot);
+    b.box(-1, 0, 2, 3, 1, 1, C.iron);
+    b.box(-1, 2, -1, 3, 1, 3, C.boot);
+  }),
+  upperArm: makePart('knight.part.upperArm', (b) => {
+    b.box(-1, 0, -1, 3, 3, 3, C.armor);
+    b.box(-1, 2, -1, 3, 1, 3, C.armorHi);
+  }),
+  forearm: makePart('knight.part.forearm', (b) => {
+    b.box(-1, 0, -1, 3, 3, 3, C.armorDark);
+    b.box(-1, 0, -1, 3, 1, 3, C.steel);
+  }),
+  hand: makePart('knight.part.hand', (b) => {
+    b.box(-1, 0, -1, 3, 1, 3, C.armorDark);
+  }),
+  fist: makePart('knight.part.fist', (b) => {
+    b.box(-1, 0, -1, 3, 1, 3, C.skin);
+  }),
+};
+
+/** 一套姿态 = 各关节的离散位移（格）。数值保持整数，体素永远是轴对齐硬边。 */
+export interface RigPose {
+  readonly name: string;
+  /** [左, 右] 抬腿：脚离地几格 */
+  readonly hipLift: readonly [number, number];
+  /** [左, 右] 髋前后摆（z 偏移） */
+  readonly hipSwing: readonly [number, number];
+  /** 副手臂前后摆（z 偏移） */
+  readonly armSwing: number;
+}
+
+export const RIG_STAND: RigPose = {
+  name: 'stand', hipLift: [0, 0], hipSwing: [0, 0], armSwing: 0,
+};
+export const RIG_STEP_LEFT: RigPose = {
+  name: 'step-left', hipLift: [2, 0], hipSwing: [1, 0], armSwing: -1,
+};
+export const RIG_STEP_RIGHT: RigPose = {
+  name: 'step-right', hipLift: [0, 2], hipSwing: [0, 1], armSwing: 1,
+};
+
+/**
+ * A 方案：运行时按关节参数把部件装配成一份 3D 体素网格。
+ *
+ * 朝向不再在这里处理 —— `drawBody` 传 yaw 给 `bake()`，后者真投影并按
+ * `spriteOf()` 的 7.5° 帧档缓存。所以姿态只装配一次，48 个朝向共用缓存。
+ * 后续挥剑 / 拉弓 / 施法只要加新的 RigPose（或扩展关节字段），不必重画方块。
+ */
+export function assembleRig(pose: RigPose, name = 'knight.rig'): VoxelModel {
+  const cells = new Map<string, Voxel>();
+  const put = (part: readonly Voxel[], ox: number, oy: number, oz: number): void => {
+    for (const v of part) {
+      const x = v.x + ox;
+      const y = v.y + oy;
+      const z = v.z + oz;
+      cells.set(`${x},${y},${z}`, { x, y, z, c: v.c });
+    }
   };
-  greave(2, leftLift);
-  greave(-4, rightLift);
+  const P = KNIGHT_PARTS;
 
-  // 腰（2 格）：腰带 + 分片腰裙 + 中央带扣，把上下身明确切开。
-  b.box(-4, 8, 0, 10, 1, 1, C.plate);
-  b.box(-4, 9, 0, 10, 1, 1, C.armorDark);
-  b.box(0, 8, 0, 2, 2, 1, C.goldDark);
-  b.box(0, 9, 0, 1, 1, 1, C.gold);
+  // 中轴：pelvis → torso → neck → head
+  put(P.pelvis, 0, 13, 0);
+  put(P.torso, 0, 16, 0);
+  put(P.neck, 0, 21, 0);
+  put(P.head, 0, 22, 0);
 
-  // 胸甲（6 格）：腹甲 / 主胸板 / 领口，板件之间用暗缝分开。
-  b.box(-4, 10, 0, 10, 2, 1, C.armorDark);
-  b.box(-4, 10, 0, 10, 1, 1, C.plate);
-  b.box(-4, 12, 0, 10, 4, 1, C.armor);
-  b.box(-2, 12, 0, 5, 4, 1, C.armorHi);
-  b.box(-2, 12, 0, 1, 4, 1, C.armorDark);
-  b.box(2, 12, 0, 1, 4, 1, C.armorDark);
-  b.box(-2, 15, 0, 5, 1, 1, C.plate);
-  // 肩甲不额外加宽轮廓，靠亮面 + 下沿暗边读出板件厚度。
-  b.box(-4, 13, 0, 2, 3, 1, C.armorHi);
-  b.box(4, 13, 0, 2, 3, 1, C.armorHi);
-  b.box(-4, 13, 0, 2, 1, 1, C.armorDark);
-  b.box(4, 13, 0, 2, 1, 1, C.armorDark);
-
-  // 副手（空手，角色左手 / 正对时屏幕右侧），与持械的 KNIGHT_ARM 分开。
-  const O = offLift * 2;
-  b.box(6, 8 + O, 0, 2, 2, 1, C.skin);
-  b.box(6, 10 + O, 0, 2, 6 - O, 1, C.armorDark);
-  b.box(6, 10 + O, 0, 2, 1, 1, C.steel);
-  b.box(6, 15, 0, 2, 1, 1, C.armorHi);
-
-  // 颈 / 面甲（4 格）：正面窄视缝 + 发光眼，背面只有后颈与盔脊。
-  b.box(-2, 16, 0, 5, 2, 1, C.plate);
-  if (back) {
-    b.box(-2, 18, 0, 5, 2, 1, C.armorDark);
-    b.box(0, 18, 0, 1, 2, 1, C.plate);
-  } else {
-    b.box(-2, 18, 0, 5, 2, 1, C.plate);
-    b.box(-2, 19, 0, 5, 1, 1, C.armorDark);
-    b.sym(1, 18, 0, 1, 1, 1, C.glow);
+  // 下肢：hip → thigh → knee → shin → ankle → foot
+  for (const side of [0, 1] as const) {
+    const sx = side === 0 ? -3 : 3;
+    const lift = pose.hipLift[side];
+    const swing = pose.hipSwing[side];
+    const bend = lift > 0 ? 1 : 0;
+    put(P.thigh, sx, 8, swing);
+    put(P.shin, sx, 3 + Math.floor(lift / 2), swing + bend);
+    put(P.foot, sx, lift, swing + bend);
   }
 
-  // 头盔（4 格）：眉檐 / 盔顶高光 / 护颊 / 中央盔脊。
-  b.box(-4, 20, 0, 10, 4, 1, C.armorHi);
-  b.box(-4, 20, 0, 10, 1, 1, C.plate);
-  b.box(-2, 22, 0, 5, 2, 1, C.steel);
-  b.sym(3, 20, 0, 2, 2, 1, C.armorDark);
-  b.box(0, 21, 0, 1, 3, 1, C.armorDark);
+  // 副手（角色左手 / 正对时屏幕右侧）。持械右手由 KNIGHT_ARM 走 drawLimb
+  // 单独绘制（保持 paint.ts 的挥砍契约），但它用同一套臂部件、同样 6px 宽。
+  put(P.upperArm, 6, 18, pose.armSwing);
+  put(P.forearm, 6, 15, pose.armSwing);
+  put(P.hand, 6, 14, pose.armSwing);
 
-  // 盔缨（4 格）：缨座 + 竖缨 + 一侧飘片。
-  b.box(-1, 24, 0, 3, 1, 1, C.goldDark);
-  b.box(0, 25, 0, 1, 3, 1, C.plume);
-  b.box(-1, 26, 0, 1, 2, 1, C.plume);
+  return { name, unit: VOXEL_UNIT, voxels: [...cells.values()] };
+}
 
-  return b.model();
+function rigBodyOf(name: string, blocks: number, poses: readonly RigPose[]): BodyModel {
+  return {
+    name,
+    unit: VOXEL_UNIT,
+    blocks,
+    poses: poses.map((p) => assembleRig(p, `${name}.${p.name}`)),
+  };
+}
+
+/**
+ * 持械手臂：从肩关节**向上**竖起的同一套臂部件，供 drawLimb 绕肩旋转。
+ * y = 0..7（8 格），宽 3 格 = 6px，和身体里的副手完全同宽。
+ */
+function assembleArm(name: string): VoxelModel {
+  const cells = new Map<string, Voxel>();
+  const put = (part: readonly Voxel[], oy: number): void => {
+    for (const v of part) {
+      const x = v.x;
+      const y = v.y + oy;
+      const z = v.z;
+      cells.set(`${x},${y},${z}`, { x, y, z, c: v.c });
+    }
+  };
+  put(KNIGHT_PARTS.upperArm, 0);
+  put(KNIGHT_PARTS.forearm, 3);
+  put(KNIGHT_PARTS.hand, 6);
+  put(KNIGHT_PARTS.fist, 7);
+  return { name, unit: VOXEL_UNIT, voxels: [...cells.values()] };
 }
 
 /** 骷髅，12 格高（48px）。腿同样加到 4 格（旧 3 格），整体上移一格。 */
@@ -658,7 +770,9 @@ function bodyOf(
   return { name, unit: VOXEL_UNIT, blocks, poses };
 }
 
-export const KNIGHT: BodyModel = bodyOf('knight', 28, knightPose);
+export const KNIGHT: BodyModel = rigBodyOf(
+  'knight', 28, [RIG_STAND, RIG_STEP_LEFT, RIG_STEP_RIGHT],
+);
 export const SKELETON: BodyModel = bodyOf('skeleton', 24, skeletonPose);
 /**
  * 骷髅法师：同一副骨架，外面套一件暗紫法袍 + 兜帽，眼窝换成紫色。
@@ -681,7 +795,7 @@ export const ARM_REACH = 14;
 export const KNIGHT_ARM: Limb = {
   name: 'knight-arm',
   unit: VOXEL_UNIT,
-  model: armModel('knight-arm', C.armorDark, C.skin),
+  model: assembleArm('knight-arm'),
 };
 export const SKELETON_ARM: Limb = {
   name: 'skeleton-arm',
