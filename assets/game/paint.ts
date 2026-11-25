@@ -93,8 +93,10 @@ import {
   destructibleModel,
   itemModel,
   modelBounds,
+  swordModelById,
   prepareScene,
-  shoulderBehind,
+  GRIP_PHI,
+  weaponBehind,
   shoulderOffset,
   shoulderOffsetY,
   skillModel,
@@ -876,12 +878,22 @@ function fitScale(model: VoxelModel, maxW: number, maxH: number): number {
 
 /** Resolve an authored item id to its voxel art key, with a sword fallback. */
 function itemArtOf(defId: string | null | undefined, quality?: string): string {
-  if (defId === null || defId === undefined) return 'blade:steel';
+  if (defId === null || defId === undefined) return '10001';
+  // 六档剑不走 shape:accent 工厂：物品 id 本身就是模型表的键。
+  if (swordModelById(defId) !== null) return defId;
+  // 演示装备 longsword 不是物品表 id，归一到 10001，进游戏即可看到新白剑。
+  if (defId === 'longsword') return '10001';
   try {
     return itemDef(defId).art;
   } catch {
     return itemArtKey(defId, quality);
   }
+}
+
+/** 持握方位由武器类型决定：物品 id 前缀 2 = 弓，其余（含 demo longsword）= 剑。 */
+function gripPhiOf(weaponId: string | null): number {
+  return weaponId !== null && weaponId.charAt(0) === '2'
+    ? GRIP_PHI.bow : GRIP_PHI.sword;
 }
 
 /**
@@ -924,9 +936,15 @@ function drawWeaponArm(
     });
   }
 
-  // 正侧身时手已经绕到躯干后面，只画剑、不画手臂：剑身从头顶上方露出来，
-  // 根部被身体挡住 —— 读作"握着但看不见手"，比整把消失自然。
-  if (showLimb) drawLimb(g, limb, sx, sy, hand.arm, { flash, scale: 1 });
+  // 2026-11-25：主角双臂（含肩 / 肘 / 腕关节）已由 3D 骨架在 drawBody 里画完，
+  // 这里不再叠加一条独立的持械手臂 —— 旧做法「body 只画副手 + drawLimb 另画
+  // 一条」的两套肩位坐标对不上，会出现浮空的手和缺失的胳膊。
+  // 武器仍由 handPose 挂在右手；挥砍时武器照常旋转。
+  void limb;
+  void sx;
+  void sy;
+  void showLimb;
+  void flash;
 }
 
 /**
@@ -980,7 +998,7 @@ function drawDownedName(g: Painter, p: Player): void {
  *
  * 和 `drawPlayer` 共用同一份装备来源：`weaponSlots[activeWeaponSlot]` 由
  * `createRemotePlayer()` 从 CVM 装备快照展开、进帧同步 hash，两端一模一样。
- * 这里直接读它画武器，不再「挥的那一下凭空塞一把 blade:steel」。
+ * 这里直接读它画武器，不再「挥的那一下凭空塞一把旧钢剑」。
  * 以前远端是 P2 影子角色，只有位置；现在 `s.remotes` 就是 `s.players` 里
  * 除我之外的真玩家，装备外观也该跟着真人走。头顶名字仍用金色，与怪的白色名板分开。
  */
@@ -1001,9 +1019,10 @@ function drawRemoteActor(g: Painter, actor: Player): void {
   const armed = weaponId !== null;
   const paintBody = (): void => {
     drawBody(g, KNIGHT, actor.x, actor.y - bob, {
-      frame: moving ? frame : 0,
+      frame: swing > 0 ? Math.floor(swing * 3) : (moving ? frame : 0),
       face: actor.face,
       flash: actor.hurt > 0,
+      action: swing > 0 ? 'swing' : 'run',
     });
   };
   const paintArm = (): void => {
@@ -1020,8 +1039,8 @@ function drawRemoteActor(g: Painter, actor: Player): void {
       true,
     );
   };
-  // 与本地玩家同一条遮挡规则：手转到身体背面时（面朝左）先画手臂。
-  if (shoulderBehind(actor.face)) {
+  // 与本地玩家同一条 φ 遮挡规则：武器握点在身体远侧时先画武器。
+  if (weaponBehind(actor.face, gripPhiOf(weaponId))) {
     paintArm();
     paintBody();
   } else {
@@ -1093,9 +1112,10 @@ function drawPlayer(g: Painter, s: GameState): void {
 
   const paintBody = (): void => {
     drawBody(g, KNIGHT, p.x, p.y - bob - lunge, {
-      frame: moving ? frame : 0,
+      frame: swing > 0 ? Math.floor(swing * 3) : (moving ? frame : 0),
       face: p.face,
       flash: p.hurt > 0,
+      action: swing > 0 ? 'swing' : 'run',
     });
   };
   // 持械手臂画在身体的**近侧**：正对 / 侧身时在身体前面（看得见握柄），
@@ -1115,10 +1135,10 @@ function drawPlayer(g: Painter, s: GameState): void {
       showLimb,
     );
   };
-  // 手转到身体背面的那半圈（面朝左）要画在**身体下层**：那时右手在屏幕上方、
-  // 位于躯干背后，只有被挡住才是对的。切换点在朝上/朝下（手在身体左右外侧），
-  // 身体盖不到，所以转身时看不出跳变。
-  if (shoulderBehind(p.face)) {
+  // 遮挡按「持握方位 φ + 朝向」算：sin(face+φ)<0 时武器在身体远侧，先画武器、
+  // 后画身体让它被盖住。剑 φ=+45°（被挡 135°–315°）、弓 φ=0°（180°–360°），
+  // 两者切换点差 45°，不再共用一条「背对就盖住」的规则。
+  if (weaponBehind(p.face, gripPhiOf(weaponId))) {
     paintArm();
     paintBody();
   } else {
@@ -1161,7 +1181,7 @@ function skeletonBody(sk: Skeleton): BodyModel {
 
 function skeletonWeapon(sk: Skeleton): VoxelModel {
   if (sk.monsterId === ARCHER_ID) return itemModel('bow:steel');
-  return itemModel('blade:steel');
+  return itemModel('10001');
 }
 
 /**
@@ -1347,7 +1367,7 @@ function drawSkeleton(g: Painter, s: GameState, sk: Skeleton): void {
       showLimb,
     );
   };
-  if (shoulderBehind(sk.face)) {
+  if (weaponBehind(sk.face, sk.monsterId === ARCHER_ID ? GRIP_PHI.bow : GRIP_PHI.sword)) {
     paintArm();
     paintBody();
   } else {

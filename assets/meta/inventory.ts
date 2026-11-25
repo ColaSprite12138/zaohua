@@ -182,7 +182,7 @@ export const ITEM_DEFS: Record<string, ItemDef> = {
     equip: 'weapon',
     color: '#ffd166',
     glyph: '⚔',
-    art: 'blade:steel',
+    art: '10001',
     stackSize: 1,
   },
 };
@@ -231,7 +231,13 @@ export function itemArtShape(defId: string, equip: EquipKind | null): ItemArtSha
 /** 药水配色不跟品质走：红药永远是红瓶，蓝药永远是蓝瓶。 */
 const POTION_ACCENT: Record<string, string> = { 30002: 'hp', 30003: 'mana' };
 
+/** 六档剑的美术由物品 id 直接索引（voxel.ts::SWORD_BY_ID），不走 shape:accent。 */
+const SWORD_ART_IDS: ReadonlySet<string> = new Set([
+  '10001', '10002', '10003', '10004', '10005', '10006',
+]);
+
 export function itemArtKey(defId: string, quality?: string, equip?: EquipKind | null): string {
+  if (SWORD_ART_IDS.has(defId)) return defId;
   const shape = itemArtShape(defId, equip ?? null);
   const accent = POTION_ACCENT[defId] ?? QUALITY_ACCENT[quality ?? ''] ?? 'steel';
   return `${shape}:${accent}`;

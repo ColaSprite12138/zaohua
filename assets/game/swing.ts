@@ -124,7 +124,10 @@ export function handPose(x: number, y: number, face: number, swing: number): Han
   };
 }
 
-/** 剑的“坐标系旋转量”：`drawVoxel` 的 `rotation` = 返回值 + PI/2。 */
+/**
+ * 剑的“坐标系旋转量”：`drawVoxel` 的 `rotation` = 返回值 + PI/2。
+ * 用户 2026-11-26 决定回退 90° 钳制：恢复「命中顺臂」，只保留静止前倾。
+ */
 export function bladeAngle(hand: HandPose): number {
   return wristAngle(hand.arm, hand.swing);
 }

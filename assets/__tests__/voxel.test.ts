@@ -23,7 +23,9 @@ import {
   bodyHeight,
   itemModel,
   modelBounds,
+  GRIP_PHI,
   shoulderBehind,
+  weaponBehind,
   shoulderOffset,
   shoulderOffsetY,
   yawOf,
@@ -45,18 +47,19 @@ function blockKeys(m: VoxelModel): Set<string> {
 describe('character rigs', () => {
   it('bakes three walk poses, each a SOLID volume (not a standee)', () => {
     for (const body of [KNIGHT, SKELETON]) {
-      expect(body.poses).toHaveLength(3);
+      // 主角是 8 帧跑步循环（关节骨架），骷髅仍是 3 帧步态。
+      expect(body.poses).toHaveLength(body === KNIGHT ? 8 : 3);
       for (const pose of body.poses) {
         expect(pose.voxels.length).toBeGreaterThan(60);
-        const head = pose.voxels.filter((v) => v.y === 10);
+        // 胸段 y=17 有完整的 3D 截面（主角），腿段 y=10 亦然（骷髅）。
+        const chest = pose.voxels.filter((v) => v.y === (body === KNIGHT ? 17 : 10));
         expect(new Set(pose.voxels.map((v) => v.z)).size).toBeGreaterThanOrEqual(BODY_DEPTH);
         if (body === KNIGHT) {
-          // 主角是真 3D 体素：侧影 z 取值远多于平面契约的 4 层，腿本身也有厚度。
+          // 主角是真 3D 体素：侧影 z 取值远多于平面契约的 4 层，胸廓本身也有厚度。
           expect(new Set(pose.voxels.map((v) => v.z)).size).toBeGreaterThanOrEqual(7);
-          expect(new Set(head.map((v) => v.z)).size).toBeGreaterThanOrEqual(4);
+          expect(new Set(chest.map((v) => v.z)).size).toBeGreaterThanOrEqual(4);
         } else {
-          // 骷髅仍是 front/back 平面 + volumeOf 复制 BODY_DEPTH 层的契约。
-          expect(new Set(head.map((v) => v.z)).size).toBe(BODY_DEPTH);
+          expect(new Set(chest.map((v) => v.z)).size).toBe(BODY_DEPTH);
         }
       }
     }
@@ -88,22 +91,24 @@ describe('character rigs', () => {
     expect(new Set(pole.map((v) => v.x)).size).toBe(2);
     expect(new Set(orb.map((v) => v.x)).size).toBe(6);
     // 比剑薄（没有刃的排面），但不比剑矮。
-    expect(staff.voxels.length).toBeLessThan(itemModel('blade:steel').voxels.length);
+    expect(staff.voxels.length).toBeLessThan(itemModel('10001').voxels.length);
     expect(ACCENTS.gem).toBeTruthy();
   });
 
-  it('the 3D volume carries BOTH faces: visor in front, nape at the back', () => {
-    // 主角改真 3D 后不能再用固定 y 行定位脸：面甲在 y=23、后脑在 z 最背层。
-    // 语义不变 —— 发光眼只在最前的面甲上，最背层是后脑、不能有眼睛。
+  it('the GLB voxel grid keeps a face, dark hair and a dense real mesh', () => {
+    // 直接用 GLB 网格落地：脸部在量化后落在 skin-shadow 档 #b8886a，
+    // 紫红头发落在 #783a4e；无发光青眼、无手搓部件。
     const pose = KNIGHT.poses[0]!;
-    const eyes = pose.voxels.filter((v) => v.c === '#67e8f9');
-    expect(eyes.length).toBeGreaterThan(0);
-    const maxZ = Math.max(...pose.voxels.map((v) => v.z));
+    const face = pose.voxels.filter((v) => v.c === '#b8886a' && v.y >= 45);
+    expect(face.length).toBeGreaterThan(0);
+    expect(face.some((v) => v.z > 0)).toBe(true);
     const minZ = Math.min(...pose.voxels.map((v) => v.z));
-    expect(eyes.every((v) => v.z >= maxZ - 1)).toBe(true);
     const backLayer = pose.voxels.filter((v) => v.z === minZ);
-    expect(backLayer.some((v) => v.c === '#67e8f9')).toBe(false);
+    expect(backLayer.some((v) => v.c === '#b8886a')).toBe(false);
     expect(backLayer.length).toBeGreaterThan(0);
+    expect(pose.voxels.some((v) => v.c === '#783a4e')).toBe(true);
+    expect(pose.voxels.some((v) => v.c === '#67e8f9')).toBe(false);
+    expect(pose.voxels.length).toBeGreaterThan(1000);
   });
 
   it('the stepped poses really lift a foot (they are not three copies)', () => {
@@ -184,10 +189,11 @@ describe('character rigs', () => {
     // 游戏里 `face` 是屏幕角（0 = 右、π/2 = 下），两者换算为 heading = 90° - face。
     const cases = [
       // 面朝、右手应在屏幕哪一侧、是否被身体挡（在背面）
-      ['上（背对）', -Math.PI / 2, 14, 0, false],    // 右手在屏幕右，可见
-      ['右', 0, 0, 14, false],                       // 右手在屏幕下方（近侧），可见
-      ['下（正对）', Math.PI / 2, -14, 0, false],    // 右手在屏幕左，可见
-      ['左', Math.PI, 0, -14, true],                 // 右手在屏幕上方（远侧），被挡
+      // 挂点半径直接用 SHOULDER_X，避免肩位校准后断言里的魔法数漂移。
+      ['上（背对）', -Math.PI / 2, SHOULDER_X, 0, false],    // 右手在屏幕右，可见
+      ['右', 0, 0, SHOULDER_X, false],                       // 右手在屏幕下方（近侧），可见
+      ['下（正对）', Math.PI / 2, -SHOULDER_X, 0, false],    // 右手在屏幕左，可见
+      ['左', Math.PI, 0, -SHOULDER_X, true],                 // 右手在屏幕上方（远侧），被挡
     ] as const;
     for (const [name, face, x, y, behind] of cases) {
       expect(shoulderOffset(face), `${name} 横向`).toBeCloseTo(x, 0);
@@ -198,7 +204,7 @@ describe('character rigs', () => {
     for (let i = 0; i < 16; i += 1) {
       const f = (i * Math.PI * 2) / 16;
       const r = Math.hypot(shoulderOffset(f), shoulderOffsetY(f));
-      expect(r).toBeCloseTo(14, 3);
+      expect(r).toBeCloseTo(SHOULDER_X, 3);
     }
   });
 
@@ -207,8 +213,8 @@ describe('character rigs', () => {
       const minY = Math.min(...limb.model.voxels.map((v) => v.y));
       const maxY = Math.max(...limb.model.voxels.map((v) => v.y));
       expect(minY).toBe(0);
-      // 2px 规格：手臂旧 4 格（y=0..3）展开成 8 格（y=0..7），屏幕尺寸不变。
-      expect(maxY).toBe(7);
+      // 主角手臂随 56 格 @1px 骨架到 22 格（y=0..21）；骷髅仍是 8 格（y=0..7）。
+      expect(maxY).toBe(limb === KNIGHT_ARM ? 21 : 7);
       expect(ARM_REACH).toBeGreaterThan(0);
       expect(ARM_REACH).toBeLessThanOrEqual(SHOULDER_Y);
       expect(SHOULDER_X).toBeGreaterThan(0);
@@ -224,8 +230,8 @@ describe('item art', () => {
     expect(itemArtShape('longsword', 'weapon')).toBe('blade');
     expect(itemArtShape('x-ring', 'ring')).toBe('ring');
     expect(itemArtShape('x-boots', 'boots')).toBe('boots');
-    expect(itemArtKey('10006', '暗金')).toBe('greatsword:gold');
-    expect(itemArtKey('10001', '白')).toBe('greatsword:steel');
+    expect(itemArtKey('10006', '暗金')).toBe('10006');
+    expect(itemArtKey('10001', '白')).toBe('10001');
     expect(itemArtKey('20006', '暗金')).toBe('bow:gold');
     expect(itemArtKey('30001')).toBe('arrow:steel');
     expect(itemArtKey('longsword')).toBe('blade:steel');
@@ -249,18 +255,19 @@ describe('item art', () => {
     }
   });
 
-  it('memoises per key and falls back to a blade for an unknown key', () => {
-    expect(itemModel('greatsword:gold')).toBe(itemModel('greatsword:gold'));
-    expect(itemModel('greatsword:gold')).not.toBe(itemModel('greatsword:steel'));
+  it('memoises per id and falls back to the new white sword', () => {
+    expect(itemModel('10006')).toBe(itemModel('10006'));
+    expect(itemModel('10006')).not.toBe(itemModel('10001'));
     const fallback = itemModel('no-such-thing:gold');
-    const blade = itemModel('blade:gold');
-    expect(fallback.voxels).toEqual(blade.voxels);
+    const white = itemModel('10001');
+    expect(fallback.voxels).toEqual(white.voxels);
   });
 
-  it('a rarity changes the accent colour, not only the label', () => {
-    const white = new Set(itemModel('greatsword:steel').voxels.map((v) => v.c));
-    const gold = new Set(itemModel('greatsword:gold').voxels.map((v) => v.c));
+  it('a higher tier changes the shape, not only the colour', () => {
+    const white = new Set(itemModel('10001').voxels.map((v) => v.c));
+    const gold = new Set(itemModel('10006').voxels.map((v) => v.c));
     expect([...gold].some((c) => !white.has(c))).toBe(true);
+    expect(itemModel('10006').voxels.length).toBeGreaterThan(itemModel('10001').voxels.length);
     expect(Object.keys(ACCENTS)).toContain('gold');
   });
 });
@@ -273,14 +280,40 @@ describe('meta catalog art wiring', () => {
       name: String(r.name),
       quality: byId.get(String(r.id)) ?? '',
     })));
-    expect(itemDef('10006').art).toBe('greatsword:gold');
-    expect(itemDef('10001').art).toBe('greatsword:steel');
+    expect(itemDef('10006').art).toBe('10006');
+    expect(itemDef('10001').art).toBe('10001');
     expect(itemDef('20006').art).toBe('bow:gold');
     expect(itemDef('30001').art).toBe('arrow:steel');
     // The demo fallback keeps a working model too.
-    expect(itemDef('longsword').art).toBe('blade:steel');
+    expect(itemDef('longsword').art).toBe('10001');
     for (const def of item.map((r) => itemDef(String(r.id)))) {
       expect(itemModel(def.art).voxels.length).toBeGreaterThan(5);
     }
+  });
+
+  it('six sword tiers resolve directly by item id, with distinct shapes', () => {
+    const ids = ['10001', '10002', '10003', '10004', '10005', '10006'];
+    const sizes = ids.map((id) => itemModel(id).voxels.length);
+    expect(new Set(sizes).size).toBe(6);
+    for (const id of ids) expect(itemModel(id).unit).toBe(1);
+    expect(itemModel('10006').voxels.length).toBeGreaterThan(itemModel('10001').voxels.length);
+    expect(itemModel('10006')).toBe(itemModel('10006'));
+  });
+
+  it('occlusion follows each grip azimuth (sword +45°, bow 0°)', () => {
+    const deg = (d: number): number => (d * Math.PI) / 180;
+    // 弓在身体正前方：朝上/背对时完全被挡，正对时可见。
+    expect(weaponBehind(deg(270), GRIP_PHI.bow)).toBe(true);
+    expect(weaponBehind(deg(90), GRIP_PHI.bow)).toBe(false);
+    // 单手剑偏右 45°：切换点 135° / 315°，与弓错开 45°。
+    expect(weaponBehind(deg(180), GRIP_PHI.sword)).toBe(true);
+    expect(weaponBehind(deg(270), GRIP_PHI.sword)).toBe(true);
+    expect(weaponBehind(deg(0), GRIP_PHI.sword)).toBe(false);
+    expect(weaponBehind(deg(90), GRIP_PHI.sword)).toBe(false);
+    // 同一朝向 150°：弓在近侧、剑已进远侧 —— 结论不同。
+    expect(weaponBehind(deg(150), GRIP_PHI.bow)).toBe(false);
+    expect(weaponBehind(deg(150), GRIP_PHI.sword)).toBe(true);
+    // 旧判据等价于 φ=+90° 特例。
+    expect(shoulderBehind(deg(180))).toBe(weaponBehind(deg(180), GRIP_PHI.hand));
   });
 });

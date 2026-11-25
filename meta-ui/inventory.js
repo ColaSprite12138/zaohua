@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/inventory.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 9e37e0fda9fb2589cd38e4b01bf68b42c08a2960a97388375f2f4125bc55158f
+ * Source SHA-256: b92bfc0389378e2e03764bcba82fccc3aa5724aa8d22e163844b3f90be346c16
  */
 (function (root) {
 "use strict";
@@ -166,7 +166,7 @@ exports.ITEM_DEFS = {
         equip: 'weapon',
         color: '#ffd166',
         glyph: '⚔',
-        art: 'blade:steel',
+        art: '10001',
         stackSize: 1,
     },
 };
@@ -207,7 +207,13 @@ function itemArtShape(defId, equip) {
 /** `"shape:accent"` key understood by `voxel.ts::itemModel()`. */
 /** 药水配色不跟品质走：红药永远是红瓶，蓝药永远是蓝瓶。 */
 const POTION_ACCENT = { 30002: 'hp', 30003: 'mana' };
+/** 六档剑的美术由物品 id 直接索引（voxel.ts::SWORD_BY_ID），不走 shape:accent。 */
+const SWORD_ART_IDS = new Set([
+    '10001', '10002', '10003', '10004', '10005', '10006',
+]);
 function itemArtKey(defId, quality, equip) {
+    if (SWORD_ART_IDS.has(defId))
+        return defId;
     const shape = itemArtShape(defId, equip ?? null);
     const accent = POTION_ACCENT[defId] ?? QUALITY_ACCENT[quality ?? ''] ?? 'steel';
     return `${shape}:${accent}`;
