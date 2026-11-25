@@ -56,6 +56,18 @@ export type Facing = 'front' | 'back';
 export const BODY_DEPTH = 4;
 
 /**
+ * 全屏最小方块 = 2px（2026-11-25 规格升级，方案 B）。
+ *
+ * 旧模型仍按 4px 格书写，由 `Builder.model()` 自动展开成 2×2 个 2px 格：
+ * 屏幕尺寸不变、全屏统一到 2px 网格。`z` 是深度层不是屏幕轴，不展开。
+ * 主角是唯一原生按 2px 书写的模型，所以只有它真正获得了加倍的造型细节。
+ *
+ * 为什么不是改一个全局常量：`unit` 是**每个模型自己的属性**，`bake()` /
+ * `extentOf()` / `modelBounds()` 都读 `m.unit`，30 个工厂各自显式传 4。
+ */
+export const VOXEL_UNIT = 2;
+
+/**
  * 烘焙朝向的量化步长：7.5° 一档。360 个角度不可能每个都留一张 sprite，
  * ±3.75° 的误差在这个体素尺度上读不出来；缓存只装真正遇到过的档位。
  */
@@ -279,7 +291,25 @@ class Builder {
   }
 
   model(): VoxelModel {
-    return { name: this.name, unit: this.unit, voxels: [...this.cells.values()] };
+    if (this.unit === VOXEL_UNIT) {
+      return { name: this.name, unit: this.unit, voxels: [...this.cells.values()] };
+    }
+    // Legacy 4px authoring: expand every block into a 2x2 patch of 2px cells.
+    // Screen size is unchanged (4 * 4px == 8 * 2px), but the whole scene now
+    // shares one 2px grid. z stays as-is: it indexes depth layers for the
+    // volume composer, expanding it would double the projected depth.
+    const k = this.unit / VOXEL_UNIT;
+    const cells = new Map<string, Voxel>();
+    for (const v of this.cells.values()) {
+      for (let dx = 0; dx < k; dx += 1) {
+        for (let dy = 0; dy < k; dy += 1) {
+          const x = v.x * k + dx;
+          const y = v.y * k + dy;
+          cells.set(`${x},${y},${v.z}`, { x, y, z: v.z, c: v.c });
+        }
+      }
+    }
+    return { name: this.name, unit: VOXEL_UNIT, voxels: [...cells.values()] };
   }
 }
 
@@ -338,13 +368,17 @@ function leg(b: Builder, x: number, width: number, lift: number, upper: string, 
 }
 
 /**
- * 装甲决斗者，14 格高（56px）。
+ * 装甲决斗者，28 格 @ 2px = 56px（2026-11-25 重设计，方案 B）。
+ *
+ * 参考 Dungeonborne 的**设计语言**而非写实质感：板甲分片、外扩肩甲、腰裙、
+ * 护胫、面甲窄缝与盔缨。层次全部靠调色板的 4 档明度差（armorHi / armor /
+ * armorDark / plate）读出来，没有渐变、圆角、抗锯齿，也没有位图贴图。
  *
  * 只画**正面 / 背面**两套平面模型 —— 中间角度不靠手绘：`volumeOf()` 合成一块
- * 有厚度的体积，`bake(..., yaw)` 真投影。所以这里不需要按角度收窄横坐标。
+ * 有厚度的体积，`bake(..., yaw)` 真投影。
  *
- * 比例（2026-11-17 调整）：腿 4 格（旧 3 格，占身高 21% 太短）、腰 1、胸 3、
- * 颈 1、脸 1、盔 2、盔缨 1。
+ * 比例（旧 14 格 × 2）：腿 8、腰 2、胸 6、颈 2、面甲 2、盔 4、盔缨 4 = 28 格。
+ * 步态参数仍是旧尺度的 0/1，函数内部 ×2，所以抬腿幅度视觉上等价于旧的 4px。
  */
 function knightPose(
   back: boolean,
@@ -353,30 +387,72 @@ function knightPose(
   offLift: number,
   name: string,
 ): VoxelModel {
-  const b = new Builder(name, 4);
-  leg(b, 1, 2, leftLift, C.armorDark, C.boot);
-  leg(b, -2, 2, rightLift, C.armorDark, C.boot);
-  b.box(-2, 4, 0, 5, 1, 1, C.plate);
-  b.box(-2, 5, 0, 5, 3, 1, C.armor);
-  b.box(-1, 6, 0, 3, 2, 1, C.armorHi);
-  // 副手（空手）在**角色左手**：正对镜头时落在屏幕右侧，和持械的右手分开。
-  // 以前画在 x = -3，正对时和持械手挤在同一侧。
-  b.box(3, 5 + offLift, 0, 1, 3, 1, C.armorDark);
-  b.box(3, 4 + offLift, 0, 1, 1, 1, C.skin);
-  b.box(3, 8, 0, 1, 1, 1, C.armorHi);
-  b.box(-1, 9, 0, 3, 1, 1, C.skin);
+  const b = new Builder(name, VOXEL_UNIT);
+
+  // 腿（8 格）：靴 / 护胫 / 膝甲三层。抬腿 = 脚离地 2 格、腿身缩短 2 格，
+  // 总高恒为 8 格，不会出现「腿变长」或半格缝隙。
+  const greave = (x: number, lift: number): void => {
+    const L = lift * 2;
+    b.box(x, L, 0, 4, 2, 1, C.boot);
+    b.box(x, L, 0, 4, 1, 1, C.iron);
+    b.box(x, L + 2, 0, 4, 6 - L, 1, C.armorDark);
+    b.box(x + 1, L + 2, 0, 1, 6 - L, 1, C.armor);
+    b.box(x, 6, 0, 4, 2, 1, C.armorHi);
+    b.box(x, 6, 0, 4, 1, 1, C.armorDark);
+  };
+  greave(2, leftLift);
+  greave(-4, rightLift);
+
+  // 腰（2 格）：腰带 + 分片腰裙 + 中央带扣，把上下身明确切开。
+  b.box(-4, 8, 0, 10, 1, 1, C.plate);
+  b.box(-4, 9, 0, 10, 1, 1, C.armorDark);
+  b.box(0, 8, 0, 2, 2, 1, C.goldDark);
+  b.box(0, 9, 0, 1, 1, 1, C.gold);
+
+  // 胸甲（6 格）：腹甲 / 主胸板 / 领口，板件之间用暗缝分开。
+  b.box(-4, 10, 0, 10, 2, 1, C.armorDark);
+  b.box(-4, 10, 0, 10, 1, 1, C.plate);
+  b.box(-4, 12, 0, 10, 4, 1, C.armor);
+  b.box(-2, 12, 0, 5, 4, 1, C.armorHi);
+  b.box(-2, 12, 0, 1, 4, 1, C.armorDark);
+  b.box(2, 12, 0, 1, 4, 1, C.armorDark);
+  b.box(-2, 15, 0, 5, 1, 1, C.plate);
+  // 肩甲不额外加宽轮廓，靠亮面 + 下沿暗边读出板件厚度。
+  b.box(-4, 13, 0, 2, 3, 1, C.armorHi);
+  b.box(4, 13, 0, 2, 3, 1, C.armorHi);
+  b.box(-4, 13, 0, 2, 1, 1, C.armorDark);
+  b.box(4, 13, 0, 2, 1, 1, C.armorDark);
+
+  // 副手（空手，角色左手 / 正对时屏幕右侧），与持械的 KNIGHT_ARM 分开。
+  const O = offLift * 2;
+  b.box(6, 8 + O, 0, 2, 2, 1, C.skin);
+  b.box(6, 10 + O, 0, 2, 6 - O, 1, C.armorDark);
+  b.box(6, 10 + O, 0, 2, 1, 1, C.steel);
+  b.box(6, 15, 0, 2, 1, 1, C.armorHi);
+
+  // 颈 / 面甲（4 格）：正面窄视缝 + 发光眼，背面只有后颈与盔脊。
+  b.box(-2, 16, 0, 5, 2, 1, C.plate);
   if (back) {
-    // 背面：没有护目镜，只有后颈和一道盔脊。
-    b.box(-1, 10, 0, 3, 1, 1, C.armorDark);
-    b.box(-2, 11, 0, 5, 2, 1, C.armorHi);
-    b.box(-1, 11, 0, 1, 2, 1, C.armorDark);
+    b.box(-2, 18, 0, 5, 2, 1, C.armorDark);
+    b.box(0, 18, 0, 1, 2, 1, C.plate);
   } else {
-    // 正面：护目镜 + 两只发光的眼。
-    b.box(-1, 10, 0, 3, 1, 1, C.plate);
-    b.sym(1, 10, 0, 1, 1, 1, C.glow);
-    b.box(-2, 11, 0, 5, 2, 1, C.armorHi);
+    b.box(-2, 18, 0, 5, 2, 1, C.plate);
+    b.box(-2, 19, 0, 5, 1, 1, C.armorDark);
+    b.sym(1, 18, 0, 1, 1, 1, C.glow);
   }
-  b.box(0, 13, 0, 1, 1, 1, C.plume);
+
+  // 头盔（4 格）：眉檐 / 盔顶高光 / 护颊 / 中央盔脊。
+  b.box(-4, 20, 0, 10, 4, 1, C.armorHi);
+  b.box(-4, 20, 0, 10, 1, 1, C.plate);
+  b.box(-2, 22, 0, 5, 2, 1, C.steel);
+  b.sym(3, 20, 0, 2, 2, 1, C.armorDark);
+  b.box(0, 21, 0, 1, 3, 1, C.armorDark);
+
+  // 盔缨（4 格）：缨座 + 竖缨 + 一侧飘片。
+  b.box(-1, 24, 0, 3, 1, 1, C.goldDark);
+  b.box(0, 25, 0, 1, 3, 1, C.plume);
+  b.box(-1, 26, 0, 1, 2, 1, C.plume);
+
   return b.model();
 }
 
@@ -577,11 +653,13 @@ function bodyOf(
     const back = pose(true, leftLift, rightLift, offLift, `${name}.${i}.back`);
     poses.push(volumeOf(front, back, `${name}.${i}`));
   }
-  return { name, unit: 4, blocks, poses };
+  // `blocks` is always the count in VOXEL_UNIT cells, so bodyHeight() keeps
+  // returning the same screen height (28 * 2 == 14 * 4 == 56px).
+  return { name, unit: VOXEL_UNIT, blocks, poses };
 }
 
-export const KNIGHT: BodyModel = bodyOf('knight', 14, knightPose);
-export const SKELETON: BodyModel = bodyOf('skeleton', 12, skeletonPose);
+export const KNIGHT: BodyModel = bodyOf('knight', 28, knightPose);
+export const SKELETON: BodyModel = bodyOf('skeleton', 24, skeletonPose);
 /**
  * 骷髅法师：同一副骨架，外面套一件暗紫法袍 + 兜帽，眼窝换成紫色。
  *
@@ -589,7 +667,7 @@ export const SKELETON: BodyModel = bodyOf('skeleton', 12, skeletonPose);
  * 钢铁剑 + 灰白骨头，玩家在 22 只怪里根本分不出「哪只会在 6 秒后丢火球」。
  * 设计 8.8 的同一句话适用于怪：**画面上读不出来的威胁等于不存在**。
  */
-export const SKELETON_MAGE: BodyModel = bodyOf('skeleton-mage', 12, skeletonMagePose);
+export const SKELETON_MAGE: BodyModel = bodyOf('skeleton-mage', 24, skeletonMagePose);
 export const CORPSE = corpse();
 export const KNIGHT_DOWN = knightDown();
 
@@ -602,12 +680,12 @@ export const ARM_REACH = 14;
 
 export const KNIGHT_ARM: Limb = {
   name: 'knight-arm',
-  unit: 4,
+  unit: VOXEL_UNIT,
   model: armModel('knight-arm', C.armorDark, C.skin),
 };
 export const SKELETON_ARM: Limb = {
   name: 'skeleton-arm',
-  unit: 4,
+  unit: VOXEL_UNIT,
   model: armModel('skeleton-arm', C.boneDark, C.bone),
 };
 
@@ -1182,8 +1260,16 @@ function bake(m: VoxelModel, override?: string, yaw = 0): Sprite {
     g.fillStyle = shade(base, 1.34 + noise);
     g.fillRect(x, y, u, topH);
     g.fillStyle = shade(base, 0.66);
-    g.fillRect(x + u - 1, y + topH, 1, u - topH);
-    g.fillRect(x, y + u - 1, u, 1);
+    if (u >= 4) {
+      g.fillRect(x + u - 1, y + topH, 1, u - topH);
+      g.fillRect(x, y + u - 1, u, 1);
+    } else {
+      // A 2px cell only has two rows: the light top strip and the body already
+      // occupy them. Stamping a full bottom edge would erase the body colour and
+      // turn the model into alternating light/dark bands, so only the
+      // bottom-right corner gets the dark face.
+      g.fillRect(x + u - 1, y + u - 1, 1, 1);
+    }
   }
 
   // 1px hard outline: dark silhouette stamped around the body, body on top.

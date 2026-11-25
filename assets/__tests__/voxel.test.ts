@@ -68,7 +68,8 @@ describe('character rigs', () => {
     expect(robe.length).toBeGreaterThan(20);
     expect(new Set(robe.map((v) => v.y)).size).toBeGreaterThanOrEqual(5);
     // 正面的瞳孔换成了紫色（`C.bolt`），背对时不能有眼睛。
-    const eyes = SKELETON_MAGE.poses[0]!.voxels.filter((v) => v.y === 10 && v.z === 0);
+    // 2px 规格：旧眼窝 y=10 / 中间层 z=0 → 新 y=20 / 正面层 z=1。
+    const eyes = SKELETON_MAGE.poses[0]!.voxels.filter((v) => v.y === 20 && v.z === 1);
     expect(eyes.length).toBeGreaterThan(0);
     expect(eyes.every((v) => !bone.has(v.c))).toBe(true);
   });
@@ -76,10 +77,11 @@ describe('character rigs', () => {
   it('the staff reads as a thin pole with one big head', () => {
     // 法杖靠「细杆 + 大头」的剪影和剑/弓分开：杆一格宽，顶上一颗三格宽的球。
     const staff = itemModel('staff:gem');
-    const pole = staff.voxels.filter((v) => v.y === 3);
-    const orb = staff.voxels.filter((v) => v.y === 10);
-    expect(new Set(pole.map((v) => v.x)).size).toBe(1);
-    expect(new Set(orb.map((v) => v.x)).size).toBe(3);
+    // 2px 规格：旧杆 y=3 / 球 y=10 → 新 y=6 / y=20；横向格数同步翻倍 1→2、3→6。
+    const pole = staff.voxels.filter((v) => v.y === 6);
+    const orb = staff.voxels.filter((v) => v.y === 20);
+    expect(new Set(pole.map((v) => v.x)).size).toBe(2);
+    expect(new Set(orb.map((v) => v.x)).size).toBe(6);
     // 比剑薄（没有刃的排面），但不比剑矮。
     expect(staff.voxels.length).toBeLessThan(itemModel('blade:steel').voxels.length);
     expect(ACCENTS.gem).toBeTruthy();
@@ -89,7 +91,8 @@ describe('character rigs', () => {
     // 正面层（z = 0）必须有发光的眼；最背层（z = -(D-1)）必须是后脑的暗色，
     // 否则转过 180° 会看到一张"暗掉的正脸"。
     // 同一高度（面部 y=10）比较最前层与最背层：眼睛只该出现在最前层。
-    const head = KNIGHT.poses[0]!.voxels.filter((v) => v.y === 10);
+    // 2px 规格：主角面甲旧 y=10 → 新 y=18（正面发光眼所在行）。
+    const head = KNIGHT.poses[0]!.voxels.filter((v) => v.y === 18);
     const maxZ = Math.max(...head.map((v) => v.z));
     const minZ = Math.min(...head.map((v) => v.z));
     const frontLayer = head.filter((v) => v.z === maxZ);
@@ -200,7 +203,8 @@ describe('character rigs', () => {
       const minY = Math.min(...limb.model.voxels.map((v) => v.y));
       const maxY = Math.max(...limb.model.voxels.map((v) => v.y));
       expect(minY).toBe(0);
-      expect(maxY).toBe(3);
+      // 2px 规格：手臂旧 4 格（y=0..3）展开成 8 格（y=0..7），屏幕尺寸不变。
+      expect(maxY).toBe(7);
       expect(ARM_REACH).toBeGreaterThan(0);
       expect(ARM_REACH).toBeLessThanOrEqual(SHOULDER_Y);
       expect(SHOULDER_X).toBeGreaterThan(0);
