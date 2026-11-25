@@ -31,45 +31,71 @@
   z-index: 5;
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
+  gap: 18px;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
-  margin: -18px -24px 12px;
-  background: linear-gradient(180deg, #241b11 0%, #100d09 100%);
-  border-bottom: 2px solid #6b5028;
-  box-shadow: inset 0 1px 0 rgba(210, 163, 51, .22), 0 4px 18px rgba(0, 0, 0, .7);
+  padding: 12px 18px;
+  margin: -18px -24px 16px;
+  background: linear-gradient(180deg, rgba(43, 32, 20, .97), rgba(10, 9, 7, .97));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .65);
 }
 #fx-shell .fx-brand { display: flex; gap: 14px; align-items: baseline; font-size: 13px; }
 #fx-shell .fx-brand b {
-  font-size: 16px; color: #d2a333; font-family: Georgia, "Songti SC", serif;
+  font-size: 17px; color: #d2a333; font-family: Georgia, "Songti SC", serif;
   letter-spacing: .08em; text-shadow: 0 0 14px rgba(210, 163, 51, .4);
 }
 #fx-shell .fx-brand span { color: #9a8b6d; font-size: 12px; }
 #fx-shell .fx-armed { color: #d2a333; }
-#fx-shell .fx-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+#fx-shell .fx-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 #fx-shell .fx-controls label { color: #9a8b6d; font-size: 12px; }
-#fx-shell .fx-controls input {
-  width: 58px; background: #0d0b08; color: #e6d9bd;
-  border: 1px solid #6b5028; border-radius: 3px; padding: 4px 6px; font: inherit;
+#fx-shell .fx-controls input, #fx-shell .fx-controls select {
+  background: rgba(5, 6, 8, .7); color: #e6d9bd;
+  border: 0; border-radius: 4px; padding: 6px 8px; font: inherit; font-size: 12px;
+  box-shadow: inset 0 2px 7px rgba(0, 0, 0, .7);
 }
+#fx-shell .fx-controls input { width: 58px; }
 #fx-shell .fx-controls button {
-  background: linear-gradient(180deg, #392c1b, #1a140d);
-  color: #e6d9bd; border: 1px solid #6b5028;
-  border-radius: 3px; padding: 7px 14px; cursor: pointer; font: inherit; font-size: 12px;
-  box-shadow: inset 0 1px 0 rgba(255, 220, 140, .18), 0 2px 0 #080705;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: linear-gradient(180deg, #3b2c1a, #17110b);
+  color: #e6d9bd; border: 0; border-radius: 5px;
+  padding: 9px 14px; min-height: 40px; cursor: pointer; font: inherit; font-size: 12px;
+  box-shadow: 0 3px 0 #080705, 0 8px 20px rgba(0, 0, 0, .45),
+    inset 0 1px 0 rgba(255, 220, 140, .2);
+  transition: transform .14s ease, filter .14s ease, box-shadow .14s ease;
 }
-#fx-shell .fx-controls button:hover:not(:disabled) { border-color: #d2a333; color: #d2a333; }
-#fx-shell .fx-controls button:disabled { opacity: .4; cursor: default; }
+/* 顶栏按钮的图标来自 meta-ui/index.html 的 :root SVG 变量（注入后挂在 #fx-shell 上）。 */
+#fx-shell .fx-controls button::before {
+  content: ""; display: inline-block; flex: none;
+  width: 20px; height: 20px; margin-right: 7px;
+  background: var(--ico-map) center / contain no-repeat;
+  filter: drop-shadow(0 0 6px rgba(210, 163, 51, .45));
+  transition: transform .16s ease, filter .16s ease;
+}
+#fx-shell #fx-deploy::before { background-image: var(--ico-sword); }
+#fx-shell #fx-back::before { background-image: var(--ico-gate); }
+#fx-shell #fx-bag::before { background-image: var(--ico-bag); }
+#fx-shell #fx-match::before { background-image: var(--ico-sword); }
+#fx-shell .fx-controls button:hover:not(:disabled) {
+  transform: translateY(-2px); filter: brightness(1.18); color: #f0d79a;
+  box-shadow: 0 5px 0 #080705, 0 10px 26px rgba(0, 0, 0, .5),
+    0 0 18px rgba(210, 163, 51, .42), inset 0 1px 0 rgba(255, 220, 140, .32);
+}
+#fx-shell .fx-controls button:hover:not(:disabled)::before {
+  transform: scale(1.12); filter: drop-shadow(0 0 10px rgba(210, 163, 51, .8));
+}
+#fx-shell .fx-controls button:active:not(:disabled) {
+  transform: translateY(2px) scale(.985); filter: brightness(.94);
+  box-shadow: 0 1px 0 #080705, inset 0 2px 6px rgba(0, 0, 0, .6);
+}
+#fx-shell .fx-controls button:disabled { opacity: .42; filter: grayscale(.4); cursor: default; }
 #fx-shell .fx-controls #fx-deploy {
-  border-color: #d2a333; color: #d2a333;
-  box-shadow: inset 0 1px 0 rgba(255, 220, 140, .25), 0 0 14px rgba(210, 163, 51, .2);
+  color: #f0d79a;
+  background: linear-gradient(180deg, #5a4020, #241a0e);
+  box-shadow: 0 3px 0 #080705, 0 0 20px rgba(210, 163, 51, .35),
+    inset 0 1px 0 rgba(255, 220, 140, .3);
 }
-/* 关卡类型（设计 2 / 4）：三条死亡规则不同，所以它是出征前的一个显式选择。 */
-#fx-shell .fx-controls select {
-  background: linear-gradient(180deg, #241c12, #100d09); color: #e6d9bd; border: 1px solid #6b5028;
-  border-radius: 3px; padding: 6px 8px; font: inherit; font-size: 12px;
-}
+/* 快速匹配里的「继续等 / 取消」是次级小按钮，图标缩一号。 */
+#fx-shell .fx-match-keep button::before { width: 14px; height: 14px; margin-right: 4px; }
 #fx-shell .fx-controls select:disabled { opacity: .4; }
 #fx-shell .fx-leftovers { color: #e0713e; font-size: 12px; }
 #fx-shell .fx-leftovers:empty { display: none; }
@@ -81,8 +107,15 @@
 
 /* 快速匹配（搜打撤 PVP）：按钮 + 状态条 + 独狼的「继续等 / 取消」。
    状态条 `:empty` 时隐藏，避免没匹配时顶栏多一截空白。 */
-#fx-shell .fx-controls #fx-match { border-color: #67e8f9; color: #67e8f9; }
-#fx-shell .fx-controls #fx-match:disabled { border-color: #294055; color: #dbe9f5; }
+#fx-shell .fx-controls #fx-match {
+  color: #9fe3ec;
+  box-shadow: 0 3px 0 #080705, 0 0 18px rgba(103, 232, 249, .32),
+    inset 0 1px 0 rgba(255, 220, 140, .2);
+}
+#fx-shell .fx-controls #fx-match:disabled {
+  color: #dbe9f5;
+  box-shadow: 0 3px 0 #080705, inset 0 2px 6px rgba(0, 0, 0, .5);
+}
 #fx-shell .fx-match-status { color: #8fa9bb; font-size: 12px; }
 #fx-shell .fx-match-status:empty { display: none; }
 #fx-shell .fx-match-status.bad { color: #ff7b7b; }
@@ -110,11 +143,12 @@
 #fx-shell .fx-account { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8fa9bb; }
 #fx-shell .fx-account b { color: #ffd166; }
 #fx-shell .fx-save-mode {
-  padding: 2px 8px;
-  border: 1px solid #294055;
-  border-radius: 999px;
+  padding: 3px 9px;
+  background: rgba(5, 6, 8, .55);
+  border-radius: 6px;
   font-size: 11px;
   color: #8fa9bb;
+  box-shadow: inset 0 1px 5px rgba(0, 0, 0, .5);
 }
 
 /* ------------------------- in-run bag overlay --------------------------- */
