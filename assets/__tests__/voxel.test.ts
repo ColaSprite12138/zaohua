@@ -111,19 +111,25 @@ describe('character rigs', () => {
     const counts = new Map<string, number>();
     for (const v of pose.voxels) counts.set(v.c, (counts.get(v.c) ?? 0) + 1);
     expect(Math.max(...counts.values())).toBeGreaterThan(300);
-    // 10 件规格：每件都是 ≥4 格宽、≥8 格高的实心块，深度 ≥ 契约厚度。
+    // 10 件规格：每件都是 ≥4 格宽的实心块；手是独立小方块（4 格高）。
     expect(BLOCK_PART_SPECS).toHaveLength(10);
     for (const s of BLOCK_PART_SPECS) {
       expect(s.w).toBeGreaterThanOrEqual(4);
-      expect(s.h).toBeGreaterThanOrEqual(8);
+      expect(s.h).toBeGreaterThanOrEqual(s.id === 'handL' || s.id === 'handR' ? 4 : 8);
       expect(s.d).toBeGreaterThanOrEqual(BODY_DEPTH);
     }
     const byId = new Map(BLOCK_PART_SPECS.map((s) => [s.id, s]));
-    // 肩 / 肘 / 髋 / 膝各留 1 体素缝，分件永远读得清。
-    expect(byId.get('upperArmL')!.x + byId.get('upperArmL')!.w).toBe(byId.get('torso')!.x - 1);
-    expect(byId.get('upperArmL')!.y - (byId.get('forearmL')!.y + byId.get('forearmL')!.h)).toBe(1);
+    // 肩 / 腕 / 髋 / 膝各留 1 体素缝，分件永远读得清。
+    expect(byId.get('armL')!.x + byId.get('armL')!.w).toBe(byId.get('torso')!.x - 1);
+    expect(byId.get('armL')!.y - (byId.get('handL')!.y + byId.get('handL')!.h)).toBe(1);
     expect(byId.get('torso')!.y - (byId.get('thighL')!.y + byId.get('thighL')!.h)).toBe(1);
     expect(byId.get('thighL')!.y - (byId.get('shinL')!.y + byId.get('shinL')!.h)).toBe(1);
+    // 胳膊与手共用肩枢轴：一个刚性组一起抡，不再两段相对旋转扭成蛇。
+    expect(byId.get('handL')!.pivotX).toBe(byId.get('armL')!.pivotX);
+    expect(byId.get('handL')!.pivotY).toBe(byId.get('armL')!.pivotY);
+    // 侧面加厚：头 / 胸 10 层、四肢 8 层，头胸比胳膊厚，转 90° 不再纸片。
+    expect(byId.get('head')!.d).toBeGreaterThan(byId.get('armL')!.d);
+    expect(byId.get('armL')!.d).toBeGreaterThanOrEqual(8);
     // 仍是真 3D 实心体积（正 / 背 / 侧都不是纸片）。
     expect(new Set(pose.voxels.map((v) => v.z)).size).toBeGreaterThanOrEqual(7);
     expect(pose.voxels.length).toBeGreaterThan(1000);

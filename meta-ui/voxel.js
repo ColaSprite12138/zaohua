@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/game/voxel.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: a14cd2517df6409392783fe1d8652ca8d502cb0a4bb8d1b7a08b711d589323f2
+ * Source SHA-256: c87e0ed14abd4c04738b96b27dbdc3afdcd5f544451a0040a0008b1e05ead4e8
  */
 (function (root) {
 "use strict";
@@ -345,9 +345,11 @@ function leg(b, x, width, lift, upper, boot) {
  * 上一版是 GLB 转模出来的 56 格逐格彩色网格：几千个 1px 小格 + 24 色，
  * 关节切了 15 段（颈/腰/膝/肘/腕…），远看糊成一团，细节做了也读不出来。
  * 这一版丢掉转模数据，直接搭 10 个刚性大部件：
- *   头 / 躯干 / 上臂×2 / 前臂×2 / 大腿×2 / 小腿×2。
+ *   头 / 躯干 / 胳膊×2 / 手×2 / 大腿×2 / 小腿×2。
  * 每件都是低分辨率实心盒 + 少量整片色带，12 色调色板，靠色块分件不靠贴图。
- * 肩 / 肘 / 髋 / 膝各留 1 体素缝，分件永远读得清。
+ * 肩 / 腕 / 髋 / 膝各留 1 体素缝，分件永远读得清。
+ * 第二轮反馈后：头胸 10 层 / 四肢 8 层深（侧面不再纸片），胳膊与手合并成
+ * 一个绕肩旋转的刚性组（不再两段相对旋转扭成蛇形）。
  *
  * 动画是装配期刚性变换：每一帧把 10 件按关键帧角度**整体旋转**（不做蒙皮
  * 拉伸、不逐格插值），旋转完合成一张体素网格，再交给原有 bake()/yaw 烘焙。
@@ -371,21 +373,25 @@ const BLOCK = {
     gold: '#e8b84b',
 };
 /**
- * 10 件静止布局。x=0 是身体中线、y=0 是地面、z 是深度层（-3 最远、3 最前）。
- * 头/躯干 7 层深、四肢 5 层深，转身时仍是真 3D 体积而不是纸片。
- * y 上的 1 格空隙就是刻意留的关节缝：肘 29、膝 12、髋 23；肩缝在 x=±5。
+ * 10 件静止布局。x=0 是身体中线、y=0 是地面、z 是深度层（-5 最远、4 最前）。
+ * 用户第二轮反馈「纸片人」：头 / 胸加到 10 层深、四肢 8 层深，正面 x 宽度
+ * 一格不加，只把侧影做厚；头胸比四肢厚 2 层，转 90° 时不再是等宽细柱。
+ * 「胳膊像蛇」：上臂 + 前臂两段各自旋转会接成阶梯，改成**一条整块胳膊**，
+ * 手是独立方块挂在末端；两者共用同一个肩枢轴、同角度旋转 = 一个刚性组，
+ * 无论怎么抡都只有一条整齐的方块边，不会出现两段相对扭。
+ * y 上的 1 格空隙是关节缝：腕 24、膝 12、髋 23；肩缝在 x=±5。
  */
 exports.BLOCK_PART_SPECS = [
-    { id: 'head', x: -4, y: 46, z: -3, w: 8, h: 8, d: 7, pivotX: 0, pivotY: 46, color: BLOCK.skin },
-    { id: 'torso', x: -4, y: 24, z: -3, w: 9, h: 22, d: 7, pivotX: 0, pivotY: 24, color: BLOCK.armor },
-    { id: 'upperArmL', x: -9, y: 30, z: -2, w: 4, h: 8, d: 5, pivotX: -7, pivotY: 38, color: BLOCK.skin },
-    { id: 'upperArmR', x: 6, y: 30, z: -2, w: 4, h: 8, d: 5, pivotX: 7, pivotY: 38, color: BLOCK.skin },
-    { id: 'forearmL', x: -14, y: 21, z: -2, w: 6, h: 8, d: 5, pivotX: -12, pivotY: 29, color: BLOCK.skin },
-    { id: 'forearmR', x: 9, y: 21, z: -2, w: 6, h: 8, d: 5, pivotX: 12, pivotY: 29, color: BLOCK.skin },
-    { id: 'thighL', x: -5, y: 13, z: -2, w: 4, h: 10, d: 5, pivotX: -3, pivotY: 23, color: BLOCK.cloth },
-    { id: 'thighR', x: 2, y: 13, z: -2, w: 4, h: 10, d: 5, pivotX: 3, pivotY: 23, color: BLOCK.cloth },
-    { id: 'shinL', x: -5, y: 0, z: -2, w: 4, h: 12, d: 5, pivotX: -3, pivotY: 12, color: BLOCK.leather },
-    { id: 'shinR', x: 2, y: 0, z: -2, w: 4, h: 12, d: 5, pivotX: 3, pivotY: 12, color: BLOCK.leather },
+    { id: 'head', x: -4, y: 46, z: -5, w: 8, h: 8, d: 10, pivotX: 0, pivotY: 46, color: BLOCK.skin },
+    { id: 'torso', x: -4, y: 24, z: -5, w: 9, h: 22, d: 10, pivotX: 0, pivotY: 24, color: BLOCK.armor },
+    { id: 'armL', x: -10, y: 25, z: -4, w: 5, h: 13, d: 8, pivotX: -8, pivotY: 37, color: BLOCK.skin },
+    { id: 'armR', x: 6, y: 25, z: -4, w: 5, h: 13, d: 8, pivotX: 8, pivotY: 37, color: BLOCK.skin },
+    { id: 'handL', x: -14, y: 20, z: -4, w: 5, h: 4, d: 8, pivotX: -8, pivotY: 37, color: BLOCK.skin },
+    { id: 'handR', x: 10, y: 20, z: -4, w: 5, h: 4, d: 8, pivotX: 8, pivotY: 37, color: BLOCK.skin },
+    { id: 'thighL', x: -5, y: 13, z: -4, w: 4, h: 10, d: 8, pivotX: -3, pivotY: 23, color: BLOCK.cloth },
+    { id: 'thighR', x: 2, y: 13, z: -4, w: 4, h: 10, d: 8, pivotX: 3, pivotY: 23, color: BLOCK.cloth },
+    { id: 'shinL', x: -5, y: 0, z: -4, w: 4, h: 12, d: 8, pivotX: -3, pivotY: 12, color: BLOCK.leather },
+    { id: 'shinR', x: 2, y: 0, z: -4, w: 4, h: 12, d: 8, pivotX: 3, pivotY: 12, color: BLOCK.leather },
 ];
 /** 10 件各画一次：实心盒打底，再用整片色带分出脸/发、胸甲、肩甲、护腕、靴。 */
 function makeBlockParts() {
@@ -407,15 +413,17 @@ function makeBlockParts() {
                 b.box(spec.x, spec.y + 18, front, 2, 4, 1, BLOCK.armorLight);
                 b.box(spec.x + spec.w - 2, spec.y + 18, front, 2, 4, 1, BLOCK.armorLight);
                 break;
-            case 'upperArmL':
-            case 'upperArmR':
-                b.box(spec.x, spec.y + 5, spec.z, spec.w, 3, spec.d, BLOCK.armorHi);
+            case 'armL':
+            case 'armR':
+                // 一整条胳膊只有一个色块：上段肩甲、其余亮肤色，中间不分段。
+                b.box(spec.x, spec.y + spec.h - 3, spec.z, spec.w, 3, spec.d, BLOCK.armorHi);
                 b.box(spec.x, spec.y, front, spec.w, spec.h - 3, 1, BLOCK.skinHi);
                 break;
-            case 'forearmL':
-            case 'forearmR':
-                b.box(spec.x, spec.y, spec.z, spec.w, 3, spec.d, BLOCK.leatherDark);
-                b.box(spec.x, spec.y + 3, front, spec.w, spec.h - 3, 1, BLOCK.skinHi);
+            case 'handL':
+            case 'handR':
+                // 手是独立小方块：底一格腕口、顶一格指节亮面，与胳膊靠 1 格腕缝分开。
+                b.box(spec.x, spec.y, spec.z, spec.w, 1, spec.d, BLOCK.leatherDark);
+                b.box(spec.x, spec.y + spec.h - 1, front, spec.w, 1, 1, BLOCK.skinHi);
                 break;
             case 'thighL':
             case 'thighR':
@@ -488,8 +496,8 @@ function rotateRigid(cells, px, py, deg) {
 const BLOCK_PARTS = makeBlockParts();
 /**
  * 模型坐标下的持械拳心；数值与 SHOULDER_X / SHOULDER_Y - ARM_REACH 由单测钉死。
- * 分件网格里前臂只画到护腕，唯一的拳头由下面这枚 KNIGHT_FIST 压在 handPose
- * 的剑柄上 —— 不再出现「静态拳头 + 握点拳头」两只手的重影。
+ * 分件网格里手是挂在胳膊末端的独立方块（覆盖 x=-14），下面这枚 KNIGHT_FIST
+ * 压在 handPose 的剑柄上作为同一只手的指节，不是另算一套肩位的第二只手。
  */
 exports.KNIGHT_GRIP = Object.freeze({ x: -14, y: 22 });
 /** 压在剑柄上的握拳。画在 handPose 的握点而不是另算肩位。 */
@@ -703,10 +711,12 @@ function angleOf(id, p) {
         case 'shinL': return p.legL > 0 ? p.legL * 3 : 0;
         case 'thighR': return p.legR > 0 ? p.legR * 4 : 0;
         case 'shinR': return p.legR > 0 ? p.legR * 3 : 0;
-        case 'upperArmL': return p.armL * 4 + (p.upperL ?? 0);
-        case 'forearmL': return p.armL * 3 + (p.foreL ?? 0);
-        case 'upperArmR': return p.armR * 4 + (p.upperR ?? 0);
-        case 'forearmR': return p.armR * 3 + (p.foreR ?? 0);
+        // 胳膊与手共用同一肩枢轴、返回同一个角度：合成后仍是一个刚性方块组，
+        // 不再出现两段各自旋转接成的蛇形阶梯。
+        case 'armL':
+        case 'handL': return p.armL * 4 + (p.swingL ?? 0);
+        case 'armR':
+        case 'handR': return p.armR * 4 + (p.swingR ?? 0);
     }
 }
 /** 迈出去的那条腿整条抬 3 格：另一只脚始终撑地，读作走路而不是原地踏步。 */
@@ -756,16 +766,16 @@ function blockBodyOf() {
             armR: amp,
         })));
     }
-    // 起手：整条持械臂向外上举；中段：抡向目标；收势：回落到体侧。
+    // 起手：整条持械胳膊（连手）向外上举；中段：抡向目标；收势：回落到体侧。
     const swingFrames = [
-        { name: 'windup', upperL: -55, foreL: -25, upperR: 12, foreR: 8 },
-        { name: 'strike', upperL: 8, foreL: 6, upperR: -12, foreR: -6 },
-        { name: 'recover', upperL: 25, foreL: 12, upperR: -5, foreR: -3 },
+        { name: 'windup', swingL: -55, swingR: 12 },
+        { name: 'strike', swingL: 8, swingR: -12 },
+        { name: 'recover', swingL: 25, swingR: -5 },
     ];
     const swingPoses = swingFrames.map((f) => withAnchor(assembleBlockPose(BLOCK_PARTS, {
         name: `swing-${f.name}`,
         legL: 0, legR: 0, armL: 0, armR: 0,
-        upperL: f.upperL, foreL: f.foreL, upperR: f.upperR, foreR: f.foreR,
+        swingL: f.swingL, swingR: f.swingR,
     })));
     return {
         name: 'knight',
