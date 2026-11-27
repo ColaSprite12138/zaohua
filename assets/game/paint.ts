@@ -74,6 +74,7 @@ import {
   KNIGHT,
   KNIGHT_ARM,
   KNIGHT_DOWN,
+  KNIGHT_FIST,
   PORTAL_FRAME,
   SHOULDER_X,
   SHOULDER_Y,
@@ -897,8 +898,9 @@ function gripPhiOf(weaponId: string | null): number {
 }
 
 /**
- * Draw the weapon arm: motion ghosts, the blade, then the limb on top so the
- * fist visibly wraps the grip. `x/y` is the feet anchor of the body.
+ * Draw the held weapon: motion ghosts, the blade, then a fist stamped on the
+ * grip so the sword reads as held (not glued to the body). The arms themselves
+ * are part of the GLB body; `x/y` is the feet anchor of the body.
  */
 function drawWeaponArm(
   g: Painter,
@@ -913,9 +915,6 @@ function drawWeaponArm(
   showLimb = true,
 ): void {
   const hand = handPose(x, y, face, swing);
-  // 与 handPose 用同一套肩位（含纵向分量），否则手臂和拳头会分家。
-  const sx = x + shoulderOffset(face);
-  const sy = y - SHOULDER_Y + shoulderOffsetY(face);
 
   if (blade !== null) {
     // Arc trail: three earlier positions of the same blade, dimmer each step.
@@ -936,15 +935,13 @@ function drawWeaponArm(
     });
   }
 
-  // 2026-11-25：主角双臂（含肩 / 肘 / 腕关节）已由 3D 骨架在 drawBody 里画完，
-  // 这里不再叠加一条独立的持械手臂 —— 旧做法「body 只画副手 + drawLimb 另画
-  // 一条」的两套肩位坐标对不上，会出现浮空的手和缺失的胳膊。
-  // 武器仍由 handPose 挂在右手；挥砍时武器照常旋转。
-  void limb;
-  void sx;
-  void sy;
-  void showLimb;
-  void flash;
+  // 2026-11-28：GLB 网格已在 drawBody 里画出双臂、袖甲和亮色拳头，这里只补
+  // 一枚「握拳」压在 handPose 的剑柄上，让剑读作被握住而不是吸附在身侧。
+  // 不叠加整条独立手臂 —— 旧版两套肩位坐标对不上，会出现浮空的手和缺失的胳膊。
+  // 拳头不跟着剑旋转：手固定在握点，剑绕手腕转。
+  if (showLimb && blade !== null && limb === KNIGHT_ARM) {
+    drawVoxel(g, KNIGHT_FIST, hand.x, hand.y, { scale, flash });
+  }
 }
 
 /**

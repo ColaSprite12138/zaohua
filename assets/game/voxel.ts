@@ -962,6 +962,88 @@ function glbCells(): Voxel[] {
 }
 /* GLB_VOXEL_DATA_END */
 
+/* ------------------------------------------------------------------------ *
+ * 主角双臂 / 握拳（2026-11-28，用户反馈「完全看不到手和胳膊」）
+ *
+ * GLB 静态网格里手臂只剩 |x|>=8 的两列近黑褐细条（左 193 格 / 右 90 格，
+ * 亮肤色 0 格），正 / 背面投影各只占轮廓最外 1–2 列 77 / 68 个可见像素，
+ * 屏幕上读不出胳膊，更没有手。这里把这两列**重建**成钢灰肩甲 + 褐皮革袖
+ * + 亮肤色拳头：头 / 躯干 / 骨盆 / 腿 / 披风一格不动，只替换手臂部件。
+ *
+ * 持械手放在模型 x = -14（角色右手），与 `swing.ts::handPose` 在正对 / 背对
+ * 时的握点 x = -SHOULDER_X、y = 脚底 - (SHOULDER_Y - ARM_REACH) 对齐；
+ * `drawBody` 的 yaw 投影会在背对时自动把它翻到屏幕右侧，两边都落在剑柄上。
+ * 所有 8 帧步态 + 3 帧挥剑共用同一份 base，姿态位移仍由 `partOf` 驱动。
+ * ------------------------------------------------------------------------ */
+
+/** 模型坐标下的持械拳心；数值与 SHOULDER_X / SHOULDER_Y - ARM_REACH 由单测钉死。 */
+export const KNIGHT_GRIP = Object.freeze({ x: -14, y: 22 });
+
+/** 只在 y>=22 的体素才归手臂部件：低于 22 会被 `partOf` 判成腿、跟着摆腿。 */
+function knightArmCells(): Voxel[] {
+  const b = new Builder('knight.arms', 1);
+  const skin = '#eec39a';
+  const skinHi = '#fadcbe';
+  const skinDark = '#b8886a';
+  const leather = '#7a4a26';
+  const cuff = '#506070';
+  const steel = '#6e8092';
+  const steelHi = '#93a6b6';
+  for (const s of [-1, 1] as const) {
+    const armed = s === -1; // 模型 x<0 = 角色右手 = 持械手
+    /** 以 x=0 为轴镜像写一侧：`s=-1` 翻到负侧。 */
+    const bx = (x: number, y: number, z: number, w: number, h: number, d: number, c: string): void => {
+      b.box(s > 0 ? x : -(x + w - 1), y, z, w, h, d, c);
+    };
+    // 肩甲：从原肩列 x=8 外扩到 11，冷钢灰 + 亮边，与暗褐斗篷拉开明度。
+    bx(8, 37, -1, 4, 4, 3, steel);
+    bx(8, 41, -1, 4, 1, 3, steelHi);
+    // 上臂：褐皮革，朝相机那面提亮，读得出圆柱而不是一条黑边。
+    bx(9, 30, -1, 3, 7, 3, leather);
+    bx(9, 30, 2, 3, 7, 1, skinDark);
+    // 肘 / 前臂：略向外张，护腕一圈冷钢，把肩和手接起来。
+    bx(10, 25, 0, 3, 5, 3, leather);
+    bx(10, 25, 2, 3, 2, 1, cuff);
+    // 拳：持械手外移到 x=12..15（镜像后 -15..-12，中心 -13.5 ≈ handPose 的 -14）。
+    // z 特意压到 -5..-3：bake 的透视下移是 (z - minZ) 像素，网格 minZ=-6，
+    // 所以屏幕高度 = v.y - z - 6 ≈ 22，正好等于 handPose 的握点
+    // (SHOULDER_Y - ARM_REACH)；否则静态拳头会比剑柄低 5~6px，读成「两只手」。
+    const fistX = armed ? 12 : 10;
+    const fistW = armed ? 4 : 3;
+    bx(fistX - 1, 22, -5, fistW + 1, 2, 3, leather); // 腕口
+    bx(fistX, 23, -5, fistW, 3, 3, skin);             // 拳
+    bx(fistX, 25, -4, fistW, 1, 2, skinHi);           // 指节亮面
+    bx(fistX, 23, -3, fistW, 1, 1, skinDark);         // 外层暗面，分出关节
+  }
+  return b.model().voxels;
+}
+
+/** 替换掉读不出来的暗色手臂细条，其余 GLB 体素原样保留。 */
+function augmentKnightArms(base: readonly Voxel[]): Voxel[] {
+  const cells = new Map<string, Voxel>();
+  for (const v of base) {
+    if (v.y >= 22 && v.y < 44 && Math.abs(v.x) >= 8) continue;
+    cells.set(`${v.x},${v.y},${v.z}`, v);
+  }
+  for (const v of knightArmCells()) cells.set(`${v.x},${v.y},${v.z}`, v);
+  return [...cells.values()];
+}
+
+/**
+ * 压在剑柄上的握拳。画在 `handPose` 的握点而不是重新算一套肩位 —— 只补一枚
+ * 拳头、不叠加整条独立手臂，避免旧版「两套肩位对不上、浮空的手」复发。
+ */
+function knightFist(): VoxelModel {
+  const b = new Builder('knight.fist', 1);
+  b.box(-2, 0, -1, 5, 2, 3, '#604226');  // 袖口 / 腕
+  b.box(-2, 2, -1, 5, 4, 3, '#eec39a');  // 拳
+  b.box(-2, 5, -1, 5, 1, 3, '#fadcbe');  // 指节亮面
+  b.box(-2, 2, 2, 5, 2, 1, '#b8886a');   // 朝相机的暗面
+  return b.model();
+}
+
+export const KNIGHT_FIST = knightFist();
+
 function rigBodyOf(name: string, blocks: number, poses: readonly RigPose[]): BodyModel {
   return {
     name,
@@ -1269,7 +1351,7 @@ function assembleGlbPose(base: readonly Voxel[], p: GlbPoseParams): VoxelModel {
 }
 
 function glbBodyOf(): BodyModel {
-  const base = glbCells();
+  const base = augmentKnightArms(glbCells());
   // 所有姿态共用静止网格的地面锚点，bake 不会因 bob / 抬腿而移动脚底。
   const anchor = {
     maxY: Math.max(...base.map((v) => v.y)),

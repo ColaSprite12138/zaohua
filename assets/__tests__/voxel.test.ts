@@ -14,6 +14,8 @@ import {
   ARM_REACH,
   KNIGHT,
   KNIGHT_ARM,
+  KNIGHT_FIST,
+  KNIGHT_GRIP,
   SHOULDER_X,
   SHOULDER_Y,
   SKELETON,
@@ -39,6 +41,7 @@ import {
 } from '../meta/inventory.ts';
 import { item } from '../resource/generated/item.ts';
 import { weapon as weaponTable } from '../resource/generated/weapon.ts';
+import { handPose } from '../game/swing.ts';
 
 function blockKeys(m: VoxelModel): Set<string> {
   return new Set(m.voxels.map((v) => `${v.x},${v.y},${v.z}`));
@@ -109,6 +112,32 @@ describe('character rigs', () => {
     expect(pose.voxels.some((v) => v.c === '#783a4e')).toBe(true);
     expect(pose.voxels.some((v) => v.c === '#67e8f9')).toBe(false);
     expect(pose.voxels.length).toBeGreaterThan(1000);
+  });
+
+  it('the GLB knight has readable arms and a bright fist on the sword grip', () => {
+    // 2026-11-28：GLB 原网格的手臂只是 |x|>=8 的两列近黑褐细条，屏幕上读不出
+    // 胳膊也没有手。重建后必须是钢灰肩甲 + 亮肤色拳头，两侧都有、都够外张。
+    const pose = KNIGHT.poses[0]!;
+    const steel = pose.voxels.filter((v) => v.c === '#6e8092' || v.c === '#93a6b6');
+    const skin = pose.voxels.filter((v) => v.c === '#eec39a' || v.c === '#fadcbe');
+    expect(steel.length).toBeGreaterThan(40);
+    expect(skin.length).toBeGreaterThan(20);
+    for (const s of [-1, 1]) {
+      const arm = skin.filter((v) => Math.sign(v.x) === s && v.y >= 22 && v.y < 30);
+      expect(arm.length).toBeGreaterThan(8);
+      expect(Math.max(...arm.map((v) => Math.abs(v.x)))).toBeGreaterThanOrEqual(10);
+    }
+    // 持械手（模型 x<0）外移到 handPose 的握点：正面 x=-SHOULDER_X、
+    // y=脚底-(SHOULDER_Y-ARM_REACH)；背对时由 yaw 投影自动翻到屏幕右侧。
+    expect(KNIGHT_GRIP.x).toBe(-SHOULDER_X);
+    expect(KNIGHT_GRIP.y).toBe(SHOULDER_Y - ARM_REACH);
+    expect(Math.min(...skin.filter((v) => v.x < 0).map((v) => v.x))).toBeLessThanOrEqual(KNIGHT_GRIP.x);
+    const hand = handPose(0, 0, Math.PI / 2, 0);
+    expect(hand.x).toBeCloseTo(KNIGHT_GRIP.x, 5);
+    expect(hand.y).toBeCloseTo(-KNIGHT_GRIP.y, 5);
+    // 压在剑柄上的握拳：亮肤色的小模型，不是又一条独立手臂。
+    expect(KNIGHT_FIST.voxels.some((v) => v.c === '#eec39a')).toBe(true);
+    expect(KNIGHT_FIST.voxels.length).toBeLessThan(120);
   });
 
   it('the stepped poses really lift a foot (they are not three copies)', () => {
