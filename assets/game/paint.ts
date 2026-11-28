@@ -72,9 +72,11 @@ import {
 import {
   CORPSE,
   KNIGHT,
+  KNIGHT_BY_WEAPON,
   KNIGHT_ARM,
+  projectedGrip,
+  type WeaponKind,
   KNIGHT_DOWN,
-  KNIGHT_FIST,
   PORTAL_FRAME,
   SHOULDER_X,
   SHOULDER_Y,
@@ -897,6 +899,32 @@ function gripPhiOf(weaponId: string | null): number {
     ? GRIP_PHI.bow : GRIP_PHI.sword;
 }
 
+/** 装备武器 → 骨骼姿态种类；itemArtOf 的 key 前缀直接给出形状。 */
+function weaponKindOf(weaponId: string | null): WeaponKind {
+  if (weaponId === null) return 'bare';
+  const art = itemArtOf(weaponId);
+  if (art.startsWith('bow')) return 'bow';
+  if (art.startsWith('staff')) return 'staff';
+  return 'sword';
+}
+
+/** 按武器选一套手臂 / 手部骨骼，不是换一张贴图。 */
+function knightBodyOf(weaponId: string | null): BodyModel {
+  return KNIGHT_BY_WEAPON[weaponKindOf(weaponId)];
+}
+
+/**
+ * 把 swing.ts 的挥砍弧线平移到模型手的真实投影位置：handPose 是纯屏幕坐标，
+ * 不含 bake() 的 z 透视下移，直接画会让剑柄浮在手上方。差值按当前朝向实时算，
+ * 弧线本身（swing.test.ts 11 条）一点不动。
+ */
+function gripAdjustOf(weaponId: string | null, face: number): { x: number; y: number } {
+  if (weaponId === null) return { x: 0, y: 0 };
+  const grip = projectedGrip(knightBodyOf(weaponId).poses[0]!, yawOf(face).yaw);
+  const base = handPose(0, 0, face, 0);
+  return { x: grip.x - base.x, y: grip.y - base.y };
+}
+
 /**
  * Draw the held weapon: motion ghosts, the blade, then a fist stamped on the
  * grip so the sword reads as held (not glued to the body). The arms themselves
@@ -912,36 +940,33 @@ function drawWeaponArm(
   swing: number,
   flash: boolean,
   scale: number,
-  showLimb = true,
+  _showLimb = true,
+  gripAdjust: { x: number; y: number } = { x: 0, y: 0 },
 ): void {
   const hand = handPose(x, y, face, swing);
-
+  // 持械臂和手都在 KNIGHT 模型里；剑柄经 gripAdjust 平移到模型手的真实
+  // 投影位置（抵消 bake 的 z 透视），弧线仍由 handPose / bladeAngle 驱动。
+  const gx = hand.x + gripAdjust.x;
+  const gy = hand.y + gripAdjust.y;
   if (blade !== null) {
     // Arc trail: three earlier positions of the same blade, dimmer each step.
     // Only during a real swing -- an idle blade must not smear.
     if (swing > 0.1) {
       for (let i = 3; i >= 1; i -= 1) {
         const past = handPose(x, y, face, Math.max(0, swing - i * 0.12));
-        drawVoxel(g, blade, past.x, past.y, {
+        drawVoxel(g, blade, past.x + gripAdjust.x, past.y + gripAdjust.y, {
           rotation: bladeAngle(past) + Math.PI / 2,
           scale,
           alpha: 0.1 * (4 - i),
         });
       }
     }
-    drawVoxel(g, blade, hand.x, hand.y, {
+    drawVoxel(g, blade, gx, gy, {
       rotation: bladeAngle(hand) + Math.PI / 2,
       scale,
     });
   }
 
-  // 2026-11-28：GLB 网格已在 drawBody 里画出双臂、袖甲和亮色拳头，这里只补
-  // 一枚「握拳」压在 handPose 的剑柄上，让剑读作被握住而不是吸附在身侧。
-  // 不叠加整条独立手臂 —— 旧版两套肩位坐标对不上，会出现浮空的手和缺失的胳膊。
-  // 拳头不跟着剑旋转：手固定在握点，剑绕手腕转。
-  if (showLimb && blade !== null && limb === KNIGHT_ARM) {
-    drawVoxel(g, KNIGHT_FIST, hand.x, hand.y, { scale, flash });
-  }
 }
 
 /**
@@ -970,6 +995,7 @@ function drawDownedKnight(g: Painter, p: Player, progress: number): void {
       yaw: yawOf(p.face).yaw,
       rotation: progress * 0.5,
       alpha: 1 - progress,
+      // 阵亡过渡里也不画 pose 内烘的刚性剑：装备剑由 drawWeaponArm 单独管。
     });
   }
   drawVoxel(g, KNIGHT_DOWN, p.x, p.y + 2, { alpha: 0.55 + 0.4 * progress });
@@ -1015,7 +1041,7 @@ function drawRemoteActor(g: Painter, actor: Player): void {
   const weaponId = actor.weaponSlots?.[actor.activeWeaponSlot] ?? null;
   const armed = weaponId !== null;
   const paintBody = (): void => {
-    drawBody(g, KNIGHT, actor.x, actor.y - bob, {
+    drawBody(g, knightBodyOf(weaponId), actor.x, actor.y - bob, {
       frame: swing > 0 ? Math.floor(swing * 3) : (moving ? frame : 0),
       face: actor.face,
       flash: actor.hurt > 0,
@@ -1034,6 +1060,7 @@ function drawRemoteActor(g: Painter, actor: Player): void {
       actor.hurt > 0,
       1,
       true,
+      gripAdjustOf(weaponId, actor.face),
     );
   };
   // 与本地玩家同一条 φ 遮挡规则：武器握点在身体远侧时先画武器。
@@ -1108,7 +1135,7 @@ function drawPlayer(g: Painter, s: GameState): void {
   }
 
   const paintBody = (): void => {
-    drawBody(g, KNIGHT, p.x, p.y - bob - lunge, {
+    drawBody(g, knightBodyOf(weaponId), p.x, p.y - bob - lunge, {
       frame: swing > 0 ? Math.floor(swing * 3) : (moving ? frame : 0),
       face: p.face,
       flash: p.hurt > 0,
@@ -1130,6 +1157,7 @@ function drawPlayer(g: Painter, s: GameState): void {
       p.hurt > 0,
       armed ? 1 : 1,
       showLimb,
+      gripAdjustOf(weaponId, p.face),
     );
   };
   // 遮挡按「持握方位 φ + 朝向」算：sin(face+φ)<0 时武器在身体远侧，先画武器、

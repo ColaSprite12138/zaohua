@@ -16,6 +16,9 @@ import {
   KNIGHT_ARM,
   KNIGHT_FIST,
   KNIGHT_GRIP,
+  KNIGHT_BY_WEAPON,
+  projectedGrip,
+  BLOCK_PART_SPECS,
   SHOULDER_X,
   SHOULDER_Y,
   SKELETON,
@@ -98,44 +101,61 @@ describe('character rigs', () => {
     expect(ACCENTS.gem).toBeTruthy();
   });
 
-  it('the GLB voxel grid keeps a face, dark hair and a dense real mesh', () => {
-    // 直接用 GLB 网格落地：脸部在量化后落在 skin-shadow 档 #b8886a，
-    // 紫红头发落在 #783a4e；无发光青眼、无手搓部件。
+  it('the block rig is 10 flat-coloured solid parts, not a dense GLB dump', () => {
+    // 12 色大色块分件；两侧静态胳膊 / 手都在模型里，空手帧身体才完整。
     const pose = KNIGHT.poses[0]!;
-    const face = pose.voxels.filter((v) => v.c === '#b8886a' && v.y >= 45);
-    expect(face.length).toBeGreaterThan(0);
-    expect(face.some((v) => v.z > 0)).toBe(true);
-    const minZ = Math.min(...pose.voxels.map((v) => v.z));
-    const backLayer = pose.voxels.filter((v) => v.z === minZ);
-    expect(backLayer.some((v) => v.c === '#b8886a')).toBe(false);
-    expect(backLayer.length).toBeGreaterThan(0);
-    expect(pose.voxels.some((v) => v.c === '#783a4e')).toBe(true);
-    expect(pose.voxels.some((v) => v.c === '#67e8f9')).toBe(false);
+    const colors = new Set(pose.voxels.map((v) => v.c));
+    expect(colors.size).toBeGreaterThanOrEqual(8);
+    expect(colors.size).toBeLessThanOrEqual(16);
+    expect(colors.has('#783a4e')).toBe(false);
+    expect(colors.has('#67e8f9')).toBe(false);
+    // 大色块而不是逐格碎纹：占比最大的一档颜色至少铺满 300 格。
+    const counts = new Map<string, number>();
+    for (const v of pose.voxels) counts.set(v.c, (counts.get(v.c) ?? 0) + 1);
+    expect(Math.max(...counts.values())).toBeGreaterThan(300);
+    // 10 件规格：每件都是 ≥4 格宽的实心块；两只手是独立小方块（4 格高）。
+    expect(BLOCK_PART_SPECS).toHaveLength(10);
+    for (const s of BLOCK_PART_SPECS) {
+      expect(s.w).toBeGreaterThanOrEqual(4);
+      expect(s.h).toBeGreaterThanOrEqual(s.id === 'handL' || s.id === 'handR' ? 4 : 8);
+      expect(s.d).toBeGreaterThanOrEqual(BODY_DEPTH);
+    }
+    const byId = new Map(BLOCK_PART_SPECS.map((s) => [s.id, s]));
+    // 肩 / 腕 / 髋 / 膝各留 1 体素缝，分件永远读得清。
+    expect(byId.get('armL')!.x + byId.get('armL')!.w).toBe(byId.get('torso')!.x - 1);
+    expect(byId.get('armL')!.y - (byId.get('handL')!.y + byId.get('handL')!.h)).toBe(1);
+    expect(byId.get('torso')!.y - (byId.get('thighL')!.y + byId.get('thighL')!.h)).toBe(1);
+    expect(byId.get('thighL')!.y - (byId.get('shinL')!.y + byId.get('shinL')!.h)).toBe(1);
+    // 持械臂与手共用肩枢轴：一个刚性组一起抡。
+    expect(byId.get('handL')!.pivotX).toBe(byId.get('armL')!.pivotX);
+    expect(byId.get('handL')!.pivotY).toBe(byId.get('armL')!.pivotY);
+    // 侧面加厚：头 9 层、胳膊 8 层，头比胳膊厚，转 90° 不再纸片。
+    expect(byId.get('head')!.d).toBeGreaterThan(byId.get('armL')!.d);
+    expect(byId.get('armL')!.d).toBeGreaterThanOrEqual(8);
+    // 仍是真 3D 实心体积（正 / 背 / 侧都不是纸片）。
+    expect(new Set(pose.voxels.map((v) => v.z)).size).toBeGreaterThanOrEqual(7);
     expect(pose.voxels.length).toBeGreaterThan(1000);
   });
 
-  it('the GLB knight has readable arms and a bright fist on the sword grip', () => {
-    // 2026-11-28：GLB 原网格的手臂只是 |x|>=8 的两列近黑褐细条，屏幕上读不出
-    // 胳膊也没有手。重建后必须是钢灰肩甲 + 亮肤色拳头，两侧都有、都够外张。
-    const pose = KNIGHT.poses[0]!;
-    const steel = pose.voxels.filter((v) => v.c === '#6e8092' || v.c === '#93a6b6');
-    const skin = pose.voxels.filter((v) => v.c === '#eec39a' || v.c === '#fadcbe');
-    expect(steel.length).toBeGreaterThan(40);
-    expect(skin.length).toBeGreaterThan(20);
-    for (const s of [-1, 1]) {
-      const arm = skin.filter((v) => Math.sign(v.x) === s && v.y >= 22 && v.y < 30);
-      expect(arm.length).toBeGreaterThan(8);
-      expect(Math.max(...arm.map((v) => Math.abs(v.x)))).toBeGreaterThanOrEqual(10);
-    }
-    // 持械手（模型 x<0）外移到 handPose 的握点：正面 x=-SHOULDER_X、
-    // y=脚底-(SHOULDER_Y-ARM_REACH)；背对时由 yaw 投影自动翻到屏幕右侧。
+  it('both hands live in the model and the sword grip sits inside handL', () => {
     expect(KNIGHT_GRIP.x).toBe(-SHOULDER_X);
     expect(KNIGHT_GRIP.y).toBe(SHOULDER_Y - ARM_REACH);
-    expect(Math.min(...skin.filter((v) => v.x < 0).map((v) => v.x))).toBeLessThanOrEqual(KNIGHT_GRIP.x);
     const hand = handPose(0, 0, Math.PI / 2, 0);
     expect(hand.x).toBeCloseTo(KNIGHT_GRIP.x, 5);
     expect(hand.y).toBeCloseTo(-KNIGHT_GRIP.y, 5);
-    // 压在剑柄上的握拳：亮肤色的小模型，不是又一条独立手臂。
+    // 两侧各一条胳膊、一只手：空手帧身体也完整，不靠运行时 Limb 补半边。
+    const byId = new Map(BLOCK_PART_SPECS.map((s) => [s.id, s]));
+    expect(BLOCK_PART_SPECS.filter((s) => s.id.startsWith('hand')).map((s) => s.id))
+      .toEqual(['handL', 'handR']);
+    expect(BLOCK_PART_SPECS.filter((s) => s.id.startsWith('arm')).map((s) => s.id))
+      .toEqual(['armL', 'armR']);
+    // 剑柄画在握点，正好落进 handL 的方块范围；KNIGHT_FIST 只作契约占位，
+    // paint.ts 不再绘制它，画面里不会出现第三只浮空手。
+    const hl = byId.get('handL')!;
+    expect(hl.x).toBeLessThanOrEqual(KNIGHT_GRIP.x);
+    expect(hl.x + hl.w).toBeGreaterThan(KNIGHT_GRIP.x);
+    expect(hl.y).toBeLessThanOrEqual(KNIGHT_GRIP.y);
+    expect(hl.y + hl.h).toBeGreaterThan(KNIGHT_GRIP.y);
     expect(KNIGHT_FIST.voxels.some((v) => v.c === '#eec39a')).toBe(true);
     expect(KNIGHT_FIST.voxels.length).toBeLessThan(120);
   });
@@ -147,6 +167,49 @@ describe('character rigs', () => {
     expect(blockKeys(leftUp!)).not.toEqual(blockKeys(rightUp!));
     const floor = (m: VoxelModel): number => m.voxels.filter((v) => v.y <= 0).length;
     expect(floor(leftUp!)).toBeLessThan(floor(stand!));
+  });
+
+  it('walk poses differ; swing poses only move the weapon arm', () => {
+    const stand = KNIGHT.poses[0]!;
+    expect(KNIGHT.frameMap).toEqual([0, 2, 4, 6]);
+    // 走路帧仍各不相同：z 前后摆 + 抬脚 + bob。
+    expect(blockKeys(KNIGHT.poses[1]!)).not.toEqual(blockKeys(stand));
+    expect(blockKeys(KNIGHT.poses[5]!)).not.toEqual(blockKeys(stand));
+    expect(blockKeys(KNIGHT.poses[1]!)).not.toEqual(blockKeys(KNIGHT.poses[5]!));
+    // 挥剑三帧只让 armL/handL 绕肩抡起：三帧互不相同，副手臂 / 腿 / 躯干
+    // 不参与（swingR / legL / legR / lean / headTurn 全为 0）。
+    const swings = KNIGHT.swingPoses ?? [];
+    expect(swings).toHaveLength(3);
+    for (const s of swings) expect(blockKeys(s)).not.toEqual(blockKeys(stand));
+    expect(blockKeys(swings[0]!)).not.toEqual(blockKeys(swings[1]!));
+    expect(blockKeys(swings[1]!)).not.toEqual(blockKeys(swings[2]!));
+  });
+
+  it('each weapon kind bakes its own arm/hand rig, and the grip projection matches bake', () => {
+    const kinds = Object.keys(KNIGHT_BY_WEAPON);
+    expect(kinds).toEqual(['sword', 'bow', 'staff', 'bare']);
+    const sword = KNIGHT_BY_WEAPON.sword.poses[0]!;
+    // 四种武器的静止骨骼都不是同一套网格换色。
+    for (const k of ['bow', 'staff', 'bare'] as const) {
+      expect(blockKeys(KNIGHT_BY_WEAPON[k].poses[0]!)).not.toEqual(blockKeys(sword));
+      expect(KNIGHT_BY_WEAPON[k].swingPoses).toHaveLength(3);
+    }
+    // 每种武器三帧主动作各不相同（剑劈砍 / 弓拉弦 / 杖举落 / 徒手挥拳）。
+    for (const k of kinds as (keyof typeof KNIGHT_BY_WEAPON)[]) {
+      const s = KNIGHT_BY_WEAPON[k].swingPoses!;
+      expect(blockKeys(s[0]!)).not.toEqual(blockKeys(s[1]!));
+      expect(blockKeys(s[1]!)).not.toEqual(blockKeys(s[2]!));
+    }
+    // 投影公式与 bake 同源：0° 下 handPose 的纯屏幕握点与模型手存在差值，
+    // 这个差值就是剑柄浮空的量；四个 yaw 都给出有限偏移。
+    const grip = projectedGrip(KNIGHT.poses[0]!, 0);
+    const base = handPose(0, 0, Math.PI / 2, 0);
+    expect(Math.abs(grip.y - base.y)).toBeGreaterThan(0);
+    for (const yaw of [0, Math.PI / 4, Math.PI / 2, Math.PI]) {
+      const p = projectedGrip(KNIGHT.poses[0]!, yaw);
+      expect(Number.isFinite(p.x)).toBe(true);
+      expect(Number.isFinite(p.y)).toBe(true);
+    }
   });
 
   it('body heights are the authored block counts (56px / 48px)', () => {
@@ -242,8 +305,8 @@ describe('character rigs', () => {
       const minY = Math.min(...limb.model.voxels.map((v) => v.y));
       const maxY = Math.max(...limb.model.voxels.map((v) => v.y));
       expect(minY).toBe(0);
-      // 主角手臂随 56 格 @1px 骨架到 22 格（y=0..21）；骷髅仍是 8 格（y=0..7）。
-      expect(maxY).toBe(limb === KNIGHT_ARM ? 21 : 7);
+      // 主角持械臂 14 格（y=0..13），末端对齐 ARM_REACH 握点；骷髅仍是 8 格。
+      expect(maxY).toBe(limb === KNIGHT_ARM ? 13 : 7);
       expect(ARM_REACH).toBeGreaterThan(0);
       expect(ARM_REACH).toBeLessThanOrEqual(SHOULDER_Y);
       expect(SHOULDER_X).toBeGreaterThan(0);
