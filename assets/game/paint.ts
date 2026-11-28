@@ -970,6 +970,8 @@ function drawDownedKnight(g: Painter, p: Player, progress: number): void {
       yaw: yawOf(p.face).yaw,
       rotation: progress * 0.5,
       alpha: 1 - progress,
+      // 阵亡过渡里也不画 pose 内烘的刚性剑：装备剑由 drawWeaponArm 单独管。
+      hideWeapon: true,
     });
   }
   drawVoxel(g, KNIGHT_DOWN, p.x, p.y + 2, { alpha: 0.55 + 0.4 * progress });
@@ -1020,6 +1022,7 @@ function drawRemoteActor(g: Painter, actor: Player): void {
       face: actor.face,
       flash: actor.hurt > 0,
       action: swing > 0 ? 'swing' : 'run',
+      hideWeapon: true,
     });
   };
   const paintArm = (): void => {
@@ -1113,6 +1116,7 @@ function drawPlayer(g: Painter, s: GameState): void {
       face: p.face,
       flash: p.hurt > 0,
       action: swing > 0 ? 'swing' : 'run',
+      hideWeapon: true,
     });
   };
   // 持械手臂画在身体的**近侧**：正对 / 侧身时在身体前面（看得见握柄），
