@@ -253,6 +253,7 @@ export function createRemotePlayer(
     starSkills,
     cast: null,
     manaSurge: 0,
+    hpSurge: 0,
     channel: null,
     deathTimer: -1,
     intent: {

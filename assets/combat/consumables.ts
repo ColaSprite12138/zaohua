@@ -27,6 +27,8 @@ const BY_ID = new Map(consumable.map((row) => [String(row.id), row]));
  */
 export interface ConsumableEffect {
   readonly hpRestore: number;
+  /** 红药缓慢回复秒数；由 `consumable.xlsx::hp_seconds` 提供。 */
+  readonly hpSeconds: number;
   readonly manaRestore: number;
   readonly manaSeconds: number;
   readonly hint: string;
@@ -37,6 +39,7 @@ export function consumableEffect(id: string): ConsumableEffect | null {
   if (row === undefined) return null;
   return {
     hpRestore: row.hp_restore,
+    hpSeconds: row.hp_seconds,
     manaRestore: row.mana_restore,
     manaSeconds: row.mana_seconds,
     hint: row.hint,
@@ -46,8 +49,9 @@ export function consumableEffect(id: string): ConsumableEffect | null {
 /** 蓝药：总量与速率（8.3：缓慢回复，不是一口回满）。 */
 export const POTION_MANA = consumableEffect(POTION_MP_ID)?.manaRestore ?? 0;
 export const POTION_SECONDS = consumableEffect(POTION_MP_ID)?.manaSeconds ?? 0;
-/** 红药：一口回多少生命。 */
+/** 红药：总共回多少生命、分几秒回完（都来自 `consumable.xlsx`）。 */
 export const POTION_HP_HEAL = consumableEffect(POTION_HP_ID)?.hpRestore ?? 0;
+export const POTION_HP_SECONDS = consumableEffect(POTION_HP_ID)?.hpSeconds ?? 0;
 
 /** 背包里有几瓶（不统计仓库：仓库永不进战局）。**按件数算，不是格子数**。 */
 export function countConsumable(run: InventoryState, defId: string): number {
@@ -95,7 +99,7 @@ export function drinkPotion(s: GameState): boolean {
   return true;
 }
 
-/** 喝红药：一口回 `hp_potion_heal`，满血不喝（不能当水喝）。 */
+/** 喝红药：按表里配的总量与秒数缓慢回血，满血不喝（不能当水喝）。 */
 export function healPotion(s: GameState): boolean {
   if (runOver(s)) return false;
   if (countConsumable(s.runInventory, POTION_HP_ID) <= 0) {
@@ -106,14 +110,19 @@ export function healPotion(s: GameState): boolean {
     say(s, '生命已满 · 先留着红药');
     return false;
   }
+  // 药效不叠加：正在回复时再喝只是把计时重置，等于白扔一瓶。
+  if (s.hpSurge > 0) {
+    say(s, '上一瓶还在回复中');
+    return false;
+  }
   const effect = consumableEffect(POTION_HP_ID);
-  if (effect === null || effect.hpRestore <= 0) {
+  if (effect === null || effect.hpRestore <= 0 || effect.hpSeconds <= 0) {
     say(s, '红药还没有配置效果（consumable.xlsx）');
     return false;
   }
   if (!takeConsumable(s.runInventory, POTION_HP_ID)) return false;
-  s.hp = Math.min(s.maxHp, s.hp + effect.hpRestore);
-  say(s, `喝下红药 · 回复 ${effect.hpRestore} 点生命`);
+  s.hpSurge = effect.hpSeconds;
+  say(s, `喝下红药 · ${effect.hpSeconds} 秒内回复 ${effect.hpRestore} 点生命`);
   burst(s, s.player.x, s.player.y - 30, '#e2564f', 12, 90);
   return true;
 }

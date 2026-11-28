@@ -167,7 +167,7 @@ const PLAYER_KEYS = [
   'hp', 'maxHp', 'invuln', 'dodge', 'dodgeCd', 'attackCd', 'attackFx', 'hurt',
   'dash', 'castPose', 'statuses', 'intent',
   'runInventory', 'weaponSlots', 'activeWeaponSlot', 'carriedItems',
-  'mana', 'maxMana', 'skillBar', 'starSkills', 'cast', 'manaSurge', 'channel',
+  'mana', 'maxMana', 'skillBar', 'starSkills', 'cast', 'manaSurge', 'hpSurge', 'channel',
   'deathTimer',
 ] as const;
 

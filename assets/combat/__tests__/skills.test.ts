@@ -13,7 +13,7 @@ import { beginSkill, advanceCast, drinkPotion, tickSkills } from '../skills.ts';
 import { SKILLS, skillDef } from '../skills.ts';
 import { NO_MODIFIERS } from '../modifiers.ts';
 import {
-  PLAYER_MANA_MAX, POTION_COUNT, POTION_SECONDS, PRE_EQUIPPED_SKILLS,
+  PLAYER_MANA_MAX, POTION_COUNT, POTION_MANA, POTION_SECONDS, PRE_EQUIPPED_SKILLS,
   POTION_MP_ID, countConsumable,
   SKILL_SLOTS, createState, projection, reset, step,
   type GameState, type StepInput,
@@ -280,8 +280,10 @@ describe('blue potions', () => {
     expect(half).toBeGreaterThan(40);
     expect(half).toBeLessThan(PLAYER_MANA_MAX);
     tick(s, POTION_SECONDS);
-    // 分帧累加有浮点残差，按 5 位小数比（上限由 `Math.min` 保证不会溢出）。
-    expect(s.mana).toBeCloseTo(PLAYER_MANA_MAX, 5);
+    // 法力上限从 100 提到 200 后，一瓶蓝药（+60）不再能回满：
+    // 期望值改成「起始值 + 表里的回复量」，上限仍由 `Math.min` 兜住。
+    // 分帧累加有浮点残差，按 5 位小数比。
+    expect(s.mana).toBeCloseTo(Math.min(s.maxMana, 40 + POTION_MANA), 5);
     expect(s.manaSurge).toBe(0);
   });
 

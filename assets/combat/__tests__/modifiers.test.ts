@@ -7,6 +7,7 @@ import { damageSkeleton } from '../attack.ts';
 import { MELEE_RANGE_BARE } from '../state.ts';
 import { monsterXp } from '../loot.ts';
 import { starmap } from '../../resource/generated/starmap.ts';
+import { combat_rule } from '../../resource/generated/combat_rule.ts';
 
 const idle: StepInput = {
   mouse: undefined,
@@ -96,9 +97,12 @@ describe('star nodes are interpreted from starmap.xlsx (design 6.3)', () => {
     });
     const hp = 1 + row('ember_hp').magnitude;
     const mana = 1 + row('frost_mana').magnitude;
-    expect(s.maxHp).toBe(Math.round(100 * hp));
+    // 基数来自 combat_rule.xlsx（500 / 200），不在断言里再抄一份数字。
+    const baseHp = combat_rule[0].player_hp_max;
+    const baseMana = combat_rule[0].player_mana_max;
+    expect(s.maxHp).toBe(Math.round(baseHp * hp));
     expect(s.hp).toBe(s.maxHp);
-    expect(s.maxMana).toBe(Math.round(100 * mana));
+    expect(s.maxMana).toBe(Math.round(baseMana * mana));
     expect(s.mana).toBe(s.maxMana);
     expect(s.skillBar.map((slot) => slot.id)).toEqual([
       'cleave', 'thunder', null, null, null, null, null,

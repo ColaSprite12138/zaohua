@@ -10,7 +10,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { damageSkeleton } from '../attack.ts';
-import { countConsumable, drinkPotion, healPotion, POTION_HP_ID, POTION_HP_HEAL, POTION_MP_ID } from '../consumables.ts';
+import { countConsumable, drinkPotion, healPotion, POTION_HP_HEAL, POTION_HP_ID, POTION_HP_SECONDS, POTION_MP_ID } from '../consumables.ts';
+import { tickSkills } from '../skills.ts';
 import {
   activeWeaponBroken, durabilityMaxOf, durabilityOf, durabilitySnapshot, maxDurability,
   weaponUsable, wearWeapon,
@@ -165,9 +166,18 @@ describe('potions are bag items, not a free per-run quota', () => {
     expect(countConsumable(s.runInventory, POTION_HP_ID)).toBe(before);
     s.hp = 20;
     expect(healPotion(s)).toBe(true);
-    expect(s.hp).toBe(Math.min(s.maxHp, 20 + POTION_HP_HEAL));
+    // 红药是缓慢回复：喝下那一刻只起计时，不立刻回血。
+    expect(s.hp).toBe(20);
+    expect(s.hpSurge).toBe(POTION_HP_SECONDS);
     expect(countConsumable(s.runInventory, POTION_HP_ID)).toBe(before - 1);
     expect(projection(s).hpPotions).toBe(before - 1);
+    // 药效不叠加：回血途中再喝一瓶要免费拒绝，不能再扣一瓶。
+    expect(healPotion(s)).toBe(false);
+    expect(countConsumable(s.runInventory, POTION_HP_ID)).toBe(before - 1);
+    // 按表里的秒数推进完，总量正好回满 150 点，计时自动收尾。
+    tickSkills(s, POTION_HP_SECONDS);
+    expect(s.hp).toBe(Math.min(s.maxHp, 20 + POTION_HP_HEAL));
+    expect(s.hpSurge).toBe(0);
   });
 
   it('an empty bag means no potion at all', () => {

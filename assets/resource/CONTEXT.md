@@ -35,6 +35,7 @@
 
 | 表 | 消费方 | 用途 |
 |:--|:--|:--|
+| `attribute.xlsx` | `combat/attributes.ts` | **人物基础属性**（2026-11-28 新增）：5 行属性，`points` 是人物自带点数初值，`hp_per_point / mana_per_point / physical_per_point / spell_per_point / healing_per_point / reduction_per_point` 是每点**绝对值**收益。只做加算、不设计百分比属性；装备词条与星图节点给的点数由调用方叠加后传入 |
 | `item.xlsx` | `combat/`、`meta/` | 15 行物品通用信息 `id / name / item_type / stack_size`：12 件武器 + `30001` 弓箭（`弹药`）+ **`30002` 红药 / `30003` 蓝药（`消耗品`，1×1）**；`item_type` 决定能不能装备与占几格 |
 | `weapon.xlsx` | `combat/`、`meta/` | 13 行武器专属信息 `id / quality / weapon_subtype / damage_min / damage_max / durability / **range**`（`durability` 2026-11-15 加，消费方 `combat/durability.ts` 与局外武器槽耐久条；`range` 2026-11-17 加，**近战可达距离**，远程行填 `0` = 交给弹道）；`weapon_subtype` 是攻击方式**唯一权威** |
 | `monster.xlsx` | `combat/`、`battle/`（地图引用校验） | 怪物 id → 掉落池 id（骷髅剑士 → 1，骷髅弓手 → 2）**+ 战斗手感四列 `walk_speed / attack_interval / attack_damage / sense_radius`**（2026-11-15 加前三列，2026-11-16 加感知半径：沉睡的怪只有在感知圈内 / 挨打 / 附近被砸开时才醒）；2026-11-12 由 `monster_loot.xlsx` 改名，生成物为 `monster.ts` / 常量 `monster` |
@@ -42,7 +43,7 @@
 | `projectile.xlsx` | `combat/projectile-runtime.ts`（join）+ `combat/attack-spec.ts`（读射程 / 弹速） | **弹道原型的数值**（2026-11-16 加）：`speed / range / hit_radius / splash_radius / pierce / homing / element / status / zone_radius / zone_life / visual / name / hint`。行：`arrow`（玩家箭，`homing>0` = 指向性）、`monster_arrow`（骷髅箭，`homing=0` = 非指向性）、`fireball`（溅射 + 落地留火）。**机制（形态 / 谁在射）留在代码**：`attack-spec.ts::targeting` 决定锁定还是锁方向 |
 | `skill.xlsx` | `combat/skills.ts` | **8 个技能的数值**（含 2026-11-16 加的 `fireball` 弹道法术）：`cost / cooldown / cast_time / damage / reach / width / zone_radius / zone_life / name / hint`。机制列（`kind` / `element` / `status` / `icon`）留在代码 |
 | `status.xlsx` | `combat/status.ts` | **18 条状态的数值**：`duration / max_stacks / dot / move_mul / attack_interval_mul / damage_taken_mul / no_move / no_attack / no_skill / no_dodge / name / hint`。视觉色与元素归属留在代码 |
-| `consumable.xlsx` | `combat/consumables.ts` | **红药 / 蓝药的效果，每瓶一行**：`hp_restore / mana_restore / mana_seconds / hint`。加第三种药 = 加一行，代码不用动 |
+| `consumable.xlsx` | `combat/consumables.ts` | **红药 / 蓝药的效果，每瓶一行**：`hp_restore / **hp_seconds** / mana_restore / mana_seconds / hint`。2026-11-28 起红药也是缓慢回复（150 点 / 10 秒），`hp_seconds=0` 才是一口回。加第三种药 = 加一行，代码不用动 |
 | `level.xlsx` | `talent/`（局外页面经 `MetaShell.levels` 注入） | **升级曲线 18 行**：`level / xp_to_next / star_points`；最后一行 `xp_to_next = 0` ＝等级上限。改这里就改了「多少击杀升一级」 |
 | `constellation.xlsx` | `talent/`（规则 + 局外面板布局） | **8 个星座**：`color`（六种亲和之一）/ `requirement`（该色亲和下限）/ `x,y`（卡片坐标）/ `hint`。亲和只累积不消耗，星座只按自己的颜色开锁 |
 | `starmap.xlsx` | `combat/modifiers.ts`（数值）+ `talent/`（规则） | **24 个节点**：`constellation / kind / effect / magnitude / cost / aff_fire…aff_wind / skill_id / hint`。`kind=skill` 解锁主动技能并产本色 2 + 邻色 1；被动产本色 1 + 邻色 1；`effect` 只允许 `dmg_pct / hp_pct / mana_pct / range_px`。**没有 `requires` 列**（v7 去掉了节点前置） |

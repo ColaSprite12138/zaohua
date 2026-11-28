@@ -23,10 +23,10 @@ import { canStand } from './movement.ts';
 import type { CombatModifiers } from './modifiers.ts';
 import { sortedPlayers } from './players.ts';
 import { playerSource } from './source.ts';
-import { POTION_MANA, POTION_SECONDS } from './consumables.ts';
+import { POTION_HP_HEAL, POTION_HP_SECONDS, POTION_MANA, POTION_SECONDS } from './consumables.ts';
 // 蓝药已经是背包物品（`consumables.ts`），这里只做转出，历史 import 路径不变。
 export { drinkPotion } from './consumables.ts';
-export { POTION_MANA, POTION_SECONDS, POTION_HP_HEAL, healPotion, countConsumable } from './consumables.ts';
+export { POTION_HP_HEAL, POTION_HP_SECONDS, POTION_MANA, POTION_SECONDS, healPotion, countConsumable } from './consumables.ts';
 import { skill as skillTable } from '../resource/generated/skill.ts';
 import { fireProjectile } from './projectile-runtime.ts';
 import { applyElement, spawnZone } from './reactions.ts';
@@ -227,6 +227,13 @@ export function tickSkills(s: GameState, dt: number): void {
     slot.cooldown = Math.max(0, slot.cooldown - dt);
   }
   s.player.castPose = Math.max(0, s.player.castPose - dt);
+  // 红药：按表里的总量与秒数逐帧回血，和蓝药同一套帧同步口径。
+  if (s.hpSurge > 0) {
+    const hpSpan = Math.min(dt, s.hpSurge);
+    s.hpSurge = Math.max(0, s.hpSurge - hpSpan);
+    s.hp = Math.min(s.maxHp, s.hp + (POTION_HP_HEAL / POTION_HP_SECONDS) * hpSpan);
+    if (s.hp >= s.maxHp) s.hpSurge = 0;
+  }
   if (s.manaSurge <= 0) return;
   const span = Math.min(dt, s.manaSurge);
   s.manaSurge = Math.max(0, s.manaSurge - span);

@@ -85,7 +85,7 @@ export {
   maxDurability,
   POTION_HP_ID,
   POTION_MP_ID,
-  POTION_HP_HEAL,
+  POTION_HP_HEAL, POTION_HP_SECONDS,
   DOT_TICK_SECONDS,
   statusDef,
   statusSnapshot,

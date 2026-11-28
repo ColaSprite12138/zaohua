@@ -152,8 +152,8 @@ export const PRE_EQUIPPED_SKILLS: readonly string[] = Object.freeze([
   'cleave', 'charge', 'ice_shard', 'fire_wall', 'venom_pool', 'water_wave', 'thunder',
 ]);
 
-/** 玩家基础生命上限（设计 8.3：只有生命 + 法力两种资源）。星图的 `hp_pct` 乘在这里。 */
-export const PLAYER_HP_MAX = 100;
+/** 玩家基础生命上限：唯一来源是 `combat_rule.xlsx::player_hp_max`，代码不写死数值。 */
+export const PLAYER_HP_MAX = RULE.player_hp_max;
 
 /**
  * 开局朝向（`+y`，屏幕下方）。
@@ -1001,6 +1001,8 @@ export interface Player {
   starSkills: readonly string[];
   cast: CastState | null;
   manaSurge: number;
+  /** 红药剩余生效秒数：> 0 时按每秒速率缓慢回血。 */
+  hpSurge: number;
   channel: number | null;
   /**
    * 联机 PVP 阵亡后的**按玩家**结算时钟（秒）：
@@ -1178,6 +1180,8 @@ export interface GameState {
   cast: CastState | null;
   /** 蓝药剩余生效秒数：> 0 时按每秒速率缓慢回蓝。 */
   manaSurge: number;
+  /** 红药剩余生效秒数：> 0 时按每秒速率缓慢回血。 */
+  hpSurge: number;
   /** 技能视觉事件队列（只写不读，见 `SkillFx`）。 */
   skillFx: SkillFx[];
   /* ---------------------------------------------------- 状态与反应链 */
@@ -1269,6 +1273,7 @@ export function createState(config: RunConfig = {}): GameState {
       starSkills: PRE_EQUIPPED_SKILLS,
       cast: null,
       manaSurge: 0,
+      hpSurge: 0,
       channel: null,
       deathTimer: -1,
       intent: {
@@ -1354,6 +1359,8 @@ export function createState(config: RunConfig = {}): GameState {
     set cast(v: CastState | null) { this.player.cast = v; },
     get manaSurge() { return this.player.manaSurge; },
     set manaSurge(v: number) { this.player.manaSurge = v; },
+    get hpSurge() { return this.player.hpSurge; },
+    set hpSurge(v: number) { this.player.hpSurge = v; },
     skillFx: [],
     zones: [],
     reactions: [],
@@ -1446,6 +1453,7 @@ export function reset(s: GameState): void {
   // 技能与法力是「本局」资源：重开一局 = 满蓝、满药、冷却清零。
   s.mana = s.maxMana;
   s.manaSurge = 0;
+  s.hpSurge = 0;
   s.cast = null;
   s.skillFx.length = 0;
   // 技能栏按「本局带进来的星图技能」重建：重开一局不能把玩家的配置换回兜底表。

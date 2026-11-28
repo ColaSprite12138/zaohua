@@ -765,7 +765,7 @@ export {
   updateDash,
 } from './skills.ts';
 export {
-  POTION_HP_HEAL, POTION_HP_ID, POTION_MANA, POTION_MP_ID, POTION_SECONDS,
+  POTION_HP_HEAL, POTION_HP_SECONDS, POTION_HP_ID, POTION_MANA, POTION_MP_ID, POTION_SECONDS,
   countConsumable, healPotion,
 } from './consumables.ts';
 export {

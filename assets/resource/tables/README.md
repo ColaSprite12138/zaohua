@@ -35,6 +35,7 @@ sharedStrings，**不读 `styles.xml`**。曾有两张表的 `styles.xml` 把 `<
 
 | 表 | 字段 | 消费方 |
 |:--|:--|:--|
+| `attribute.xlsx` | `id, name, points, hp_per_point, mana_per_point, physical_per_point, spell_per_point, healing_per_point, reduction_per_point, hint` | `combat/attributes.ts`（人物基础属性 → 派生数值，全部绝对值加算） |
 | `item.xlsx` | `id, name, item_type, stack_size` | `combat` / `meta`（身份、类型、**堆叠上限**；`item_type=消耗品` → 1×1 且不可装备） |
 | `shop.xlsx` | `id, name, kind, item_id, qty, price, safe_cols` | `meta/shop.ts`（**金币出口**：`kind=potion` 买物品 / `kind=safe` 保险格扩容）；`meta-ui` 顶栏商店面板 |
 | `workshop.xlsx` | `id, kind, quality, cost, max_times, unit_price, step_pct, max_loss_pct` | `meta/workshop.ts`（**金币出口**：`kind=reforge` 洗词条（每件 `max_times` 次）/ `kind=repair` 修耐久（`unit_price` × `step_pct^次数`，并按补回量永久扣 `max_loss_pct` 的上限））；`meta-ui` 顶栏工坊面板 |
@@ -46,7 +47,7 @@ sharedStrings，**不读 `styles.xml`**。曾有两张表的 `styles.xml` 把 `<
 | `status.xlsx` | `id, name, category, duration, max_stacks, dot, move_mul, attack_interval_mul, damage_taken_mul, no_move, no_attack, no_skill, no_dodge, hint` | `combat`（状态数值） |
 | `projectile.xlsx` | `id, name, speed, range, hit_radius, splash_radius, pierce, homing, element, status, zone_radius, zone_life, visual, hint` | `combat`（弹道：加入 2026-11-16。`homing>0` = 指向性追踪，`splash_radius / zone_radius` = 落点爆炸与留火） |
 | `combat_rule.xlsx` | 单行全局常量 + `mainline_star_points, explore_star_points` | `combat` / `talent`（手感 + 星图一次性点数） |
-| `consumable.xlsx` | `id, hp_restore, mana_restore, mana_seconds, hint` | `combat`（喝药效果，按 id join） |
+| `consumable.xlsx` | `id, hp_restore, hp_seconds, mana_restore, mana_seconds, hint` | `combat`（喝药效果，按 id join；`hp_seconds` / `mana_seconds` 为 0 表示一口回） |
 | `level.xlsx` | `id, level, xp_to_next, star_points` | `talent`（升级曲线，18 级封顶） |
 | `constellation.xlsx` | `id, name, color, requirement, x, y, hint` | `talent`（亲和门槛 + 面板布局） |
 | `starmap.xlsx` | `id, constellation, name, kind, effect, magnitude, cost, aff_fire…aff_wind, skill_id, hint` | `talent`（规则）+ `combat`（乘区） |
