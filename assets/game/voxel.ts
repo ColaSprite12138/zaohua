@@ -425,8 +425,9 @@ function leg(b: Builder, x: number, width: number, lift: number, upper: string, 
 const RIG_UNIT = 1;
 
 /**
- * 分件调色板：12 色，全是大色块（每块 ≥2–3 格），没有眼 / 嘴 / 腰扣 / 高光
- * 这类 1 格碎点。明度从暗到亮：boot < armorDark < cloth < armor < armorHi
+ * 分件调色板：12 色，全是大色块（每块 ≥2–3 格）。眼 / 嘴用 ≥2×2 的
+ * 整块色，腰扣 / 肩甲高光这类 1 格碎点一律不留 —— 45° 旋转采样不会掉成
+ * 杂点。明度从暗到亮：boot < armorDark < cloth < armor < armorHi
  * < armorLight < skin，靠部件间明度差而不是贴花分件。
  */
 const BLOCK = {
@@ -469,21 +470,24 @@ export interface BlockPartSpec {
 
 /**
  * 10 件静止布局。x=0 是身体中线、y=0 是地面、z 是深度层（-5 最远、4 最前）。
- * 用户第二轮反馈「纸片人」：头 / 胸加到 10 层深、四肢 8 层深，正面 x 宽度
- * 一格不加，只把侧影做厚；头胸比四肢厚 2 层，转 90° 时不再是等宽细柱。
+ * 用户第二轮反馈「纸片人」：胸 10 层 / 头 9 层 / 四肢 8 层深，正面 x 宽度
+ * 一格不加，只把侧影做厚；头胸比四肢厚，转 90° 时不再是等宽细柱。
+ * 第四轮反馈「头成了长方体」：头由 8×8×10 改成 10×10×9 接近立方体。
  * 「胳膊像蛇」：上臂 + 前臂两段各自旋转会接成阶梯，改成**一条整块胳膊**，
  * 手是独立方块挂在末端；两者共用同一个肩枢轴、同角度旋转 = 一个刚性组，
  * 无论怎么抡都只有一条整齐的方块边，不会出现两段相对扭。
  * 第三轮视觉自检：90° 侧影仍是一根等宽柱子，而胳膊主体整片亮肤色在侧身时
  * 覆盖躯干中段（Z 排序里左臂比躯干更近），读成一条「露腰」肉带。于是把胳膊
- * 主体换成钢灰护臂色，并把大腿 / 小腿收窄到 6 层深、前移一层 —— 头胸 10、
- * 胳膊 8、手 / 腿 6，侧影上厚下薄，转 90° 不再是上下等宽的柱子。
+ * 主体换成钢灰护臂色，并把大腿 / 小腿收窄到 6 层深、前移一层 —— 胸 10 /
+ * 头 9、胳膊 8、手 / 腿 6，侧影上厚下薄，转 90° 不再是上下等宽的柱子。
  * 手盒再换成深棕护手（只在最前两层露肉色掌心）、背面加一条背脊甲带：
  * 侧面胯部不再横贯一条亮肤色带，背面也不只是「正面去掉脸」。
  * y 上的 1 格空隙是关节缝：腕 24、膝 12、髋 23；肩缝在 x=±5。
  */
 export const BLOCK_PART_SPECS: readonly BlockPartSpec[] = [
-  { id: 'head', x: -4, y: 46, z: -5, w: 8, h: 8, d: 10, pivotX: 0, pivotY: 46, color: BLOCK.skin },
+  // 头从 8×8×10 的长方体改成 10×10×9：宽高深接近立方体，正面也放大到能
+  // 放下 2×2 的眼和 4×2 的嘴。仍比胳膊（8 层）厚，保住「上厚下薄」侧影。
+  { id: 'head', x: -5, y: 46, z: -4, w: 10, h: 10, d: 9, pivotX: 0, pivotY: 46, color: BLOCK.skin },
   { id: 'torso', x: -4, y: 24, z: -5, w: 9, h: 22, d: 10, pivotX: 0, pivotY: 24, color: BLOCK.armor },
   { id: 'armL', x: -10, y: 25, z: -4, w: 5, h: 13, d: 8, pivotX: -8, pivotY: 37, color: BLOCK.armorHi },
   { id: 'armR', x: 6, y: 25, z: -4, w: 5, h: 13, d: 8, pivotX: 8, pivotY: 37, color: BLOCK.armorHi },
@@ -556,7 +560,9 @@ function paintSixFaces(b: Builder, s: BlockPartSpec, m: BlockMaterial): void {
   // 不会因为「顶 2 行 + 底 2 行」把整件盖满。每档色块都 ≥2–3 格。
   const zt = Math.max(1, Math.round(s.d * 0.25));
   const yt = Math.max(1, Math.round(s.h * 0.18));
-  const xt = Math.max(1, Math.round(s.w * 0.25));
+  // 头要把正面整片留给脸（画五官），左右各留 1 列侧面材质即可；
+  // 其余部件按 1/4 宽取，保证 90° 侧身挑中的最前列仍是侧面材质。
+  const xt = s.id === 'head' ? 1 : Math.max(1, Math.round(s.w * 0.25));
   for (let k = 0; k < s.d; k += 1) {
     const faceZ = k >= s.d - zt ? m.front : k < zt ? m.back : null;
     for (let j = 0; j < s.h; j += 1) {
@@ -583,10 +589,17 @@ function makeBlockParts(): readonly BlockPart[] {
     const b = new Builder(`knight.block.${spec.id}`, RIG_UNIT);
     paintSixFaces(b, spec, materialOf(spec.id));
     switch (spec.id) {
-      case 'head':
+      case 'head': {
+        // 五官只用 ≥2×2 的整块色：0° 正面读得出脸，45° 旋转采样不会掉成
+        // 杂点；90° / 180° 挑中的是 left / back 面的深发，脸不会漏到侧面。
+        const faceZ = spec.z + spec.d - 2;
+        b.box(spec.x + 2, spec.y + 6, faceZ, 2, 2, 2, BLOCK.hair);
+        b.box(spec.x + spec.w - 4, spec.y + 6, faceZ, 2, 2, 2, BLOCK.hair);
+        b.box(spec.x + 3, spec.y + 3, faceZ, 4, 2, 2, BLOCK.skinDark);
         // 后颈领口（2 格高、整片宽）：后脑与躯干之间有一道明确的结构接缝。
         b.box(spec.x, spec.y, spec.z, spec.w, 2, 2, BLOCK.leatherDark);
         break;
+      }
       case 'torso':
         // 背面独立几何：亮甲背脊竖带 + 肩胛两片 + 棕皮横箍 + 金色脊扣，
         // 全部落在最背两层，180° 才露出来；正面完全被前层挡住。
@@ -972,23 +985,24 @@ function armAngle(p: BlockPoseParams, side: 'L' | 'R'): number {
   return base * 8 + swing;
 }
 
-function legAngle(p: BlockPoseParams, side: 'L' | 'R'): number {
-  return clamp((side === 'L' ? p.legL : p.legR) * 5, -18, 18);
-}
-
-/** 膝以下切开：小腿不跟着大腿整段斜，只按膝的水平位移平动 + 抬脚。 */
-function kneeShift(deg: number): number {
-  return Math.round(10 * Math.sin((deg * Math.PI) / 180));
+/**
+ * 走路是绕髋的**前后摆**：只在 z 深度上错开，不在屏幕横向 x 上摆。
+ * 上一版让两条腿绕 z 轴反相转 ±18°，末端同时朝身体中线收，再用 kneeShift
+ * 把小腿横推 3 格，脚在 x≈0 撞在一起、合帧时互相覆盖 —— 就是用户看到的
+ * 「走路腿重叠」。现在迈步腿整体前移 3 格 + 抬 2 格，撑地腿完全不动：
+ * 0° 正面两腿各占各的列，90° 侧视才看得出前后错开，仍是一套几何。
+ */
+function strideDepth(amp: number): number {
+  return Math.round(clamp(amp, -4, 4) * 0.8);
 }
 
 function angleOf(id: BlockPartId, p: BlockPoseParams): number {
   switch (id) {
     case 'head': return p.headTurn ?? 0;
     case 'torso': return 0;
-    case 'thighL': return legAngle(p, 'L');
-    case 'thighR': return legAngle(p, 'R');
-    // 踝 / 膝切开：小腿旋转 0°，靴子保持水平，不再「整段斜过去像折断」。
-    case 'shinL': case 'shinR': return 0;
+    // 腿不再绕 z 轴横向旋转：前后摆由 assembleBlockPose 的 z 位移承担，
+    // 靴子也就不跟着大腿整段斜过去。
+    case 'thighL': case 'thighR': case 'shinL': case 'shinR': return 0;
     // 胳膊与手共用同一肩枢轴、返回同一角度，合成后仍是一个刚性方块组。
     case 'armL': case 'handL': return armAngle(p, 'L');
     case 'armR': case 'handR': return armAngle(p, 'R');
@@ -1004,26 +1018,25 @@ function assembleBlockPose(parts: readonly BlockPart[], p: BlockPoseParams): Vox
   const bob = p.bob ?? 0;
   // 躯干扭转：按高度线性横移，腰不动、肩微偏，上半身连成一体不脱节。
   const leanDx = (y: number): number => Math.round(((y - 22) / 24) * lean);
-  const put = (v: Voxel, dx: number, dy: number): void => {
+  const put = (v: Voxel, dx: number, dy: number, dz = 0): void => {
     const x = v.x + dx;
     const y = v.y + dy;
-    cells.set(`${x},${y},${v.z}`, { ...v, x, y, z: v.z });
+    const z = v.z + dz;
+    cells.set(`${x},${y},${z}`, { ...v, x, y, z });
   };
   for (const part of parts) {
     const rotated = rotateRigid(part.cells, part.px, part.py, angleOf(part.id, p));
     const upper = isUpper(part.id);
     const side: 'L' | 'R' = part.id === 'thighL' || part.id === 'shinL' ? 'L' : 'R';
     const amp = side === 'L' ? p.legL : p.legR;
-    const a = legAngle(p, side);
-    // 撑地的那条腿不吃 bob，脚底始终钉在统一地面线上。
-    const planted = !upper && amp <= 0;
-    const dx = upper ? 0 : kneeShift(a);
-    const dy = upper
-      ? bob
-      : (amp > 0 ? (part.id === 'shinL' || part.id === 'shinR' ? 2 : 1) : 0);
+    // 只有迈出去的那条腿动：z 前移 + 整条抬 2 格；撑地腿完全不动，脚底
+    // 钉在统一地面线上，两条腿在正面始终各占各的屏幕列。
+    const stepping = !upper && amp > 0;
+    const dz = stepping ? strideDepth(amp) : 0;
+    const dy = upper ? bob : (stepping ? 2 : 0);
     for (const v of rotated) {
       const shiftX = upper ? leanDx(v.y) : 0;
-      put(v, dx + shiftX, planted ? 0 : dy);
+      put(v, shiftX, dy, dz);
     }
   }
   // 刚性剑：柄焊在握点（随持械臂的肩枢轴一起平移），刃用自己的摆角。
