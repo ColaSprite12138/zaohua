@@ -448,7 +448,8 @@ const BLOCK = {
 } as const;
 
 export type BlockPartId =
-  | 'head' | 'torso' | 'armR' | 'handR'
+  | 'head' | 'torso'
+  | 'armL' | 'armR' | 'handL' | 'handR'
   | 'thighL' | 'thighR' | 'shinL' | 'shinR';
 
 export interface BlockPartSpec {
@@ -488,10 +489,12 @@ export const BLOCK_PART_SPECS: readonly BlockPartSpec[] = [
   // 放下 2×2 的眼和 4×2 的嘴。仍比胳膊（8 层）厚，保住「上厚下薄」侧影。
   { id: 'head', x: -5, y: 46, z: -4, w: 10, h: 10, d: 9, pivotX: 0, pivotY: 46, color: BLOCK.skin },
   { id: 'torso', x: -4, y: 24, z: -5, w: 9, h: 22, d: 10, pivotX: 0, pivotY: 24, color: BLOCK.armor },
-  // 持械侧（模型 x<0）不再烘静态胳膊 / 手方块 / 剑：整条持械臂由
-  // paint.ts::drawWeaponArm 用 KNIGHT_ARM(Limb) + KNIGHT_FIST + 装备剑，
-  // 全部共用 handPose 一套坐标，避免「两个拳头垂着、第三只手浮在剑柄上」。
+  // 两侧静态胳膊 / 手都在模型里，身体才完整（运行时 Limb 只在装备武器时画，
+  // 空手帧会缺半边）。handL 覆盖 KNIGHT_GRIP(-14,22)，剑柄就插在这只手里；
+  // 不再另画 KNIGHT_FIST 浮空拳头，也就没有「第三只手」。
+  { id: 'armL', x: -10, y: 25, z: -4, w: 5, h: 13, d: 8, pivotX: -8, pivotY: 37, color: BLOCK.armorHi },
   { id: 'armR', x: 6, y: 25, z: -4, w: 5, h: 13, d: 8, pivotX: 8, pivotY: 37, color: BLOCK.armorHi },
+  { id: 'handL', x: -14, y: 20, z: -2, w: 5, h: 4, d: 6, pivotX: -8, pivotY: 37, color: BLOCK.leatherDark },
   { id: 'handR', x: 10, y: 20, z: -2, w: 5, h: 4, d: 6, pivotX: 8, pivotY: 37, color: BLOCK.leatherDark },
   { id: 'thighL', x: -5, y: 13, z: -3, w: 4, h: 10, d: 6, pivotX: -3, pivotY: 23, color: BLOCK.cloth },
   { id: 'thighR', x: 2, y: 13, z: -3, w: 4, h: 10, d: 6, pivotX: 3, pivotY: 23, color: BLOCK.cloth },
@@ -533,10 +536,12 @@ function materialOf(id: BlockPartId): BlockMaterial {
     case 'torso':
       return { core: BLOCK.armor, front: BLOCK.armorHi, back: BLOCK.armorDark,
         left: BLOCK.armor, right: BLOCK.armor, top: BLOCK.armorLight, bottom: BLOCK.cloth };
+    case 'armL':
     case 'armR':
-      // 副手臂是长袖护臂，不再有一整片裸肤色和「蓝灰上衣 + 裸胳膊」的矛盾。
+      // 两条胳膊都是长袖护臂，不再有一整片裸肤色和「蓝灰上衣 + 裸胳膊」的矛盾。
       return { core: BLOCK.armor, front: BLOCK.armorHi, back: BLOCK.armorDark,
         left: BLOCK.armor, right: BLOCK.armor, top: BLOCK.armorLight, bottom: BLOCK.armor };
+    case 'handL':
     case 'handR':
       // 裸拳三面都是皮肤（面积很小，不再是「最亮最大抢焦点」），这样侧身时
       // 拳头仍是皮肤、也让握点最外侧 x=-14 保持皮肤（KNIGHT_GRIP 契约）。
@@ -980,6 +985,7 @@ function angleOf(id: BlockPartId, p: BlockPoseParams): number {
     case 'thighL': case 'thighR': case 'shinL': case 'shinR': return 0;
     // 只有挥剑三帧才有主动作角度；走路摆臂由 armDepth 的 z 位移承担。
     // 胳膊与手共用同一肩枢轴、返回同一角度，合成后仍是一个刚性方块组。
+    case 'armL': case 'handL': return armAngle(p, 'L');
     case 'armR': case 'handR': return armAngle(p, 'R');
   }
 }
@@ -1004,7 +1010,8 @@ function assembleBlockPose(parts: readonly BlockPart[], p: BlockPoseParams): Vox
     const upper = isUpper(part.id);
     const side: 'L' | 'R' = part.id.endsWith('L') ? 'L' : 'R';
     const amp = side === 'L' ? p.legL : p.legR;
-    const isArm = part.id === 'armR' || part.id === 'handR';
+    const isArm = part.id === 'armL' || part.id === 'armR'
+      || part.id === 'handL' || part.id === 'handR';
     // 只有迈出去的那条腿动：z 前移 + 整条抬 2 格；撑地腿完全不动，脚底
     // 钉在统一地面线上，两条腿在正面始终各占各的屏幕列。
     const stepping = !upper && amp > 0;
@@ -1049,19 +1056,20 @@ function blockBodyOf(): BodyModel {
       bob: i % 2 === 1 ? 1 : 0,
     })));
   }
-  // 挥剑只动持械臂：模型三帧保持站姿，不再全身前倾 / 换重心 / 转头 /
-  // 两臂反相抡（用户第六轮「跟跳舞一样，可以只动右手手臂」）。抡臂与剑刃
-  // 由 paint.ts::drawWeaponArm 依 handPose(swing) + bladeAngle 运行时绘制，
-  // 弧线契约仍由 swing.test.ts 的 11 条单测钉死。
+  // 挥剑只动持械臂：swingL 让 armL/handL 整块绕肩抡起，副手臂、腿、躯干、
+  // 头全部站定（用户第六轮「跟跳舞一样，可以只动右手手臂」）。剑刃仍由
+  // paint.ts 依 handPose(swing) + bladeAngle 运行时画，弧线由 swing.test.ts
+  // 的 11 条单测钉死。
   const swingFrames = [
-    { name: 'windup' },
-    { name: 'strike' },
-    { name: 'recover' },
+    { name: 'windup', swingL: -24 },
+    { name: 'strike', swingL: 8 },
+    { name: 'recover', swingL: 20 },
   ] as const;
   const swingPoses: VoxelModel[] = swingFrames.map((f) =>
     withAnchor(assembleBlockPose(BLOCK_PARTS, {
       name: `swing-${f.name}`,
       legL: 0, legR: 0, armL: 0, armR: 0,
+      swingL: f.swingL,
     })));
   return {
     name: 'knight',

@@ -74,11 +74,9 @@ import {
   KNIGHT,
   KNIGHT_ARM,
   KNIGHT_DOWN,
-  KNIGHT_FIST,
   PORTAL_FRAME,
   SHOULDER_X,
   SHOULDER_Y,
-  ARM_REACH,
   SKELETON,
   SKELETON_ARM,
   SKELETON_MAGE,
@@ -913,18 +911,11 @@ function drawWeaponArm(
   swing: number,
   flash: boolean,
   scale: number,
-  showLimb = true,
+  _showLimb = true,
 ): void {
   const hand = handPose(x, y, face, swing);
-  // 整条持械臂绕肩画：肩位由握点反推 ARM_REACH。Limb 模型向上竖起，
-  // rotation = arm + π/2 后朝下，末端正好落在 handPose 的握点 —— 臂、
-  // 拳头、装备剑三者共用一套坐标，不再是三处各画各的。
-  const shoulderX = hand.x - Math.cos(hand.arm) * ARM_REACH;
-  const shoulderY = hand.y - Math.sin(hand.arm) * ARM_REACH;
-  if (showLimb && blade !== null && limb === KNIGHT_ARM) {
-    drawLimb(g, limb, shoulderX, shoulderY, hand.arm, { flash, scale, yaw: yawOf(face).yaw });
-  }
-
+  // 持械臂和手都在 KNIGHT 模型里（armL / handL），不再另画运行时 Limb 或
+  // 握拳：剑柄画在握点，正好插进 handL，只有两只手，空手帧身体也完整。
   if (blade !== null) {
     // Arc trail: three earlier positions of the same blade, dimmer each step.
     // Only during a real swing -- an idle blade must not smear.
@@ -944,12 +935,6 @@ function drawWeaponArm(
     });
   }
 
-  // 拳头压在剑柄上、连在上面的 Limb 末端：手 / 臂 / 剑共用 handPose 一套
-  // 坐标，不再出现「两个拳头垂在胳膊下面、第三只手浮在剑柄上」。
-  // 拳头不跟着剑旋转：手固定在握点，剑绕手腕转。
-  if (showLimb && blade !== null && limb === KNIGHT_ARM) {
-    drawVoxel(g, KNIGHT_FIST, hand.x, hand.y, { scale, flash });
-  }
 }
 
 /**

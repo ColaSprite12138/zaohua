@@ -99,8 +99,8 @@ describe('character rigs', () => {
     expect(ACCENTS.gem).toBeTruthy();
   });
 
-  it('the block rig is 8 flat-coloured solid parts, not a dense GLB dump', () => {
-    // 12 色大色块分件；持械侧的胳膊 / 手 / 剑交给运行时 Limb，不烘进 pose。
+  it('the block rig is 10 flat-coloured solid parts, not a dense GLB dump', () => {
+    // 12 色大色块分件；两侧静态胳膊 / 手都在模型里，空手帧身体才完整。
     const pose = KNIGHT.poses[0]!;
     const colors = new Set(pose.voxels.map((v) => v.c));
     expect(colors.size).toBeGreaterThanOrEqual(8);
@@ -111,45 +111,49 @@ describe('character rigs', () => {
     const counts = new Map<string, number>();
     for (const v of pose.voxels) counts.set(v.c, (counts.get(v.c) ?? 0) + 1);
     expect(Math.max(...counts.values())).toBeGreaterThan(300);
-    // 8 件规格：每件都是 ≥4 格宽的实心块；副手是独立小方块（4 格高）。
-    expect(BLOCK_PART_SPECS).toHaveLength(8);
+    // 10 件规格：每件都是 ≥4 格宽的实心块；两只手是独立小方块（4 格高）。
+    expect(BLOCK_PART_SPECS).toHaveLength(10);
     for (const s of BLOCK_PART_SPECS) {
       expect(s.w).toBeGreaterThanOrEqual(4);
-      expect(s.h).toBeGreaterThanOrEqual(s.id === 'handR' ? 4 : 8);
+      expect(s.h).toBeGreaterThanOrEqual(s.id === 'handL' || s.id === 'handR' ? 4 : 8);
       expect(s.d).toBeGreaterThanOrEqual(BODY_DEPTH);
     }
     const byId = new Map(BLOCK_PART_SPECS.map((s) => [s.id, s]));
-    // 肩 / 腕 / 髋 / 膝各留 1 体素缝（持械侧已移到 Limb，改查副手侧）。
-    expect(byId.get('armR')!.x).toBe(byId.get('torso')!.x + byId.get('torso')!.w + 1);
-    expect(byId.get('armR')!.y - (byId.get('handR')!.y + byId.get('handR')!.h)).toBe(1);
+    // 肩 / 腕 / 髋 / 膝各留 1 体素缝，分件永远读得清。
+    expect(byId.get('armL')!.x + byId.get('armL')!.w).toBe(byId.get('torso')!.x - 1);
+    expect(byId.get('armL')!.y - (byId.get('handL')!.y + byId.get('handL')!.h)).toBe(1);
     expect(byId.get('torso')!.y - (byId.get('thighL')!.y + byId.get('thighL')!.h)).toBe(1);
     expect(byId.get('thighL')!.y - (byId.get('shinL')!.y + byId.get('shinL')!.h)).toBe(1);
-    // 副手臂与副手共用肩枢轴：一个刚性组一起摆。
-    expect(byId.get('handR')!.pivotX).toBe(byId.get('armR')!.pivotX);
-    expect(byId.get('handR')!.pivotY).toBe(byId.get('armR')!.pivotY);
-    // 侧面加厚：头 9 层、副手臂 8 层，头比胳膊厚，转 90° 不再纸片。
-    expect(byId.get('head')!.d).toBeGreaterThan(byId.get('armR')!.d);
-    expect(byId.get('armR')!.d).toBeGreaterThanOrEqual(8);
+    // 持械臂与手共用肩枢轴：一个刚性组一起抡。
+    expect(byId.get('handL')!.pivotX).toBe(byId.get('armL')!.pivotX);
+    expect(byId.get('handL')!.pivotY).toBe(byId.get('armL')!.pivotY);
+    // 侧面加厚：头 9 层、胳膊 8 层，头比胳膊厚，转 90° 不再纸片。
+    expect(byId.get('head')!.d).toBeGreaterThan(byId.get('armL')!.d);
+    expect(byId.get('armL')!.d).toBeGreaterThanOrEqual(8);
     // 仍是真 3D 实心体积（正 / 背 / 侧都不是纸片）。
     expect(new Set(pose.voxels.map((v) => v.z)).size).toBeGreaterThanOrEqual(7);
     expect(pose.voxels.length).toBeGreaterThan(1000);
   });
 
-  it('the held arm, fist and sword share one handPose grip', () => {
-    // 模型里只剩副手臂 / 副手；持械侧由 KNIGHT_ARM(Limb) + KNIGHT_FIST +
-    // 六档装备剑共用 handPose 一套坐标，不再有第三只浮在剑柄上的手。
+  it('both hands live in the model and the sword grip sits inside handL', () => {
     expect(KNIGHT_GRIP.x).toBe(-SHOULDER_X);
     expect(KNIGHT_GRIP.y).toBe(SHOULDER_Y - ARM_REACH);
     const hand = handPose(0, 0, Math.PI / 2, 0);
     expect(hand.x).toBeCloseTo(KNIGHT_GRIP.x, 5);
     expect(hand.y).toBeCloseTo(-KNIGHT_GRIP.y, 5);
-    // 模型里只有一只手方块（副手），持械侧的静态胳膊与手已删除。
-    expect(BLOCK_PART_SPECS.filter((s) => s.id.startsWith('hand')).map((s) => s.id)).toEqual(['handR']);
-    expect(BLOCK_PART_SPECS.filter((s) => s.id.startsWith('arm')).map((s) => s.id)).toEqual(['armR']);
-    // Limb 从肩向上竖起 14 格，末端正好落在 ARM_REACH 的握点。
-    const armTop = Math.max(...KNIGHT_ARM.model.voxels.map((v) => v.y));
-    expect(armTop + 1).toBe(ARM_REACH);
-    // 压在剑柄上的握拳：亮肤色小模型，连在 Limb 末端而不是另算肩位。
+    // 两侧各一条胳膊、一只手：空手帧身体也完整，不靠运行时 Limb 补半边。
+    const byId = new Map(BLOCK_PART_SPECS.map((s) => [s.id, s]));
+    expect(BLOCK_PART_SPECS.filter((s) => s.id.startsWith('hand')).map((s) => s.id))
+      .toEqual(['handL', 'handR']);
+    expect(BLOCK_PART_SPECS.filter((s) => s.id.startsWith('arm')).map((s) => s.id))
+      .toEqual(['armL', 'armR']);
+    // 剑柄画在握点，正好落进 handL 的方块范围；KNIGHT_FIST 只作契约占位，
+    // paint.ts 不再绘制它，画面里不会出现第三只浮空手。
+    const hl = byId.get('handL')!;
+    expect(hl.x).toBeLessThanOrEqual(KNIGHT_GRIP.x);
+    expect(hl.x + hl.w).toBeGreaterThan(KNIGHT_GRIP.x);
+    expect(hl.y).toBeLessThanOrEqual(KNIGHT_GRIP.y);
+    expect(hl.y + hl.h).toBeGreaterThan(KNIGHT_GRIP.y);
     expect(KNIGHT_FIST.voxels.some((v) => v.c === '#eec39a')).toBe(true);
     expect(KNIGHT_FIST.voxels.length).toBeLessThan(120);
   });
@@ -163,18 +167,20 @@ describe('character rigs', () => {
     expect(floor(leftUp!)).toBeLessThan(floor(stand!));
   });
 
-  it('walk poses are distinct; swing poses stay planted (arm acts at runtime)', () => {
+  it('walk poses differ; swing poses only move the weapon arm', () => {
     const stand = KNIGHT.poses[0]!;
     expect(KNIGHT.frameMap).toEqual([0, 2, 4, 6]);
     // 走路帧仍各不相同：z 前后摆 + 抬脚 + bob。
     expect(blockKeys(KNIGHT.poses[1]!)).not.toEqual(blockKeys(stand));
     expect(blockKeys(KNIGHT.poses[5]!)).not.toEqual(blockKeys(stand));
     expect(blockKeys(KNIGHT.poses[1]!)).not.toEqual(blockKeys(KNIGHT.poses[5]!));
-    // 挥剑三帧模型保持站姿：抡臂与剑刃由 paint.ts 依 handPose(swing) 运行时
-    // 画，弧线契约由 swing.test.ts 11 条单测钉死，模型不再全身跟着跳。
+    // 挥剑三帧只让 armL/handL 绕肩抡起：三帧互不相同，副手臂 / 腿 / 躯干
+    // 不参与（swingR / legL / legR / lean / headTurn 全为 0）。
     const swings = KNIGHT.swingPoses ?? [];
     expect(swings).toHaveLength(3);
-    for (const s of swings) expect(blockKeys(s)).toEqual(blockKeys(stand));
+    for (const s of swings) expect(blockKeys(s)).not.toEqual(blockKeys(stand));
+    expect(blockKeys(swings[0]!)).not.toEqual(blockKeys(swings[1]!));
+    expect(blockKeys(swings[1]!)).not.toEqual(blockKeys(swings[2]!));
   });
 
   it('body heights are the authored block counts (56px / 48px)', () => {
