@@ -71,7 +71,7 @@ const STATUS_MECHANICS: Readonly<Record<StatusId, { color: string; element?: Ele
     petrify: { color: '#9a9584' },
     sleep: { color: '#60a5fa' },
     /* 软控削弱 */
-    slow: { color: '#8be9fd', element: 'ice' },
+    slow: { color: '#8be9fd', element: 'demeter' },
     chill: { color: '#7dd3fc' },
     silence: { color: '#c084fc' },
     disarm: { color: '#e8eef5' },
@@ -79,12 +79,12 @@ const STATUS_MECHANICS: Readonly<Record<StatusId, { color: string; element?: Ele
     grievous: { color: '#ff6b6b' },
     /* 持续伤害 */
     bleed: { color: '#e0453f' },
-    poison: { color: '#4ade80', element: 'poison' },
-    burn: { color: '#fb923c', element: 'fire' },
+    poison: { color: '#4ade80', element: 'apollo' },
+    burn: { color: '#fb923c', element: 'ares' },
     /* 元素附着 */
-    wet: { color: '#60a5fa', element: 'water' },
-    shock: { color: '#c084fc', element: 'shock' },
-    wind: { color: '#a7f3d0', element: 'wind' },
+    wet: { color: '#60a5fa', element: 'poseidon' },
+    shock: { color: '#c084fc', element: 'zeus' },
+    wind: { color: '#a7f3d0', element: 'athena' },
   });
 
 /**
@@ -132,23 +132,23 @@ export const STATUS: Readonly<Record<StatusId, StatusDef>> = Object.freeze(build
 
 /** 每个元素由哪个状态承载（反应结算要按元素找附着）。 */
 export const ELEMENT_STATUS: Readonly<Record<ElementId, StatusId>> = Object.freeze({
-  water: 'wet',
-  ice: 'slow',
-  fire: 'burn',
-  poison: 'poison',
-  shock: 'shock',
-  wind: 'wind',
+  poseidon: 'wet',
+  demeter: 'slow',
+  ares: 'burn',
+  apollo: 'poison',
+  zeus: 'shock',
+  athena: 'wind',
 });
 
-/** 元素的中文名与颜色（HUD / 反应提示）。 */
+/** 权能的中文名与颜色（HUD / 反应提示）。 */
 export const ELEMENT_LABEL: Readonly<Record<ElementId, { name: string; color: string }>> =
   Object.freeze({
-    water: { name: '水', color: '#60a5fa' },
-    ice: { name: '冰', color: '#8be9fd' },
-    fire: { name: '火', color: '#fb923c' },
-    poison: { name: '毒', color: '#4ade80' },
-    shock: { name: '雷', color: '#c084fc' },
-    wind: { name: '风', color: '#a7f3d0' },
+    poseidon: { name: '沧溟', color: '#60a5fa' },
+    demeter: { name: '霜序', color: '#8be9fd' },
+    ares: { name: '兵燹', color: '#fb923c' },
+    apollo: { name: '双曜', color: '#4ade80' },
+    zeus: { name: '天威', color: '#c084fc' },
+    athena: { name: '神行', color: '#a7f3d0' },
   });
 
 export function statusDef(id: StatusId): StatusDef {

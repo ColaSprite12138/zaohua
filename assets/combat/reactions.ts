@@ -7,7 +7,7 @@
  *
  * 三条写死的规则：
  *
- * 1. **只认 8.5 的表**：6 元素、5 条反应，一条都不多。不做「任意两两组合」的 N² 判定。
+ * 1. **只认 8.5 的表**：6 权能、5 条反应，一条都不多。不做「任意两两组合」的 N² 判定。
  * 2. **反应消耗双方附着**：触发后两个元素状态都被清掉，所以一次反应不可能自己连爆。
  * 3. **一切伤害都走 `damageSkeleton()`**：DOT、引爆、传导、撞墙都算，否则击杀不计、
  *    掉落不滚、`lootLog` 与实际对不上（保护清单 / 不变量 29）。
@@ -40,32 +40,33 @@ export interface ReactionDef {
 }
 
 /**
- * 设计 8.5 的表，**一条不多**：
- * 水+冰 冻结 / 水+雷 麻痹传导 / 火+毒 引爆 / 风+火 火势蔓延 / 风+毒 毒雾扩散。
+ * 设计 8.5 的表，**一条不多**（神话叙事版，结构与初版同构）：
+ * 沧溟+霜序 冥后之冬 / 沧溟+天威 海天争权 / 兵燹+双曜 疫火燎原 /
+ * 神行+兵燹 风助炉焰 / 神行+双曜 神行播疫。
  *
- * 6 种元素、5 条反应 —— 这是刻意压出来的学习成本。加第 6 条之前先问：
+ * 6 种权能、5 条反应 —— 这是刻意压出来的学习成本。加第 6 条之前先问：
  * 玩家能不能记住？记不住的组合等于不存在。
  */
 export const REACTIONS: readonly ReactionDef[] = Object.freeze([
   Object.freeze({
-    id: 'freeze', name: '冻结', elements: ['water', 'ice'] as const,
-    hint: '水 + 冰 → 冻结：硬控 1.5 秒',
+    id: 'freeze', name: '冥后之冬', elements: ['poseidon', 'demeter'] as const,
+    hint: '沧溟 + 霜序 → 冥后之冬：硬控 1.5 秒',
   }),
   Object.freeze({
-    id: 'paralyze', name: '麻痹', elements: ['water', 'shock'] as const,
-    hint: '水 + 雷 → 麻痹：硬控，并向附近敌人传导',
+    id: 'paralyze', name: '海天争权', elements: ['poseidon', 'zeus'] as const,
+    hint: '沧溟 + 天威 → 海天争权：硬控，并向附近敌人传导',
   }),
   Object.freeze({
-    id: 'detonate', name: '引爆', elements: ['fire', 'poison'] as const,
-    hint: '火 + 毒 → 引爆毒层：按层数瞬间掉血',
+    id: 'detonate', name: '疫火燎原', elements: ['ares', 'apollo'] as const,
+    hint: '兵燹 + 双曜 → 疫火燎原：按层数瞬间掉血',
   }),
   Object.freeze({
-    id: 'fireSpread', name: '火势蔓延', elements: ['wind', 'fire'] as const,
-    hint: '风 + 火 → 火焰区域扩大',
+    id: 'forgeGale', name: '风助炉焰', elements: ['athena', 'ares'] as const,
+    hint: '神行 + 兵燹 → 风助炉焰：兵燹区域扩大',
   }),
   Object.freeze({
-    id: 'poisonSpread', name: '毒雾扩散', elements: ['wind', 'poison'] as const,
-    hint: '风 + 毒 → 中毒区域扩大',
+    id: 'wanderingPlague', name: '神行播疫', elements: ['athena', 'apollo'] as const,
+    hint: '神行 + 双曜 → 神行播疫：双曜区域扩大',
   }),
 ]);
 
@@ -80,10 +81,10 @@ export function reactionFor(a: ElementId, b: ElementId): ReactionDef | null {
 
 /** 每个元素对应的「地面区域状态」（风没有地面区域，它只吹旺别人）。 */
 const ZONE_STATUS: Partial<Record<ElementId, StatusId>> = {
-  fire: 'burn',
-  poison: 'poison',
-  ice: 'slow',
-  water: 'wet',
+  ares: 'burn',
+  apollo: 'poison',
+  demeter: 'slow',
+  poseidon: 'wet',
 };
 
 /* --------------------------------------------------------- 元素附着入口 */
@@ -181,18 +182,18 @@ function runReaction(
       damageSkeleton(s, index, damage, { knockback: 0, color: '#ffd166', source });
       break;
     }
-    case 'fireSpread':
-      growZones(s, sk.x, sk.y, ['fire']);
+    case 'forgeGale':
+      growZones(s, sk.x, sk.y, ['ares']);
       break;
-    case 'poisonSpread':
-      growZones(s, sk.x, sk.y, ['poison']);
+    case 'wanderingPlague':
+      growZones(s, sk.x, sk.y, ['apollo']);
       break;
   }
 }
 
 /* ------------------------------------------------------------------ 区域 */
 
-/** 放一片地面区域（火墙 / 毒池 / 冰面 / 水洼）。 */
+/** 放一片地面区域（兵燹 / 双曜 / 霜序 / 沧溟）。 */
 export function spawnZone(
   s: GameState,
   element: ElementId,

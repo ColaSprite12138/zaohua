@@ -11,7 +11,7 @@
  */
 
 import { cos, sin } from '../net/trig.ts';
-import { VIEW_H, VIEW_W } from '../shared/constants.ts';
+import { DOMAIN_IDS, VIEW_H, VIEW_W, type DomainId } from '../shared/constants.ts';
 import { testArena } from '../resource/maps/arena-test.ts';
 import { combat_rule } from '../resource/generated/combat_rule.ts';
 import { skill as skillTable } from '../resource/generated/skill.ts';
@@ -227,7 +227,9 @@ export interface SkillFx {
  * 元素不是独立资源，它是挂在身上的**附着**（`StatusInstance` 带 `element`），
  * 两个附着凑成反应表里的一对就触发反应。
  */
-export type ElementId = 'water' | 'ice' | 'fire' | 'poison' | 'shock' | 'wind';
+/** 六权能 id；权威定义在 `shared/constants.ts::DOMAIN_IDS`（本模块不复制字面量）。 */
+export type ElementId = DomainId;
+export { DOMAIN_IDS };
 
 /**
  * 全部状态 id（设计文档 8.4 的表）。定义（时长 / 效果 / 颜色）在 `status.ts`，
@@ -245,7 +247,7 @@ export type StatusId =
 
 /** 反应链 id（设计文档 8.5 的 5 条，一条不多）。 */
 export type ReactionId =
-  'freeze' | 'paralyze' | 'detonate' | 'fireSpread' | 'poisonSpread';
+  'freeze' | 'paralyze' | 'detonate' | 'forgeGale' | 'wanderingPlague';
 
 /**
  * 挂在身上的一层状态。

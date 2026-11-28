@@ -139,7 +139,7 @@ describe('弹道 / 技能 / 地面区域也打玩家', () => {
     foe.x = me.x + 20;
     foe.y = me.y;
     s.zones.length = 0;
-    spawnZone(s, 'fire', me.x, me.y, 90, 4, playerSource('fire_wall', '火墙', me.id));
+    spawnZone(s, 'ares', me.x, me.y, 90, 4, playerSource('fire_wall', '火墙', me.id));
     updateZones(s, 0.5);
     expect(me.statuses.some((st) => st.id === 'burn')).toBe(false);
     expect(foe.statuses.some((st) => st.id === 'burn')).toBe(true);

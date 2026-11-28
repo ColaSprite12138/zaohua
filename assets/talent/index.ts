@@ -21,8 +21,11 @@
  * 可双击的独立页与 4174 注入壳层共用同一份规则；它也因此在结构上无法私藏一份数值。
  */
 
-/** 六种亲和＝六种元素（与 `combat/state.ts::ElementId` 同名）。 */
-export const AFFINITIES = ['fire', 'ice', 'water', 'poison', 'shock', 'wind'] as const;
+/**
+ * 六亲和＝六权能。权威定义在 `shared/constants.ts::DOMAIN_IDS`；
+ * 本文件零 import（要转译成浏览器脚本），故保留镜像，由 `starmap-data.test.ts` 断言防漂移。
+ */
+export const AFFINITIES = ['ares', 'demeter', 'poseidon', 'apollo', 'zeus', 'athena'] as const;
 export type Affinity = (typeof AFFINITIES)[number];
 export type AffinityMap = Record<Affinity, number>;
 
@@ -49,12 +52,12 @@ export interface StarNodeRow {
   effect: string;
   magnitude: number;
   cost: number;
-  aff_fire: number;
-  aff_ice: number;
-  aff_water: number;
-  aff_poison: number;
-  aff_shock: number;
-  aff_wind: number;
+  aff_ares: number;
+  aff_demeter: number;
+  aff_poseidon: number;
+  aff_apollo: number;
+  aff_zeus: number;
+  aff_athena: number;
   skill_id: string;
   hint: string;
 }
@@ -110,7 +113,7 @@ export function createStarState(level = 1): StarState {
 /* ------------------------------ 星座 / 节点 ----------------------------- */
 
 export function emptyAffinity(): AffinityMap {
-  return { fire: 0, ice: 0, water: 0, poison: 0, shock: 0, wind: 0 };
+  return { ares: 0, demeter: 0, poseidon: 0, apollo: 0, zeus: 0, athena: 0 };
 }
 
 function isAffinity(value: string): value is Affinity {

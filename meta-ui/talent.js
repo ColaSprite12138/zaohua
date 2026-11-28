@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/talent/index.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 5e2e78bd65881db9aeffd081a68f40a7691e152468c679231838c3481db0383a
+ * Source SHA-256: 2a5f5a1c3a2b8d8c5b854bc35fefb40fe5f0ea56b7b16f0a143c79f9bf6fca04
  */
 (function (root) {
 "use strict";
@@ -55,14 +55,17 @@ exports.grantXp = grantXp;
 exports.awardClear = awardClear;
 exports.awardExplore = awardExplore;
 exports.sanitizeProgress = sanitizeProgress;
-/** 六种亲和＝六种元素（与 `combat/state.ts::ElementId` 同名）。 */
-exports.AFFINITIES = ['fire', 'ice', 'water', 'poison', 'shock', 'wind'];
+/**
+ * 六亲和＝六权能。权威定义在 `shared/constants.ts::DOMAIN_IDS`；
+ * 本文件零 import（要转译成浏览器脚本），故保留镜像，由 `starmap-data.test.ts` 断言防漂移。
+ */
+exports.AFFINITIES = ['ares', 'demeter', 'poseidon', 'apollo', 'zeus', 'athena'];
 function createStarState(level = 1) {
     return { level, xp: 0, picks: [], cleared: [], explored: [] };
 }
 /* ------------------------------ 星座 / 节点 ----------------------------- */
 function emptyAffinity() {
-    return { fire: 0, ice: 0, water: 0, poison: 0, shock: 0, wind: 0 };
+    return { ares: 0, demeter: 0, poseidon: 0, apollo: 0, zeus: 0, athena: 0 };
 }
 function isAffinity(value) {
     return exports.AFFINITIES.includes(value);

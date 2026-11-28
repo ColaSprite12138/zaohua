@@ -1487,16 +1487,16 @@
   }
 
   /**
-   * 六种亲和的显示名与颜色。**只有标签与色值**（纯展示），门槛 / 产出 / 花费全在表里。
+   * 六权能的显示名与颜色。**只有标签与色值**（纯展示），门槛 / 产出 / 花费全在表里。
    * 键与 `talent/AFFINITIES` 一致，缺失时按英文键兜底，不会静默画错色。
    */
   const AFFINITY_META = {
-    fire: { label: '火', color: '#ff7b7b' },
-    ice: { label: '冰', color: '#67e8f9' },
-    water: { label: '水', color: '#5b9dff' },
-    poison: { label: '毒', color: '#7ddc7d' },
-    shock: { label: '雷', color: '#ffd166' },
-    wind: { label: '风', color: '#c8a2ff' },
+    ares: { label: '兵燹', color: '#ff7b7b' },
+    demeter: { label: '霜序', color: '#67e8f9' },
+    poseidon: { label: '沧溟', color: '#5b9dff' },
+    apollo: { label: '双曜', color: '#7ddc7d' },
+    zeus: { label: '天威', color: '#ffd166' },
+    athena: { label: '神行', color: '#c8a2ff' },
   };
   const affMeta = (color) => AFFINITY_META[color] || { label: color, color: '#8fa9bb' };
   const affList = () => (T && T.AFFINITIES ? T.AFFINITIES : Object.keys(AFFINITY_META));

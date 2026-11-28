@@ -306,10 +306,10 @@ function drawTorchGlow(g: Painter, s: GameState): void {
  * 不用渐变、不用圆。
  */
 const ZONE_PAINT: Record<string, { base: string; hi: string; ember: string }> = {
-  fire: { base: '#c2410c', hi: '#fb923c', ember: '#ffd166' },
-  poison: { base: '#166534', hi: '#4ade80', ember: '#bbf7d0' },
-  ice: { base: '#0e7490', hi: '#8be9fd', ember: '#eaf8ff' },
-  water: { base: '#1e3a8a', hi: '#60a5fa', ember: '#bfdbfe' },
+  ares: { base: '#c2410c', hi: '#fb923c', ember: '#ffd166' },
+  apollo: { base: '#166534', hi: '#4ade80', ember: '#bbf7d0' },
+  demeter: { base: '#0e7490', hi: '#8be9fd', ember: '#eaf8ff' },
+  poseidon: { base: '#1e3a8a', hi: '#60a5fa', ember: '#bfdbfe' },
 };
 
 function drawZones(g: Painter, s: GameState): void {
@@ -341,8 +341,8 @@ function drawZones(g: Painter, s: GameState): void {
       }
     }
     // 上升的粒子（火苗 / 气泡）：按时间循环，火焰比毒雾跳得快一档。
-    const rise = zone.element === 'fire' ? 2.6 : zone.element === 'poison' ? 1.1 : 0.5;
-    const count = zone.element === 'ice' || zone.element === 'water' ? 4 : 7;
+    const rise = zone.element === 'ares' ? 2.6 : zone.element === 'apollo' ? 1.1 : 0.5;
+    const count = zone.element === 'demeter' || zone.element === 'poseidon' ? 4 : 7;
     for (let i = 0; i < count; i += 1) {
       const phase = (s.t * rise + i / count) % 1;
       const ang = i * 2.399 + zone.uid;
@@ -350,7 +350,7 @@ function drawZones(g: Painter, s: GameState): void {
       const cy = zone.y + Math.sin(ang) * zone.radius * 0.45;
       g.globalAlpha = fade * (1 - phase) * 0.85;
       g.fillStyle = palette.hi;
-      const size = zone.element === 'fire' ? 5 : 4;
+      const size = zone.element === 'ares' ? 5 : 4;
       g.fillRect(Math.round(cx) - size / 2, Math.round(cy - phase * 34), size, size);
     }
     g.restore();

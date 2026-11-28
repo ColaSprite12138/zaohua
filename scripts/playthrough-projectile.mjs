@@ -311,7 +311,7 @@ export default async function projectile(play) {
       const st = await play.state('game.state');
       throw new Error(`火球没有落地留火（stats=${JSON.stringify(st.projectileStats)}，zones=${st.zones.length}）`);
     }
-    const fire = exploded.zones.find((z) => z.element === 'fire');
+    const fire = exploded.zones.find((z) => z.element === 'ares');
     if (fire === undefined) throw new Error('落地了但没有火区域');
     await play.screenshot('projectile-fireball-zone');
   });
