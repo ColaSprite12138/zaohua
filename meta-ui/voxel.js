@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/game/voxel.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: b86915c5cd9ac48063f5ac406d966a63092a475ff5d5877a3d61c6366e563c08
+ * Source SHA-256: 43d0b61c6056fcfc861b97fd803c39f8ec75b27227d55c9e97c66fe22a126451
  */
 (function (root) {
 "use strict";
@@ -401,9 +401,10 @@ exports.BLOCK_PART_SPECS = [
     // 放下 2×2 的眼和 4×2 的嘴。仍比胳膊（8 层）厚，保住「上厚下薄」侧影。
     { id: 'head', x: -5, y: 46, z: -4, w: 10, h: 10, d: 9, pivotX: 0, pivotY: 46, color: BLOCK.skin },
     { id: 'torso', x: -4, y: 24, z: -5, w: 9, h: 22, d: 10, pivotX: 0, pivotY: 24, color: BLOCK.armor },
-    { id: 'armL', x: -10, y: 25, z: -4, w: 5, h: 13, d: 8, pivotX: -8, pivotY: 37, color: BLOCK.armorHi },
+    // 持械侧（模型 x<0）不再烘静态胳膊 / 手方块 / 剑：整条持械臂由
+    // paint.ts::drawWeaponArm 用 KNIGHT_ARM(Limb) + KNIGHT_FIST + 装备剑，
+    // 全部共用 handPose 一套坐标，避免「两个拳头垂着、第三只手浮在剑柄上」。
     { id: 'armR', x: 6, y: 25, z: -4, w: 5, h: 13, d: 8, pivotX: 8, pivotY: 37, color: BLOCK.armorHi },
-    { id: 'handL', x: -14, y: 20, z: -2, w: 5, h: 4, d: 6, pivotX: -8, pivotY: 37, color: BLOCK.leatherDark },
     { id: 'handR', x: 10, y: 20, z: -2, w: 5, h: 4, d: 6, pivotX: 8, pivotY: 37, color: BLOCK.leatherDark },
     { id: 'thighL', x: -5, y: 13, z: -3, w: 4, h: 10, d: 6, pivotX: -3, pivotY: 23, color: BLOCK.cloth },
     { id: 'thighR', x: 2, y: 13, z: -3, w: 4, h: 10, d: 6, pivotX: 3, pivotY: 23, color: BLOCK.cloth },
@@ -419,12 +420,10 @@ function materialOf(id) {
         case 'torso':
             return { core: BLOCK.armor, front: BLOCK.armorHi, back: BLOCK.armorDark,
                 left: BLOCK.armor, right: BLOCK.armor, top: BLOCK.armorLight, bottom: BLOCK.cloth };
-        case 'armL':
         case 'armR':
-            // 整条胳膊是长袖护臂，不再有一整片裸肤色和「蓝灰上衣 + 裸胳膊」的矛盾。
+            // 副手臂是长袖护臂，不再有一整片裸肤色和「蓝灰上衣 + 裸胳膊」的矛盾。
             return { core: BLOCK.armor, front: BLOCK.armorHi, back: BLOCK.armorDark,
                 left: BLOCK.armor, right: BLOCK.armor, top: BLOCK.armorLight, bottom: BLOCK.armor };
-        case 'handL':
         case 'handR':
             // 裸拳三面都是皮肤（面积很小，不再是「最亮最大抢焦点」），这样侧身时
             // 拳头仍是皮肤、也让握点最外侧 x=-14 保持皮肤（KNIGHT_GRIP 契约）。
@@ -568,31 +567,13 @@ const BLOCK_PARTS = makeBlockParts();
  * 压在 handPose 的剑柄上作为同一只手的指节，不是另算一套肩位的第二只手。
  */
 exports.KNIGHT_GRIP = Object.freeze({ x: -14, y: 22 });
-function makeRigSword() {
-    const b = new Builder('knight.rig.sword', RIG_UNIT);
-    const gx = exports.KNIGHT_GRIP.x;
-    const gy = exports.KNIGHT_GRIP.y;
-    const z0 = 4;
-    const d = 3;
-    // 配重 + 握柄（棕皮，3 格宽）
-    b.box(gx - 1, gy - 4, z0, 3, 6, d, BLOCK.leatherDark);
-    b.box(gx - 1, gy - 4, z0, 3, 2, d, BLOCK.gold);
-    // 护手：整片 7 格宽 × 2 格高的亮钢，四个视角都读得出「这是一把剑」。
-    b.box(gx - 3, gy + 2, z0, 7, 2, d, BLOCK.armorLight);
-    // 剑刃：3 格宽 × 16 格高，前层亮钢 / 中层钢灰 / 背层暗，自带厚度明暗。
-    const by = gy + 4;
-    for (let j = 0; j < 16; j += 1) {
-        for (let k = 0; k < d; k += 1) {
-            const c = k === d - 1 ? BLOCK.steel : k === 0 ? BLOCK.armorDark : BLOCK.armorHi;
-            b.box(gx - 1, by + j, z0 + k, 3, 1, 1, c);
-        }
-    }
-    b.box(gx, by + 16, z0, 1, 2, d, BLOCK.steel);
-    const cells = b.model().voxels.map((v) => ({ ...v, part: 'sword' }));
-    // 与 armL/handL 共用肩枢轴，一起旋转 → 剑永远连在手上。
-    return { cells, px: -8, py: 37 };
-}
-const RIG_SWORD = makeRigSword();
+/**
+ * 烘入模型的刚性剑已删除（2026-11-28 第六轮）。它和模型里的持械手方块、
+ * paint.ts 用 handPose 画的装备剑 / 握拳是**两套坐标**，所以实机里出现
+ * 「两个拳头垂在胳膊下面、剑柄上还浮着第三只手」。现在武器统一由
+ * `paint.ts::drawWeaponArm` 画：整条持械臂(Limb) + 握拳 + 六档品质装备剑，
+ * 三者共用 handPose 一套坐标，模型只负责躯干 / 头 / 副手臂 / 双腿。
+ */
 /** 压在剑柄上的握拳。画在 handPose 的握点而不是另算肩位。 */
 function knightFist() {
     const b = new Builder('knight.fist', RIG_UNIT);
@@ -604,16 +585,17 @@ function knightFist() {
 }
 exports.KNIGHT_FIST = knightFist();
 /**
- * 持械手臂 Limb：从肩关节**向上**竖起，y=0..21（单测钉死）。
- * 现在 drawWeaponArm 只画 KNIGHT_FIST，这份是 Limb 契约的占位模型，
- * 配色与 10 件分件同源，不再引用已删除的 15 段关节骨架。
+ * 持械手臂 Limb：从肩关节**向上**竖起，共 14 格（y=0..13）。
+ * drawLimb 以 (肩, angle+π/2) 绕肩旋转，静止 angle=π/2 时整条翻转朝下，
+ * 末端正好落在 ARM_REACH=14 的握点；拳头与装备剑都画在那一点，三者连成
+ * 一条手臂。配色与分件同源，不再引用已删除的 15 段关节骨架。
  */
 function knightArmLimb() {
     const b = new Builder('knight-arm', RIG_UNIT);
-    b.box(-2, 0, -1, 4, 8, 3, BLOCK.leather);
-    b.box(-2, 8, -1, 4, 2, 3, BLOCK.armorHi);
-    b.box(-2, 10, -1, 4, 8, 3, BLOCK.skin);
-    b.box(-2, 18, -1, 4, 4, 3, BLOCK.armorHi);
+    b.box(-2, 0, -1, 4, 5, 3, BLOCK.leather); // 前臂
+    b.box(-2, 5, -1, 4, 2, 3, BLOCK.armorHi); // 护腕
+    b.box(-2, 7, -1, 4, 5, 3, BLOCK.skin); // 上臂
+    b.box(-2, 12, -1, 4, 2, 3, BLOCK.armorHi); // 肩甲
     return b.model();
 }
 /** 骷髅，12 格高（48px）。腿同样加到 4 格（旧 3 格），整体上移一格。 */
@@ -830,8 +812,6 @@ function angleOf(id, p) {
         case 'shinR': return 0;
         // 只有挥剑三帧才有主动作角度；走路摆臂由 armDepth 的 z 位移承担。
         // 胳膊与手共用同一肩枢轴、返回同一角度，合成后仍是一个刚性方块组。
-        case 'armL':
-        case 'handL': return armAngle(p, 'L');
         case 'armR':
         case 'handR': return armAngle(p, 'R');
     }
@@ -854,8 +834,7 @@ function assembleBlockPose(parts, p) {
         const upper = isUpper(part.id);
         const side = part.id.endsWith('L') ? 'L' : 'R';
         const amp = side === 'L' ? p.legL : p.legR;
-        const isArm = part.id === 'armL' || part.id === 'armR'
-            || part.id === 'handL' || part.id === 'handR';
+        const isArm = part.id === 'armR' || part.id === 'handR';
         // 只有迈出去的那条腿动：z 前移 + 整条抬 2 格；撑地腿完全不动，脚底
         // 钉在统一地面线上，两条腿在正面始终各占各的屏幕列。
         const stepping = !upper && amp > 0;
@@ -867,20 +846,8 @@ function assembleBlockPose(parts, p) {
             put(v, shiftX, dy, dz);
         }
     }
-    // 刚性剑：柄焊在握点。挥剑帧用 swingL 把「握点」绕肩转到手的实际位置；
-    // 走路帧 swingL=0，剑不横移，只跟持械手一起做 z 前后摆，不会脱节。
-    // 刃再用自己的 swordAngle 转，避免与大臂共线糊成一团。
-    const armA = (armAngle(p, 'L') * Math.PI) / 180;
-    const gripDx = exports.KNIGHT_GRIP.x - RIG_SWORD.px;
-    const gripDy = exports.KNIGHT_GRIP.y - RIG_SWORD.py;
-    const movedGripX = RIG_SWORD.px + gripDx * Math.cos(armA) - gripDy * Math.sin(armA);
-    const movedGripY = RIG_SWORD.py + gripDx * Math.sin(armA) + gripDy * Math.cos(armA);
-    const shiftX = movedGripX - exports.KNIGHT_GRIP.x;
-    const shiftY = movedGripY - exports.KNIGHT_GRIP.y;
-    const blade = rotateRigid(RIG_SWORD.cells, exports.KNIGHT_GRIP.x, exports.KNIGHT_GRIP.y, p.swordAngle ?? 0);
-    for (const v of blade) {
-        put(v, Math.round(shiftX) + leanDx(v.y), Math.round(shiftY) + bob, armDepth(p, 'L'));
-    }
+    // 剑不再烘进 pose：由 paint.ts::drawWeaponArm 与持械臂、拳头一起画，
+    // 三者共用 handPose 一套坐标，模型这边只负责身体。
     return { name: `knight.${p.name}`, unit: RIG_UNIT, voxels: [...cells.values()] };
 }
 function blockBodyOf() {
@@ -906,29 +873,23 @@ function blockBodyOf() {
             legR: -amp,
             armL: -amp,
             armR: amp,
+            // 只留上下起伏 + 腿/副手臂的 z 前后摆：lean 的横向扭肩、头左右转
+            // 全部去掉（用户第六轮「肩膀左右摆不对」）。
             bob: i % 2 === 1 ? 1 : 0,
-            lean: Math.round(1.5 * Math.sin(ph)),
-            headTurn: -Math.round(2 * Math.sin(ph)),
-            // 走路时剑随握点小幅摆动（不跟大臂共线），剑形始终读得出。
-            swordAngle: Math.round(-amp * 8 * 0.4),
         })));
     }
-    // 挥剑三帧：不只换贴图，躯干前倾 / 后仰、重心换腿、头转、持械臂抡出去，
-    // 三帧各有独立的剑刃摆角 —— 起手剑举、中段剑劈、收势剑落，都连在手上。
+    // 挥剑只动持械臂：模型三帧保持站姿，不再全身前倾 / 换重心 / 转头 /
+    // 两臂反相抡（用户第六轮「跟跳舞一样，可以只动右手手臂」）。抡臂与剑刃
+    // 由 paint.ts::drawWeaponArm 依 handPose(swing) + bladeAngle 运行时绘制，
+    // 弧线契约仍由 swing.test.ts 的 11 条单测钉死。
     const swingFrames = [
-        // 起手：重心压在后腿、躯干后仰、头回望、剑竖直举在握点上方（不与臂共线）。
-        { name: 'windup', swingL: -18, swingR: 12, legL: 0, legR: 3, bob: 2, lean: -3, headTurn: 5, swordAngle: -8 },
-        // 中段：前腿弓步、躯干前倾、头压低，剑横抡到身前（刃角明显不同于起手）。
-        { name: 'strike', swingL: 6, swingR: -14, legL: 4, legR: 0, bob: 0, lean: 4, headTurn: -5, swordAngle: 74 },
-        // 收势：重心回落、躯干回正、剑斜落到体侧。
-        { name: 'recover', swingL: 18, swingR: 8, legL: 1, legR: 0, bob: 0, lean: 1, headTurn: 2, swordAngle: 28 },
+        { name: 'windup' },
+        { name: 'strike' },
+        { name: 'recover' },
     ];
     const swingPoses = swingFrames.map((f) => withAnchor(assembleBlockPose(BLOCK_PARTS, {
         name: `swing-${f.name}`,
-        legL: f.legL, legR: f.legR, armL: 0, armR: 0,
-        swingL: f.swingL, swingR: f.swingR,
-        bob: f.bob, lean: f.lean, headTurn: f.headTurn,
-        swordAngle: f.swordAngle,
+        legL: 0, legR: 0, armL: 0, armR: 0,
     })));
     return {
         name: 'knight',
@@ -1794,6 +1755,8 @@ function drawLimb(g, limb, x, y, angle, opts = {}) {
         scale: opts.scale,
         alpha: opts.alpha,
         flip: opts.flip,
+        // 持械臂也参与 yaw 烘焙，转 90°/180° 时和身体一起收窄 / 翻面。
+        yaw: opts.yaw,
     });
 }
 /* ----------------------------------------------------------------- terrain */

@@ -78,6 +78,7 @@ import {
   PORTAL_FRAME,
   SHOULDER_X,
   SHOULDER_Y,
+  ARM_REACH,
   SKELETON,
   SKELETON_ARM,
   SKELETON_MAGE,
@@ -915,6 +916,14 @@ function drawWeaponArm(
   showLimb = true,
 ): void {
   const hand = handPose(x, y, face, swing);
+  // 整条持械臂绕肩画：肩位由握点反推 ARM_REACH。Limb 模型向上竖起，
+  // rotation = arm + π/2 后朝下，末端正好落在 handPose 的握点 —— 臂、
+  // 拳头、装备剑三者共用一套坐标，不再是三处各画各的。
+  const shoulderX = hand.x - Math.cos(hand.arm) * ARM_REACH;
+  const shoulderY = hand.y - Math.sin(hand.arm) * ARM_REACH;
+  if (showLimb && blade !== null && limb === KNIGHT_ARM) {
+    drawLimb(g, limb, shoulderX, shoulderY, hand.arm, { flash, scale, yaw: yawOf(face).yaw });
+  }
 
   if (blade !== null) {
     // Arc trail: three earlier positions of the same blade, dimmer each step.
@@ -935,9 +944,8 @@ function drawWeaponArm(
     });
   }
 
-  // 2026-11-28：GLB 网格已在 drawBody 里画出双臂、袖甲和亮色拳头，这里只补
-  // 一枚「握拳」压在 handPose 的剑柄上，让剑读作被握住而不是吸附在身侧。
-  // 不叠加整条独立手臂 —— 旧版两套肩位坐标对不上，会出现浮空的手和缺失的胳膊。
+  // 拳头压在剑柄上、连在上面的 Limb 末端：手 / 臂 / 剑共用 handPose 一套
+  // 坐标，不再出现「两个拳头垂在胳膊下面、第三只手浮在剑柄上」。
   // 拳头不跟着剑旋转：手固定在握点，剑绕手腕转。
   if (showLimb && blade !== null && limb === KNIGHT_ARM) {
     drawVoxel(g, KNIGHT_FIST, hand.x, hand.y, { scale, flash });
@@ -971,7 +979,6 @@ function drawDownedKnight(g: Painter, p: Player, progress: number): void {
       rotation: progress * 0.5,
       alpha: 1 - progress,
       // 阵亡过渡里也不画 pose 内烘的刚性剑：装备剑由 drawWeaponArm 单独管。
-      hideWeapon: true,
     });
   }
   drawVoxel(g, KNIGHT_DOWN, p.x, p.y + 2, { alpha: 0.55 + 0.4 * progress });
@@ -1022,7 +1029,6 @@ function drawRemoteActor(g: Painter, actor: Player): void {
       face: actor.face,
       flash: actor.hurt > 0,
       action: swing > 0 ? 'swing' : 'run',
-      hideWeapon: true,
     });
   };
   const paintArm = (): void => {
@@ -1116,7 +1122,6 @@ function drawPlayer(g: Painter, s: GameState): void {
       face: p.face,
       flash: p.hurt > 0,
       action: swing > 0 ? 'swing' : 'run',
-      hideWeapon: true,
     });
   };
   // 持械手臂画在身体的**近侧**：正对 / 侧身时在身体前面（看得见握柄），
