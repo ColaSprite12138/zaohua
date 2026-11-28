@@ -16,7 +16,6 @@ import {
   KNIGHT_ARM,
   KNIGHT_FIST,
   KNIGHT_GRIP,
-  BLOCK_PART_SPECS,
   SHOULDER_X,
   SHOULDER_Y,
   SKELETON,
@@ -99,45 +98,25 @@ describe('character rigs', () => {
     expect(ACCENTS.gem).toBeTruthy();
   });
 
-  it('the block rig is 10 flat-coloured solid parts, not a dense GLB dump', () => {
-    // 路线 A：不再有 24 色 GLB 逐格网格 / 紫红发 / 发光青眼，改成 12 色大色块分件。
+  it('the GLB voxel grid keeps a face, dark hair and a dense real mesh', () => {
+    // 直接用 GLB 网格落地：脸部在量化后落在 skin-shadow 档 #b8886a，
+    // 紫红头发落在 #783a4e；无发光青眼、无手搓部件。
     const pose = KNIGHT.poses[0]!;
-    const colors = new Set(pose.voxels.map((v) => v.c));
-    expect(colors.size).toBeGreaterThanOrEqual(8);
-    expect(colors.size).toBeLessThanOrEqual(16);
-    expect(colors.has('#783a4e')).toBe(false);
-    expect(colors.has('#67e8f9')).toBe(false);
-    // 大色块而不是逐格碎纹：占比最大的一档颜色至少铺满 300 格。
-    const counts = new Map<string, number>();
-    for (const v of pose.voxels) counts.set(v.c, (counts.get(v.c) ?? 0) + 1);
-    expect(Math.max(...counts.values())).toBeGreaterThan(300);
-    // 10 件规格：每件都是 ≥4 格宽的实心块；手是独立小方块（4 格高）。
-    expect(BLOCK_PART_SPECS).toHaveLength(10);
-    for (const s of BLOCK_PART_SPECS) {
-      expect(s.w).toBeGreaterThanOrEqual(4);
-      expect(s.h).toBeGreaterThanOrEqual(s.id === 'handL' || s.id === 'handR' ? 4 : 8);
-      expect(s.d).toBeGreaterThanOrEqual(BODY_DEPTH);
-    }
-    const byId = new Map(BLOCK_PART_SPECS.map((s) => [s.id, s]));
-    // 肩 / 腕 / 髋 / 膝各留 1 体素缝，分件永远读得清。
-    expect(byId.get('armL')!.x + byId.get('armL')!.w).toBe(byId.get('torso')!.x - 1);
-    expect(byId.get('armL')!.y - (byId.get('handL')!.y + byId.get('handL')!.h)).toBe(1);
-    expect(byId.get('torso')!.y - (byId.get('thighL')!.y + byId.get('thighL')!.h)).toBe(1);
-    expect(byId.get('thighL')!.y - (byId.get('shinL')!.y + byId.get('shinL')!.h)).toBe(1);
-    // 胳膊与手共用肩枢轴：一个刚性组一起抡，不再两段相对旋转扭成蛇。
-    expect(byId.get('handL')!.pivotX).toBe(byId.get('armL')!.pivotX);
-    expect(byId.get('handL')!.pivotY).toBe(byId.get('armL')!.pivotY);
-    // 侧面加厚：头 / 胸 10 层、四肢 8 层，头胸比胳膊厚，转 90° 不再纸片。
-    expect(byId.get('head')!.d).toBeGreaterThan(byId.get('armL')!.d);
-    expect(byId.get('armL')!.d).toBeGreaterThanOrEqual(8);
-    // 仍是真 3D 实心体积（正 / 背 / 侧都不是纸片）。
-    expect(new Set(pose.voxels.map((v) => v.z)).size).toBeGreaterThanOrEqual(7);
+    const face = pose.voxels.filter((v) => v.c === '#b8886a' && v.y >= 45);
+    expect(face.length).toBeGreaterThan(0);
+    expect(face.some((v) => v.z > 0)).toBe(true);
+    const minZ = Math.min(...pose.voxels.map((v) => v.z));
+    const backLayer = pose.voxels.filter((v) => v.z === minZ);
+    expect(backLayer.some((v) => v.c === '#b8886a')).toBe(false);
+    expect(backLayer.length).toBeGreaterThan(0);
+    expect(pose.voxels.some((v) => v.c === '#783a4e')).toBe(true);
+    expect(pose.voxels.some((v) => v.c === '#67e8f9')).toBe(false);
     expect(pose.voxels.length).toBeGreaterThan(1000);
   });
 
-  it('the block arms reach the sword grip, with one fist stamped on it', () => {
-    // 分件手臂是整片钢灰肩甲 + 亮肤色块面，两侧都外张到握点；
-    // 网格里不再画第二枚拳头，避免「静态拳头 + 握点拳头」重影成两只手。
+  it('the GLB knight has readable arms and a bright fist on the sword grip', () => {
+    // 2026-11-28：GLB 原网格的手臂只是 |x|>=8 的两列近黑褐细条，屏幕上读不出
+    // 胳膊也没有手。重建后必须是钢灰肩甲 + 亮肤色拳头，两侧都有、都够外张。
     const pose = KNIGHT.poses[0]!;
     const steel = pose.voxels.filter((v) => v.c === '#6e8092' || v.c === '#93a6b6');
     const skin = pose.voxels.filter((v) => v.c === '#eec39a' || v.c === '#fadcbe');
@@ -168,20 +147,6 @@ describe('character rigs', () => {
     expect(blockKeys(leftUp!)).not.toEqual(blockKeys(rightUp!));
     const floor = (m: VoxelModel): number => m.voxels.filter((v) => v.y <= 0).length;
     expect(floor(leftUp!)).toBeLessThan(floor(stand!));
-  });
-
-  it('rigid rotation bakes distinct walk and swing poses (not just a moving sword)', () => {
-    // 装配期把 10 件整体旋转后合成网格：走路帧、挥剑三帧都必须是不同的身体姿态。
-    const stand = KNIGHT.poses[0]!;
-    expect(KNIGHT.frameMap).toEqual([0, 2, 4, 6]);
-    const swings = KNIGHT.swingPoses ?? [];
-    expect(swings).toHaveLength(3);
-    for (const s of swings) expect(blockKeys(s)).not.toEqual(blockKeys(stand));
-    expect(blockKeys(swings[0]!)).not.toEqual(blockKeys(swings[1]!));
-    expect(blockKeys(swings[1]!)).not.toEqual(blockKeys(swings[2]!));
-    // 举臂那一帧的持械臂明显离开体侧：上沿体素比站姿更高、更外张。
-    const reach = (m: VoxelModel): number => Math.min(...m.voxels.map((v) => v.x));
-    expect(reach(swings[0]!)).toBeLessThan(reach(stand));
   });
 
   it('body heights are the authored block counts (56px / 48px)', () => {
