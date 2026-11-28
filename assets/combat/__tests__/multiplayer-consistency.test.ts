@@ -79,7 +79,7 @@ describe('共享系统认识所有玩家', () => {
   it('地面区域给圈内每个玩家续状态，不只给本机', () => {
     const s = createState();
     const { me, other } = twoPlayers(s);
-    const zone = spawnZone(s, 'fire', me.x, me.y, 200, 1, monsterSource('100001'));
+    const zone = spawnZone(s, 'ares', me.x, me.y, 200, 1, monsterSource('100001'));
     expect(zone).not.toBeNull();
     for (const z of s.zones) z.next = 0;  // 这一帧就跳
     updateZones(s, 1 / 60);

@@ -77,7 +77,7 @@ function buildProfiles(): Record<string, ProjectileProfile> {
     const id = String(row.id);
     const element = row.element === '' ? null : (row.element as ElementId);
     if (element !== null && ELEMENT_STATUS[element] === undefined) {
-      throw new Error(`projectile.xlsx::${id} 的 element=${row.element} 不是 6 元素之一`);
+      throw new Error(`projectile.xlsx::${id} 的 element=${row.element} 不是六权能之一`);
     }
     const status = row.status === '' ? null : (row.status as StatusId);
     if (status !== null && STATUS[status] === undefined) {
@@ -327,7 +327,7 @@ function damageMonster(
     dirX: source.vx / speed,
     dirY: source.vy / speed,
     knockback,
-    color: profile.element === 'fire' ? '#fb923c' : '#ffd166',
+    color: profile.element === 'ares' ? '#fb923c' : '#ffd166',
     source: src,
   });
   // 造成伤害才磨武器（设计 7.4）：打空只丢一支箭，不额外扣耐久。
@@ -373,11 +373,11 @@ function explode(
       if (p.hp <= 0 || p.id === skipPlayerId) continue;
       if (Math.sqrt((p.x - x) * (p.x - x) + ((p.y - BODY_LIFT) - y) * ((p.y - BODY_LIFT) - y)) > profile.splashRadius) continue;
       damagePlayer(s, source.damage, {
-        color: profile.element === 'fire' ? '#fb923c' : '#cfe8ff', source: src,
+        color: profile.element === 'ares' ? '#fb923c' : '#cfe8ff', source: src,
       }, p);
     }
     s.projectileStats.splashes += 1;
-    burst(s, x, y, profile.element === 'fire' ? '#fb923c' : '#cfe8ff', 18, 220);
+    burst(s, x, y, profile.element === 'ares' ? '#fb923c' : '#cfe8ff', 18, 220);
   }
   if (profile.zoneRadius > 0 && profile.element !== null) {
     spawnZone(

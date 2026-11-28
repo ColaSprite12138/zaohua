@@ -118,18 +118,18 @@ interface SkillMechanics {
 const SKILL_MECHANICS: Readonly<Record<string, SkillMechanics>> = Object.freeze({
   cleave: Object.freeze({ kind: 'sweep', icon: 'cleave', status: 'bleed' }),
   // 冲锋撞出的气流就是「风」：冲进火里会把火吹旺（风 + 火 = 火势蔓延）。
-  charge: Object.freeze({ kind: 'dash', icon: 'charge', element: 'wind' }),
-  ice_shard: Object.freeze({ kind: 'bolt', icon: 'ice_shard', element: 'ice', zoneElement: 'ice' }),
-  fire_wall: Object.freeze({ kind: 'zone', icon: 'fire_wall', element: 'fire', zoneElement: 'fire' }),
-  venom_pool: Object.freeze({ kind: 'zone', icon: 'venom_pool', element: 'poison', zoneElement: 'poison' }),
-  water_wave: Object.freeze({ kind: 'cone', icon: 'water_wave', element: 'water' }),
-  thunder: Object.freeze({ kind: 'strike', icon: 'thunder', element: 'shock' }),
+  charge: Object.freeze({ kind: 'dash', icon: 'charge', element: 'athena' }),
+  ice_shard: Object.freeze({ kind: 'bolt', icon: 'ice_shard', element: 'demeter', zoneElement: 'demeter' }),
+  fire_wall: Object.freeze({ kind: 'zone', icon: 'fire_wall', element: 'ares', zoneElement: 'ares' }),
+  venom_pool: Object.freeze({ kind: 'zone', icon: 'venom_pool', element: 'apollo', zoneElement: 'apollo' }),
+  water_wave: Object.freeze({ kind: 'cone', icon: 'water_wave', element: 'poseidon' }),
+  thunder: Object.freeze({ kind: 'strike', icon: 'thunder', element: 'zeus' }),
   /**
    * 火球：**非指向性弹道法术**。它和火墙同属火，但换取的是「远距离 + 会飞」
    * 而不是「一片地」。落地留火与溅射半径都在 `projectile.xlsx::fireball` 里，
    * 所以这一行只声明「我是弹道形态、用哪个弹」。
    */
-  fireball: Object.freeze({ kind: 'missile', icon: 'fireball', element: 'fire', projectile: 'fireball' }),
+  fireball: Object.freeze({ kind: 'missile', icon: 'fireball', element: 'ares', projectile: 'fireball' }),
 });
 
 /**
@@ -714,14 +714,14 @@ function zone(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
     if (sk === undefined || !sk.alive) continue;
     if (Math.sqrt((sk.x - x) * (sk.x - x) + (sk.y - y) * (sk.y - y)) > radius + 16) continue;
     // 落地这一下给少量伤害 + 轻推，真正的输出交给区域里的 DOT。
-    hit(s, i, def, damage, { knockback: 0.4, color: def.zone.element === 'fire' ? '#fb923c' : '#4ade80' });
+    hit(s, i, def, damage, { knockback: 0.4, color: def.zone.element === 'ares' ? '#fb923c' : '#4ade80' });
     spawnFx(s, 'impact', sk.x, sk.y, p.face, 22, 0.45);
     hits += 1;
   }
   for (const foe of sortedPlayers(s)) {
     if (foe.id === p.id || foe.hp <= 0) continue;
     if (Math.sqrt((foe.x - x) * (foe.x - x) + (foe.y - y) * (foe.y - y)) > radius + 16) continue;
-    hitPlayer(s, p, foe, def, damage, def.zone.element === 'fire' ? '#fb923c' : '#4ade80');
+    hitPlayer(s, p, foe, def, damage, def.zone.element === 'ares' ? '#fb923c' : '#4ade80');
     spawnFx(s, 'impact', foe.x, foe.y, p.face, 22, 0.45);
     hits += 1;
   }
@@ -729,7 +729,7 @@ function zone(s: GameState, def: SkillDef, aim: { x: number; y: number }, damage
   // 别人的火墙会烧我」，而不是把全体玩家当成一个阵营一刀切。
   spawnZone(s, def.zone.element, x, y, radius, def.zone.life,
     playerSource(def.id, def.name, p.id));
-  spawnFx(s, def.zone.element === 'fire' ? 'fire' : 'venom', x, y, p.face, radius, 0.85);
+  spawnFx(s, def.zone.element === 'ares' ? 'fire' : 'venom', x, y, p.face, radius, 0.85);
   say(s, `「${def.name}」铺开 · ${hits > 0 ? `命中 ${hits} 个目标` : '地面已点燃'}`);
 }
 

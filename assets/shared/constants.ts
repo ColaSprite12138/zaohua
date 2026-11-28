@@ -44,3 +44,27 @@ export function keyLabel(code: string): string {
 
 export const clamp = (v: number, lo: number, hi: number): number =>
   v < lo ? lo : v > hi ? hi : v;
+
+/**
+ * 六权能（Domain）—— 星图亲和与战斗元素的**唯一权威 id 表**。
+ * 神话配对：ares 兵燹(阿瑞斯/赫菲斯托斯) / poseidon 沧溟(波塞冬/阿佛洛狄忒) /
+ * zeus 天威(宙斯/赫拉) / apollo 双曜(阿波罗/阿尔忒弥斯) /
+ * demeter 霜序(得墨忒尔/狄俄尼索斯) / athena 神行(雅典娜/赫尔墨斯)。
+ * `talent/index.ts` 零 import（要转译成浏览器脚本），保留一份镜像，
+ * 由 `assets/talent/__tests__/starmap-data.test.ts` 的一致性断言防漂移。
+ */
+export const DOMAIN_IDS = [
+  'ares', 'demeter', 'poseidon', 'apollo', 'zeus', 'athena',
+] as const;
+export type DomainId = (typeof DOMAIN_IDS)[number];
+
+/** 权能的中文名与 HUD 色值（视觉资产，颜色沿用初版）。 */
+export const DOMAIN_LABEL: Readonly<Record<DomainId, { name: string; color: string }>> =
+  Object.freeze({
+    ares: { name: '兵燹', color: '#fb923c' },
+    demeter: { name: '霜序', color: '#8be9fd' },
+    poseidon: { name: '沧溟', color: '#60a5fa' },
+    apollo: { name: '双曜', color: '#4ade80' },
+    zeus: { name: '天威', color: '#c084fc' },
+    athena: { name: '神行', color: '#a7f3d0' },
+  });

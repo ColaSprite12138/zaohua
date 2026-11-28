@@ -17,14 +17,14 @@ const levels: LevelRow[] = [
 const rule: StarRule = { mainline_star_points: 2, explore_star_points: 1 };
 
 const constellations: ConstellationRow[] = [
-  { id: 'ember', name: '余烬', color: 'fire', requirement: 0, x: 0, y: 0, hint: '' },
-  { id: 'frost', name: '霜牙', color: 'ice', requirement: 0, x: 0, y: 0, hint: '' },
-  { id: 'tide', name: '潮汐', color: 'water', requirement: 2, x: 0, y: 0, hint: '' },
-  { id: 'warlord', name: '战意', color: 'fire', requirement: 5, x: 0, y: 0, hint: '' },
+  { id: 'ember', name: '余烬', color: 'ares', requirement: 0, x: 0, y: 0, hint: '' },
+  { id: 'frost', name: '霜牙', color: 'demeter', requirement: 0, x: 0, y: 0, hint: '' },
+  { id: 'tide', name: '潮汐', color: 'poseidon', requirement: 2, x: 0, y: 0, hint: '' },
+  { id: 'warlord', name: '战意', color: 'ares', requirement: 5, x: 0, y: 0, hint: '' },
 ];
 
 const zeroAff = {
-  aff_fire: 0, aff_ice: 0, aff_water: 0, aff_poison: 0, aff_shock: 0, aff_wind: 0,
+  aff_ares: 0, aff_demeter: 0, aff_poseidon: 0, aff_apollo: 0, aff_zeus: 0, aff_athena: 0,
 };
 
 const node = (
@@ -44,30 +44,30 @@ const node = (
 const nodeRows: StarNodeRow[] = [
   node({
     id: 'ember_skill', constellation: 'ember', kind: 'skill', effect: '', magnitude: 0,
-    skill_id: 'fire_wall', aff_fire: 2,
+    skill_id: 'fire_wall', aff_ares: 2,
   }),
   // 被动是**通用乘区**，绝不写「提升某个技能」（设计 6.3 v7）。
-  node({ id: 'ember_dmg', constellation: 'ember', aff_fire: 1, aff_poison: 1 }),
+  node({ id: 'ember_dmg', constellation: 'ember', aff_ares: 1, aff_apollo: 1 }),
   node({
     id: 'frost_skill', constellation: 'frost', kind: 'skill', effect: '', magnitude: 0,
-    skill_id: 'ice_shard', aff_ice: 2,
+    skill_id: 'ice_shard', aff_demeter: 2,
   }),
-  node({ id: 'frost_mana', constellation: 'frost', effect: 'mana_pct', magnitude: 0.1, aff_ice: 1, aff_water: 1 }),
-  node({ id: 'frost_range', constellation: 'frost', effect: 'range_px', magnitude: 12, aff_ice: 1, aff_water: 1 }),
+  node({ id: 'frost_mana', constellation: 'frost', effect: 'mana_pct', magnitude: 0.1, aff_demeter: 1, aff_poseidon: 1 }),
+  node({ id: 'frost_range', constellation: 'frost', effect: 'range_px', magnitude: 12, aff_demeter: 1, aff_poseidon: 1 }),
   node({
     id: 'tide_skill', constellation: 'tide', kind: 'skill', effect: '', magnitude: 0,
-    skill_id: 'water_wave', aff_water: 2,
+    skill_id: 'water_wave', aff_poseidon: 2,
   }),
-  node({ id: 'ember_big', constellation: 'ember', kind: 'passive', magnitude: 0.1, cost: 2, aff_fire: 1 }),
-  node({ id: 'warlord_dmg', constellation: 'warlord', kind: 'passive', magnitude: 0.12, cost: 2, aff_fire: 1 }),
+  node({ id: 'ember_big', constellation: 'ember', kind: 'passive', magnitude: 0.1, cost: 2, aff_ares: 1 }),
+  node({ id: 'warlord_dmg', constellation: 'warlord', kind: 'passive', magnitude: 0.12, cost: 2, aff_ares: 1 }),
 ];
 
 const map = createStarMap(nodeRows, constellations);
 
 describe('star map parsing rejects broken wiring', () => {
   it('normalizes affinity grants and keeps nodes grouped per constellation', () => {
-    expect(map.byId.ember_skill!.grants).toEqual({ fire: 2 });
-    expect(map.byId.ember_dmg!.grants).toEqual({ fire: 1, poison: 1 });
+    expect(map.byId.ember_skill!.grants).toEqual({ ares: 2 });
+    expect(map.byId.ember_dmg!.grants).toEqual({ ares: 1, apollo: 1 });
     expect(map.constellationById.ember!.nodes.map((n) => n.id))
       .toEqual(['ember_skill', 'ember_dmg', 'ember_big']);
   });
@@ -88,10 +88,10 @@ describe('star map parsing rejects broken wiring', () => {
 describe('affinity is the only gate (design 6.3 v7, Grim Dawn style)', () => {
   it('every node grants affinity; the total is derived, never spent', () => {
     const state = createStarState(3);
-    expect(affinityOf(state, map).fire).toBe(0);
+    expect(affinityOf(state, map).ares).toBe(0);
     pickNode(state, map, levels, rule, 'ember_skill');
-    expect(affinityOf(state, map).fire).toBe(2);
-    expect(affinityOf(state, map).poison).toBe(0);
+    expect(affinityOf(state, map).ares).toBe(2);
+    expect(affinityOf(state, map).apollo).toBe(0);
     // 亲和不是货币：点完两点火，点数只少 1，火亲和不会变成 1。
     expect(pointsSpent(state, map)).toBe(1);
     expect(pointsEarned(state, levels, rule)).toBe(3);
@@ -119,7 +119,7 @@ describe('affinity is the only gate (design 6.3 v7, Grim Dawn style)', () => {
     expect(pickNode(state, map, levels, rule, 'ember_dmg')).toBe(true);
     expect(pickNode(state, map, levels, rule, 'ember_skill')).toBe(true);
     expect(canPick(state, map, levels, rule, 'warlord_dmg')).toBe(false); // 火 3 < 5
-    expect(affinityOf(state, map).fire).toBe(3);
+    expect(affinityOf(state, map).ares).toBe(3);
   });
 
   it('refuses unknown / duplicate picks and leaves state untouched', () => {
@@ -145,7 +145,7 @@ describe('affinity is the only gate (design 6.3 v7, Grim Dawn style)', () => {
     state.cleared = ['arena']; // +2 首通 → 2 点余额
     expect(pointsLeft(state, map, levels, rule)).toBe(2);
     // 有点数但火亲和只有 3（< 5）：卡在亲和，不是点数。两道门互不替代。
-    expect(affinityOf(state, map).fire).toBe(3);
+    expect(affinityOf(state, map).ares).toBe(3);
     expect(pickNode(state, map, levels, rule, 'warlord_dmg')).toBe(false);
   });
 });
@@ -157,10 +157,10 @@ describe('respec is free and affinity follows it back to zero', () => {
     awardClear(state, 'arena');
     pickNode(state, map, levels, rule, 'ember_skill');
     pickNode(state, map, levels, rule, 'ember_dmg');
-    expect(affinityOf(state, map).fire).toBe(3);
+    expect(affinityOf(state, map).ares).toBe(3);
     expect(respec(state)).toBe(2);
     expect(state.picks).toEqual([]);
-    expect(affinityOf(state, map).fire).toBe(0); // 亲和是算出来的，洗点即归零
+    expect(affinityOf(state, map).ares).toBe(0); // 亲和是算出来的，洗点即归零
     expect(state.level).toBe(3);
     expect(state.xp).toBe(40);
     expect(state.cleared).toEqual(['arena']);

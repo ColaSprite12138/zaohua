@@ -298,7 +298,7 @@ const SELFTEST = `
       // 点火墙（余烬 = 起点星座，产出 火2 + 毒1）
       document.querySelector('.star-chip[data-node="ember_wall"]').click();
       out.star.picked = H.getProgress().picks.indexOf('ember_wall') >= 0;
-      out.star.affinityFire = T.affinityOf(H.getProgress(), SM).fire;
+      out.star.affinityAres = T.affinityOf(H.getProgress(), SM).ares;
       // 战意要 5 点火亲和：此时只有 2，点不动（亲和是门槛，不是点数）
       document.querySelector('.star-chip[data-node="warlord_dmg"]').click();
       out.star.blockedByAffinity = H.getProgress().picks.indexOf('warlord_dmg') < 0;
@@ -308,7 +308,7 @@ const SELFTEST = `
       // 免费洗点：点数退回、亲和归零（亲和是算出来的）
       document.getElementById('star-respec').click();
       out.star.respec = H.getProgress().picks.length === 0;
-      out.star.affinityAfterRespec = T.affinityOf(H.getProgress(), SM).fire;
+      out.star.affinityAfterRespec = T.affinityOf(H.getProgress(), SM).ares;
 
       // 换成一个 3 级角色（3 点）继续测「技能进技能栏 + 乘区进战局」。
       H.setProgress(T.createStarState(3));
@@ -957,7 +957,7 @@ const checks = [
       && result.star.constellations >= 6 && result.star.noLines === 0
       && result.star.mapPosition === 'relative', result.star],
   ['亲和是门槛：点节点涨亲和、亲和不足点不动、点数不足也点不动',
-    result.star.picked === true && result.star.affinityFire === 2
+    result.star.picked === true && result.star.affinityAres === 2
       && result.star.blockedByAffinity === true
       && result.star.budgetBlocked === true, result.star],
   ['免费洗点：点数退回，亲和归零',

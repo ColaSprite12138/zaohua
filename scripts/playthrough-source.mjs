@@ -35,7 +35,7 @@ export default async function source(play) {
     await play.advance(0.6);
 
     let s = await play.state('game.state');
-    const own = s.zones.filter((z) => z.element === 'fire' && z.source === 'fire_wall');
+    const own = s.zones.filter((z) => z.element === 'ares' && z.source === 'fire_wall');
     assert.ok(
       own.length > 0,
       `自己的火墙没铺出来（zones=${JSON.stringify(s.zones)}）`,
@@ -97,7 +97,7 @@ export default async function source(play) {
     await play.advance(0.8);
 
     const s = await play.state('game.state');
-    const wall = s.zones.filter((z) => z.element === 'fire' && z.owner === 'player');
+    const wall = s.zones.filter((z) => z.element === 'ares' && z.owner === 'player');
     assert.ok(wall.length > 0, '火墙应该铺在怪脚下');
     const burned = s.skeletons.some(
       (sk) => sk.alive && sk.statuses.some((x) => x.id === 'burn'),

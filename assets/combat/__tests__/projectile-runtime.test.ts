@@ -62,7 +62,7 @@ describe('projectile table join', () => {
     expect(Object.keys(PROJECTILES).sort()).toEqual(projectileRows.map((r) => String(r.id)).sort());
     expect(projectileProfile('arrow').visual).toBe('arrow');
     expect(projectileProfile('fireball').splashRadius).toBeGreaterThan(0);
-    expect(projectileProfile('fireball').element).toBe('fire');
+    expect(projectileProfile('fireball').element).toBe('ares');
     expect(projectileProfile('fireball').zoneRadius).toBeGreaterThan(0);
     expect(projectileProfile('monster_arrow').element).toBeNull();
     // 怪物技能的状态**挂在弹道上**（monster_skill.xlsx 不允许重复写）；
@@ -187,7 +187,7 @@ describe('impact effects', () => {
       from: { x: s.player.x, y: s.player.y }, aim: { x: 700, y: 470 }, sourceId: 'fireball',
     });
     fly(s, 2.5);
-    const zone = s.zones.find((z) => z.element === 'fire');
+    const zone = s.zones.find((z) => z.element === 'ares');
     expect(zone).toBeDefined();
     expect(zone!.x).toBeGreaterThan(600);
     expect(zone!.radius).toBe(projectileProfile('fireball').zoneRadius);
@@ -204,7 +204,7 @@ describe('impact effects', () => {
       aimRange: 220, sourceId: 'fireball',
     });
     fly(s, 2);
-    const zone = s.zones.find((z) => z.element === 'fire');
+    const zone = s.zones.find((z) => z.element === 'ares');
     expect(zone).toBeDefined();
     expect(zone!.x).toBeGreaterThan(500);
     expect(zone!.x).toBeLessThan(560);

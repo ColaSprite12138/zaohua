@@ -587,7 +587,7 @@ export default async function playthrough(play) {
     await play.keyboard.press('KeyG'); // 毒池
     await play.advance(0.3);
     const poisoned = await play.state('game.state');
-    assert.ok(poisoned.zones.some((zone) => zone.element === 'poison'), 'the pool is on the ground');
+    assert.ok(poisoned.zones.some((zone) => zone.element === 'apollo'), 'the pool is on the ground');
     assert.ok(
       poisoned.skeletons.some((sk) => sk.statuses.some((st) => st.id === 'poison')),
       'the pool attaches poison to whoever stands in it',
@@ -604,7 +604,7 @@ export default async function playthrough(play) {
       blown.reactions.some((r) => r.id === 'detonate'),
       `fire on a poisoned target detonates (${JSON.stringify(blown.reactions)})`,
     );
-    assert.ok(blown.zones.some((zone) => zone.element === 'fire'), 'the flame wall stays on the ground');
+    assert.ok(blown.zones.some((zone) => zone.element === 'ares'), 'the flame wall stays on the ground');
     await play.screenshot('reaction-detonate');
   });
 
@@ -641,7 +641,7 @@ export default async function playthrough(play) {
       frozen.reactions.some((r) => r.id === 'freeze'),
       `ice on a soaked target freezes it (${JSON.stringify(frozen.reactions)})`,
     );
-    assert.ok(frozen.zones.some((zone) => zone.element === 'ice'), 'the shard leaves an ice patch');
+    assert.ok(frozen.zones.some((zone) => zone.element === 'demeter'), 'the shard leaves an ice patch');
     await play.screenshot('status-freeze');
   });
 

@@ -75,19 +75,19 @@ describe('status registry (8.4)', () => {
   });
 
   it('has exactly the five designed reactions and nothing else', () => {
-    // 6 元素、5 条固定条目 —— 不做「任意两两组合」的 N² 判定。
+    // 6 权能、5 条固定条目 —— 不做「任意两两组合」的 N² 判定。
     expect(Object.keys(ELEMENT_STATUS)).toHaveLength(6);
     const pairs = [
-      ['water', 'ice'], ['water', 'shock'], ['fire', 'poison'], ['wind', 'fire'], ['wind', 'poison'],
+      ['poseidon', 'demeter'], ['poseidon', 'zeus'], ['ares', 'apollo'], ['athena', 'ares'], ['athena', 'apollo'],
     ] as const;
     for (const [a, b] of pairs) {
       expect(reactionForPair(a, b), `${a}+${b}`).not.toBeNull();
       expect(reactionForPair(b, a), `${b}+${a}`).not.toBeNull();
     }
     // 未列入的组合必须没有反应（例如 冰 + 火、雷 + 毒）。
-    expect(reactionForPair('ice', 'fire')).toBeNull();
-    expect(reactionForPair('shock', 'poison')).toBeNull();
-    expect(reactionForPair('water', 'fire')).toBeNull();
+    expect(reactionForPair('demeter', 'ares')).toBeNull();
+    expect(reactionForPair('zeus', 'apollo')).toBeNull();
+    expect(reactionForPair('poseidon', 'ares')).toBeNull();
   });
 
   it('stacks only what the design says stacks, and caps it', () => {
@@ -289,7 +289,7 @@ describe('statuses change the fight (8.4)', () => {
     stage(s, [[s.player.x + 60, s.player.y]]);
     applyStatus(s.skeletons[0]!, 'burn');
     applyStatus(s.player, 'slow');
-    spawnZone(s, 'fire', s.player.x, s.player.y, 60, 4, playerSource('test', '测试火'));
+    spawnZone(s, 'ares', s.player.x, s.player.y, 60, 4, playerSource('test', '测试火'));
     reset(s);
     expect(s.zones).toHaveLength(0);
     expect(s.player.statuses).toHaveLength(0);
@@ -308,9 +308,9 @@ describe('reaction chains (8.5)', () => {
   it('water + ice freezes the target and consumes both attachments', () => {
     const s = createState();
     stage(s, [[s.player.x + 80, s.player.y]]);
-    applyElement(s, 0, 'water');
+    applyElement(s, 0, 'poseidon');
     expect(hasStatus(s.skeletons[0]!, 'wet')).toBe(true);
-    applyElement(s, 0, 'ice');
+    applyElement(s, 0, 'demeter');
     const sk = s.skeletons[0]!;
     expect(hasStatus(sk, 'freeze')).toBe(true);
     expect(hasStatus(sk, 'wet')).toBe(false);
@@ -321,8 +321,8 @@ describe('reaction chains (8.5)', () => {
   it('water + shock paralyses and chains to a nearby enemy', () => {
     const s = createState();
     stage(s, [[s.player.x + 80, s.player.y], [s.player.x + 100, s.player.y], [s.player.x + 600, s.player.y]]);
-    applyElement(s, 0, 'water');
-    applyElement(s, 0, 'shock');
+    applyElement(s, 0, 'poseidon');
+    applyElement(s, 0, 'zeus');
     expect(hasStatus(s.skeletons[0]!, 'paralyze')).toBe(true);
     // 传导：附近的怪也被麻住，远处的不受影响。
     expect(hasStatus(s.skeletons[1]!, 'paralyze')).toBe(true);
@@ -333,10 +333,10 @@ describe('reaction chains (8.5)', () => {
     const s = createState();
     stage(s, [[s.player.x + 80, s.player.y]]);
     const sk = s.skeletons[0]!;
-    for (let i = 0; i < 4; i += 1) applyElement(s, 0, 'poison');
+    for (let i = 0; i < 4; i += 1) applyElement(s, 0, 'apollo');
     expect(sk.statuses.find((st) => st.id === 'poison')?.stacks).toBe(4);
     const before = sk.hp;
-    applyElement(s, 0, 'fire');
+    applyElement(s, 0, 'ares');
     expect(sk.hp).toBeLessThan(before - 20);
     // 引爆消耗毒层与火附着：一次反应不会自己连爆。
     expect(hasStatus(sk, 'poison')).toBe(false);
@@ -347,25 +347,25 @@ describe('reaction chains (8.5)', () => {
   it('wind + fire and wind + poison grow the matching ground zones', () => {
     const s = createState();
     stage(s, [[s.player.x + 90, s.player.y]]);
-    const fire = spawnZone(s, 'fire', s.player.x + 90, s.player.y, 80, 5, playerSource('fire_wall', '火墙'))!;
-    const venom = spawnZone(s, 'poison', s.player.x + 95, s.player.y, 80, 5, playerSource('venom_pool', '毒池'))!;
+    const fire = spawnZone(s, 'ares', s.player.x + 90, s.player.y, 80, 5, playerSource('fire_wall', '火墙'))!;
+    const venom = spawnZone(s, 'apollo', s.player.x + 95, s.player.y, 80, 5, playerSource('venom_pool', '毒池'))!;
     const before = { fire: fire.radius, venom: venom.radius };
-    applyElement(s, 0, 'fire');
-    applyElement(s, 0, 'wind');
+    applyElement(s, 0, 'ares');
+    applyElement(s, 0, 'athena');
     expect(fire.radius).toBeGreaterThan(before.fire);
     // 风 + 火 只吹火，不会顺手把毒池也吹大。
     expect(venom.radius).toBe(before.venom);
 
-    applyElement(s, 0, 'poison');
-    applyElement(s, 0, 'wind');
+    applyElement(s, 0, 'apollo');
+    applyElement(s, 0, 'athena');
     expect(venom.radius).toBeGreaterThan(before.venom);
-    expect(s.reactions.map((r) => r.id)).toEqual(['fireSpread', 'poisonSpread']);
+    expect(s.reactions.map((r) => r.id)).toEqual(['forgeGale', 'wanderingPlague']);
   });
 
   it('a single attachment never triggers anything on its own', () => {
     const s = createState();
     stage(s, [[s.player.x + 80, s.player.y]]);
-    for (const el of ['water', 'ice', 'fire', 'poison', 'shock', 'wind'] as const) {
+    for (const el of ['poseidon', 'demeter', 'ares', 'apollo', 'zeus', 'athena'] as const) {
       applyElement(s, 0, el);
     }
     // 依次上元素时，能成对的那几对已经反应掉了；剩下的绝不该产生「凭空反应」。
@@ -380,7 +380,7 @@ describe('ground zones', () => {
     const s = createState();
     stage(s, [[s.player.x + 90, s.player.y]]);
     const sk = s.skeletons[0]!;
-    spawnZone(s, 'fire', sk.x, sk.y, 80, 1.2, playerSource('fire_wall', '火墙'));
+    spawnZone(s, 'ares', sk.x, sk.y, 80, 1.2, playerSource('fire_wall', '火墙'));
     tick(s, 0.6);
     expect(hasStatus(sk, 'burn')).toBe(true);
     const hp = sk.hp;
@@ -393,7 +393,7 @@ describe('ground zones', () => {
     const s = createState();
     stage(s, [[s.player.x + 90, s.player.y]]);
     const sk = s.skeletons[0]!;
-    spawnZone(s, 'poison', sk.x, sk.y, 80, 4, playerSource('venom_pool', '毒池'));
+    spawnZone(s, 'apollo', sk.x, sk.y, 80, 4, playerSource('venom_pool', '毒池'));
     // 只推进区域（不跑 DOT）：不该掉血，只该被续上中毒。
     updateZones(s, 0.5);
     expect(sk.hp).toBe(66);
@@ -402,8 +402,8 @@ describe('ground zones', () => {
 
   it('zones grow but never past the cap', () => {
     const s = createState();
-    const zone = spawnZone(s, 'fire', 400, 400, 80, 4, playerSource('fire_wall', '火墙'))!;
-    for (let i = 0; i < 10; i += 1) growZones(s, 400, 400, ['fire']);
+    const zone = spawnZone(s, 'ares', 400, 400, 80, 4, playerSource('fire_wall', '火墙'))!;
+    for (let i = 0; i < 10; i += 1) growZones(s, 400, 400, ['ares']);
     expect(zone.radius).toBeLessThanOrEqual(220);
   });
 });
@@ -419,7 +419,7 @@ describe('damage sources: own effects never hurt their owner', () => {
   it('a player-laid fire wall does not burn the player standing in it', () => {
     const s = createState();
     stage(s, []);
-    const zone = spawnZone(s, 'fire', s.player.x, s.player.y, 80, 4, playerSource('fire_wall', '火墙'))!;
+    const zone = spawnZone(s, 'ares', s.player.x, s.player.y, 80, 4, playerSource('fire_wall', '火墙'))!;
     expect(zone.source.owner).toBe('player');
     // 投影也要说得清「这片地是谁的」。
     expect(projection(s).zones[0]?.owner).toBe('player');
@@ -433,7 +433,7 @@ describe('damage sources: own effects never hurt their owner', () => {
   it('an enemy-laid zone still burns the player', () => {
     const s = createState();
     stage(s, []);
-    spawnZone(s, 'fire', s.player.x, s.player.y, 80, 4, monsterSource('100001'));
+    spawnZone(s, 'ares', s.player.x, s.player.y, 80, 4, monsterSource('100001'));
     const hp = s.hp;
     tick(s, 1.5);
     expect(hasStatus(s.player, 'burn')).toBe(true);
@@ -444,7 +444,7 @@ describe('damage sources: own effects never hurt their owner', () => {
     const s = createState();
     stage(s, [[s.player.x + 20, s.player.y]]);
     const sk = s.skeletons[0]!;
-    spawnZone(s, 'fire', s.player.x, s.player.y, 140, 4, WORLD_SOURCE);
+    spawnZone(s, 'ares', s.player.x, s.player.y, 140, 4, WORLD_SOURCE);
     tick(s, 1.2);
     expect(hasStatus(s.player, 'burn')).toBe(true);
     expect(hasStatus(sk, 'burn')).toBe(true);
@@ -454,11 +454,11 @@ describe('damage sources: own effects never hurt their owner', () => {
     const s = createState();
     stage(s, [[400, 470]]);
     const sk = s.skeletons[0]!;
-    spawnZone(s, 'fire', sk.x, sk.y, 80, 4, monsterSource('100001'));
+    spawnZone(s, 'ares', sk.x, sk.y, 80, 4, monsterSource('100001'));
     updateZones(s, 0.5);
     expect(hasStatus(sk, 'burn')).toBe(false);
     // 换成玩家铺的同一片火，它就该烧起来。
-    spawnZone(s, 'fire', sk.x, sk.y, 80, 4, playerSource('fire_wall', '火墙'));
+    spawnZone(s, 'ares', sk.x, sk.y, 80, 4, playerSource('fire_wall', '火墙'));
     updateZones(s, 0.45);
     expect(hasStatus(sk, 'burn')).toBe(true);
   });
@@ -511,9 +511,9 @@ describe('skills carry the elements (so all five reactions are playable)', () =>
       const def = SKILLS[slot.id!]!;
       expect(skillModel(def.icon), `${def.id} 缺体素图标`).not.toBeNull();
     }
-    // 6 种元素都要有来源，否则反应表就有打不出来的条目。
+    // 6 种权能都要有来源，否则反应表就有打不出来的条目。
     const elements = new Set(Object.values(SKILLS).map((def) => def.element).filter(Boolean));
-    expect([...elements].sort()).toEqual(['fire', 'ice', 'poison', 'shock', 'water', 'wind']);
+    expect([...elements].sort()).toEqual(['apollo', 'ares', 'athena', 'demeter', 'poseidon', 'zeus']);
   });
 
   it('the flame wall lays a real zone and the poison pool stacks poison', () => {
@@ -521,7 +521,7 @@ describe('skills carry the elements (so all five reactions are playable)', () =>
     stage(s, [[s.player.x + 90, s.player.y]]);
     const sk = s.skeletons[0]!;
     expect(beginSkill(s, SLOT.fire_wall, { x: sk.x, y: sk.y }, NO_MODIFIERS)).toBe('ok');
-    expect(s.zones.some((zone) => zone.element === 'fire')).toBe(true);
+    expect(s.zones.some((zone) => zone.element === 'ares')).toBe(true);
     expect(hasStatus(sk, 'burn')).toBe(true);
 
     expect(beginSkill(s, SLOT.venom_pool, { x: sk.x, y: sk.y }, NO_MODIFIERS)).toBe('ok');
@@ -550,25 +550,25 @@ describe('skills carry the elements (so all five reactions are playable)', () =>
     const py = s.player.y;
     stage(s, [[px + 140, py]]);
     const sk = s.skeletons[0]!;
-    spawnZone(s, 'fire', sk.x, sk.y, 70, 5, playerSource('fire_wall', '火墙'));
+    spawnZone(s, 'ares', sk.x, sk.y, 70, 5, playerSource('fire_wall', '火墙'));
     applyStatus(sk, 'burn', { duration: 9 });
     const zone = s.zones[0]!;
     const before = zone.radius;
     expect(beginSkill(s, SLOT.charge, { x: px + 400, y: py }, NO_MODIFIERS)).toBe('ok');
     tick(s, 0.4);
     expect(zone.radius).toBeGreaterThan(before);
-    expect(s.reactions.some((r) => r.id === 'fireSpread')).toBe(true);
+    expect(s.reactions.some((r) => r.id === 'forgeGale')).toBe(true);
   });
 
   it('reflects statuses and zones in the read projection', () => {
     const s = createState();
     stage(s, [[s.player.x + 90, s.player.y]]);
-    applyElement(s, 0, 'fire');
-    spawnZone(s, 'fire', s.skeletons[0]!.x, s.skeletons[0]!.y, 80, 4, playerSource('fire_wall', '火墙'));
+    applyElement(s, 0, 'ares');
+    spawnZone(s, 'ares', s.skeletons[0]!.x, s.skeletons[0]!.y, 80, 4, playerSource('fire_wall', '火墙'));
     const p = projection(s);
     expect(p.skeletons[0]?.statuses.some((st) => st.id === 'burn')).toBe(true);
     expect(p.zones).toHaveLength(1);
-    expect(p.zones[0]?.element).toBe('fire');
+    expect(p.zones[0]?.element).toBe('ares');
     expect(p.playerStatuses).toEqual([]);
     expect(Array.isArray(p.reactions)).toBe(true);
     // 投影里的坐标同样是屏幕归一化的（验收脚本直接按它断言）。

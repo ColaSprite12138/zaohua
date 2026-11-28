@@ -306,7 +306,7 @@ export default async function monsterSkill(play) {
         if (!sawShot) await play.screenshot('monster-skill-fireball-flight');
         sawShot = true;
       }
-      if (st.zones.some((z) => z.element === 'fire')) sawFire = true;
+      if (st.zones.some((z) => z.element === 'ares')) sawFire = true;
       // 判据是「火球真的出手 + 地上真的留了火」。**不要求抓到飞行中的那 0.1 秒**：
       // 法师常隔着一张货架放，火球 40px 就炸在墙上，0.1s 的采样窗口看不到飞行体
       // （实测火已经在脚下烧、`sawShot` 仍是 false）。敌方出手数涨了就证明是它放的

@@ -142,81 +142,81 @@ LEVELS = [(1, 60), (2, 90), (3, 120), (4, 170), (5, 220), (6, 280),
 #   * 想开高阶星座，就得先在不那么想要的星座里拿够亲和 —— 这是取舍的来源；
 #   * 被动一律是通用乘区（伤害 / 生命 / 法力 / 距离），**不为某个主动技能加成**。
 #
-# 六种亲和＝六种元素（combat 的 ElementId），技能节点给本色 2 点，被动给本色 1 点 + 邻色 1 点。
+# 六种亲和＝六种权能（combat 的 ElementId，与 shared/domains.ts 同源），技能节点给本色 2 点，被动给本色 1 点 + 邻色 1 点。
 # 邻色是设计的核心：跨色产出让「绕路」有意义，否则每个星座只能开自己。
 CONSTELLATIONS = [
     # id, name, color, requirement, x, y, hint
-    ('ember', '余烬', 'fire', 0, 90, 60, '火。起点星座，不需要亲和'),
-    ('frost', '霜牙', 'ice', 0, 330, 60, '冰。起点星座，不需要亲和'),
-    ('tide', '潮汐', 'water', 2, 570, 60, '水。需要 2 点水亲和'),
-    ('venom', '腐沼', 'poison', 2, 810, 60, '毒。需要 2 点毒亲和'),
-    ('gale', '疾风', 'wind', 3, 210, 275, '风。需要 3 点风亲和'),
-    ('storm', '怒雷', 'shock', 3, 560, 275, '雷。需要 3 点雷亲和'),
-    ('warlord', '战意', 'fire', 5, 260, 450, '火之巅。需要 5 点火亲和'),
-    ('archon', '奥能', 'shock', 5, 640, 450, '雷之巅。需要 5 点雷亲和'),
+    ('ember', '余烬', 'ares', 0, 90, 60, '兵燹。起点星座，不需要亲和'),
+    ('frost', '霜牙', 'demeter', 0, 330, 60, '霜序。起点星座，不需要亲和'),
+    ('tide', '潮汐', 'poseidon', 2, 570, 60, '沧溟。需要 2 点沧溟亲和'),
+    ('venom', '腐沼', 'apollo', 2, 810, 60, '双曜。需要 2 点双曜亲和'),
+    ('gale', '疾风', 'athena', 3, 210, 275, '神行。需要 3 点神行亲和'),
+    ('storm', '怒雷', 'zeus', 3, 560, 275, '天威。需要 3 点天威亲和'),
+    ('warlord', '战意', 'ares', 5, 260, 450, '兵燹之巅。需要 5 点兵燹亲和'),
+    ('archon', '奥能', 'zeus', 5, 640, 450, '天威之巅。需要 5 点天威亲和'),
 ]
 
 # id, constellation, name, kind, effect, magnitude, cost, (affinities), skill_id, hint
-# affinities 用 dict：{'fire': 2} 之类；缺省色为 0。
+# affinities 用 dict：{'ares': 2} 之类；缺省色为 0。
 NODES = [
     # 技能节点：本色 2 点 + 邻色 1 点（技能本身也产出亲和，这是 GD 的核心手感：
     # 你想开的那条线，往往要靠「顺手点的一个技能」把颜色推上去）。
-    ('ember_wall', 'ember', '火墙', 'skill', '', 0, 1, {'fire': 2, 'poison': 1}, 'fire_wall',
+    ('ember_wall', 'ember', '火墙', 'skill', '', 0, 1, {'ares': 2, 'apollo': 1}, 'fire_wall',
      '解锁主动技能「火墙」'),
-    ('ember_dmg', 'ember', '燎原', 'attribute', 'dmg_pct', 0.05, 1, {'fire': 1, 'poison': 1},
+    ('ember_dmg', 'ember', '燎原', 'attribute', 'dmg_pct', 0.05, 1, {'ares': 1, 'apollo': 1},
      '', '所有伤害 +5%'),
-    ('ember_hp', 'ember', '炭壳', 'attribute', 'hp_pct', 0.06, 1, {'fire': 1, 'wind': 1},
+    ('ember_hp', 'ember', '炭壳', 'attribute', 'hp_pct', 0.06, 1, {'ares': 1, 'athena': 1},
      '', '生命上限 +6%'),
 
-    ('frost_shard', 'frost', '冰锥', 'skill', '', 0, 1, {'ice': 2, 'water': 1}, 'ice_shard',
+    ('frost_shard', 'frost', '冰锥', 'skill', '', 0, 1, {'demeter': 2, 'poseidon': 1}, 'ice_shard',
      '解锁主动技能「冰锥」'),
-    ('frost_mana', 'frost', '静流', 'attribute', 'mana_pct', 0.10, 1, {'ice': 1, 'water': 1},
+    ('frost_mana', 'frost', '静流', 'attribute', 'mana_pct', 0.10, 1, {'demeter': 1, 'poseidon': 1},
      '', '法力上限 +10%'),
-    ('frost_dmg', 'frost', '砭骨', 'attribute', 'dmg_pct', 0.04, 1, {'ice': 1, 'shock': 1},
+    ('frost_dmg', 'frost', '砭骨', 'attribute', 'dmg_pct', 0.04, 1, {'demeter': 1, 'zeus': 1},
      '', '所有伤害 +4%'),
 
-    ('tide_wave', 'tide', '水浪', 'skill', '', 0, 1, {'water': 2, 'shock': 1}, 'water_wave',
+    ('tide_wave', 'tide', '水浪', 'skill', '', 0, 1, {'poseidon': 2, 'zeus': 1}, 'water_wave',
      '解锁主动技能「水浪」'),
-    ('tide_hp', 'tide', '潮息', 'attribute', 'hp_pct', 0.10, 1, {'water': 1, 'wind': 1},
+    ('tide_hp', 'tide', '潮息', 'attribute', 'hp_pct', 0.10, 1, {'poseidon': 1, 'athena': 1},
      '', '生命上限 +10%'),
-    ('tide_mana', 'tide', '深潭', 'attribute', 'mana_pct', 0.08, 1, {'water': 1, 'poison': 1},
+    ('tide_mana', 'tide', '深潭', 'attribute', 'mana_pct', 0.08, 1, {'poseidon': 1, 'apollo': 1},
      '', '法力上限 +8%'),
 
-    ('venom_pool', 'venom', '毒池', 'skill', '', 0, 1, {'poison': 2, 'wind': 1}, 'venom_pool',
+    ('venom_pool', 'venom', '毒池', 'skill', '', 0, 1, {'apollo': 2, 'athena': 1}, 'venom_pool',
      '解锁主动技能「毒池」'),
-    ('venom_dmg', 'venom', '蚀骨', 'attribute', 'dmg_pct', 0.06, 1, {'poison': 1, 'wind': 1},
+    ('venom_dmg', 'venom', '蚀骨', 'attribute', 'dmg_pct', 0.06, 1, {'apollo': 1, 'athena': 1},
      '', '所有伤害 +6%'),
-    ('venom_range', 'venom', '蔓延', 'attribute', 'range_px', 12, 1, {'poison': 1, 'shock': 1},
+    ('venom_range', 'venom', '蔓延', 'attribute', 'range_px', 12, 1, {'apollo': 1, 'zeus': 1},
      '', '近战距离 +12px'),
 
-    ('gale_charge', 'gale', '冲锋', 'skill', '', 0, 1, {'wind': 2, 'fire': 1}, 'charge',
+    ('gale_charge', 'gale', '冲锋', 'skill', '', 0, 1, {'athena': 2, 'ares': 1}, 'charge',
      '解锁主动技能「冲锋」'),
-    ('gale_cleave', 'gale', '横扫', 'skill', '', 0, 1, {'wind': 2, 'ice': 1}, 'cleave',
+    ('gale_cleave', 'gale', '横扫', 'skill', '', 0, 1, {'athena': 2, 'demeter': 1}, 'cleave',
      '解锁主动技能「横扫」'),
-    ('gale_range', 'gale', '疾行', 'attribute', 'range_px', 16, 1, {'wind': 1, 'fire': 1},
+    ('gale_range', 'gale', '疾行', 'attribute', 'range_px', 16, 1, {'athena': 1, 'ares': 1},
      '', '近战距离 +16px'),
-    ('gale_dmg', 'gale', '割裂', 'attribute', 'dmg_pct', 0.05, 1, {'wind': 1, 'shock': 1},
+    ('gale_dmg', 'gale', '割裂', 'attribute', 'dmg_pct', 0.05, 1, {'athena': 1, 'zeus': 1},
      '', '所有伤害 +5%'),
 
-    ('storm_thunder', 'storm', '落雷', 'skill', '', 0, 1, {'shock': 2, 'fire': 1}, 'thunder',
+    ('storm_thunder', 'storm', '落雷', 'skill', '', 0, 1, {'zeus': 2, 'ares': 1}, 'thunder',
      '解锁主动技能「落雷」'),
-    ('storm_mana', 'storm', '雷鸣', 'attribute', 'mana_pct', 0.15, 1, {'shock': 1, 'fire': 1},
+    ('storm_mana', 'storm', '雷鸣', 'attribute', 'mana_pct', 0.15, 1, {'zeus': 1, 'ares': 1},
      '', '法力上限 +15%'),
-    ('storm_dmg', 'storm', '电弧', 'attribute', 'dmg_pct', 0.08, 1, {'shock': 1, 'wind': 1},
+    ('storm_dmg', 'storm', '电弧', 'attribute', 'dmg_pct', 0.08, 1, {'zeus': 1, 'athena': 1},
      '', '所有伤害 +8%'),
 
-    ('warlord_dmg', 'warlord', '破军', 'passive', 'dmg_pct', 0.12, 2, {'fire': 1},
+    ('warlord_dmg', 'warlord', '破军', 'passive', 'dmg_pct', 0.12, 2, {'ares': 1},
      '', '所有伤害 +12%（大点）'),
-    ('warlord_hp', 'warlord', '铁壁', 'passive', 'hp_pct', 0.15, 2, {'fire': 1},
+    ('warlord_hp', 'warlord', '铁壁', 'passive', 'hp_pct', 0.15, 2, {'ares': 1},
      '', '生命上限 +15%（大点）'),
 
-    ('archon_mana', 'archon', '洪流', 'passive', 'mana_pct', 0.20, 2, {'shock': 1},
+    ('archon_mana', 'archon', '洪流', 'passive', 'mana_pct', 0.20, 2, {'zeus': 1},
      '', '法力上限 +20%（大点）'),
-    ('archon_range', 'archon', '远见', 'passive', 'range_px', 20, 2, {'shock': 1},
+    ('archon_range', 'archon', '远见', 'passive', 'range_px', 20, 2, {'zeus': 1},
      '', '近战距离 +20px（大点）'),
 ]
 
-AFFINITIES = ('fire', 'ice', 'water', 'poison', 'shock', 'wind')
+AFFINITIES = ('ares', 'demeter', 'poseidon', 'apollo', 'zeus', 'athena')
 
 
 def constellation_rows():

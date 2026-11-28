@@ -13,12 +13,19 @@ import { starmap as nodeRows } from '../../resource/generated/starmap.ts';
 import { constellation as constellationRows } from '../../resource/generated/constellation.ts';
 import { level as levelRows } from '../../resource/generated/level.ts';
 import { combat_rule } from '../../resource/generated/combat_rule.ts';
+import { DOMAIN_IDS } from '../../shared/constants.ts';
 import {
   AFFINITIES, affinityOf, canPick, constellationOpen, createStarMap, createStarState,
   levelCap, pickNode, pointsEarned, type AffinityMap, type StarMap,
 } from '../index.ts';
 
 const map = createStarMap(nodeRows, constellationRows);
+
+describe('六权能 id 防漂移', () => {
+  it('星图亲和镜像与 shared/constants.ts 的权威定义完全一致', () => {
+    expect([...AFFINITIES]).toEqual([...DOMAIN_IDS]);
+  });
+});
 const rule = {
   mainline_star_points: combat_rule[0].mainline_star_points,
   explore_star_points: combat_rule[0].explore_star_points,
@@ -105,8 +112,8 @@ describe('the affinity graph is not deadlocked and a real build reaches the top'
       expect(pickNode(state, map, levelRows, rule, id), `点不动 ${id}`).toBe(true);
     }
     const affinity = affinityOf(state, map);
-    expect(affinity.wind).toBeGreaterThanOrEqual(3);
-    expect(affinity.fire).toBeGreaterThanOrEqual(5);
+    expect(affinity.athena).toBeGreaterThanOrEqual(3);
+    expect(affinity.ares).toBeGreaterThanOrEqual(5);
     expect(constellationOpen(state, map, 'gale')).toBe(true);
     expect(constellationOpen(state, map, 'warlord')).toBe(true);
     // 只要 8 点，而满级+全首通也只有 21 点：想全点是不可能的（26 点点满全部节点）。
