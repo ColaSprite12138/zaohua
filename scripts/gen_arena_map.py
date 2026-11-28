@@ -5,7 +5,7 @@
     python scripts/gen_arena_map.py --check    # validate the current .ldtk (LDtk-openable?)
 
 **布局不在这里**：地块形状、分区轮廓、建筑、走廊、实体点位全在 `arena_layout.py`
-（2026-11-18 重做：840×544 格 / 五个不规则地块（四区 + 正中宝库）/ 每区不同的地形语言）。
+（2026-11-18 重做：840×544 格 / 五个不规则地块（四区 + 正中奥林匹斯圣库）/ 每区不同的地形语言）。
 这个文件只负责把布局写进 LDtk 的 JSON 结构，以及"LDtk 能打开"的结构自检。
 
 The output .ldtk stays the human-authored source afterwards: open it in LDtk,

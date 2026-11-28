@@ -211,7 +211,19 @@
   .aff.empty { opacity: .45; }
 
   /* 星座是散在画布上的「区块」，彼此之间没有线 —— 门槛是颜色亲和，不是路径 */
-  .star-map { position: relative; width: 100%; max-width: 1060px; aspect-ratio: 1060 / 560; margin: 0 auto; }
+  .star-map { position: relative; width: 100%; max-width: 1060px; aspect-ratio: 1060 / 700; margin: 0 auto; }
+  /* GD 式星图：canvas 画星座与连线，DOM 只留透明点击热区（验收依赖 .star-chip / .constellation）。 */
+  .star-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .star-map .constellation {
+    width: 0; height: 0; padding: 0; border: 0; border-radius: 0;
+    background: none; box-shadow: none; opacity: 1; transform: none;
+  }
+  .star-map .star-chip {
+    position: absolute; width: 26px; height: 26px; padding: 0; border: 0;
+    background: transparent; border-radius: 50%; transform: translate(-50%, -50%);
+    cursor: pointer; color: transparent; font-size: 0; line-height: 0;
+  }
+  .star-map .star-chip .cn, .star-map .star-chip .cm { display: none; }
   .constellation {
     position: absolute; transform: translate(-50%, -50%); width: 208px;
     border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px 10px;
@@ -464,12 +476,7 @@
   }
 
   /* 星图：符文石雕刻感（保持 #star-map 的 position:relative 不变，验收依赖） */
-  .constellation {
-    background: linear-gradient(160deg, rgba(43, 33, 21, .95), rgba(13, 11, 8, .97));
-    border-color: #5a4425; box-shadow: inset 0 1px 0 rgba(210, 163, 51, .12);
-  }
-  .constellation.open { border-color: var(--gold); box-shadow: inset 0 0 0 1px rgba(210, 163, 51, .2); }
-  .constellation.done { border-color: var(--green); }
+  .constellation { background: none; border: 0; box-shadow: none; }
   .star-chip.available { border-color: var(--gold); }
   .star-chip.available .cn { color: var(--gold); }
   .star-chip.lit { background: rgba(210, 163, 51, .17); border-color: var(--gold); }
@@ -1562,45 +1569,81 @@
 
     const map = $('star-map');
     map.innerHTML = '';
+    const cv = document.createElement('canvas');
+    cv.className = 'star-canvas';
+    map.appendChild(cv);
+    const W = 1060, H = 700;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = W * dpr; cv.height = H * dpr;
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    // 背景星尘（确定性：按坐标哈希，不用随机）
+    g.fillStyle = 'rgba(180, 200, 220, .18)';
+    for (let i = 0; i < 220; i += 1) {
+      const x = (i * 733 + 97) % W, y = (i * 419 + 53) % H;
+      g.fillRect(x, y, (i % 7 === 0) ? 2 : 1, (i % 7 === 0) ? 2 : 1);
+    }
     for (const constellation of starMap.constellations) {
       const open = T.constellationOpen(starState, starMap, constellation.id);
       const missing = T.affinityMissing(starState, starMap, constellation.id);
       const meta = affMeta(constellation.color);
       const picked = constellation.nodes.filter((n) => starState.picks.includes(n.id)).length;
+      const done = picked === constellation.nodes.length;
       const box = document.createElement('div');
-      box.className = 'constellation' + (missing > 0 ? ' locked' : picked === constellation.nodes.length ? ' done' : ' open');
+      box.className = 'constellation' + (missing > 0 ? ' locked' : done ? ' done' : ' open');
       box.dataset.constellation = constellation.id;
-      box.style.left = (constellation.x / 1060) * 100 + '%';
-      box.style.top = (constellation.y / 560) * 100 + '%';
+      // 星座内节点坐标：沿一条弧线排开（GD 式星座形状），最后一个节点是技能星。
+      const pts = constellation.nodes.map((n, i) => {
+        const t = constellation.nodes.length > 1 ? i / (constellation.nodes.length - 1) : 0;
+        return { x: constellation.x + (t - 0.5) * 108, y: constellation.y + Math.sin(t * Math.PI) * -22, n };
+      });
+      // ★ 星座内连线：GD 的星座就是一串用线连起来的星，星座之间不连线。
+      g.beginPath();
+      pts.forEach((p, i) => { if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y); });
+      g.strokeStyle = missing > 0 ? 'rgba(120,140,160,.22)' : 'rgba(210,163,51,.55)';
+      g.lineWidth = 1.5; g.stroke();
+      // 星座名与门槛
+      g.font = '700 12px sans-serif';
+      g.fillStyle = meta.color;
+      g.textAlign = 'center';
+      g.fillText(constellation.name, constellation.x, constellation.y - 42);
+      g.font = '10px sans-serif';
+      g.fillStyle = missing > 0 ? '#b06a6a' : '#8fa9bb';
       const req = constellation.requirement <= 0
-        ? '起点 · ' + meta.label + ' ' + affinity[constellation.color]
-        : meta.label + ' ' + constellation.requirement + '（' + (missing > 0 ? '还差 ' + missing : '已开') + '）';
-      const head = document.createElement('div');
-      head.className = 'c-head';
-      head.innerHTML = '<b style="color:' + meta.color + '">' + constellation.name + '</b>'
-        + '<span class="c-req' + (missing > 0 ? ' miss' : '') + '">' + req + '</span>';
-      box.appendChild(head);
-
-      const list = document.createElement('div');
-      list.className = 'c-nodes';
-      for (const node of constellation.nodes) {
-        const lit = starState.picks.includes(node.id);
+        ? '起点 · ' + meta.label
+        : meta.label + ' ' + constellation.requirement + (missing > 0 ? ' · 还差 ' + missing : ' · 已开');
+      g.fillText(req, constellation.x, constellation.y - 28);
+      // 星点
+      pts.forEach((p) => {
+        const n = p.n;
+        const lit = starState.picks.includes(n.id);
+        const available = !lit && open && T.canPick(starState, starMap, levels, rule, n.id);
+        const isSkill = n.kind === 'skill' || n.kind === 'ult' || n.kind === 'passive';
+        const r = isSkill ? 6 : 4;
+        if (lit || available) {
+          g.beginPath(); g.arc(p.x, p.y, r + 5, 0, Math.PI * 2);
+          g.fillStyle = lit ? 'rgba(210,163,51,.22)' : 'rgba(103,232,249,.18)'; g.fill();
+        }
+        g.beginPath(); g.arc(p.x, p.y, r, 0, Math.PI * 2);
+        g.fillStyle = lit ? '#ffd166' : available ? '#67e8f9' : 'rgba(120,140,160,.35)';
+        g.fill();
+        g.lineWidth = 1; g.strokeStyle = meta.color; g.stroke();
+        // 透明点击热区（GD 里点的是星，不是卡片）
         const chip = document.createElement('button');
         chip.type = 'button';
-        chip.className = 'star-chip kind-' + node.kind
-          + (lit ? ' lit' : '')
-          + (!lit && open && T.canPick(starState, starMap, levels, rule, node.id) ? ' available' : '');
-        chip.dataset.node = node.id;
-        chip.title = node.hint;
-        chip.innerHTML = '<span class="cn">' + node.name + '</span>'
-          + '<span class="cm">' + (node.kind === 'skill' ? '主动技能' : node.hint)
-          + ' · ' + grantsText(node) + (node.cost > 1 ? ' · ' + node.cost + ' 点' : '') + '</span>';
-        chip.addEventListener('click', () => pickStar(node.id));
-        list.appendChild(chip);
-      }
-      box.appendChild(list);
+        chip.className = 'star-chip kind-' + n.kind + (lit ? ' lit' : '') + (available ? ' available' : '');
+        chip.dataset.node = n.id;
+        chip.title = n.name + ' · ' + n.hint + ' · ' + grantsText(n);
+        chip.innerHTML = '<span class="cn">' + n.name + '</span><span class="cm">' + n.hint + '</span>';
+        chip.style.left = (p.x / W) * 100 + '%';
+        chip.style.top = (p.y / H) * 100 + '%';
+        chip.addEventListener('click', () => pickStar(n.id));
+        box.appendChild(chip);
+      });
       map.appendChild(box);
     }
+
   }
 
   function pickStar(id) {

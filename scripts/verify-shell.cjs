@@ -288,32 +288,41 @@ const SELFTEST = `
       out.star.panelVisible = !!starPanel && starPanel.hidden === false;
       out.star.nodes = starPanel ? starPanel.querySelectorAll('.star-chip').length : 0;
       out.star.constellations = starPanel ? starPanel.querySelectorAll('.constellation').length : 0;
-      // 设计 6.3 v7：星座之间没有连线（旧版画过 SVG 线，这里守着别再画回去）。
+      // GD 式星图：星座内的连线画在 canvas 上，DOM 里不该再出现 svg/line（旧版连线）。
       out.star.noLines = starPanel ? starPanel.querySelectorAll('svg, line').length : -1;
-      // 注入层会把「紧跟在 CSS 注释后面的规则」吞掉（2026-11-15 踩过，星座因此全飘到
-      // #fx-shell 上）。这里断言定位样式真的进了页面，而不是只看 DOM 存在。
+      out.star.canvas = starPanel ? starPanel.querySelectorAll('canvas.star-canvas').length : 0;
       var starMapEl = document.getElementById('star-map');
       out.star.mapPosition = starMapEl ? getComputedStyle(starMapEl).position : 'missing';
 
-      // 点火墙（余烬 = 起点星座，产出 火2 + 毒1）
-      document.querySelector('.star-chip[data-node="ember_wall"]').click();
-      out.star.picked = H.getProgress().picks.indexOf('ember_wall') >= 0;
+      // 1 级只有 1 点：点基础星座第 1 点，第 2 点因点数不足点不动。
+      document.querySelector('.star-chip[data-node="ares_base_n1"]').click();
+      out.star.picked = H.getProgress().picks.indexOf('ares_base_n1') >= 0;
+      document.querySelector('.star-chip[data-node="ares_base_n2"]').click();
+      out.star.budgetBlocked = H.getProgress().picks.indexOf('ares_base_n2') < 0;
+
+      // 亲和只由「点满的星座」产出：满级点满 ares_base（4 点）→ 兵燹亲和 3。
+      H.setProgress(T.createStarState(18));
+      ['ares_base_n1','ares_base_n2','ares_base_n3','ares_base_n4'].forEach(function (id) {
+        document.querySelector('.star-chip[data-node="' + id + '"]').click();
+      });
       out.star.affinityAres = T.affinityOf(H.getProgress(), SM).ares;
-      // 战意要 5 点火亲和：此时只有 2，点不动（亲和是门槛，不是点数）
-      document.querySelector('.star-chip[data-node="warlord_dmg"]').click();
-      out.star.blockedByAffinity = H.getProgress().picks.indexOf('warlord_dmg') < 0;
-      // 1 级只有 1 点：再点燎原会栽在点数上
-      document.querySelector('.star-chip[data-node="ember_dmg"]').click();
-      out.star.budgetBlocked = H.getProgress().picks.indexOf('ember_dmg') < 0;
-      // 免费洗点：点数退回、亲和归零（亲和是算出来的）
+      // 终极要 8 点兵燹，此时只有 3 → 点不动（亲和是门槛，不是点数）。
+      document.querySelector('.star-chip[data-node="ares_seat_a_n1"]').click();
+      out.star.blockedByAffinity = H.getProgress().picks.indexOf('ares_seat_a_n1') < 0;
+      // 星座内必须顺序：跳过 n1 直接点 n3 也不行。
+      document.querySelector('.star-chip[data-node="ares_mid_a_n3"]').click();
+      out.star.orderBlocked = H.getProgress().picks.indexOf('ares_mid_a_n3') < 0;
+
+      // 免费洗点：点数退回、亲和归零（亲和是算出来的）。
       document.getElementById('star-respec').click();
       out.star.respec = H.getProgress().picks.length === 0;
       out.star.affinityAfterRespec = T.affinityOf(H.getProgress(), SM).ares;
 
-      // 换成一个 3 级角色（3 点）继续测「技能进技能栏 + 乘区进战局」。
-      H.setProgress(T.createStarState(3));
-      document.querySelector('.star-chip[data-node="ember_wall"]').click();
-      document.querySelector('.star-chip[data-node="ember_dmg"]').click();
+      // 换成一个 4 级角色（4 点）：点满基础星座，最后一点的主动技能进技能栏。
+      H.setProgress(T.createStarState(4));
+      ['ares_base_n1','ares_base_n2','ares_base_n3','ares_base_n4'].forEach(function (id) {
+        document.querySelector('.star-chip[data-node="' + id + '"]').click();
+      });
       out.star.deployPicks = H.getProgress().picks.slice();
 
       // ---- 商店（设计 5.2）：金币买补给 / 保险格扩容，买了才进背包 ----
@@ -952,13 +961,13 @@ const checks = [
   ['点「仓库」只展开配装面板，点「星图」只展开星图',
     result.view.stashOpen === true && result.star.openedByButton === true,
     { view: result.view, star: result.star }],
-  ['星图面板点开后画出全部星座，且没有连线（定位样式没被注入层吞掉）',
-    result.star.panelVisible === true && result.star.nodes >= 20
-      && result.star.constellations >= 6 && result.star.noLines === 0
-      && result.star.mapPosition === 'relative', result.star],
-  ['亲和是门槛：点节点涨亲和、亲和不足点不动、点数不足也点不动',
-    result.star.picked === true && result.star.affinityAres === 2
-      && result.star.blockedByAffinity === true
+  ['GD 式画布星图：42 星座 / 168 节点 / canvas 画线（DOM 无 svg line）',
+    result.star.panelVisible === true && result.star.nodes >= 168
+      && result.star.constellations >= 42 && result.star.noLines === 0
+      && result.star.canvas === 1 && result.star.mapPosition === 'relative', result.star],
+  ['点满星座才给亲和：亲和不足点不动、星座内要顺序、点数不足也点不动',
+    result.star.picked === true && result.star.affinityAres === 3
+      && result.star.blockedByAffinity === true && result.star.orderBlocked === true
       && result.star.budgetBlocked === true, result.star],
   ['免费洗点：点数退回，亲和归零',
     result.star.respec === true && result.star.affinityAfterRespec === 0, result.star],
@@ -1001,8 +1010,8 @@ const checks = [
       && result.workshop.repaired.gold === 500
       && result.workshop.repaired.rowGone === true, result.workshop],
   ['出征把星图技能与乘区快照给 Worker，局内星图面板隐藏',
-    !!d.stars && d.stars.skills.indexOf('fire_wall') >= 0
-      && d.stars.nodes.indexOf('ember_wall') >= 0
+    !!d.stars && d.stars.skills.indexOf('ember_bolt') >= 0
+      && d.stars.nodes.indexOf('ares_base_n4') >= 0
       && result.star.hiddenInBattle === true, result.star],
   ['结算把本局经验换成等级，并记下主线首通',
     result.star.levelAfterRun > result.star.levelBeforeRun

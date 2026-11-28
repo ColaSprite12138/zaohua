@@ -108,6 +108,8 @@ import {
   type Limb,
   type BodyModel,
   type VoxelModel,
+  bodyWithGear,
+  type GearLook,
 } from './voxel.ts';
 // 挥砍运动学是**纯数学**，单独成文件（`swing.ts`）并带单测：
 // 弧线必须围绕目标方向，而不是围绕"屏幕向下"。详见该文件头注释。
@@ -647,7 +649,7 @@ function drawBigMap(g: Painter, s: GameState): void {
   text(g, '大地图', px + 20, py + 26, 16, '#e8f4ff', 'left', '800');
   const zones = zonesOf(s.map);
   text(g, zones.length > 0
-    ? `四区环形 · 正中${zones.find((z) => z.id === 'vault')?.name ?? '宝库'}（高价值）`
+    ? `四区环形 · 正中${zones.find((z) => z.id === 'olympus')?.name ?? '奥林匹斯圣库'}（高价值）`
     : '这张图没有分区', px + 96, py + 25, 12, '#8fb3c9', 'left', '600');
   text(g, 'M 关闭 · 世界不会暂停', px + pw - 20, py + 25, 12, '#ffd166', 'right', '700');
 
@@ -908,9 +910,49 @@ function weaponKindOf(weaponId: string | null): WeaponKind {
   return 'sword';
 }
 
-/** 按武器选一套手臂 / 手部骨骼，不是换一张贴图。 */
-function knightBodyOf(weaponId: string | null): BodyModel {
-  return KNIGHT_BY_WEAPON[weaponKindOf(weaponId)];
+/**
+ * 装备槽 → 外观签名（2026-11-28）。五类可见槽各取物品 art 的 ":accent" 段，
+ * 与长剑 itemArtKey / ACCENTS 同源：同一个形状不同品质换配色，不逐件建模。
+ * 戒指 / 项链在 1px 尺度下读不出来，不生成外观层。槽位索引与 EQUIP_SLOTS 对应。
+ */
+const GEAR_SLOTS: readonly (readonly [number, keyof GearLook])[] = [
+  [5, 'gloves'], [6, 'helmet'], [7, 'chest'], [8, 'pants'], [9, 'boots'],
+];
+
+function gearLookOf(
+  equipped: readonly ({ readonly defId: string } | null)[] | undefined,
+): GearLook {
+  const gear: { -readonly [K in keyof GearLook]?: string } = {};
+  if (equipped === undefined) return gear;
+  for (const [idx, key] of GEAR_SLOTS) {
+    const it = equipped[idx];
+    if (it === null || it === undefined) continue;
+    let accent = 'steel';
+    try {
+      const art = itemDef(it.defId).art;
+      if (art.includes(':')) accent = art.split(':')[1] ?? 'steel';
+    } catch {
+      // 表里没有这件物品时回落钢色，不因为外观让画面挂掉。
+    }
+    gear[key] = accent;
+  }
+  return gear;
+}
+
+/** 按武器选骨骼 + 按穿戴装备叠外观层；外观签名缓存，绝不每帧重建 11 套 pose。 */
+const BODY_CACHE = new Map<string, BodyModel>();
+
+function knightBodyOf(weaponId: string | null, gear: GearLook = {}): BodyModel {
+  const kind = weaponKindOf(weaponId);
+  const bare = !gear.helmet && !gear.chest && !gear.pants && !gear.boots && !gear.gloves;
+  if (bare) return KNIGHT_BY_WEAPON[kind];
+  const key = `${kind}|${gear.helmet ?? ''}|${gear.chest ?? ''}|${gear.pants ?? ''}|${gear.boots ?? ''}|${gear.gloves ?? ''}`;
+  let model = BODY_CACHE.get(key);
+  if (model === undefined) {
+    model = bodyWithGear(kind, gear);
+    BODY_CACHE.set(key, model);
+  }
+  return model;
 }
 
 /**
@@ -1041,7 +1083,7 @@ function drawRemoteActor(g: Painter, actor: Player): void {
   const weaponId = actor.weaponSlots?.[actor.activeWeaponSlot] ?? null;
   const armed = weaponId !== null;
   const paintBody = (): void => {
-    drawBody(g, knightBodyOf(weaponId), actor.x, actor.y - bob, {
+    drawBody(g, knightBodyOf(weaponId, gearLookOf(actor.runInventory?.equipped)), actor.x, actor.y - bob, {
       frame: swing > 0 ? Math.floor(swing * 3) : (moving ? frame : 0),
       face: actor.face,
       flash: actor.hurt > 0,
@@ -1135,7 +1177,7 @@ function drawPlayer(g: Painter, s: GameState): void {
   }
 
   const paintBody = (): void => {
-    drawBody(g, knightBodyOf(weaponId), p.x, p.y - bob - lunge, {
+    drawBody(g, knightBodyOf(weaponId, gearLookOf(p.runInventory?.equipped)), p.x, p.y - bob - lunge, {
       frame: swing > 0 ? Math.floor(swing * 3) : (moving ? frame : 0),
       face: p.face,
       flash: p.hurt > 0,

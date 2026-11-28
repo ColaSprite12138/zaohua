@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/game/voxel.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 6fae7fea3647984883c476ebe783465fee455a4701b25ba5bd26d0077c9a4a96
+ * Source SHA-256: 0eac410d38abebf81a9b6e637b8013f3905628917eae6b10a3e50409e79c7d95
  */
 (function (root) {
 "use strict";
@@ -45,6 +45,7 @@ exports.weaponBehind = weaponBehind;
 exports.shoulderBehind = shoulderBehind;
 exports.handVisible = handVisible;
 exports.projectedGrip = projectedGrip;
+exports.bodyWithGear = bodyWithGear;
 exports.swordModelById = swordModelById;
 exports.itemModel = itemModel;
 exports.destructibleModel = destructibleModel;
@@ -366,20 +367,28 @@ const RIG_UNIT = 1;
  * < armorLight < skin，靠部件间明度差而不是贴花分件。
  */
 const BLOCK = {
+    // 2026-11-28：主角改成「人体 + 布料」中性冒险者，不预设任何职业装备。
+    // 旧盔甲 / 皮革 / 金饰键保留（道具与旧模型仍引用），但骨架材质不再使用。
     skin: '#eec39a',
     skinHi: '#fadcbe',
+    skinDark: '#b8886a',
     hair: '#2b211c',
+    hairHi: '#4b3a31',
+    cloth: '#4a5560',
+    clothHi: '#6b7886',
+    clothDark: '#303a44',
+    trousers: '#433e3d',
+    trousersHi: '#5b5552',
+    trousersDark: '#2b2828',
     armor: '#3a4a58',
     armorHi: '#6e8092',
     armorLight: '#93a6b6',
     armorDark: '#24323e',
-    cloth: '#33323e',
     leather: '#7a4a26',
     leatherDark: '#604226',
     boot: '#1b2c3a',
     gold: '#e8b84b',
     steel: '#e2efff',
-    skinDark: '#b8886a',
 };
 /**
  * 10 件静止布局。x=0 是身体中线、y=0 是地面、z 是深度层（-5 最远、4 最前）。
@@ -417,31 +426,53 @@ exports.BLOCK_PART_SPECS = [
 function materialOf(id) {
     switch (id) {
         case 'head':
-            // 只有正脸是皮肤，其余五面全是头发 → 后脑是独立体积，180° 看不到脸。
+            // 正脸露皮肤，其余五面是头发 → 后脑是独立体积，180° 看不到脸。
             return { core: BLOCK.hair, front: BLOCK.skin, back: BLOCK.hair,
                 left: BLOCK.hair, right: BLOCK.hair, top: BLOCK.hair, bottom: BLOCK.hair };
         case 'torso':
-            return { core: BLOCK.armor, front: BLOCK.armorHi, back: BLOCK.armorDark,
-                left: BLOCK.armor, right: BLOCK.armor, top: BLOCK.armorLight, bottom: BLOCK.cloth };
+            return { core: BLOCK.cloth, front: BLOCK.clothHi, back: BLOCK.clothDark,
+                left: BLOCK.cloth, right: BLOCK.clothDark, top: BLOCK.clothHi, bottom: BLOCK.clothDark };
         case 'armL':
         case 'armR':
-            // 两条胳膊都是长袖护臂，不再有一整片裸肤色和「蓝灰上衣 + 裸胳膊」的矛盾。
-            return { core: BLOCK.armor, front: BLOCK.armorHi, back: BLOCK.armorDark,
-                left: BLOCK.armor, right: BLOCK.armor, top: BLOCK.armorLight, bottom: BLOCK.armor };
+            // 布袖，不再有盔甲 / 裸胳膊的混搭。
+            return { core: BLOCK.cloth, front: BLOCK.clothHi, back: BLOCK.clothDark,
+                left: BLOCK.cloth, right: BLOCK.clothDark, top: BLOCK.clothHi, bottom: BLOCK.clothDark };
         case 'handL':
         case 'handR':
-            // 裸拳三面都是皮肤（面积很小，不再是「最亮最大抢焦点」），这样侧身时
-            // 拳头仍是皮肤、也让握点最外侧 x=-14 保持皮肤（KNIGHT_GRIP 契约）。
-            return { core: BLOCK.leatherDark, front: BLOCK.skin, back: BLOCK.leatherDark,
-                left: BLOCK.skin, right: BLOCK.skin, top: BLOCK.leather, bottom: BLOCK.leatherDark };
+            // 手是皮肤；握点最外侧 x=-14 仍是皮肤（KNIGHT_GRIP 契约）。
+            return { core: BLOCK.skin, front: BLOCK.skinHi, back: BLOCK.skinDark,
+                left: BLOCK.skin, right: BLOCK.skinDark, top: BLOCK.skinHi, bottom: BLOCK.skinDark };
         case 'thighL':
         case 'thighR':
-            return { core: BLOCK.cloth, front: BLOCK.cloth, back: BLOCK.armorDark,
-                left: BLOCK.cloth, right: BLOCK.cloth, top: BLOCK.armor, bottom: BLOCK.cloth };
+            return { core: BLOCK.trousers, front: BLOCK.trousersHi, back: BLOCK.trousersDark,
+                left: BLOCK.trousers, right: BLOCK.trousersDark, top: BLOCK.trousersHi, bottom: BLOCK.trousersDark };
         case 'shinL':
         case 'shinR':
-            return { core: BLOCK.leather, front: BLOCK.leather, back: BLOCK.leatherDark,
-                left: BLOCK.leatherDark, right: BLOCK.leatherDark, top: BLOCK.leather, bottom: BLOCK.boot };
+            return { core: BLOCK.trousers, front: BLOCK.trousersHi, back: BLOCK.trousersDark,
+                left: BLOCK.trousers, right: BLOCK.trousersDark, top: BLOCK.trousersHi, bottom: BLOCK.skinDark };
+    }
+}
+/**
+ * 人体轮廓（2026-11-28）：在实心长方体基础上按部位收放，让 56 格高的人
+ * 有肩 / 腰 / 膝 / 下颌的起伏，而不是一根等宽方柱。只裁边角，不动 pivot，
+ * 所以 8 步态、3 挥击与 KNIGHT_GRIP 的坐标契约全部保持不变。
+ */
+function inShape(id, s, i, j) {
+    const v = j / Math.max(1, s.h - 1);
+    const edge = i === 0 || i === s.w - 1;
+    switch (id) {
+        case 'head': // 头顶与下颌收角
+            return !(edge && (v < 0.22 || v > 0.88));
+        case 'torso': // 腰线内收
+            return !(edge && v > 0.18 && v < 0.42);
+        case 'armL':
+        case 'armR': // 小臂比上臂细
+            return !(edge && v < 0.30);
+        case 'shinL':
+        case 'shinR': // 踝部收细
+            return !(edge && v < 0.22);
+        default:
+            return true;
     }
 }
 function paintSixFaces(b, s, m) {
@@ -458,11 +489,13 @@ function paintSixFaces(b, s, m) {
             const faceY = j >= s.h - yt ? m.top : j < yt ? m.bottom : null;
             for (let i = 0; i < s.w; i += 1) {
                 let c = m.core;
-                // 顶 / 底 > 左 / 右 > 前 / 后：左右两侧列**恒为侧面材质**，
-                // 否则 90° 正侧身时画家算法挑中的最左列会被 front 色染成一条
-                // 「正脸皮肤竖条」（用户第三轮明确点名的破绽）。正面中央仍露
-                // front 色（脸 / 胸甲），背面中央是 back 色（背脊甲带）。
-                if (faceY !== null)
+                // 头是例外：最前 zt 层整片留给脸（额头 / 下巴都是皮肤）。否则
+                // faceY 的 top/bottom 会把脸压成中间一条窄缝 —— 正是「头发裹住
+                // 整张脸」的成因。左右各留 1 列侧发，90° 侧身仍不会漏出正脸。
+                if (s.id === 'head' && k >= s.d - zt) {
+                    c = (i < xt || i >= s.w - xt) ? m.left : m.front;
+                }
+                else if (faceY !== null)
                     c = faceY;
                 else if (i < xt)
                     c = m.left;
@@ -470,6 +503,8 @@ function paintSixFaces(b, s, m) {
                     c = m.right;
                 else if (faceZ !== null)
                     c = faceZ;
+                if (!inShape(s.id, s, i, j))
+                    continue;
                 b.box(s.x + i, s.y + j, s.z + k, 1, 1, 1, c);
             }
         }
@@ -482,29 +517,48 @@ function makeBlockParts() {
         paintSixFaces(b, spec, materialOf(spec.id));
         switch (spec.id) {
             case 'head': {
-                // 五官只用 ≥2×2 的整块色：0° 正面读得出脸，45° 旋转采样不会掉成
-                // 杂点；90° / 180° 挑中的是 left / back 面的深发，脸不会漏到侧面。
                 const faceZ = spec.z + spec.d - 2;
+                const frontZ = spec.z + spec.d - 1;
+                // 发束高光只压在**后层**，绝不盖住正面额头；不越出头顶，守住 56 格契约。
+                b.box(spec.x + 1, spec.y + spec.h - 2, spec.z, spec.w - 2, 2, spec.d - 2, BLOCK.hairHi);
+                // 刘海只占发际线 1 行、中间留缺口；鬓角各 1 列 4 格，脸整片露出来。
+                b.box(spec.x + 2, spec.y + spec.h - 1, faceZ, 3, 1, 2, BLOCK.hair);
+                b.box(spec.x + spec.w - 5, spec.y + spec.h - 1, faceZ, 3, 1, 2, BLOCK.hair);
+                b.box(spec.x, spec.y + 5, faceZ, 1, 4, 2, BLOCK.hair);
+                b.box(spec.x + spec.w - 1, spec.y + 5, faceZ, 1, 4, 2, BLOCK.hair);
+                // 五官 ≥2×2 整块，45° 采样不会掉成杂点；鼻梁再前凸一格做体积。
                 b.box(spec.x + 2, spec.y + 6, faceZ, 2, 2, 2, BLOCK.hair);
                 b.box(spec.x + spec.w - 4, spec.y + 6, faceZ, 2, 2, 2, BLOCK.hair);
-                b.box(spec.x + 3, spec.y + 3, faceZ, 4, 2, 2, BLOCK.skinDark);
-                // 后颈领口（2 格高、整片宽）：后脑与躯干之间有一道明确的结构接缝。
-                b.box(spec.x, spec.y, spec.z, spec.w, 2, 2, BLOCK.leatherDark);
+                b.box(spec.x + 2, spec.y + 8, faceZ, 2, 1, 2, BLOCK.hairHi);
+                b.box(spec.x + spec.w - 4, spec.y + 8, faceZ, 2, 1, 2, BLOCK.hairHi);
+                b.box(spec.x + 4, spec.y + 4, frontZ, 2, 2, 1, BLOCK.skinDark);
+                b.box(spec.x + 4, spec.y + 2, faceZ, 2, 1, 2, BLOCK.skinDark);
+                // 后颈结构缝：衣领与后脑之间有转折，不是装备。
+                b.box(spec.x, spec.y, spec.z, spec.w, 2, 2, BLOCK.clothDark);
                 break;
             }
-            case 'torso':
-                // 背面独立几何：亮甲背脊竖带 + 肩胛两片 + 棕皮横箍 + 金色脊扣，
-                // 全部落在最背两层，180° 才露出来；正面完全被前层挡住。
-                b.box(-1, spec.y + 5, spec.z, 3, 12, 2, BLOCK.armorLight);
-                b.box(spec.x, spec.y + 16, spec.z, 2, 4, 2, BLOCK.armorHi);
-                b.box(spec.x + spec.w - 2, spec.y + 16, spec.z, 2, 4, 2, BLOCK.armorHi);
-                b.box(spec.x, spec.y + 3, spec.z, spec.w, 2, 2, BLOCK.leather);
-                b.box(-1, spec.y + 9, spec.z, 3, 2, 2, BLOCK.gold);
+            case 'torso': {
+                const frontZ = spec.z + spec.d - 1;
+                // 肩线左右各外扩 2 格，和布袖连成斜肩；胸廓前凸、竖向布褶，无甲片无纹章。
+                b.box(spec.x - 2, spec.y + spec.h - 4, spec.z + 1, 2, 4, spec.d - 2, BLOCK.clothHi);
+                b.box(spec.x + spec.w, spec.y + spec.h - 4, spec.z + 1, 2, 4, spec.d - 2, BLOCK.clothHi);
+                b.box(spec.x + 2, spec.y + 10, frontZ, 5, 8, 1, BLOCK.clothHi);
+                b.box(spec.x + 1, spec.y + 6, frontZ, 2, 8, 1, BLOCK.clothDark);
+                b.box(spec.x + spec.w - 3, spec.y + 6, frontZ, 2, 8, 1, BLOCK.clothDark);
+                // 衣袍下摆比腰宽 2 格，底边压暗，布料有重量感。
+                b.box(spec.x - 1, spec.y, spec.z + 1, spec.w + 2, 3, spec.d - 2, BLOCK.cloth);
+                b.box(spec.x - 1, spec.y, frontZ, spec.w + 2, 1, 1, BLOCK.clothDark);
+                break;
+            }
+            case 'armL':
+            case 'armR':
+                b.box(spec.x, spec.y, spec.z + spec.d - 2, spec.w, 2, 2, BLOCK.clothDark);
                 break;
             case 'shinL':
             case 'shinR':
-                // 踝部切开：靴口两格高、整圈深，抬腿时靴子仍是平的一块。
-                b.box(spec.x, spec.y + 2, spec.z, spec.w, 2, spec.d, BLOCK.boot);
+                // 裤脚 + 露出的脚背（皮肤），不预置靴子。
+                b.box(spec.x, spec.y + 2, spec.z, spec.w, 2, spec.d, BLOCK.trousersDark);
+                b.box(spec.x, spec.y, spec.z + 1, spec.w, 2, spec.d - 2, BLOCK.skinDark);
                 break;
         }
         return { id: spec.id, cells: b.model().voxels, px: spec.pivotX, py: spec.pivotY };
@@ -872,10 +926,10 @@ function assembleBlockPose(parts, p) {
     // 三者共用 handPose 一套坐标，模型这边只负责身体。
     return { name: `knight.${p.name}`, unit: RIG_UNIT, voxels: [...cells.values()] };
 }
-function blockBodyOf(kind) {
+function bodyOfParts(kind, parts) {
     const rig = WEAPON_RIGS[kind];
     // 所有姿态共用静止网格的地面锚点，起伏 / 抬腿 / 举臂不会让整只人上下漂。
-    const stand = assembleBlockPose(BLOCK_PARTS, {
+    const stand = assembleBlockPose(parts, {
         name: `stand.${kind}`, kind, legL: 0, legR: 0, armL: 0, armR: 0,
     });
     const anchor = {
@@ -889,7 +943,7 @@ function blockBodyOf(kind) {
     for (let i = 0; i < FRAMES; i += 1) {
         const ph = (i / FRAMES) * Math.PI * 2;
         const amp = Math.round(4 * Math.sin(ph));
-        poses.push(withAnchor(assembleBlockPose(BLOCK_PARTS, {
+        poses.push(withAnchor(assembleBlockPose(parts, {
             name: `step.${kind}.${i}`,
             kind,
             legL: amp,
@@ -902,7 +956,7 @@ function blockBodyOf(kind) {
     }
     // 每种武器一套三帧主动作：剑劈砍、弓拉弦、杖举落、徒手挥拳。
     const names = ['windup', 'strike', 'recover'];
-    const swingPoses = rig.swings.map((swingL, i) => withAnchor(assembleBlockPose(BLOCK_PARTS, {
+    const swingPoses = rig.swings.map((swingL, i) => withAnchor(assembleBlockPose(parts, {
         name: `swing.${kind}.${names[i] ?? i}`,
         kind,
         legL: 0, legR: 0, armL: 0, armR: 0,
@@ -916,6 +970,9 @@ function blockBodyOf(kind) {
         frameMap: [0, 2, 4, 6],
         swingPoses,
     };
+}
+function blockBodyOf(kind) {
+    return bodyOfParts(kind, BLOCK_PARTS);
 }
 /** 每种武器一套骨骼姿态；KNIGHT 仍指向剑，兼容既有引用与单测。 */
 exports.KNIGHT_BY_WEAPON = {
@@ -995,6 +1052,63 @@ exports.ACCENTS = {
     // 法杖顶端的法力球：青色，和紫色法袍拉开对比（`staff:gem`，骷髅法师 2026-11-18）。
     gem: C.gem,
 };
+function gearCells(gear) {
+    const out = {};
+    const put = (ids, accent, build) => {
+        const c = { hi: shade(accent, 1.30), mid: accent, dark: shade(accent, 0.66) };
+        for (const id of ids) {
+            const s = exports.BLOCK_PART_SPECS.find((q) => q.id === id);
+            const b = new Builder(`gear.${id}`, RIG_UNIT);
+            build(b, s, c);
+            (out[id] ??= []).push(...b.model().voxels);
+        }
+    };
+    const A = (name) => name ? (exports.ACCENTS[name] ?? C.steel) : null;
+    const helm = A(gear.helmet);
+    if (helm !== null)
+        put(['head'], helm, (b, s, c) => {
+            b.box(s.x - 1, s.y + s.h - 3, s.z, s.w + 2, 3, s.d, c.mid);
+            b.box(s.x - 1, s.y + s.h - 1, s.z + s.d - 2, s.w + 2, 1, 2, c.hi);
+            b.box(s.x, s.y + 4, s.z, 1, s.h - 5, s.d, c.dark);
+            b.box(s.x + s.w - 1, s.y + 4, s.z, 1, s.h - 5, s.d, c.dark);
+        });
+    const chest = A(gear.chest);
+    if (chest !== null)
+        put(['torso'], chest, (b, s, c) => {
+            b.box(s.x - 1, s.y + 6, s.z + s.d - 2, s.w + 2, s.h - 8, 2, c.mid);
+            b.box(s.x - 1, s.y + 6, s.z, s.w + 2, s.h - 8, 2, c.dark);
+            b.box(s.x + 2, s.y + 12, s.z + s.d - 1, s.w - 4, 6, 1, c.hi);
+        });
+    const pants = A(gear.pants);
+    if (pants !== null)
+        put(['thighL', 'thighR', 'shinL', 'shinR'], pants, (b, s, c) => {
+            b.box(s.x - 1, s.y + 1, s.z + s.d - 2, s.w + 2, s.h - 2, 2, c.mid);
+            b.box(s.x - 1, s.y + 1, s.z, s.w + 2, s.h - 2, 2, c.dark);
+        });
+    const boots = A(gear.boots);
+    if (boots !== null)
+        put(['shinL', 'shinR'], boots, (b, s, c) => {
+            b.box(s.x - 1, s.y, s.z, s.w + 2, 5, s.d, c.mid);
+            b.box(s.x - 1, s.y + 4, s.z + s.d - 2, s.w + 2, 1, 2, c.hi);
+            b.box(s.x - 1, s.y, s.z + 1, s.w + 2, 1, s.d - 2, c.dark);
+        });
+    const gloves = A(gear.gloves);
+    if (gloves !== null)
+        put(['handL', 'handR'], gloves, (b, s, c) => {
+            b.box(s.x, s.y, s.z, s.w, s.h, s.d, c.mid);
+            b.box(s.x, s.y + s.h - 1, s.z + s.d - 2, s.w, 1, 2, c.hi);
+        });
+    return out;
+}
+/** 运行时按装备组合出一套 BodyModel；调用方按外观签名缓存，别每帧重建。 */
+function bodyWithGear(kind, gear) {
+    const layers = gearCells(gear);
+    const parts = BLOCK_PARTS.map((p) => {
+        const extra = layers[p.id];
+        return extra && extra.length > 0 ? { ...p, cells: [...p.cells, ...extra] } : p;
+    });
+    return bodyOfParts(kind, parts);
+}
 /* 旧 4px bladeShape 已删除：剑全部由 SWORD_BY_ID（10001..10006，1px）提供。 */
 function bowShape(name, accent) {
     const b = new Builder(name, 4);

@@ -1,14 +1,14 @@
 /**
- * 分区契约（设计文档 11：不规则地块、环形动线、每对相邻区两条通道、正中宝库、大地图）。
+ * 分区契约（设计文档 11：不规则地块、环形动线、每对相邻区两条通道、正中奥林匹斯圣库、大地图）。
  *
  * 2026-11-18 第二轮：地图扩到 **840×544（26880×17408）**，四块地块各外移 120 格，
- * 正中新增第五区 `vault`（宝库，全图唯一的高价值战利品区，四区各有一条支线）。
+ * 正中新增第五区 `vault`（奥林匹斯圣库，全图唯一的高价值战利品区，四区各有一条支线）。
  * 分区从"矩形铺满"改成"不规则地块 + 逐格光栅"。护栏有七层：
  *
  * 1. **尺寸与穿越目标**：从出生点走到最远点 ≥140 秒纯移动（走速 205px/s）。
  *    旧图实测 50 秒（用户原话"差不多一分钟就能走完"），要求是 2.5–3 分钟。
  * 2. **归属光栅自洽**：`zoneGrid` 行数 / 行长正确，字符合法，区外是 `.`。
- * 3. **每对相邻区 ≥2 条口子**（绕后 / 甩追 / 换路线的前提），**通往宝库各 ≥1 条**。
+ * 3. **每对相邻区 ≥2 条口子**（绕后 / 甩追 / 换路线的前提），**通往奥林匹斯圣库各 ≥1 条**。
  *    口子按"跨区过渡边的连通分量"数，一条走廊正好一段 —— 不按矩形边扫。
  * 4. **每区都有内容**：至少一扇门、一只怪、一个可破坏物、一个事件点。
  * 5. **环形是通的**：从出生点能靠两条腿走到每个区（不是靠传送）。
@@ -71,7 +71,7 @@ describe('分区表（arena.generated 的 zones / zoneGrid）', () => {
       expect(zone.cols).toBeGreaterThan(0);
       expect(zone.rows).toBeGreaterThan(0);
     }
-    expect(zones.map((z) => z.id)).toEqual(['court', 'corridor', 'cavern', 'wateryard', 'vault']);
+    expect(zones.map((z) => z.id)).toEqual(['agora', 'stoa', 'tartarus', 'aegean', 'olympus']);
     for (let i = 0; i < zones.length; i += 1) {
       for (let j = i + 1; j < zones.length; j += 1) {
         const a = zones[i]!;
@@ -83,7 +83,7 @@ describe('分区表（arena.generated 的 zones / zoneGrid）', () => {
     }
   });
 
-  it('世界尺寸是 840×544（26880×17408px，四区外移 120 格给宝库腾位置）', () => {
+  it('世界尺寸是 840×544（26880×17408px，四区外移 120 格给奥林匹斯圣库腾位置）', () => {
     expect(arena.cols).toBe(840);
     expect(arena.rows).toBe(544);
     expect(arena.pxWid).toBe(840 * 32);
@@ -104,15 +104,15 @@ describe('分区表（arena.generated 的 zones / zoneGrid）', () => {
     expect(grid![arena.rows - 1]!.includes('.')).toBe(true);
   });
 
-  it('每对相邻区至少两条口子，通往宝库至少一条（设计 11 的硬要求）', () => {
+  it('每对相邻区至少两条口子，通往奥林匹斯圣库至少一条（设计 11 的硬要求）', () => {
     const world = makeWorld(arena);
     const links = zoneLinks(arena, world);
     // 环形动线的四对相邻区
-    for (const key of ['cavern|wateryard', 'corridor|cavern', 'court|corridor', 'court|wateryard']) {
+    for (const key of ['tartarus|aegean', 'stoa|tartarus', 'agora|stoa', 'agora|aegean']) {
       expect(links[key], `${key} 的口子数`).toBeGreaterThanOrEqual(2);
     }
-    // 宝库是这一版新增的战利品中心：四个区各必须有一条支线（不然进不去）
-    for (const key of ['cavern|vault', 'corridor|vault', 'court|vault', 'wateryard|vault']) {
+    // 奥林匹斯圣库是这一版新增的战利品中心：四个区各必须有一条支线（不然进不去）
+    for (const key of ['tartarus|olympus', 'stoa|olympus', 'agora|olympus', 'aegean|olympus']) {
       expect(links[key], `${key} 的口子数`).toBeGreaterThanOrEqual(1);
     }
     // 四条走廊 ×2 不可能出现"六七个口子"：那说明分区边界在走廊里来回锯齿。
@@ -148,7 +148,7 @@ describe('分区表（arena.generated 的 zones / zoneGrid）', () => {
       }
       expect(reached, `${zone.name} 从出生点走不到`).toBe(true);
     }
-    expect(zoneAt(arena, arena.spawn.x, arena.spawn.y)?.id).toBe('court');
+    expect(zoneAt(arena, arena.spawn.x, arena.spawn.y)?.id).toBe('agora');
   });
 
   it('穿越时间：从出生点到最远点 ≥140 秒纯移动（设计 11：2.5–3 分钟）', () => {

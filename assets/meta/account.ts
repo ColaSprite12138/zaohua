@@ -17,7 +17,12 @@
  * actually available. Persistence is verified after publishing, not locally.
  */
 
-export const SAVE_KEY = 'forgeax.save.v1';
+export const SAVE_KEY = 'forgeax.save.v2';
+/**
+ * v2 键是 2026-11-28 的**断代**：42 星座星图与旧 24 节点表结构完全不同，
+ * 旧键 forgeax.save.v1 下的星图进度一律不再读取（等价于存档全部清空）。
+ * 信封内的 schemaVersion 仍从 1 起算，下面的 v1/v2/v3 迁移逻辑保持不变。
+ */
 
 /**
  * v2 把「星图进度」和背包一起存进同一个 blob（设计 6.1 / 6.3：等级、经验、

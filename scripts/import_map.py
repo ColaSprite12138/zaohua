@@ -363,7 +363,7 @@ def render(project, level, digest, cols, rows, grid, grid_size, spawn, monsters,
     lines.append('  ],')
     lines.append('  // 分区归属（逐格）：每行 `cols` 个字符，`.` = 不属于任何区（崖 / 深林 / 走廊外）。')
     lines.append('  // 这是**真实形状**：zones 里的矩形只是包围盒（标签位置、粗筛）。')
-    lines.append('  // 顺序与上面的 zones 一致（0 院落 / 1 东廊 / 2 石窟 / 3 水榭）。')
+    lines.append('  // 顺序与上面的 zones 一致（0 阿戈拉圣院 / 1 斯多亚长廊 / 2 塔耳塔洛斯 / 3 爱琴水榭）。')
     lines.append('  zoneGrid: [')
     for row in zone_grid:
         lines.append('    %s,' % json.dumps(''.join('.' if v < 0 else str(v) for v in row)))

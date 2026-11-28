@@ -57,7 +57,7 @@ if (typeof BroadcastChannel !== 'undefined') {
 // exist. initialize() above has already run the user.current and storage
 // connectivity checks; here we resolve the real user and the saved blob once,
 // then hand both down so the shell never has to await a Promise.
-const SAVE_KEY = globalThis.MetaAccount?.SAVE_KEY ?? 'forgeax.save.v1'
+const SAVE_KEY = globalThis.MetaAccount?.SAVE_KEY ?? 'forgeax.save.v2'
 const profile = await user.getCurrent()
 const initial = await storage.get(SAVE_KEY)
 const mountPlatformStore = globalThis.MetaShell?.mountPlatformStore

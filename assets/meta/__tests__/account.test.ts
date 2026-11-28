@@ -15,7 +15,7 @@ describe('platform KV envelope', () => {
   it('uses one key and one versioned, deep-copied JSON blob', () => {
     const state = createInventoryState(3);
     const env = A.encodeSave(state);
-    expect(A.SAVE_KEY).toBe('forgeax.save.v1');
+    expect(A.SAVE_KEY).toBe('forgeax.save.v2');
     expect(env.schemaVersion).toBe(A.SCHEMA_VERSION);
     expect(env.state).toEqual(state);
     expect(env.state).not.toBe(state);

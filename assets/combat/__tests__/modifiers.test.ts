@@ -27,6 +27,19 @@ function queuedSwing(distance: number) {
   return { s, sk };
 }
 
+describe('school attributes come from star nodes', () => {
+  it('strength boosts physical skills and wisdom boosts spell skills independently', () => {
+    const physical = createModifiers(['ares_base_n1']); // effect=strength 0.06
+    const spell = createModifiers(['ares_mid_b_n1']);   // effect=wisdom 0.06
+    expect(physical.physicalMultiplier()).toBeCloseTo(1.06);
+    expect(physical.spellMultiplier()).toBe(1);
+    expect(spell.spellMultiplier()).toBeCloseTo(1.06);
+    expect(spell.physicalMultiplier()).toBe(1);
+    expect(NO_MODIFIERS.physicalMultiplier()).toBe(1);
+    expect(NO_MODIFIERS.spellMultiplier()).toBe(1);
+  });
+});
+
 describe('talent-effect hook lives in combat', () => {
   it('NO_MODIFIERS reproduces the legacy bare-hand damage exactly', () => {
     const { s, sk } = queuedSwing(50);
@@ -40,6 +53,8 @@ describe('talent-effect hook lives in combat', () => {
     const double: CombatModifiers = {
       starNodes: ['test.damage-x2'],
       damageMultiplier: (base) => base * 2,
+      physicalMultiplier: () => 1,
+      spellMultiplier: () => 1,
       meleeRangeBonus: () => 0,
       maxHpMultiplier: () => 1,
       maxManaMultiplier: () => 1,
@@ -53,6 +68,8 @@ describe('talent-effect hook lives in combat', () => {
     const reachMods: CombatModifiers = {
       starNodes: ['test.reach+100'],
       damageMultiplier: (base) => base,
+      physicalMultiplier: () => 1,
+      spellMultiplier: () => 1,
       meleeRangeBonus: () => 100,
       maxHpMultiplier: () => 1,
       maxManaMultiplier: () => 1,
@@ -75,16 +92,16 @@ describe('star nodes are interpreted from starmap.xlsx (design 6.3)', () => {
   const row = (id: string) => starmap.find((r) => r.id === id)!;
 
   it('sums additive percentages and flat range over the picked nodes', () => {
-    const mods = createModifiers(['ember_dmg', 'venom_dmg', 'venom_range']);
-    const dmg = 1 + row('ember_dmg').magnitude + row('venom_dmg').magnitude;
+    const mods = createModifiers(['ares_oath_n3', 'hephaestus_oath_n3']);
+    const dmg = 1 + row('ares_oath_n3').magnitude + row('hephaestus_oath_n3').magnitude;
     expect(mods.damageMultiplier(100)).toBeCloseTo(100 * dmg, 6);
-    expect(mods.meleeRangeBonus()).toBe(row('venom_range').magnitude);
+    expect(mods.meleeRangeBonus()).toBe(0); // 新表没有 range_px 属性点
     expect(mods.maxHpMultiplier()).toBe(1);
     expect(mods.maxManaMultiplier()).toBe(1);
   });
 
   it('ignores unknown node ids and skill nodes (magnitude 0)', () => {
-    const mods = createModifiers(['ember_wall', 'ghost']);
+    const mods = createModifiers(['ares_base_n4', 'ghost']);
     expect(mods.damageMultiplier(50)).toBe(50);
     expect(mods.maxHpMultiplier()).toBe(1);
     expect(createModifiers([])).toBe(NO_MODIFIERS);
@@ -93,10 +110,10 @@ describe('star nodes are interpreted from starmap.xlsx (design 6.3)', () => {
   it('deploy applies HP / mana multipliers and the star skill bar', () => {
     const s = createState();
     deployRun(s, {
-      stars: { skills: ['cleave', 'thunder'], nodes: ['ember_hp', 'frost_mana'] },
+      stars: { skills: ['cleave', 'thunder'], nodes: ['ares_base_n2', 'ares_mid_b_n3'] },
     });
-    const hp = 1 + row('ember_hp').magnitude;
-    const mana = 1 + row('frost_mana').magnitude;
+    const hp = 1 + row('ares_base_n2').magnitude;
+    const mana = 1 + row('ares_mid_b_n3').magnitude;
     // 基数来自 combat_rule.xlsx（500 / 200），不在断言里再抄一份数字。
     const baseHp = combat_rule[0].player_hp_max;
     const baseMana = combat_rule[0].player_mana_max;

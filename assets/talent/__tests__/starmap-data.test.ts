@@ -16,7 +16,7 @@ import { combat_rule } from '../../resource/generated/combat_rule.ts';
 import { DOMAIN_IDS } from '../../shared/constants.ts';
 import {
   AFFINITIES, affinityOf, canPick, constellationOpen, createStarMap, createStarState,
-  levelCap, pickNode, pointsEarned, type AffinityMap, type StarMap,
+  constellationDone, levelCap, pickNode, pointsEarned, type AffinityMap, type StarMap,
 } from '../index.ts';
 
 const map = createStarMap(nodeRows, constellationRows);
@@ -99,36 +99,39 @@ describe('the affinity graph is not deadlocked and a real build reaches the top'
     }
   });
 
-  it('an 8-point build really opens 疾风 and 战意 (design 6.3: detour is the point)', () => {
+  it('a 20-point build reaches an ultimate and stays within budget', () => {
     const state = createStarState(levelCap(levelRows));
+    state.cleared = ['arena'];
+    state.explored = ['shrine'];
+    // 兵燹线：基础 4 + 中级 4 + 被动 3 + 终极 5 = 16 点，
+    // 终极给 3 个配合色各 3 点，再点一个配合色中级 4 点 = 20 点。
     const build = [
-      'ember_wall', 'ember_dmg', 'ember_hp', // 火 4 + 毒 2（毒来自火墙/燎原）
-      'frost_shard', 'frost_mana', // 水 2 → 潮汐
-      'tide_hp', // 风 +1
-      'venom_pool', // 风 +1（毒 2 已够）
-      'gale_range', // 火 5 → 战意
+      'ares_base_n1', 'ares_base_n2', 'ares_base_n3', 'ares_base_n4',
+      'ares_mid_a_n1', 'ares_mid_a_n2', 'ares_mid_a_n3', 'ares_mid_a_n4',
+      'ares_oath_n1', 'ares_oath_n2', 'ares_oath_n3',
+      'ares_seat_a_n1', 'ares_seat_a_n2', 'ares_seat_a_n3', 'ares_seat_a_n4', 'ares_seat_a_n5',
+      'apollo_mid_a_n1', 'apollo_mid_a_n2', 'apollo_mid_a_n3', 'apollo_mid_a_n4',
     ];
     for (const id of build) {
       expect(pickNode(state, map, levelRows, rule, id), `点不动 ${id}`).toBe(true);
     }
     const affinity = affinityOf(state, map);
-    expect(affinity.athena).toBeGreaterThanOrEqual(3);
-    expect(affinity.ares).toBeGreaterThanOrEqual(5);
-    expect(constellationOpen(state, map, 'gale')).toBe(true);
-    expect(constellationOpen(state, map, 'warlord')).toBe(true);
-    // 只要 8 点，而满级+全首通也只有 21 点：想全点是不可能的（26 点点满全部节点）。
+    expect(affinity.ares).toBeGreaterThanOrEqual(8);
+    expect(affinity.apollo).toBeGreaterThanOrEqual(3);
+    expect(constellationDone(state, map, 'ares_seat_a')).toBe(true);
+    // 168 点点满，预算 20 点 → 必须取舍。
     expect(state.picks.length).toBeLessThanOrEqual(MAX_POINTS);
     expect(map.nodes.reduce((sum, node) => sum + node.cost, 0)).toBeGreaterThan(MAX_POINTS);
   });
 });
 
 describe('passives are generic, never a buff for one active skill', () => {
-  const GENERIC = ['dmg_pct', 'hp_pct', 'mana_pct', 'range_px'];
+  const GENERIC = ['dmg_pct', 'hp_pct', 'mana_pct', 'range_px', 'atk_speed_pct', 'strength', 'wisdom'];
   const skillNames = map.nodes.filter((n) => n.kind === 'skill').map((n) => n.name);
 
-  it('only uses the four generic multiplier effects off-skill', () => {
+  it('only uses generic multiplier / attribute effects off-skill', () => {
     for (const node of map.nodes) {
-      if (node.kind === 'skill') {
+      if (node.kind === 'skill' || node.kind === 'ult') {
         expect(node.effect, `${node.id} 技能节点不该带乘区`).toBe('');
         continue;
       }

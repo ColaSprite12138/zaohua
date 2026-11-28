@@ -29,41 +29,56 @@ export const AFFINITIES = ['ares', 'demeter', 'poseidon', 'apollo', 'zeus', 'ath
 export type Affinity = (typeof AFFINITIES)[number];
 export type AffinityMap = Record<Affinity, number>;
 
-/** `tables/constellation.xlsx` 的一行。`requirement` 是**该星座颜色的亲和下限**。 */
+/** 星座层级：基础(0门槛) / 中级 / 被动 / 终极。 */
+export type ConstellationTier = 'base' | 'mid' | 'passive' | 'ult';
+
+/** `tables/constellation.xlsx` 的一行。亲和**点满星座才一次性给**，不逐点产。 */
 export interface ConstellationRow {
   id: string;
   name: string;
   color: string;
+  tier: string;
+  /** 关联主神（被动 / 终极星座有值），用于 combo 判定。 */
+  god: string;
+  /** 物理技能受力量加成、法术技能受智慧加成。 */
+  school: string;
+  /** 开星座所需本色亲和；base = 0。 */
   requirement: number;
+  /** 点满后产出的本色亲和（base 3 / mid 5 / passive 0 / ult 0）。 */
+  grant_color: string;
+  grant_amount: number;
+  /** 终极点满后给这三个配合色各 3 点，可开对应色的中级星座。 */
+  combo_a: string;
+  combo_b: string;
+  combo_c: string;
   x: number;
   y: number;
   hint: string;
 }
 
-/**
- * `tables/starmap.xlsx` 的一行。
- * `aff_<color>` 是该节点产出的亲和（技能 2 点本色，被动 1 点本色 + 1 点邻色）。
- */
+/** `tables/starmap.xlsx` 的一行。星座内按 `order` 顺序点亮，最后一点给技能。 */
 export interface StarNodeRow {
   id: string;
   constellation: string;
   name: string;
+  /** attribute / skill / passive / ult。 */
   kind: string;
+  /** 星座内的点亮顺序，从 1 开始。 */
+  order: number;
+  /** 通用乘区：strength / wisdom / hp_pct / mana_pct / dmg_pct / range_px / atk_speed_pct。 */
   effect: string;
   magnitude: number;
   cost: number;
-  aff_ares: number;
-  aff_demeter: number;
-  aff_poseidon: number;
-  aff_apollo: number;
-  aff_zeus: number;
-  aff_athena: number;
+  school: string;
+  god: string;
+  /** 被动节点关联的主神，用于与终极的 combo 判定（邪修时仍生效，只是不共鸣）。 */
+  combo_god: string;
   skill_id: string;
   hint: string;
 }
 
 export interface StarNode extends StarNodeRow {
-  /** 解析后的亲和产出，只含 > 0 的色。UI 画色点用。 */
+  /** 该节点所属星座点满后产出的亲和（仅星座最后一点承载，UI 画色点用）。 */
   grants: Partial<AffinityMap>;
 }
 
@@ -147,29 +162,53 @@ export function createStarMap(
     if (constellation === undefined) {
       throw new Error(`starmap: node ${row.id} belongs to unknown constellation ${row.constellation}`);
     }
-    if (row.kind === 'skill' && row.skill_id === '') {
-      throw new Error(`starmap: node ${row.id} is a skill without skill_id`);
+    if ((row.kind === 'skill' || row.kind === 'ult') && row.skill_id === '') {
+      throw new Error(`starmap: node ${row.id} is a ${row.kind} without skill_id`);
     }
-    const grants: Partial<AffinityMap> = {};
-    for (const color of AFFINITIES) {
-      const amount = row[`aff_${color}` as keyof StarNodeRow] as number;
-      if (amount > 0) grants[color] = amount;
-    }
-    const node: StarNode = { ...row, grants };
+    if (row.order < 1) throw new Error(`starmap: node ${row.id} has invalid order ${row.order}`);
+    const node: StarNode = { ...row, grants: {} };
     byId[node.id] = node;
     nodes.push(node);
     constellation.nodes.push(node);
+  }
+  // 星座内按 order 排序，并把「点满星座一次性给的亲和」挂到最后一个节点上。
+  for (const c of constellations) {
+    c.nodes.sort((a, b) => a.order - b.order);
+    for (let i = 0; i < c.nodes.length; i += 1) {
+      if (c.nodes[i]!.order !== i + 1) {
+        throw new Error(`starmap: constellation ${c.id} has non-contiguous order`);
+      }
+    }
+    const last = c.nodes[c.nodes.length - 1];
+    if (last === undefined) throw new Error(`starmap: constellation ${c.id} has no nodes`);
+    if (c.grant_amount > 0 && isAffinity(c.grant_color)) {
+      last.grants[c.grant_color] = c.grant_amount;
+    }
+    // 终极点满给三个配合色各 3 点。
+    if (c.tier === 'ult') {
+      for (const key of [c.combo_a, c.combo_b, c.combo_c]) {
+        if (isAffinity(key)) last.grants[key] = (last.grants[key] ?? 0) + 3;
+      }
+    }
   }
   if (nodes.length === 0) throw new Error('starmap: no nodes');
   return { nodes, byId, constellations, constellationById };
 }
 
-/** 当前亲和（只由已点亮的节点决定，**不随洗点外的任何东西变化**）。 */
+/** 星座是否点满（全部节点都在 picks 里）。 */
+export function constellationDone(state: StarState, map: StarMap, id: string): boolean {
+  const c = map.constellationById[id];
+  if (c === undefined || c.nodes.length === 0) return false;
+  return c.nodes.every((n) => state.picks.includes(n.id));
+}
+
+/** 当前亲和：只由**已点满**的星座决定，点满才给、洗点即归零。 */
 export function affinityOf(state: StarState, map: StarMap): AffinityMap {
   const affinity = emptyAffinity();
   for (const id of state.picks) {
     const node = map.byId[id];
     if (node === undefined) continue;
+    // 亲和挂在星座最后一个节点上；只有该星座点满时那个节点才可能被点到。
     for (const color of AFFINITIES) {
       const amount = node.grants[color];
       if (amount !== undefined) affinity[color] += amount;
@@ -246,7 +285,19 @@ export function pointsLeft(
 
 /* ------------------------------- 选点 ---------------------------------- */
 
-/** 能不能点：未知 / 重复 / 星座未开 / 点数不够 → 一律 false。 */
+/** 全局已点亮的终极数量（一个 build 只允许 1 个）。 */
+export function ultimateCount(state: StarState, map: StarMap): number {
+  let n = 0;
+  for (const id of state.picks) {
+    if (map.byId[id]?.kind === 'ult') n += 1;
+  }
+  return n;
+}
+
+/**
+ * 能不能点：未知 / 重复 / 星座未开 / 星座内非顺序 / 终极重复 / 点数不够 → false。
+ * 星座内必须按 order 逐点点亮（GD 式：前面的点给属性，最后一点给技能）。
+ */
 export function canPick(
   state: StarState, map: StarMap, levels: readonly LevelRow[], rule: StarRule, id: string,
 ): boolean {
@@ -254,6 +305,14 @@ export function canPick(
   if (node === undefined) return false;
   if (state.picks.includes(id)) return false;
   if (!constellationOpen(state, map, node.constellation)) return false;
+  // 星座内顺序：前一个 order 必须已点亮。
+  if (node.order > 1) {
+    const c = map.constellationById[node.constellation];
+    const prev = c?.nodes[node.order - 2];
+    if (prev === undefined || !state.picks.includes(prev.id)) return false;
+  }
+  // 终极全局互斥。
+  if (node.kind === 'ult' && ultimateCount(state, map) > 0) return false;
   return pointsLeft(state, map, levels, rule) >= node.cost;
 }
 
@@ -283,7 +342,7 @@ export function unlockedSkills(state: StarState, map: StarMap): string[] {
   const out: string[] = [];
   for (const id of state.picks) {
     const node = map.byId[id];
-    if (node === undefined || node.kind !== 'skill') continue;
+    if (node === undefined || (node.kind !== 'skill' && node.kind !== 'ult')) continue;
     if (node.skill_id !== '' && !out.includes(node.skill_id)) out.push(node.skill_id);
   }
   return out;

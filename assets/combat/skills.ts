@@ -85,6 +85,8 @@ export interface SkillDef {
   readonly zone?: SkillZone;
   /** `missile` 形态用的弹道原型（`projectile.xlsx` 的一行）。 */
   readonly projectile?: string;
+  /** physical 受力量加成 / spell 受智慧加成（星图属性节点的产出）。 */
+  readonly school: 'physical' | 'spell';
 }
 
 /**
@@ -130,6 +132,38 @@ const SKILL_MECHANICS: Readonly<Record<string, SkillMechanics>> = Object.freeze(
    * 所以这一行只声明「我是弹道形态、用哪个弹」。
    */
   fireball: Object.freeze({ kind: 'missile', icon: 'fireball', element: 'ares', projectile: 'fireball' }),
+  // 30 个六权能技能（starmap 42 星座的主动技能）。数值全在 skill.xlsx，
+  // 这里只声明作用形态与元素归属；图标复用已有 8 个，避免新增体素资产。
+  ember_bolt: Object.freeze({ kind: 'bolt', icon: 'fire_wall', element: 'ares' }),
+  rend_formation: Object.freeze({ kind: 'bolt', icon: 'fire_wall', element: 'ares' }),
+  forge_burst: Object.freeze({ kind: 'bolt', icon: 'fire_wall', element: 'ares' }),
+  ult_ares: Object.freeze({ kind: 'strike', icon: 'fire_wall', element: 'ares' }),
+  ult_hephaestus: Object.freeze({ kind: 'strike', icon: 'fire_wall', element: 'ares' }),
+  tide_splash: Object.freeze({ kind: 'bolt', icon: 'water_wave', element: 'poseidon' }),
+  surge_wave: Object.freeze({ kind: 'bolt', icon: 'water_wave', element: 'poseidon' }),
+  foam_bind: Object.freeze({ kind: 'bolt', icon: 'water_wave', element: 'poseidon' }),
+  ult_poseidon: Object.freeze({ kind: 'strike', icon: 'water_wave', element: 'poseidon' }),
+  ult_aphrodite: Object.freeze({ kind: 'strike', icon: 'water_wave', element: 'poseidon' }),
+  spark_call: Object.freeze({ kind: 'bolt', icon: 'thunder', element: 'zeus' }),
+  sky_bolt: Object.freeze({ kind: 'bolt', icon: 'thunder', element: 'zeus' }),
+  divine_edict: Object.freeze({ kind: 'bolt', icon: 'thunder', element: 'zeus' }),
+  ult_zeus: Object.freeze({ kind: 'strike', icon: 'thunder', element: 'zeus' }),
+  ult_hera: Object.freeze({ kind: 'strike', icon: 'thunder', element: 'zeus' }),
+  sun_arrow: Object.freeze({ kind: 'bolt', icon: 'venom_pool', element: 'apollo' }),
+  plague_arrow: Object.freeze({ kind: 'bolt', icon: 'venom_pool', element: 'apollo' }),
+  moon_piercer: Object.freeze({ kind: 'bolt', icon: 'venom_pool', element: 'apollo' }),
+  ult_apollo: Object.freeze({ kind: 'strike', icon: 'venom_pool', element: 'apollo' }),
+  ult_artemis: Object.freeze({ kind: 'strike', icon: 'venom_pool', element: 'apollo' }),
+  frost_dust: Object.freeze({ kind: 'bolt', icon: 'ice_shard', element: 'demeter' }),
+  frost_field: Object.freeze({ kind: 'bolt', icon: 'ice_shard', element: 'demeter' }),
+  harvest_gift: Object.freeze({ kind: 'bolt', icon: 'ice_shard', element: 'demeter' }),
+  ult_demeter: Object.freeze({ kind: 'strike', icon: 'ice_shard', element: 'demeter' }),
+  ult_dionysus: Object.freeze({ kind: 'strike', icon: 'ice_shard', element: 'demeter' }),
+  quick_step: Object.freeze({ kind: 'dash', icon: 'charge', element: 'athena' }),
+  tactical_wall: Object.freeze({ kind: 'bolt', icon: 'charge', element: 'athena' }),
+  winged_step: Object.freeze({ kind: 'bolt', icon: 'charge', element: 'athena' }),
+  ult_athena: Object.freeze({ kind: 'strike', icon: 'charge', element: 'athena' }),
+  ult_hermes: Object.freeze({ kind: 'strike', icon: 'charge', element: 'athena' }),
 });
 
 /**
@@ -166,6 +200,7 @@ function buildSkills(): Record<string, SkillDef> {
       width: row.width,
       hint: row.hint,
       icon: mech.icon,
+      school: row.school === 'spell' ? 'spell' : 'physical',
       ...(mech.element !== undefined ? { element: mech.element } : {}),
       ...(mech.status !== undefined ? { status: mech.status } : {}),
       ...(mech.zoneElement !== undefined
@@ -368,8 +403,10 @@ function resolveSkill(
   aim: { x: number; y: number },
   mods: CombatModifiers,
 ): void {
-  // 伤害乘区只作用于**直接伤害**；DOT / 区域伤害走各自的状态数值（避免同一节点双吃）。
-  const damage = mods.damageMultiplier(def.damage);
+  // 直接伤害 = 基础白值 × 通用乘区 × 流派属性乘区（物理吃力量 / 法术吃智慧）。
+  // DOT / 区域伤害走各自的状态数值，不吃这两层，避免同一节点双吃。
+  const schoolMul = def.school === 'spell' ? mods.spellMultiplier() : mods.physicalMultiplier();
+  const damage = mods.damageMultiplier(def.damage) * schoolMul;
   if (def.kind === 'sweep') sweep(s, def, damage);
   else if (def.kind === 'dash') startDash(s, def, aim, damage);
   else if (def.kind === 'bolt') bolt(s, def, aim, damage);

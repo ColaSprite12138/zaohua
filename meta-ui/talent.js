@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/talent/index.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 2a5f5a1c3a2b8d8c5b854bc35fefb40fe5f0ea56b7b16f0a143c79f9bf6fca04
+ * Source SHA-256: c0202a6547450b5205a611bad6934aede7626bee66a83b772492f0ae1b6dd2e6
  */
 (function (root) {
 "use strict";
@@ -35,6 +35,7 @@ exports.AFFINITIES = void 0;
 exports.createStarState = createStarState;
 exports.emptyAffinity = emptyAffinity;
 exports.createStarMap = createStarMap;
+exports.constellationDone = constellationDone;
 exports.affinityOf = affinityOf;
 exports.constellationOpen = constellationOpen;
 exports.affinityMissing = affinityMissing;
@@ -46,6 +47,7 @@ exports.pointsFromClears = pointsFromClears;
 exports.pointsEarned = pointsEarned;
 exports.pointsSpent = pointsSpent;
 exports.pointsLeft = pointsLeft;
+exports.ultimateCount = ultimateCount;
 exports.canPick = canPick;
 exports.pickNode = pickNode;
 exports.respec = respec;
@@ -94,31 +96,57 @@ function createStarMap(nodeRows, constellationRows) {
         if (constellation === undefined) {
             throw new Error(`starmap: node ${row.id} belongs to unknown constellation ${row.constellation}`);
         }
-        if (row.kind === 'skill' && row.skill_id === '') {
-            throw new Error(`starmap: node ${row.id} is a skill without skill_id`);
+        if ((row.kind === 'skill' || row.kind === 'ult') && row.skill_id === '') {
+            throw new Error(`starmap: node ${row.id} is a ${row.kind} without skill_id`);
         }
-        const grants = {};
-        for (const color of exports.AFFINITIES) {
-            const amount = row[`aff_${color}`];
-            if (amount > 0)
-                grants[color] = amount;
-        }
-        const node = { ...row, grants };
+        if (row.order < 1)
+            throw new Error(`starmap: node ${row.id} has invalid order ${row.order}`);
+        const node = { ...row, grants: {} };
         byId[node.id] = node;
         nodes.push(node);
         constellation.nodes.push(node);
+    }
+    // 星座内按 order 排序，并把「点满星座一次性给的亲和」挂到最后一个节点上。
+    for (const c of constellations) {
+        c.nodes.sort((a, b) => a.order - b.order);
+        for (let i = 0; i < c.nodes.length; i += 1) {
+            if (c.nodes[i].order !== i + 1) {
+                throw new Error(`starmap: constellation ${c.id} has non-contiguous order`);
+            }
+        }
+        const last = c.nodes[c.nodes.length - 1];
+        if (last === undefined)
+            throw new Error(`starmap: constellation ${c.id} has no nodes`);
+        if (c.grant_amount > 0 && isAffinity(c.grant_color)) {
+            last.grants[c.grant_color] = c.grant_amount;
+        }
+        // 终极点满给三个配合色各 3 点。
+        if (c.tier === 'ult') {
+            for (const key of [c.combo_a, c.combo_b, c.combo_c]) {
+                if (isAffinity(key))
+                    last.grants[key] = (last.grants[key] ?? 0) + 3;
+            }
+        }
     }
     if (nodes.length === 0)
         throw new Error('starmap: no nodes');
     return { nodes, byId, constellations, constellationById };
 }
-/** 当前亲和（只由已点亮的节点决定，**不随洗点外的任何东西变化**）。 */
+/** 星座是否点满（全部节点都在 picks 里）。 */
+function constellationDone(state, map, id) {
+    const c = map.constellationById[id];
+    if (c === undefined || c.nodes.length === 0)
+        return false;
+    return c.nodes.every((n) => state.picks.includes(n.id));
+}
+/** 当前亲和：只由**已点满**的星座决定，点满才给、洗点即归零。 */
 function affinityOf(state, map) {
     const affinity = emptyAffinity();
     for (const id of state.picks) {
         const node = map.byId[id];
         if (node === undefined)
             continue;
+        // 亲和挂在星座最后一个节点上；只有该星座点满时那个节点才可能被点到。
         for (const color of exports.AFFINITIES) {
             const amount = node.grants[color];
             if (amount !== undefined)
@@ -179,7 +207,19 @@ function pointsLeft(state, map, levels, rule) {
     return Math.max(0, pointsEarned(state, levels, rule) - pointsSpent(state, map));
 }
 /* ------------------------------- 选点 ---------------------------------- */
-/** 能不能点：未知 / 重复 / 星座未开 / 点数不够 → 一律 false。 */
+/** 全局已点亮的终极数量（一个 build 只允许 1 个）。 */
+function ultimateCount(state, map) {
+    let n = 0;
+    for (const id of state.picks) {
+        if (map.byId[id]?.kind === 'ult')
+            n += 1;
+    }
+    return n;
+}
+/**
+ * 能不能点：未知 / 重复 / 星座未开 / 星座内非顺序 / 终极重复 / 点数不够 → false。
+ * 星座内必须按 order 逐点点亮（GD 式：前面的点给属性，最后一点给技能）。
+ */
 function canPick(state, map, levels, rule, id) {
     const node = map.byId[id];
     if (node === undefined)
@@ -187,6 +227,16 @@ function canPick(state, map, levels, rule, id) {
     if (state.picks.includes(id))
         return false;
     if (!constellationOpen(state, map, node.constellation))
+        return false;
+    // 星座内顺序：前一个 order 必须已点亮。
+    if (node.order > 1) {
+        const c = map.constellationById[node.constellation];
+        const prev = c?.nodes[node.order - 2];
+        if (prev === undefined || !state.picks.includes(prev.id))
+            return false;
+    }
+    // 终极全局互斥。
+    if (node.kind === 'ult' && ultimateCount(state, map) > 0)
         return false;
     return pointsLeft(state, map, levels, rule) >= node.cost;
 }
@@ -212,7 +262,7 @@ function unlockedSkills(state, map) {
     const out = [];
     for (const id of state.picks) {
         const node = map.byId[id];
-        if (node === undefined || node.kind !== 'skill')
+        if (node === undefined || (node.kind !== 'skill' && node.kind !== 'ult'))
             continue;
         if (node.skill_id !== '' && !out.includes(node.skill_id))
             out.push(node.skill_id);

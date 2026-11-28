@@ -4,11 +4,11 @@
 //
 // 一局只走 1/3 张图，所以「我在哪、门在哪、下一片区域怎么过去」必须能查。
 // 这一支验五件事：
-//   ① 真地图是 840×544（26880×17408px）五区（四角 + 正中宝库），出生点在院落；
+//   ① 真地图是 840×544（26880×17408px）五区（四角 + 正中奥林匹斯圣库），出生点在阿戈拉圣院；
 //   ② M 打开大地图（覆盖层），并且**打开时点地面不会走**（看地图不是一次误操作）；
 //   ③ 大地图上五块分区都是**不规则色块**（不是五个方块），当前区高亮（见截图）；
-//   ④ 靠两条腿从院落**走进东廊廊口**（环形动线的第一条边真的通 —— 端到端证据；
-//      四条边 + 四区→宝库的连通性另有单测 `zones.test.ts` 的 BFS 守着）；
+//   ④ 靠两条腿从阿戈拉圣院**走进斯多亚长廊廊口**（环形动线的第一条边真的通 —— 端到端证据；
+//      四条边 + 四区→奥林匹斯圣库的连通性另有单测 `zones.test.ts` 的 BFS 守着）；
 //   ⑤ 每一步截一张图。
 //
 // 为什么不再"绕完整圈"：新图面积是旧图的 11 倍，绕一圈要 8 分钟以上游戏时间，
@@ -16,7 +16,7 @@
 //
 // 走法：路线由 `scripts/lib/map-route.mjs` 从地图源（`arena.ldtk`）自己算
 // （BFS → 按身体半径拉直），每轮只点"这一段上前进 380px"的那一点。**不要**改回
-// "朝东廊方向点屏幕边缘"：固定相对偏移会反复吸附到同一处墙后死角，实测 160 轮
+// "朝斯多亚长廊方向点屏幕边缘"：固定相对偏移会反复吸附到同一处墙后死角，实测 160 轮
 // 走了 39.5k px 人还在出生点旁边。
 
 import { GRID, loadTerrain, planRoute, stepAlong } from './lib/map-route.mjs';
@@ -25,8 +25,8 @@ const VIEW_W = 1280;
 const VIEW_H = 720;
 
 /**
- * 东廊西端的入口（`arena_layout.CORRIDORS` 第一条的东端，落在主廊上）。
- * 从院落出生点到这里的**最短路径**是 12k px 级别 ≈ 一分钟纯移动 —— 这就是新图的尺度。
+ * 斯多亚长廊西端的入口（`arena_layout.CORRIDORS` 第一条的东端，落在主廊上）。
+ * 从阿戈拉圣院出生点到这里的**最短路径**是 12k px 级别 ≈ 一分钟纯移动 —— 这就是新图的尺度。
  */
 const GALLERY_GATE = { col: 545, row: 60 };
 /** 只有走到这个半径内才算"到了廊口"——`zone` 在走廊边界上就会翻，会早报 4k px。 */
@@ -42,7 +42,7 @@ async function deploy(play, kind) {
     const channel = new BroadcastChannel('forgeax-arena-run');
     channel.postMessage({
       type: 'deploy',
-      // 带一把剑：这一趟要在院落里走 16k px，院里有 15 只怪，空手会被磨死。
+      // 带一把剑：这一趟要在阿戈拉圣院里走 16k px，院里有 15 只怪，空手会被磨死。
       deployment: {
         seed: 0x5eed1234,
         kind: runKind,
@@ -71,9 +71,9 @@ export default async function worldMap(play) {
     if (s.map.w !== 26880 || s.map.h !== 17408) {
       throw new Error(`地图尺寸应为 26880x17408，实际 ${s.map.w}x${s.map.h}`);
     }
-    if (s.regions.length !== 5) throw new Error(`应有 5 个分区（含正中宝库），实际 ${s.regions.length}`);
-    if (!s.regions.some((r) => r.id === 'vault')) throw new Error('分区表里没有宝库');
-    if (s.zone?.id !== 'court') throw new Error(`出生点应在院落，实际 ${JSON.stringify(s.zone)}`);
+    if (s.regions.length !== 5) throw new Error(`应有 5 个分区（含正中奥林匹斯圣库），实际 ${s.regions.length}`);
+    if (!s.regions.some((r) => r.id === 'olympus')) throw new Error('分区表里没有奥林匹斯圣库');
+    if (s.zone?.id !== 'agora') throw new Error(`出生点应在阿戈拉圣院，实际 ${JSON.stringify(s.zone)}`);
     if (s.viewBigMap !== false) throw new Error('开局大地图应该是关着的');
     await play.screenshot('world-zone-court');
   });
@@ -112,10 +112,10 @@ export default async function worldMap(play) {
     };
     const route = planRoute(map, s.worldPlayer, gate);
     if (route === null) {
-      throw new Error(`出生点 ${JSON.stringify(s.worldPlayer)} 走不到东廊入口 ${JSON.stringify(GALLERY_GATE)}`);
+      throw new Error(`出生点 ${JSON.stringify(s.worldPlayer)} 走不到斯多亚长廊入口 ${JSON.stringify(GALLERY_GATE)}`);
     }
     // 这一趟必须是"真远征"：太短说明图又缩回去了。
-    if (route.length < 6000) throw new Error(`到东廊的最短路径只有 ${Math.round(route.length)}px，不像五区大地图`);
+    if (route.length < 6000) throw new Error(`到斯多亚长廊的最短路径只有 ${Math.round(route.length)}px，不像五区大地图`);
 
     const from = { ...s.worldPlayer };
     let walked = 0;
@@ -138,7 +138,7 @@ export default async function worldMap(play) {
       if (idle >= 6) {
         throw new Error(`连点 6 次都没挪动，卡在路点 #${cursor}（${Math.round(p.x)},${Math.round(p.y)}）`);
       }
-      if (st.zone?.id === 'corridor' && Math.hypot(p.x - gate.x, p.y - gate.y) < GATE_NEAR) {
+      if (st.zone?.id === 'stoa' && Math.hypot(p.x - gate.x, p.y - gate.y) < GATE_NEAR) {
         reached = st;
         break;
       }
@@ -153,14 +153,14 @@ export default async function worldMap(play) {
     if (reached === null) {
       const st = await play.state('game.state');
       throw new Error(
-        `走不进东廊（停在 ${st.zone?.id}，走了 ${Math.round(walked)}px / ${Math.round(route.length)}px，`
+        `走不进斯多亚长廊（停在 ${st.zone?.id}，走了 ${Math.round(walked)}px / ${Math.round(route.length)}px，`
         + `world=${JSON.stringify(st.worldPlayer)}）`,
       );
     }
     await play.screenshot('world-zone-corridor');
-    // 落地后确认区域名确实切到东廊（HUD 与大地图读的是同一份数据）
-    if (reached.zone?.name !== '东廊') {
-      throw new Error(`进入东廊后区域名应为「东廊」，实际 ${JSON.stringify(reached.zone)}`);
+    // 落地后确认区域名确实切到斯多亚长廊（HUD 与大地图读的是同一份数据）
+    if (reached.zone?.name !== '斯多亚长廊') {
+      throw new Error(`进入斯多亚长廊后区域名应为「斯多亚长廊」，实际 ${JSON.stringify(reached.zone)}`);
     }
     // 走出来的位移要和路线同量级：太小说明是"被传送"或根本没动，太大说明绕了远路。
     // 下界放到 0.7 —— 引擎自己的 A* 比脚本的拉直线更贴角，实测全程会省掉一成多；

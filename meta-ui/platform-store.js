@@ -3,7 +3,7 @@
  *
  * There is NO local login/registration and NO local save. The player identity
  * comes from the platform container via `user.getCurrent()`; the save is one
- * opaque KV blob (`forgeax.save.v1`) written through `storage.get/set`.
+ * opaque KV blob (`forgeax.save.v2`) written through `storage.get/set`.
  * Outside the platform host (the 4174 preview) the shell starts from the
  * default inventory and writes nothing at all.
  *

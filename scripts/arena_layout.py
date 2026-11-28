@@ -18,22 +18,22 @@
 
 2026-11-18 第二轮（用户四条反馈的第二轮）又加了两件事：
 
-5. **正中新增第五区 `vault`（宝库）**：全图唯一的高价值战利品区，四块地块各外移
+5. **正中新增第五区 `vault`（奥林匹斯圣库）**：全图唯一的高价值战利品区，四块地块各外移
    120 格让出天井，四个区各有一条支线通进去。它也是唯一"填满再挖"的**库房群**
    （9 间房 + 3 格门洞 + 货架），怪与可破坏物的密度是四区的 5–6 倍。
-6. **走廊改到最后挖**。以前先挖走廊、再建各区，东廊与石窟那种"整区填满墙"的
+6. **走廊改到最后挖**。以前先挖走廊、再建各区，斯多亚长廊与塔耳塔洛斯那种"整区填满墙"的
    地形会把走廊中段重填成 WALL —— 图上还留着路的样子，人走过去是死路。
    现在 `build_terrain()` 的顺序是 land → 各区 → 走廊，并且走廊端点会被吸附到
    **区内主连通块**（`_zone_main_block`），不会再停在墙里的一小块空地上。
 
 每区的地形语言（这是战斗节奏，不是美术）：
 
-    Ａ 院落 court      围合：11 个尺寸不一的院子用带门连接墙串成一片 + 窄巷 + 假山
+    Ａ 阿戈拉圣院 court      围合：11 个尺寸不一的院子用带门连接墙串成一片 + 窄巷 + 假山
                              → 卡门、绕后、被堵死
-    Ｂ 东廊 corridor   线性：一条**蛇形**主廊（来回折返）+ 梳齿支廊 + 非等距柱列
+    Ｂ 斯多亚长廊 corridor   线性：一条**蛇形**主廊（来回折返）+ 梳齿支廊 + 非等距柱列
                              → 横穿必须来回走，视线被切成一段一段
-    Ｃ 石窟 cavern     有机：噪声岩体 + 蜿蜒洞道 + 大石柱   → 没有一条长直边
-    Ｄ 水榭 wateryard  分割：不规则湖 + 三座桥 + 池心亭      → 桥是唯一咽喉
+    Ｃ 塔耳塔洛斯 cavern     有机：噪声岩体 + 蜿蜒洞道 + 大石柱   → 没有一条长直边
+    Ｄ 爱琴水榭 wateryard  分割：不规则湖 + 三座桥 + 池心亭      → 桥是唯一咽喉
 
 **确定性**：所有"随机"都是 (坐标, 盐) 的哈希，重跑逐字节一致，不依赖种子文件。
 """
@@ -43,7 +43,7 @@ import math
 from collections import deque
 
 # 840×544 格 @32px = 26880×17408 px。2026-11-18 第二轮扩图：为了在正中塞下
-# 第五区「宝库」，四块地块各向外平移 120 格，中间留出 190×144 格的天井。
+# 第五区「奥林匹斯圣库」，四块地块各向外平移 120 格，中间留出 190×144 格的天井。
 COLS, ROWS, GRID = 840, 544, 32
 FLOOR, WALL, PAVED, VOID = 0, 1, 2, 3
 
@@ -51,14 +51,17 @@ FLOOR, WALL, PAVED, VOID = 0, 1, 2, 3
 # 这里的矩形**只是包围盒**（大地图标签、zoneRect、粗筛），真实形状在 AREA 里，
 # 逐格归属由 `build_land()` 光栅化成 `zone` 表导出。
 #
-# 第五区 `vault`（宝库）在正中：四块地块各平移 120 格让出来的天井里，
+# 第五区 `vault`（奥林匹斯圣库）在正中：四块地块各平移 120 格让出来的天井里，
 # **只有**四条走廊分别从四区通进来 —— 它是全图唯一的高价值战利品区。
+# 分区 id 改名（2026-11-28 希腊化）后，**哈希盐仍用旧 id**，保证地形与实体点位逐格不变。
+SALT_IDS = ('court', 'corridor', 'cavern', 'wateryard', 'vault')
+
 ZONES = [
-    ('court', '院落', 36, 24, 286, 190),
-    ('corridor', '东廊', 516, 30, 307, 194),
-    ('cavern', '石窟', 520, 370, 302, 174),
-    ('wateryard', '水榭', 36, 368, 291, 172),
-    ('vault', '宝库', 350, 244, 140, 102),
+    ('agora', '阿戈拉圣院', 36, 24, 286, 190),
+    ('stoa', '斯多亚长廊', 516, 30, 307, 194),
+    ('tartarus', '塔耳塔洛斯', 520, 370, 302, 174),
+    ('aegean', '爱琴水榭', 36, 368, 291, 172),
+    ('olympus', '奥林匹斯圣库', 350, 244, 140, 102),
 ]
 ZONE_INDEX = {z[0]: i for i, z in enumerate(ZONES)}
 
@@ -66,31 +69,31 @@ ZONE_INDEX = {z[0]: i for i, z in enumerate(ZONES)}
 # 为什么不用矩形并集：矩形再怎么拼，看过去仍是"圆角方块"；多边形才能做出
 # 半岛、凹湾、斜切角 —— 也就是用户要的"现实里的地块边角不会那么整齐"。
 OUTLINE = {
-    'court': [
+    'agora': [
         (36, 74), (58, 40), (108, 26), (156, 40), (188, 24), (240, 36),
         (272, 22), (306, 48), (322, 92), (300, 120), (318, 150), (286, 176),
         (240, 168), (208, 196), (160, 188), (120, 206), (74, 190), (44, 166),
         (30, 120), (48, 100),
     ],
-    'corridor': [
+    'stoa': [
         (520, 40), (590, 28), (660, 40), (720, 26), (780, 44), (822, 80),
         (810, 120), (822, 150), (788, 176), (820, 200), (780, 224), (710, 210),
         (660, 224), (600, 206), (550, 220), (520, 190), (538, 150), (516, 120),
         (534, 90), (516, 64),
     ],
-    'cavern': [
+    'tartarus': [
         (524, 382), (570, 368), (620, 384), (676, 370), (720, 388), (770, 374),
         (820, 400), (816, 450), (822, 500), (780, 520), (730, 508), (686, 532),
         (636, 516), (590, 538), (550, 516), (520, 490), (536, 450), (518, 420),
     ],
-    'wateryard': [
+    'aegean': [
         (38, 390), (76, 370), (130, 382), (170, 368), (220, 384), (268, 372),
         (310, 394), (326, 430), (306, 460), (322, 492), (296, 520), (250, 534),
         (206, 520), (160, 540), (112, 524), (66, 538), (38, 512), (46, 470),
         (32, 440), (50, 416),
     ],
-    # 宝库：140×102 的不规则地块，四角各缺一块（四条走廊从缺角进来）。
-    'vault': [
+    # 奥林匹斯圣库：140×102 的不规则地块，四角各缺一块（四条走廊从缺角进来）。
+    'olympus': [
         (356, 268), (372, 250), (404, 246), (432, 252), (462, 244), (484, 258),
         (490, 286), (482, 310), (488, 332), (470, 344), (440, 338), (414, 346),
         (388, 338), (362, 336), (350, 314), (356, 292),
@@ -98,26 +101,26 @@ OUTLINE = {
 }
 
 # 区之间的走廊：(区 A, 区 B, 折线, 宽度)。每条都要落进两端的区里、中段穿过 VOID 带。
-# `verify()` 校验「每对相邻区 ≥2 条（通往宝库的 ≥1 条）」。
+# `verify()` 校验「每对相邻区 ≥2 条（通往奥林匹斯圣库的 ≥1 条）」。
 #
 # 2026-11-18 第二轮：四区各外移 120 格，走廊坐标整批重算；新增四条
-# 「区 ↔ 宝库」的支线，全部从**区角**贴着天井边缘进入，不与区际走廊交叉
+# 「区 ↔ 奥林匹斯圣库」的支线，全部从**区角**贴着天井边缘进入，不与区际走廊交叉
 # （交叉会让两条路并成一个口子，"每对相邻区 2 条"就数不准了）。
 CORRIDORS = [
-    # 环形动线：院落 → 东廊 → 石窟 → 水榭 → 院落，每对 2 条
-    ('court', 'corridor', [(300, 70), (400, 60), (520, 72)], 7),
-    ('court', 'corridor', [(270, 160), (390, 178), (520, 168)], 7),
-    ('corridor', 'cavern', [(780, 200), (812, 280), (780, 380)], 7),
-    ('corridor', 'cavern', [(620, 205), (600, 290), (620, 375)], 7),
-    ('cavern', 'wateryard', [(540, 510), (430, 520), (320, 500)], 7),
-    ('cavern', 'wateryard', [(540, 420), (430, 430), (320, 420)], 7),
-    ('wateryard', 'court', [(150, 380), (120, 290), (150, 200)], 7),
-    ('wateryard', 'court', [(260, 378), (290, 290), (260, 200)], 7),
-    # 支线：四个区各一条通往正中宝库（高价值区必须有路，但不能是大道）
-    ('court', 'vault', [(230, 185), (300, 230), (360, 265)], 6),
-    ('corridor', 'vault', [(540, 190), (500, 220), (470, 270)], 6),
-    ('cavern', 'vault', [(540, 390), (500, 370), (470, 330)], 6),
-    ('wateryard', 'vault', [(330, 380), (340, 360), (360, 330)], 6),
+    # 环形动线：阿戈拉圣院 → 斯多亚长廊 → 塔耳塔洛斯 → 爱琴水榭 → 阿戈拉圣院，每对 2 条
+    ('agora', 'stoa', [(300, 70), (400, 60), (520, 72)], 7),
+    ('agora', 'stoa', [(270, 160), (390, 178), (520, 168)], 7),
+    ('stoa', 'tartarus', [(780, 200), (812, 280), (780, 380)], 7),
+    ('stoa', 'tartarus', [(620, 205), (600, 290), (620, 375)], 7),
+    ('tartarus', 'aegean', [(540, 510), (430, 520), (320, 500)], 7),
+    ('tartarus', 'aegean', [(540, 420), (430, 430), (320, 420)], 7),
+    ('aegean', 'agora', [(150, 380), (120, 290), (150, 200)], 7),
+    ('aegean', 'agora', [(260, 378), (290, 290), (260, 200)], 7),
+    # 支线：四个区各一条通往正中奥林匹斯圣库（高价值区必须有路，但不能是大道）
+    ('agora', 'olympus', [(230, 185), (300, 230), (360, 265)], 6),
+    ('stoa', 'olympus', [(540, 190), (500, 220), (470, 270)], 6),
+    ('tartarus', 'olympus', [(540, 390), (500, 370), (470, 330)], 6),
+    ('aegean', 'olympus', [(330, 380), (340, 360), (360, 330)], 6),
 ]
 
 # ------------------------------------------------------------------ 哈希 / 噪声
@@ -182,7 +185,7 @@ class Canvas:
     - `land` 地块（1 = 这块地在建筑群范围内，0 = 崖 / 深林）
     - `zone` 分区下标（-1 = 还没定）
     - `road` 通路（走廊 / 桥 / 甬道）。后画的岩体与水面**不许盖住它** ——
-             B→C 的走廊曾经被石窟的噪声岩体重填成墙，图上是一条走不通的虚线。
+             B→C 的走廊曾经被塔耳塔洛斯的噪声岩体重填成墙，图上是一条走不通的虚线。
     """
 
     __slots__ = ('t', 'land', 'zone', 'road')
@@ -285,7 +288,7 @@ def carve_path(g: Canvas, points, width: int, value: int = FLOOR,
 
     `force=False`：只把 VOID / 地面改成 `value`，不铲平已有的墙（走廊穿过院内时
     不会把院墙一起推掉）。
-    `force=True`：**填满再挖**模式 —— 先铺一片岩体、再用它挖出廊道（东廊就这么做）。
+    `force=True`：**填满再挖**模式 —— 先铺一片岩体、再用它挖出廊道（斯多亚长廊就这么做）。
     两种情况都打 `road` 标记，保护它不被后续的岩体 / 水面覆盖。
     """
     def visit(c, r):
@@ -303,7 +306,7 @@ def _zone_main_block(g: Canvas, zi: int) -> set[tuple[int, int]]:
 
     走廊端点必须落在这块上。落在别处时，走廊会停在一小撮被墙围住的坑里：
     图上看着"路画到了"，人走过去却是死路 —— 2026-11-18 右上↔右下不连通
-    就是这么来的（东廊整区填满墙，走廊端点正好在墙里）。
+    就是这么来的（斯多亚长廊整区填满墙，走廊端点正好在墙里）。
     """
     walk = (FLOOR, PAVED)
     cells = {(c, r) for r in range(ROWS) for c in range(COLS)
@@ -473,7 +476,7 @@ def rock(g: Canvas, c: int, r: int, rad: float, salt: str = 'rock') -> None:
                 g.wall(c + dx, r + dy)
 
 
-# ------------------------------------------------------------------ Ａ 院落
+# ------------------------------------------------------------------ Ａ 阿戈拉圣院
 # (c0, r0, w, h)：16 个院子。**四行，但行高不同、列宽差 3 倍、行首错位** ——
 # 等列等距的"九宫格"是用户点名的问题，这里刻意让每行起点 38/44/46 不齐、
 # 列宽从 26 到 86 不等，院子之间留 8–16 格巷子。
@@ -553,15 +556,15 @@ def build_court(g: Canvas) -> None:
         rock(g, c, r, rad, 'courtrock')
 
 
-# ------------------------------------------------------------------ Ｂ 东廊
+# ------------------------------------------------------------------ Ｂ 斯多亚长廊
 def build_gallery(g: Canvas) -> None:
     """**填满再挖**：整区先砌成实心建筑群，再抠出一条**蛇形**主廊 + 梳齿支廊。
 
     为什么这样：第一版是"空地上画几条墙带"，量出来 95% 可走 —— 那是广场，不是廊。
-    填满之后墙上只剩廊道，横穿必须走完一整趟再折回来，这才是"东廊"，
+    填满之后墙上只剩廊道，横穿必须走完一整趟再折回来，这才是"斯多亚长廊"，
     也才是横穿时间的主要来源。
     """
-    zi = ZONE_INDEX['corridor']
+    zi = ZONE_INDEX['stoa']
     for r in range(ROWS):
         for c in range(COLS):
             if g.zone[r][c] == zi and g.land[r][c] and not g.road[r][c]:
@@ -608,13 +611,13 @@ def build_gallery(g: Canvas) -> None:
         carve_path(g, [(c0 + 14, r0 + 18), (c0 + 14, r0)], 4, FLOOR, force=True)
 
 
-# ------------------------------------------------------------------ Ｃ 石窟
+# ------------------------------------------------------------------ Ｃ 塔耳塔洛斯
 def build_cavern(g: Canvas) -> None:
     """噪声岩体：`fbm > 阈值` 的地方是石头，剩下的天然是蜿蜒洞道。
 
     阈值从 0.56 往下试，直到主连通块占可走格 ≥ 80%。
     """
-    zi = ZONE_INDEX['cavern']
+    zi = ZONE_INDEX['tartarus']
     cells = [(c, r) for r in range(ROWS) for c in range(COLS)
              if g.land[r][c] and g.zone[r][c] == zi]
     if not cells:
@@ -666,10 +669,10 @@ def _main_share(g: Canvas, cells) -> float:
     return best / len(walk)
 
 
-# ------------------------------------------------------------------ Ｄ 水榭
+# ------------------------------------------------------------------ Ｄ 爱琴水榭
 def build_wateryard(g: Canvas) -> None:
     """不规则湖 + 三座桥 + 池心亭。桥是唯一近路，绕湖要多走 40–90 秒。"""
-    zi = ZONE_INDEX['wateryard']
+    zi = ZONE_INDEX['aegean']
     cx, cy, rx, ry = 160.0, 456.0, 104.0, 48.0
     for r in range(372, ROWS):
         for c in range(38, 330):
@@ -723,7 +726,7 @@ def build_wateryard(g: Canvas) -> None:
                         g.t[rr][cc] = WALL
 
 
-# ------------------------------------------------------------------ Ｅ 宝库
+# ------------------------------------------------------------------ Ｅ 奥林匹斯圣库
 # 正中的第五区：**全图唯一的高价值战利品区**。地形语言是"库房"——
 # 整区先砌成实心建筑群，再挖出 9 间大小不一的库房，房与房之间只靠 3 格宽的门洞
 # 相连，房内再摆货架。所以这里的交战永远是"推门 → 两三只怪贴脸"，
@@ -745,7 +748,7 @@ VAULT_DOORS = [
 
 def build_vault(g: Canvas) -> None:
     """库房群：整区填实 → 挖 9 间房 → 每间配 2–3 个门洞 → 房内摆货架。"""
-    zi = ZONE_INDEX['vault']
+    zi = ZONE_INDEX['olympus']
     for r in range(ROWS):
         for c in range(COLS):
             if g.zone[r][c] == zi and g.land[r][c] and not g.road[r][c]:
@@ -840,15 +843,15 @@ def _scatter(g: Canvas, zi: int, count: int, gap: int, salt: str,
 
 
 # 每区的实体配额：(门, 怪, 可破坏物, 事件点)。
-# 四区刻意稀疏（单局 15 分钟只走 1–3 个区，铺满就变成割草）；宝库是
+# 四区刻意稀疏（单局 15 分钟只走 1–3 个区，铺满就变成割草）；奥林匹斯圣库是
 # **全图唯一的高价值区**，密度按可走面积算是四区的 5–6 倍 —— 推一扇门就有
 # 两三只贴脸，这是"值不值得进去"的赌注。
 SPAWNS = {
-    'court': (5, 15, 15, 2),
-    'corridor': (5, 15, 15, 2),
-    'cavern': (5, 15, 15, 2),
-    'wateryard': (5, 15, 15, 2),
-    'vault': (3, 20, 22, 2),
+    'agora': (5, 15, 15, 2),
+    'stoa': (5, 15, 15, 2),
+    'tartarus': (5, 15, 15, 2),
+    'aegean': (5, 15, 15, 2),
+    'olympus': (3, 20, 22, 2),
 }
 
 
@@ -857,7 +860,7 @@ def place_entities(g: Canvas, spawn):
     portals: list[tuple[int, int]] = []
     reach = _reachable(g, spawn)
     for zi, (zid, _name, *_bb) in enumerate(ZONES):
-        portals += _scatter(g, zi, SPAWNS[zid][0], 42, 'portal%s' % zid,
+        portals += _scatter(g, zi, SPAWNS[zid][0], 42, 'portal%s' % SALT_IDS[zi],
                             [spawn], reach, hard_gap=60)
 
     # 出生点周围留一圈**安全落脚区**。以前怪离出生点只隔 7 格（曼哈顿 224px）——
@@ -866,7 +869,7 @@ def place_entities(g: Canvas, spawn):
     # 观察窗口；出圈之后该多凶还是多凶。
     monster_spots: list[tuple[int, int]] = []
     for zi, (zid, _name, *_bb) in enumerate(ZONES):
-        monster_spots += _scatter(g, zi, SPAWNS[zid][1], 7, 'monster%s' % zid,
+        monster_spots += _scatter(g, zi, SPAWNS[zid][1], 7, 'monster%s' % SALT_IDS[zi],
                                   [spawn] + portals, reach, hard_gap=SAFE_SPAWN_CELLS)
 
     monsters = []
@@ -878,14 +881,14 @@ def place_entities(g: Canvas, spawn):
 
     chest_spots: list[tuple[int, int]] = []
     for zi, (zid, _name, *_bb) in enumerate(ZONES):
-        chest_spots += _scatter(g, zi, SPAWNS[zid][2], 6, 'chest%s' % zid,
+        chest_spots += _scatter(g, zi, SPAWNS[zid][2], 6, 'chest%s' % SALT_IDS[zi],
                                 [spawn] + portals + monster_spots, reach, hard_gap=4)
     kinds = ('crate', 'coffer', 'reliquary')
-    vault_zi = ZONE_INDEX['vault']
+    vault_zi = ZONE_INDEX['olympus']
     destructibles = []
     for k, (c, r) in enumerate(chest_spots):
         if g.zone[r][c] == vault_zi:
-            # 宝库里不要破木箱：库房囤的是匣与舍利匣。
+            # 奥林匹斯圣库里不要破木箱：库房囤的是匣与舍利匣。
             kind = 'reliquary' if _h01('ckind', c, r) < 0.62 else 'coffer'
         else:
             kind = kinds[k % 3] if _h01('ckind', c, r) < 0.55 else kinds[(k + 1) % 3]
@@ -893,7 +896,7 @@ def place_entities(g: Canvas, spawn):
 
     event_sites: list[tuple[int, int]] = []
     for zi, (zid, _name, *_bb) in enumerate(ZONES):
-        event_sites += _scatter(g, zi, SPAWNS[zid][3], 70, 'event%s' % zid,
+        event_sites += _scatter(g, zi, SPAWNS[zid][3], 70, 'event%s' % SALT_IDS[zi],
                                 [spawn] + portals + monster_spots, reach, hard_gap=25)
 
     return portals, monsters, destructibles, event_sites
@@ -928,7 +931,7 @@ def build_terrain() -> Canvas:
     build_vault(g)
     # **走廊必须最后挖**。各区建筑会（有意地）把整区砌满墙 —— 先挖的走廊会被
     # 后来的"填满再挖"重填成 WALL，图上还留着路的样子。2026-11-18 用户报的
-    # 「右上和右下画了路但不连通」就是这个：东廊↔石窟的两条中段已经是实心墙。
+    # 「右上和右下画了路但不连通」就是这个：斯多亚长廊↔塔耳塔洛斯的两条中段已经是实心墙。
     build_corridors(g)
     return g
 
@@ -1018,26 +1021,26 @@ def verify(g: Canvas, spawn, monsters, portals, destructibles, event_sites) -> l
         if not any(in_zone(c, r) for c, r in event_sites):
             problems.append('分区 %s 没有事件点' % name)
 
-    # 相邻区通道：环形四对每对 ≥2 条，通往宝库每区 ≥1 条
+    # 相邻区通道：环形四对每对 ≥2 条，通往奥林匹斯圣库每区 ≥1 条
     # （走廊条数，生成器自己知道，不用像素反推）
     pair_count: dict[tuple[int, int], int] = {}
     for a, b, _pts, _w in CORRIDORS:
         key = tuple(sorted((ZONE_INDEX[a], ZONE_INDEX[b])))
         pair_count[key] = pair_count.get(key, 0) + 1
     for (a, b), n in sorted(pair_count.items()):
-        need = 1 if 'vault' in (ZONES[a][0], ZONES[b][0]) else 2
+        need = 1 if 'olympus' in (ZONES[a][0], ZONES[b][0]) else 2
         if n < need:
             problems.append('分区 %s 与 %s 只有 %d 条通道（设计要求 ≥%d）'
                             % (ZONES[a][1], ZONES[b][1], n, need))
 
-    # 宝库必须与**每一个**区都连通（它是这一版新增的战利品中心）
-    vault = ZONE_INDEX['vault']
+    # 奥林匹斯圣库必须与**每一个**区都连通（它是这一版新增的战利品中心）
+    vault = ZONE_INDEX['olympus']
     for zi, (zid, name, *_rest) in enumerate(ZONES):
         if zi == vault:
             continue
         key = tuple(sorted((zi, vault)))
         if pair_count.get(key, 0) < 1:
-            problems.append('分区 %s 没有通往宝库的通道' % name)
+            problems.append('分区 %s 没有通往奥林匹斯圣库的通道' % name)
 
     # 尺寸与穿越目标（设计 11：单局 15 分钟，横穿 2.5–3 分钟纯移动）
     dist = [-1] * (COLS * ROWS)

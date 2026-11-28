@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/meta/account.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: 2a173f4ec3669efb0169bc0b2280a045270a7e2ef15095ea2c7f273af7161f73
+ * Source SHA-256: 81bb61dcf569d3c6df2060a3a650b98ec0a55adc785d8ddcf0c40982e832d358
  */
 (function (root) {
 "use strict";
@@ -36,7 +36,12 @@ exports.decodeExtra = decodeExtra;
 exports.readSave = readSave;
 exports.createSaveQueue = createSaveQueue;
 exports.writeSave = writeSave;
-exports.SAVE_KEY = 'forgeax.save.v1';
+exports.SAVE_KEY = 'forgeax.save.v2';
+/**
+ * v2 键是 2026-11-28 的**断代**：42 星座星图与旧 24 节点表结构完全不同，
+ * 旧键 forgeax.save.v1 下的星图进度一律不再读取（等价于存档全部清空）。
+ * 信封内的 schemaVersion 仍从 1 起算，下面的 v1/v2/v3 迁移逻辑保持不变。
+ */
 /**
  * v2 把「星图进度」和背包一起存进同一个 blob（设计 6.1 / 6.3：等级、经验、
  * 点数、点亮节点都是跨局进度，掉线不该清零）。

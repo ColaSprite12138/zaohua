@@ -30,7 +30,7 @@ async function deploy(play, kind = 'pvpve') {
       deployment: {
         seed: 0x5eed1234,
         kind: runKind,
-        // 带一把剑：这一趟要穿过整个院落（每区 15 只怪），赤手空拳走不到宝库。
+        // 带一把剑：这一趟要穿过整个阿戈拉圣院（每区 15 只怪），赤手空拳走不到奥林匹斯圣库。
         loadout: {
           bag: [],
           equipped: [
@@ -101,21 +101,21 @@ export default async function fog(play) {
   });
 
   await play.step('walk into the vault through the courtyard branch', async () => {
-    // 宝库在正中（350–490 × 244–346 格）。从院落出生点过去要穿过大半个院落，
+    // 奥林匹斯圣库在正中（350–490 × 244–346 格）。从阿戈拉圣院出生点过去要穿过大半个阿戈拉圣院，
     // 所以这一趟和 worldmap 那支一样：**路线由地图源算**（`lib/map-route.mjs`），
     // 每轮只点"这一段往前 380px"那一点 —— 朝固定方向点屏幕会在院墙前原地打转。
     const map = loadTerrain();
-    const gate = { x: 372 * 32, y: 268 * 32 };     // 宝库西侧入口
+    const gate = { x: 372 * 32, y: 268 * 32 };     // 奥林匹斯圣库西侧入口
     let st = await play.state('game.state');
     const route = planRoute(map, st.worldPlayer, gate);
-    if (route === null) throw new Error(`从出生点走不到宝库入口 ${JSON.stringify(gate)}`);
+    if (route === null) throw new Error(`从出生点走不到奥林匹斯圣库入口 ${JSON.stringify(gate)}`);
 
     let cursor = 1;
     let reached = null;
     for (let i = 0; i < 200 && reached === null; i += 1) {
       st = await play.state('game.state');
-      if (st.zone?.id === 'vault') { reached = st; break; }
-      if (st.gameOver) throw new Error(`去宝库的路上被打死了（路线 ${Math.round(route.length)}px，hp=${st.hp}）`);
+      if (st.zone?.id === 'olympus') { reached = st; break; }
+      if (st.gameOver) throw new Error(`去奥林匹斯圣库的路上被打死了（路线 ${Math.round(route.length)}px，hp=${st.hp}）`);
       // 血少就喝药（Z）；没药就贴着路线往前冲，别停下来对砍。
       if (st.hp <= st.maxHp * 0.55) await play.keyboard.press('KeyZ');
       const next = stepAlong(route, cursor, st.worldPlayer, 380);
@@ -127,7 +127,7 @@ export default async function fog(play) {
     if (reached === null) {
       const last = await play.state('game.state');
       throw new Error(
-        `200 步内没走进宝库（停在 ${last.zone?.id ?? '图外'}，world=${JSON.stringify(last.worldPlayer)}，hp=${last.hp}）`,
+        `200 步内没走进奥林匹斯圣库（停在 ${last.zone?.id ?? '图外'}，world=${JSON.stringify(last.worldPlayer)}，hp=${last.hp}）`,
       );
     }
     await play.screenshot('vault-inside');

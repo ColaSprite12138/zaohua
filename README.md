@@ -1,5 +1,19 @@
 # 2.5D 骷髅竞技场（ForgeAX 工程版）
 
+> ## ⚠ 星图 / 元素 / 分区已断代（2026-11-28，优先级高于本文其余内容）
+>
+> **设计正本：`docs/design/starmap-v3.md`**。本文下面凡涉及「8 星座 / 24 节点 /
+> 火冰水毒雷风 / 逐点产亲和 / 卡片式星图 / 院落东廊石窟水榭宝库」的描述**均已作废**：
+> - 元素与亲和 → 奥林匹斯六权能（ares 兵燹 / poseidon 沧溟 / zeus 天威 /
+>   apollo 双曜 / demeter 霜序 / athena 神行），`shared/constants.ts::DOMAIN_IDS` 为唯一权威；
+> - 星图 → 42 星座 / 168 节点、四层结构、点满星座才给亲和、GD 式 canvas 星图；
+> - 属性 → 物理技能吃 `strength`、法术技能吃 `wisdom`（`skill.xlsx::school`）；
+> - 分区 → `agora` / `stoa` / `tartarus` / `aegean` / `olympus`（连 id 一起改）；
+> - 存档 → `forgeax.save.v2`，旧存档全部清空。
+>
+> 旧描述按 `docs/README.md` 规矩 2 保留在原地不搬家，靠本指针止住误导。
+
+
 基于 ForgeAX SDK 0.4.19 的 `empty` 模板构建的可运行 2.5D 游戏模板。场景、角色、骷髅、
 掉落物与 HUD 由 `assets/game/paint.ts` 的 Canvas 2D 绘制层生成（**全部为体素/像素方块，
 模型与烘焙在 `assets/game/voxel.ts`，规格见 `docs/art-style.md`**），经 `CanvasTexture` 送进
