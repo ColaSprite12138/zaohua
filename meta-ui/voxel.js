@@ -1,7 +1,7 @@
 /* GENERATED FILE — DO NOT EDIT.
  * Source of truth: assets/game/voxel.ts
  * Regenerate: node scripts/build-meta-ui.mjs
- * Source SHA-256: d58fbfed6652a0bb4f8995d4cc613059973102f691105957e04e413581011402
+ * Source SHA-256: 6fae7fea3647984883c476ebe783465fee455a4701b25ba5bd26d0077c9a4a96
  */
 (function (root) {
 "use strict";
@@ -37,13 +37,14 @@ var exports = module.exports;
  *    of the meta UI (which reuses this very file, see `scripts/build-meta-ui`).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.WALL_LIFT = exports.SKILL_ICONS = exports.MODELS = exports.DESTRUCTIBLE_MODELS = exports.SWORD_BY_ID = exports.ACCENTS = exports.SKELETON_ARM = exports.KNIGHT_ARM = exports.ARM_REACH = exports.SHOULDER_X = exports.SHOULDER_Y = exports.KNIGHT_DOWN = exports.CORPSE = exports.SKELETON_MAGE = exports.SKELETON = exports.KNIGHT = exports.PORTAL_FRAME = exports.KNIGHT_FIST = exports.KNIGHT_GRIP = exports.BLOCK_PART_SPECS = exports.HAND_HIDDEN_PX = exports.GRIP_PHI = exports.VOXEL_UNIT = exports.BODY_DEPTH = void 0;
+exports.WALL_LIFT = exports.SKILL_ICONS = exports.MODELS = exports.DESTRUCTIBLE_MODELS = exports.SWORD_BY_ID = exports.ACCENTS = exports.SKELETON_ARM = exports.KNIGHT_ARM = exports.ARM_REACH = exports.SHOULDER_X = exports.SHOULDER_Y = exports.KNIGHT_DOWN = exports.CORPSE = exports.SKELETON_MAGE = exports.SKELETON = exports.KNIGHT_GRIP_VOXEL = exports.KNIGHT = exports.KNIGHT_BY_WEAPON = exports.PORTAL_FRAME = exports.KNIGHT_FIST = exports.KNIGHT_GRIP = exports.BLOCK_PART_SPECS = exports.HAND_HIDDEN_PX = exports.GRIP_PHI = exports.VOXEL_UNIT = exports.BODY_DEPTH = void 0;
 exports.yawNarrow = yawNarrow;
 exports.shoulderOffset = shoulderOffset;
 exports.shoulderOffsetY = shoulderOffsetY;
 exports.weaponBehind = weaponBehind;
 exports.shoulderBehind = shoulderBehind;
 exports.handVisible = handVisible;
+exports.projectedGrip = projectedGrip;
 exports.swordModelById = swordModelById;
 exports.itemModel = itemModel;
 exports.destructibleModel = destructibleModel;
@@ -781,6 +782,16 @@ function bodyOf(name, blocks, pose) {
     // returning the same screen height (28 * 2 == 14 * 4 == 56px).
     return { name, unit: exports.VOXEL_UNIT, blocks, poses };
 }
+const WEAPON_RIGS = {
+    // 剑：双臂自然垂，起手外举 → 中段劈下 → 收势回落。
+    sword: { armL: 0, armR: 0, handLiftL: 0, handLiftR: 0, swings: [-24, 8, 20] },
+    // 弓：持弓臂斜举前伸、拉弦臂内收，拉弦手抬到胸前；三帧是拉弦不是抡砍。
+    bow: { armL: -22, armR: 12, handLiftL: 1, handLiftR: 3, swings: [-6, 2, -4] },
+    // 法杖：单臂上举握杆，副手垂在体侧；三帧是举杖砸落。
+    staff: { armL: -38, armR: 0, handLiftL: 2, handLiftR: 0, swings: [-38, -10, -20] },
+    // 空手：双臂略外张（±8°，幅度很小，不是「张翅膀」），挥拳幅度比持剑小。
+    bare: { armL: -8, armR: 8, handLiftL: 0, handLiftR: 0, swings: [-16, 12, 18] },
+};
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 /**
  * 挥剑的**主动作角度**（绕肩抡臂）。走路摆臂不在这里：两侧肩枢轴各在
@@ -817,9 +828,9 @@ function angleOf(id, p) {
         // 只有挥剑三帧才有主动作角度；走路摆臂由 armDepth 的 z 位移承担。
         // 胳膊与手共用同一肩枢轴、返回同一角度，合成后仍是一个刚性方块组。
         case 'armL':
-        case 'handL': return armAngle(p, 'L');
+        case 'handL': return armAngle(p, 'L') + WEAPON_RIGS[p.kind].armL;
         case 'armR':
-        case 'handR': return armAngle(p, 'R');
+        case 'handR': return armAngle(p, 'R') + WEAPON_RIGS[p.kind].armR;
     }
 }
 const isUpper = (id) => id !== 'thighL' && id !== 'thighR' && id !== 'shinL' && id !== 'shinR';
@@ -847,7 +858,11 @@ function assembleBlockPose(parts, p) {
         const stepping = !upper && amp > 0;
         // 手臂与腿共用前后摆：左右反相、只改 z，正面不再对称外张 / 内收。
         const dz = isArm ? armDepth(p, side) : (stepping ? strideDepth(amp) : 0);
-        const dy = upper ? bob : (stepping ? 2 : 0);
+        // 手部随武器抬升：拉弦手到胸前、握杆手抬高，但幅度 ≤3 格始终连在臂末端。
+        const rig = WEAPON_RIGS[p.kind];
+        const handLift = part.id === 'handL' ? rig.handLiftL
+            : part.id === 'handR' ? rig.handLiftR : 0;
+        const dy = (upper ? bob : (stepping ? 2 : 0)) + handLift;
         for (const v of rotated) {
             const shiftX = upper ? leanDx(v.y) : 0;
             put(v, shiftX, dy, dz);
@@ -857,10 +872,11 @@ function assembleBlockPose(parts, p) {
     // 三者共用 handPose 一套坐标，模型这边只负责身体。
     return { name: `knight.${p.name}`, unit: RIG_UNIT, voxels: [...cells.values()] };
 }
-function blockBodyOf() {
+function blockBodyOf(kind) {
+    const rig = WEAPON_RIGS[kind];
     // 所有姿态共用静止网格的地面锚点，起伏 / 抬腿 / 举臂不会让整只人上下漂。
     const stand = assembleBlockPose(BLOCK_PARTS, {
-        name: 'stand', legL: 0, legR: 0, armL: 0, armR: 0,
+        name: `stand.${kind}`, kind, legL: 0, legR: 0, armL: 0, armR: 0,
     });
     const anchor = {
         maxY: Math.max(...stand.voxels.map((v) => v.y)),
@@ -873,34 +889,27 @@ function blockBodyOf() {
     for (let i = 0; i < FRAMES; i += 1) {
         const ph = (i / FRAMES) * Math.PI * 2;
         const amp = Math.round(4 * Math.sin(ph));
-        // 0 / 3 / 4 是中立与落地帧：amp=0，双脚都着地，不再缺中立帧。
         poses.push(withAnchor(assembleBlockPose(BLOCK_PARTS, {
-            name: `step-${i}`,
+            name: `step.${kind}.${i}`,
+            kind,
             legL: amp,
             legR: -amp,
             armL: -amp,
             armR: amp,
-            // 只留上下起伏 + 腿/副手臂的 z 前后摆：lean 的横向扭肩、头左右转
-            // 全部去掉（用户第六轮「肩膀左右摆不对」）。
+            // 只留上下起伏 + 腿/臂的 z 前后摆，不再横向扭肩。
             bob: i % 2 === 1 ? 1 : 0,
         })));
     }
-    // 挥剑只动持械臂：swingL 让 armL/handL 整块绕肩抡起，副手臂、腿、躯干、
-    // 头全部站定（用户第六轮「跟跳舞一样，可以只动右手手臂」）。剑刃仍由
-    // paint.ts 依 handPose(swing) + bladeAngle 运行时画，弧线由 swing.test.ts
-    // 的 11 条单测钉死。
-    const swingFrames = [
-        { name: 'windup', swingL: -24 },
-        { name: 'strike', swingL: 8 },
-        { name: 'recover', swingL: 20 },
-    ];
-    const swingPoses = swingFrames.map((f) => withAnchor(assembleBlockPose(BLOCK_PARTS, {
-        name: `swing-${f.name}`,
+    // 每种武器一套三帧主动作：剑劈砍、弓拉弦、杖举落、徒手挥拳。
+    const names = ['windup', 'strike', 'recover'];
+    const swingPoses = rig.swings.map((swingL, i) => withAnchor(assembleBlockPose(BLOCK_PARTS, {
+        name: `swing.${kind}.${names[i] ?? i}`,
+        kind,
         legL: 0, legR: 0, armL: 0, armR: 0,
-        swingL: f.swingL,
+        swingL,
     })));
     return {
-        name: 'knight',
+        name: `knight.${kind}`,
         unit: RIG_UNIT,
         blocks: 56,
         poses,
@@ -908,7 +917,43 @@ function blockBodyOf() {
         swingPoses,
     };
 }
-exports.KNIGHT = blockBodyOf();
+/** 每种武器一套骨骼姿态；KNIGHT 仍指向剑，兼容既有引用与单测。 */
+exports.KNIGHT_BY_WEAPON = {
+    sword: blockBodyOf('sword'),
+    bow: blockBodyOf('bow'),
+    staff: blockBodyOf('staff'),
+    bare: blockBodyOf('bare'),
+};
+exports.KNIGHT = exports.KNIGHT_BY_WEAPON.sword;
+/** handL 的可见前层握点（模型坐标），由 spec 推导，不是魔法数。 */
+exports.KNIGHT_GRIP_VOXEL = (() => {
+    const h = exports.BLOCK_PART_SPECS.find((s) => s.id === 'handL');
+    return Object.freeze({ x: h.x, y: h.y + Math.floor(h.h / 2), z: h.z + h.d - 1 });
+})();
+/**
+ * 与 bake() 同源的投影：模型体素 (x,y,z) → 相对脚底锚点的屏幕偏移。
+ * paint.ts 用它把装备武器从「handPose 纯屏幕坐标」平移到模型手的真实位置，
+ * 抵消 bake 的 z 透视下移 —— 这就是剑柄浮在手上方几像素的根因。
+ * 公式与 bake() 的 tilt / compensate / y 逐项一致，改 bake 必须同步改这里。
+ */
+function projectedGrip(model, yaw) {
+    const u = model.unit;
+    const zStep = Math.max(1, Math.round(u * 0.45));
+    const cos = Math.cos(yaw);
+    const sin = Math.sin(yaw);
+    const anchorMinZ = model.anchor?.minZ ?? Math.min(...model.voxels.map((v) => v.z));
+    let footZ = anchorMinZ;
+    for (const v of model.voxels)
+        if (v.y === 0 && v.z > footZ)
+            footZ = v.z;
+    const tilt = zStep * Math.pow(0.5 + 0.5 * cos, 5) * (1 - 0.3 * Math.abs(sin));
+    const compensate = (footZ - anchorMinZ) * (zStep - tilt);
+    const g = exports.KNIGHT_GRIP_VOXEL;
+    return {
+        x: (g.x * cos + g.z * sin) * u,
+        y: -(g.y + 1) * u + (g.z - anchorMinZ) * tilt + compensate,
+    };
+}
 exports.SKELETON = bodyOf('skeleton', 24, skeletonPose);
 /**
  * 骷髅法师：同一副骨架，外面套一件暗紫法袍 + 兜帽，眼窝换成紫色。

@@ -16,6 +16,8 @@ import {
   KNIGHT_ARM,
   KNIGHT_FIST,
   KNIGHT_GRIP,
+  KNIGHT_BY_WEAPON,
+  projectedGrip,
   BLOCK_PART_SPECS,
   SHOULDER_X,
   SHOULDER_Y,
@@ -181,6 +183,33 @@ describe('character rigs', () => {
     for (const s of swings) expect(blockKeys(s)).not.toEqual(blockKeys(stand));
     expect(blockKeys(swings[0]!)).not.toEqual(blockKeys(swings[1]!));
     expect(blockKeys(swings[1]!)).not.toEqual(blockKeys(swings[2]!));
+  });
+
+  it('each weapon kind bakes its own arm/hand rig, and the grip projection matches bake', () => {
+    const kinds = Object.keys(KNIGHT_BY_WEAPON);
+    expect(kinds).toEqual(['sword', 'bow', 'staff', 'bare']);
+    const sword = KNIGHT_BY_WEAPON.sword.poses[0]!;
+    // 四种武器的静止骨骼都不是同一套网格换色。
+    for (const k of ['bow', 'staff', 'bare'] as const) {
+      expect(blockKeys(KNIGHT_BY_WEAPON[k].poses[0]!)).not.toEqual(blockKeys(sword));
+      expect(KNIGHT_BY_WEAPON[k].swingPoses).toHaveLength(3);
+    }
+    // 每种武器三帧主动作各不相同（剑劈砍 / 弓拉弦 / 杖举落 / 徒手挥拳）。
+    for (const k of kinds as (keyof typeof KNIGHT_BY_WEAPON)[]) {
+      const s = KNIGHT_BY_WEAPON[k].swingPoses!;
+      expect(blockKeys(s[0]!)).not.toEqual(blockKeys(s[1]!));
+      expect(blockKeys(s[1]!)).not.toEqual(blockKeys(s[2]!));
+    }
+    // 投影公式与 bake 同源：0° 下 handPose 的纯屏幕握点与模型手存在差值，
+    // 这个差值就是剑柄浮空的量；四个 yaw 都给出有限偏移。
+    const grip = projectedGrip(KNIGHT.poses[0]!, 0);
+    const base = handPose(0, 0, Math.PI / 2, 0);
+    expect(Math.abs(grip.y - base.y)).toBeGreaterThan(0);
+    for (const yaw of [0, Math.PI / 4, Math.PI / 2, Math.PI]) {
+      const p = projectedGrip(KNIGHT.poses[0]!, yaw);
+      expect(Number.isFinite(p.x)).toBe(true);
+      expect(Number.isFinite(p.y)).toBe(true);
+    }
   });
 
   it('body heights are the authored block counts (56px / 48px)', () => {

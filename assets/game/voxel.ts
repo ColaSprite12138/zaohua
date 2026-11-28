@@ -923,8 +923,38 @@ function bodyOf(
  * z 前后错开（左右反相），上半身起伏 + 扭转、头微转；膝与踝切开；
  * 只有挥剑三帧才用绕 z 轴抡臂，与走路彻底分开，剑同步跟手的 z 位移走。
  */
+/**
+ * 装备武器决定**手臂与手的骨骼姿态**，不是换一张贴图。每种武器生成一套
+ * 独立的 8 步态 + 3 挥击 pose 池（见 KNIGHT_BY_WEAPON）。
+ */
+export type WeaponKind = 'sword' | 'bow' | 'staff' | 'bare';
+
+interface WeaponRig {
+  /** 持械臂 / 副手臂相对自然下垂的基础旋转角（度），arm 与 hand 共用同一枢轴。 */
+  readonly armL: number;
+  readonly armR: number;
+  /** 两只手额外的抬升（格，≤3）：拉弦手到胸前、握杆手抬高，仍连在臂末端。 */
+  readonly handLiftL: number;
+  readonly handLiftR: number;
+  /** 三帧主动作的持械臂角度（度），每种武器一套。 */
+  readonly swings: readonly [number, number, number];
+}
+
+const WEAPON_RIGS: Record<WeaponKind, WeaponRig> = {
+  // 剑：双臂自然垂，起手外举 → 中段劈下 → 收势回落。
+  sword: { armL: 0, armR: 0, handLiftL: 0, handLiftR: 0, swings: [-24, 8, 20] },
+  // 弓：持弓臂斜举前伸、拉弦臂内收，拉弦手抬到胸前；三帧是拉弦不是抡砍。
+  bow: { armL: -22, armR: 12, handLiftL: 1, handLiftR: 3, swings: [-6, 2, -4] },
+  // 法杖：单臂上举握杆，副手垂在体侧；三帧是举杖砸落。
+  staff: { armL: -38, armR: 0, handLiftL: 2, handLiftR: 0, swings: [-38, -10, -20] },
+  // 空手：双臂略外张（±8°，幅度很小，不是「张翅膀」），挥拳幅度比持剑小。
+  bare: { armL: -8, armR: 8, handLiftL: 0, handLiftR: 0, swings: [-16, 12, 18] },
+};
+
 interface BlockPoseParams {
   readonly name: string;
+  /** 本套姿态对应的武器骨骼。 */
+  readonly kind: WeaponKind;
   /** 摆腿幅度（格，左右反相）；只有正值那一侧迈步抬脚。 */
   readonly legL: number;
   readonly legR: number;
@@ -985,8 +1015,8 @@ function angleOf(id: BlockPartId, p: BlockPoseParams): number {
     case 'thighL': case 'thighR': case 'shinL': case 'shinR': return 0;
     // 只有挥剑三帧才有主动作角度；走路摆臂由 armDepth 的 z 位移承担。
     // 胳膊与手共用同一肩枢轴、返回同一角度，合成后仍是一个刚性方块组。
-    case 'armL': case 'handL': return armAngle(p, 'L');
-    case 'armR': case 'handR': return armAngle(p, 'R');
+    case 'armL': case 'handL': return armAngle(p, 'L') + WEAPON_RIGS[p.kind].armL;
+    case 'armR': case 'handR': return armAngle(p, 'R') + WEAPON_RIGS[p.kind].armR;
   }
 }
 
@@ -1017,7 +1047,11 @@ function assembleBlockPose(parts: readonly BlockPart[], p: BlockPoseParams): Vox
     const stepping = !upper && amp > 0;
     // 手臂与腿共用前后摆：左右反相、只改 z，正面不再对称外张 / 内收。
     const dz = isArm ? armDepth(p, side) : (stepping ? strideDepth(amp) : 0);
-    const dy = upper ? bob : (stepping ? 2 : 0);
+    // 手部随武器抬升：拉弦手到胸前、握杆手抬高，但幅度 ≤3 格始终连在臂末端。
+    const rig = WEAPON_RIGS[p.kind];
+    const handLift = part.id === 'handL' ? rig.handLiftL
+      : part.id === 'handR' ? rig.handLiftR : 0;
+    const dy = (upper ? bob : (stepping ? 2 : 0)) + handLift;
     for (const v of rotated) {
       const shiftX = upper ? leanDx(v.y) : 0;
       put(v, shiftX, dy, dz);
@@ -1028,10 +1062,11 @@ function assembleBlockPose(parts: readonly BlockPart[], p: BlockPoseParams): Vox
   return { name: `knight.${p.name}`, unit: RIG_UNIT, voxels: [...cells.values()] };
 }
 
-function blockBodyOf(): BodyModel {
+function blockBodyOf(kind: WeaponKind): BodyModel {
+  const rig = WEAPON_RIGS[kind];
   // 所有姿态共用静止网格的地面锚点，起伏 / 抬腿 / 举臂不会让整只人上下漂。
   const stand = assembleBlockPose(BLOCK_PARTS, {
-    name: 'stand', legL: 0, legR: 0, armL: 0, armR: 0,
+    name: `stand.${kind}`, kind, legL: 0, legR: 0, armL: 0, armR: 0,
   });
   const anchor = {
     maxY: Math.max(...stand.voxels.map((v) => v.y)),
@@ -1044,35 +1079,28 @@ function blockBodyOf(): BodyModel {
   for (let i = 0; i < FRAMES; i += 1) {
     const ph = (i / FRAMES) * Math.PI * 2;
     const amp = Math.round(4 * Math.sin(ph));
-    // 0 / 3 / 4 是中立与落地帧：amp=0，双脚都着地，不再缺中立帧。
     poses.push(withAnchor(assembleBlockPose(BLOCK_PARTS, {
-      name: `step-${i}`,
+      name: `step.${kind}.${i}`,
+      kind,
       legL: amp,
       legR: -amp,
       armL: -amp,
       armR: amp,
-      // 只留上下起伏 + 腿/副手臂的 z 前后摆：lean 的横向扭肩、头左右转
-      // 全部去掉（用户第六轮「肩膀左右摆不对」）。
+      // 只留上下起伏 + 腿/臂的 z 前后摆，不再横向扭肩。
       bob: i % 2 === 1 ? 1 : 0,
     })));
   }
-  // 挥剑只动持械臂：swingL 让 armL/handL 整块绕肩抡起，副手臂、腿、躯干、
-  // 头全部站定（用户第六轮「跟跳舞一样，可以只动右手手臂」）。剑刃仍由
-  // paint.ts 依 handPose(swing) + bladeAngle 运行时画，弧线由 swing.test.ts
-  // 的 11 条单测钉死。
-  const swingFrames = [
-    { name: 'windup', swingL: -24 },
-    { name: 'strike', swingL: 8 },
-    { name: 'recover', swingL: 20 },
-  ] as const;
-  const swingPoses: VoxelModel[] = swingFrames.map((f) =>
+  // 每种武器一套三帧主动作：剑劈砍、弓拉弦、杖举落、徒手挥拳。
+  const names = ['windup', 'strike', 'recover'] as const;
+  const swingPoses: VoxelModel[] = rig.swings.map((swingL, i) =>
     withAnchor(assembleBlockPose(BLOCK_PARTS, {
-      name: `swing-${f.name}`,
+      name: `swing.${kind}.${names[i] ?? i}`,
+      kind,
       legL: 0, legR: 0, armL: 0, armR: 0,
-      swingL: f.swingL,
+      swingL,
     })));
   return {
-    name: 'knight',
+    name: `knight.${kind}`,
     unit: RIG_UNIT,
     blocks: 56,
     poses,
@@ -1081,7 +1109,43 @@ function blockBodyOf(): BodyModel {
   };
 }
 
-export const KNIGHT: BodyModel = blockBodyOf();
+/** 每种武器一套骨骼姿态；KNIGHT 仍指向剑，兼容既有引用与单测。 */
+export const KNIGHT_BY_WEAPON: Record<WeaponKind, BodyModel> = {
+  sword: blockBodyOf('sword'),
+  bow: blockBodyOf('bow'),
+  staff: blockBodyOf('staff'),
+  bare: blockBodyOf('bare'),
+};
+export const KNIGHT: BodyModel = KNIGHT_BY_WEAPON.sword;
+
+/** handL 的可见前层握点（模型坐标），由 spec 推导，不是魔法数。 */
+export const KNIGHT_GRIP_VOXEL = (() => {
+  const h = BLOCK_PART_SPECS.find((s) => s.id === 'handL')!;
+  return Object.freeze({ x: h.x, y: h.y + Math.floor(h.h / 2), z: h.z + h.d - 1 });
+})();
+
+/**
+ * 与 bake() 同源的投影：模型体素 (x,y,z) → 相对脚底锚点的屏幕偏移。
+ * paint.ts 用它把装备武器从「handPose 纯屏幕坐标」平移到模型手的真实位置，
+ * 抵消 bake 的 z 透视下移 —— 这就是剑柄浮在手上方几像素的根因。
+ * 公式与 bake() 的 tilt / compensate / y 逐项一致，改 bake 必须同步改这里。
+ */
+export function projectedGrip(model: VoxelModel, yaw: number): { x: number; y: number } {
+  const u = model.unit;
+  const zStep = Math.max(1, Math.round(u * 0.45));
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  const anchorMinZ = model.anchor?.minZ ?? Math.min(...model.voxels.map((v) => v.z));
+  let footZ = anchorMinZ;
+  for (const v of model.voxels) if (v.y === 0 && v.z > footZ) footZ = v.z;
+  const tilt = zStep * Math.pow(0.5 + 0.5 * cos, 5) * (1 - 0.3 * Math.abs(sin));
+  const compensate = (footZ - anchorMinZ) * (zStep - tilt);
+  const g = KNIGHT_GRIP_VOXEL;
+  return {
+    x: (g.x * cos + g.z * sin) * u,
+    y: -(g.y + 1) * u + (g.z - anchorMinZ) * tilt + compensate,
+  };
+}
 export const SKELETON: BodyModel = bodyOf('skeleton', 24, skeletonPose);
 /**
  * 骷髅法师：同一副骨架，外面套一件暗紫法袍 + 兜帽，眼窝换成紫色。
