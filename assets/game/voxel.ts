@@ -946,15 +946,16 @@ function bodyOf(
 /**
  * 装配期刚性动画（2026-11-28 重做）：**上下半身一起演**。旧版只有腿动，
  * 双臂所有步态帧 + 三帧挥剑永远一个姿势、躯干不起伏不扭转、头永远水平，
- * 抬腿时靴子还跟大腿整段斜过去像折断。现在：反向摆臂幅度加倍、上半身
- * 起伏 + 扭转、头微转；膝与踝切开，小腿只平动不旋转；剑跟着持械臂一起转。
+ * 抬腿时靴子还跟大腿整段斜过去像折断。现在：走路摆臂 / 摆腿都改绕肩髋的
+ * z 前后错开（左右反相），上半身起伏 + 扭转、头微转；膝与踝切开；
+ * 只有挥剑三帧才用绕 z 轴抡臂，与走路彻底分开，剑同步跟手的 z 位移走。
  */
 interface BlockPoseParams {
   readonly name: string;
   /** 摆腿幅度（格，左右反相）；只有正值那一侧迈步抬脚。 */
   readonly legL: number;
   readonly legR: number;
-  /** 反向摆臂幅度（格，左右反相，与腿交叉）。 */
+  /** 反向摆臂的 z 前后错开量（格，左右反相，与腿交叉）；不再产生横向角度。 */
   readonly armL: number;
   readonly armR: number;
   /** 挥剑三帧：两条「胳膊 + 手」刚性组各自的整体旋转角（度）。 */
@@ -977,23 +978,29 @@ interface BlockPoseParams {
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
+/**
+ * 挥剑的**主动作角度**（绕肩抡臂）。走路摆臂不在这里：两侧肩枢轴各在
+ * x=−8 / +8，走路帧给反号的 z 轴旋转会变成镜像对称的「两臂同时外张 /
+ * 同时内收」，正常人不会这样。走路改由 armDepth 做绕肩的 z 前后错开。
+ */
 function armAngle(p: BlockPoseParams, side: 'L' | 'R'): number {
-  const base = side === 'L' ? p.armL : p.armR;
-  const swing = side === 'L' ? (p.swingL ?? 0) : (p.swingR ?? 0);
-  // 反向摆臂幅度从 4°/格 加到 8°/格：手块每帧位置都变，外轮廓跟着变，
-  // 小尺寸也读得出在走路，而不是「左右对称端在身前」的固定剪影。
-  return base * 8 + swing;
+  return side === 'L' ? (p.swingL ?? 0) : (p.swingR ?? 0);
 }
 
 /**
- * 走路是绕髋的**前后摆**：只在 z 深度上错开，不在屏幕横向 x 上摆。
- * 上一版让两条腿绕 z 轴反相转 ±18°，末端同时朝身体中线收，再用 kneeShift
- * 把小腿横推 3 格，脚在 x≈0 撞在一起、合帧时互相覆盖 —— 就是用户看到的
- * 「走路腿重叠」。现在迈步腿整体前移 3 格 + 抬 2 格，撑地腿完全不动：
- * 0° 正面两腿各占各的列，90° 侧视才看得出前后错开，仍是一套几何。
+ * 走路是绕髋 / 肩的**前后摆**：只在 z 深度上错开，不在屏幕横向 x 上摆。
+ * 腿的上一版让两条腿绕 z 轴反相转 ±18°，末端同时朝中线收，再横推 3 格，
+ * 脚在 x≈0 撞在一起；手臂的上一版是 `base * 8`，两臂对称张成翅膀 / 抱胸。
+ * 现在两者共用同一套量纲：迈步腿前移 3 格 + 抬 2 格，左右臂反相前后错开，
+ * 0° 正面各占各的列，90° 侧视才看得出前后，四视角仍是同一套几何。
  */
 function strideDepth(amp: number): number {
   return Math.round(clamp(amp, -4, 4) * 0.8);
+}
+
+/** 左右臂反相前后摆（与腿交叉）：只改 z，不做屏幕内横向旋转。 */
+function armDepth(p: BlockPoseParams, side: 'L' | 'R'): number {
+  return strideDepth(side === 'L' ? p.armL : p.armR);
 }
 
 function angleOf(id: BlockPartId, p: BlockPoseParams): number {
@@ -1003,6 +1010,7 @@ function angleOf(id: BlockPartId, p: BlockPoseParams): number {
     // 腿不再绕 z 轴横向旋转：前后摆由 assembleBlockPose 的 z 位移承担，
     // 靴子也就不跟着大腿整段斜过去。
     case 'thighL': case 'thighR': case 'shinL': case 'shinR': return 0;
+    // 只有挥剑三帧才有主动作角度；走路摆臂由 armDepth 的 z 位移承担。
     // 胳膊与手共用同一肩枢轴、返回同一角度，合成后仍是一个刚性方块组。
     case 'armL': case 'handL': return armAngle(p, 'L');
     case 'armR': case 'handR': return armAngle(p, 'R');
@@ -1027,21 +1035,24 @@ function assembleBlockPose(parts: readonly BlockPart[], p: BlockPoseParams): Vox
   for (const part of parts) {
     const rotated = rotateRigid(part.cells, part.px, part.py, angleOf(part.id, p));
     const upper = isUpper(part.id);
-    const side: 'L' | 'R' = part.id === 'thighL' || part.id === 'shinL' ? 'L' : 'R';
+    const side: 'L' | 'R' = part.id.endsWith('L') ? 'L' : 'R';
     const amp = side === 'L' ? p.legL : p.legR;
+    const isArm = part.id === 'armL' || part.id === 'armR'
+      || part.id === 'handL' || part.id === 'handR';
     // 只有迈出去的那条腿动：z 前移 + 整条抬 2 格；撑地腿完全不动，脚底
     // 钉在统一地面线上，两条腿在正面始终各占各的屏幕列。
     const stepping = !upper && amp > 0;
-    const dz = stepping ? strideDepth(amp) : 0;
+    // 手臂与腿共用前后摆：左右反相、只改 z，正面不再对称外张 / 内收。
+    const dz = isArm ? armDepth(p, side) : (stepping ? strideDepth(amp) : 0);
     const dy = upper ? bob : (stepping ? 2 : 0);
     for (const v of rotated) {
       const shiftX = upper ? leanDx(v.y) : 0;
       put(v, shiftX, dy, dz);
     }
   }
-  // 刚性剑：柄焊在握点（随持械臂的肩枢轴一起平移），刃用自己的摆角。
-  // 先用 armAngle 把「握点」转到这一帧手的实际位置，得到剑整体要平移的量；
-  // 再让 RIG_SWORD 绕自己的握点转 swordAngle，避免刃和大臂共线糊成一团。
+  // 刚性剑：柄焊在握点。挥剑帧用 swingL 把「握点」绕肩转到手的实际位置；
+  // 走路帧 swingL=0，剑不横移，只跟持械手一起做 z 前后摆，不会脱节。
+  // 刃再用自己的 swordAngle 转，避免与大臂共线糊成一团。
   const armA = (armAngle(p, 'L') * Math.PI) / 180;
   const gripDx = KNIGHT_GRIP.x - RIG_SWORD.px;
   const gripDy = KNIGHT_GRIP.y - RIG_SWORD.py;
@@ -1051,7 +1062,7 @@ function assembleBlockPose(parts: readonly BlockPart[], p: BlockPoseParams): Vox
   const shiftY = movedGripY - KNIGHT_GRIP.y;
   const blade = rotateRigid(RIG_SWORD.cells, KNIGHT_GRIP.x, KNIGHT_GRIP.y, p.swordAngle ?? 0);
   for (const v of blade) {
-    put(v, Math.round(shiftX) + leanDx(v.y), Math.round(shiftY) + bob);
+    put(v, Math.round(shiftX) + leanDx(v.y), Math.round(shiftY) + bob, armDepth(p, 'L'));
   }
   return { name: `knight.${p.name}`, unit: RIG_UNIT, voxels: [...cells.values()] };
 }
